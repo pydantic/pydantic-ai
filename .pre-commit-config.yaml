@@ -8,6 +8,18 @@ repos:
       - id: check-toml
       - id: end-of-file-fixer
       - id: trailing-whitespace
+      - id: check-added-large-files
+        args:
+          - --maxkb=1024 # 1MB
+          - --enforce-all # Allow to run in the whole source code, instead of only the changed files.
+        # TODO(Marcelo): We should replace the kiwi.png file with a smaller one.
+        exclude: |
+          (?x)^(
+              tests/models/cassettes/.*|
+              tests/cassettes/.*|
+              uv.lock|
+              tests/assets/kiwi.png
+          )$
 
   - repo: https://github.com/sirosen/texthooks
     rev: 0.6.8

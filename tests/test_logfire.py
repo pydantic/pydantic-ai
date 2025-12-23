@@ -22,7 +22,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
-from .conftest import IsStr
+from .conftest import IsDatetime, IsStr
 
 try:
     import logfire
@@ -421,13 +421,13 @@ def test_logfire(
                                     'zero_count': 0,
                                     'positive': {
                                         'offset': 23234,
-                                        'bucket_counts': IsList(length=...),  # type: ignore
+                                        'bucket_counts': IsList(length=...),
                                     },
                                     'negative': {'offset': 0, 'bucket_counts': [0]},
                                     'flags': 0,
                                     'min': 51,
                                     'max': 52,
-                                    'exemplars': IsList(length=...),  # type: ignore
+                                    'exemplars': IsList(length=...),
                                 },
                                 {
                                     'attributes': {
@@ -445,13 +445,13 @@ def test_logfire(
                                     'zero_count': 0,
                                     'positive': {
                                         'offset': 255,
-                                        'bucket_counts': IsList(length=...),  # type: ignore
+                                        'bucket_counts': IsList(length=...),
                                     },
                                     'negative': {'offset': 0, 'bucket_counts': [0]},
                                     'flags': 0,
                                     'min': 4,
                                     'max': 8,
-                                    'exemplars': IsList(length=...),  # type: ignore
+                                    'exemplars': IsList(length=...),
                                 },
                             ],
                             'aggregation_temporality': 1,
@@ -2740,7 +2740,11 @@ def test_function_instructions_with_history_in_agent_run_span(
     result = my_agent.run_sync(
         'Hello',
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content='Hi')], instructions='Instructions from a previous agent run'),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hi')],
+                instructions='Instructions from a previous agent run',
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(parts=[TextPart(content='Hello')]),
         ],
         output_type=MyOutput,

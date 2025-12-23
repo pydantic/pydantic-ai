@@ -338,6 +338,16 @@ def test_video_url_invalid():
         VideoUrl('foobar.potato').media_type
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="'Python 3.10's mimetypes module does not support query parameters'"
+)
+def test_url_with_query_parameters() -> None:
+    """Test that Url types correctly infer media type from URLs with query parameters"""
+    video_url = VideoUrl('https://example.com/video.mp4?query=param')
+    assert video_url.media_type == 'video/mp4'
+    assert video_url.format == 'mp4'
+
+
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
     original_delta = ThinkingPartDelta(
@@ -454,7 +464,7 @@ def test_pre_usage_refactor_messages_deserializable():
                         content='What is the capital of Mexico?',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City.')],

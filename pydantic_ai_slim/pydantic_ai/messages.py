@@ -2,11 +2,11 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
-from mimetypes import guess_extension, guess_type
+from mimetypes import guess_type
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
@@ -26,6 +26,35 @@ if TYPE_CHECKING:
     from magika import Magika
 
     from .models.instrumented import InstrumentationSettings
+
+_mime_types = MimeTypes()
+# Replicate what is being done in `mimetypes.init()`
+_mime_types.read_windows_registry()
+for file in mimetypes.knownfiles:
+    if os.path.isfile(file):
+        _mime_types.read(file)
+# TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
+# Document types
+_mime_types.add_type('application/rtf', '.rtf')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
+_mime_types.add_type('text/markdown', '.mdx')
+_mime_types.add_type('text/markdown', '.md')
+_mime_types.add_type('text/x-asciidoc', '.asciidoc')
+
+# Image types
+_mime_types.add_type('image/webp', '.webp')
+
+# Video types
+_mime_types.add_type('video/3gpp', '.three_gp')
+_mime_types.add_type('video/x-matroska', '.mkv')
+_mime_types.add_type('video/x-ms-wmv', '.wmv')
+
+# Audio types
+_mime_types.add_type('audio/aiff', '.aiff')
+_mime_types.add_type('audio/flac', '.flac')
+_mime_types.add_type('audio/ogg', '.oga')
+_mime_types.add_type('audio/wav', '.wav')
 
 
 _magika_instance: Magika | None = None
@@ -190,12 +219,12 @@ class FileUrl(ABC):
 
     def _infer_media_type(self) -> str:
         """Infer the media type of the file based on the URL."""
-        media_type = guess_type(self.url)[0]
-        if media_type is None:
+        mime_type, _ = _mime_types.guess_type(self.url)
+        if mime_type is None:
             raise ValueError(
-                f'Could not infer media type from URL: {self.url}. Explicitly provide a `media_type` instead.'
+                f'Could not infer media type from video URL: {self.url}. Explicitly provide a `media_type` instead.'
             )
-        return media_type
+        return mime_type
 
     @property
     def format(self) -> str:
@@ -242,28 +271,12 @@ class VideoUrl(FileUrl):
         )
         self.kind = kind
 
-    def _infer_media_type(self) -> VideoMediaType | str:
+    def _infer_media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
-        if self.url.endswith('.mkv'):
-            return 'video/x-matroska'
-        elif self.url.endswith('.mov'):
-            return 'video/quicktime'
-        elif self.url.endswith('.mp4'):
-            return 'video/mp4'
-        elif self.url.endswith('.webm'):
-            return 'video/webm'
-        elif self.url.endswith('.flv'):
-            return 'video/x-flv'
-        elif self.url.endswith(('.mpeg', '.mpg')):
-            return 'video/mpeg'
-        elif self.url.endswith('.wmv'):
-            return 'video/x-ms-wmv'
-        elif self.url.endswith('.three_gp'):
-            return 'video/3gpp'
         # Assume that YouTube videos are mp4 because there would be no extension
         # to infer from. This should not be a problem, as Gemini disregards media
         # type for YouTube URLs.
-        elif self.is_youtube:
+        if self.is_youtube:
             return 'video/mp4'
         else:
             return super()._infer_media_type()
@@ -271,7 +284,9 @@ class VideoUrl(FileUrl):
     @property
     def is_youtube(self) -> bool:
         """True if the URL has a YouTube domain."""
-        return self.url.startswith(('https://youtu.be/', 'https://youtube.com/', 'https://www.youtube.com/'))
+        parsed = urlparse(self.url)
+        hostname = parsed.hostname
+        return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
 
     @property
     def format(self) -> VideoFormat | str:
@@ -316,26 +331,6 @@ class AudioUrl(FileUrl):
         )
         self.kind = kind
 
-    def _infer_media_type(self) -> AudioMediaType | str:
-        """Return the media type of the audio file, based on the url.
-
-        References:
-        - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
-        """
-        if self.url.endswith('.mp3'):
-            return 'audio/mpeg'
-        if self.url.endswith('.wav'):
-            return 'audio/wav'
-        if self.url.endswith('.flac'):
-            return 'audio/flac'
-        if self.url.endswith('.oga'):
-            return 'audio/ogg'
-        if self.url.endswith('.aiff'):
-            return 'audio/aiff'
-        if self.url.endswith('.aac'):
-            return 'audio/aac'
-
-        return super()._infer_media_type()
 
     @property
     def format(self) -> AudioFormat | str:
@@ -376,18 +371,6 @@ class ImageUrl(FileUrl):
             identifier=identifier or _identifier,
         )
         self.kind = kind
-
-    def _infer_media_type(self) -> ImageMediaType | str:
-        """Return the media type of the image, based on the url."""
-        if self.url.endswith(('.jpg', '.jpeg')):
-            return 'image/jpeg'
-        elif self.url.endswith('.png'):
-            return 'image/png'
-        elif self.url.endswith('.gif'):
-            return 'image/gif'
-        elif self.url.endswith('.webp'):
-            return 'image/webp'
-        return super()._infer_media_type()
 
     @property
     def format(self) -> ImageFormat | str:
@@ -432,31 +415,6 @@ class DocumentUrl(FileUrl):
         )
         self.kind = kind
 
-    def _infer_media_type(self) -> str:
-        """Return the media type of the document, based on the url."""
-        # Common document types are hardcoded here as mime-type support for these
-        # extensions varies across operating systems.
-        if self.url.endswith(('.md', '.mdx', '.markdown')):
-            return 'text/markdown'
-        elif self.url.endswith('.asciidoc'):
-            return 'text/x-asciidoc'
-        elif self.url.endswith('.txt'):
-            return 'text/plain'
-        elif self.url.endswith('.pdf'):
-            return 'application/pdf'
-        elif self.url.endswith('.rtf'):
-            return 'application/rtf'
-        elif self.url.endswith('.doc'):
-            return 'application/msword'
-        elif self.url.endswith('.docx'):
-            return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        elif self.url.endswith('.xls'):
-            return 'application/vnd.ms-excel'
-        elif self.url.endswith('.xlsx'):
-            return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        else:
-            return super()._infer_media_type()
-
     @property
     def format(self) -> DocumentFormat | str:
         """The file format of the document.
@@ -478,6 +436,7 @@ class BinaryContent:
 
     _: KW_ONLY
 
+    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
 
     vendor_metadata: dict[str, Any] | None = None
@@ -561,7 +520,7 @@ class BinaryContent:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
-        media_type, _ = guess_type(path)
+        media_type, _ = _mime_types.guess_type(path)
         if media_type is None:
             media_type = 'application/octet-stream'
 
@@ -681,16 +640,8 @@ class BinaryImage(BinaryContent):
         _type: str | None = None,
         _extension: str | None = None,
     ):
-        # Use _media_type if media_type is not provided (for inline-snapshot compatibility)
-        effective_media_type = media_type or _media_type
-
         super().__init__(
-            data=data,
-            media_type=effective_media_type,
-            identifier=identifier or _identifier,
-            vendor_metadata=vendor_metadata,
-            _type=_type,
-            _extension=_extension,
+            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
         )
 
         if not self.is_image:
@@ -786,7 +737,6 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-ms-wmv': 'wmv',
     'video/3gpp': 'three_gp',
 }
-_type_map = _image_format_lookup | _audio_format_lookup | _document_format_lookup | _video_format_lookup
 
 
 @dataclass(repr=False)
@@ -1063,6 +1013,11 @@ class ModelRequest:
 
     _: KW_ONLY
 
+    # Default is None for backwards compatibility with old serialized messages that don't have this field.
+    # Using a default_factory would incorrectly fill in the current time for deserialized historical messages.
+    timestamp: datetime | None = None
+    """The timestamp when the request was sent to the model."""
+
     instructions: str | None = None
     """The instructions for the model."""
 
@@ -1304,9 +1259,10 @@ class ModelResponse:
     """The name of the model that generated the response."""
 
     timestamp: datetime = field(default_factory=_now_utc)
-    """The timestamp of the response.
+    """The timestamp when the response was received locally.
 
-    If the model provides a timestamp in the response (as OpenAI does) that will be used.
+    This is always a high-precision local datetime. Provider-specific timestamps
+    (if available) are stored in `provider_details['timestamp']`.
     """
 
     kind: Literal['response'] = 'response'
@@ -1450,10 +1406,7 @@ class ModelResponse:
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
                 body.setdefault('content', []).append(
-                    {
-                        'kind': kind,
-                        **({'text': part.content} if settings.include_content else {}),
-                    }
+                    {'kind': kind, **({'text': part.content} if settings.include_content else {})}
                 )
             elif isinstance(part, FilePart):
                 body.setdefault('content', []).append(

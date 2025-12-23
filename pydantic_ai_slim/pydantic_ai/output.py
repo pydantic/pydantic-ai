@@ -11,8 +11,9 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
+from ._run_context import RunContext
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, ToolDefinition
+from .tools import DeferredToolRequests, ObjectJsonSchema, ToolDefinition
 
 __all__ = (
     # classes
@@ -60,7 +61,7 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Callable[[RunContext, str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
+    Callable[[RunContext[Any], str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
     type_params=(T_co,),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.

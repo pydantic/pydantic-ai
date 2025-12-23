@@ -44,7 +44,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsInt, IsStr, try_import
+from ..conftest import IsDatetime, IsInt, IsStr, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -148,7 +148,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
                 RetryPromptPart('retry_prompt2'),
                 {},  # test unexpected parts  # type: ignore
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(parts=[TextPart('text3')]),
     ]
@@ -359,7 +360,7 @@ async def test_instrumented_model_not_recording():
         InstrumentationSettings(tracer_provider=NoOpTracerProvider(), logger_provider=NoOpLoggerProvider()),
     )
 
-    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
+    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')], timestamp=IsDatetime())]
     await model.request(
         messages,
         model_settings=ModelSettings(temperature=1),
@@ -380,7 +381,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
         ModelRequest(
             parts=[
                 UserPromptPart('user_prompt'),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
     ]
     async with model.request_stream(
@@ -482,7 +484,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
         ModelRequest(
             parts=[
                 UserPromptPart('user_prompt'),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
     ]
 
@@ -607,6 +610,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                 RetryPromptPart('retry_prompt2'),
                 {},  # test unexpected parts  # type: ignore
             ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(parts=[TextPart('text3')]),
     ]
@@ -987,7 +991,7 @@ def test_messages_to_otel_events_serialization_errors():
 
     messages = [
         ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')]),
-        ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')]),
+        ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')], timestamp=IsDatetime()),
     ]
 
     settings = InstrumentationSettings()
@@ -1026,7 +1030,7 @@ def test_messages_to_otel_events_serialization_errors():
 
 def test_messages_to_otel_events_instructions():
     messages = [
-        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime()),
         ModelResponse(parts=[TextPart('text1')]),
     ]
     settings = InstrumentationSettings()
@@ -1052,9 +1056,9 @@ def test_messages_to_otel_events_instructions():
 
 def test_messages_to_otel_events_instructions_multiple_messages():
     messages = [
-        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime()),
         ModelResponse(parts=[TextPart('text1')]),
-        ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
+        ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')], timestamp=IsDatetime()),
     ]
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -1081,10 +1085,22 @@ def test_messages_to_otel_events_instructions_multiple_messages():
 
 def test_messages_to_otel_events_image_url(document_content: BinaryContent):
     messages = [
-        ModelRequest(parts=[UserPromptPart(content=['user_prompt', ImageUrl('https://example.com/image.png')])]),
-        ModelRequest(parts=[UserPromptPart(content=['user_prompt2', AudioUrl('https://example.com/audio.mp3')])]),
-        ModelRequest(parts=[UserPromptPart(content=['user_prompt3', DocumentUrl('https://example.com/document.pdf')])]),
-        ModelRequest(parts=[UserPromptPart(content=['user_prompt4', VideoUrl('https://example.com/video.mp4')])]),
+        ModelRequest(
+            parts=[UserPromptPart(content=['user_prompt', ImageUrl('https://example.com/image.png')])],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content=['user_prompt2', AudioUrl('https://example.com/audio.mp3')])],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content=['user_prompt3', DocumentUrl('https://example.com/document.pdf')])],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content=['user_prompt4', VideoUrl('https://example.com/video.mp4')])],
+            timestamp=IsDatetime(),
+        ),
         ModelRequest(
             parts=[
                 UserPromptPart(
@@ -1096,9 +1112,10 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                         VideoUrl('https://example.com/video2.mp4'),
                     ]
                 )
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
-        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])], timestamp=IsDatetime()),
         ModelResponse(parts=[TextPart('text1')]),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
@@ -1238,7 +1255,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
 
 def test_messages_to_otel_events_without_binary_content(document_content: BinaryContent):
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])], timestamp=IsDatetime()),
     ]
     settings = InstrumentationSettings(include_binary_content=False)
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -1266,7 +1283,7 @@ def test_messages_to_otel_events_without_binary_content(document_content: Binary
 
 def test_messages_without_content(document_content: BinaryContent):
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[SystemPromptPart('system_prompt')]),
+        ModelRequest(parts=[SystemPromptPart('system_prompt')], timestamp=IsDatetime()),
         ModelResponse(parts=[TextPart('text1')]),
         ModelRequest(
             parts=[
@@ -1280,13 +1297,17 @@ def test_messages_without_content(document_content: BinaryContent):
                         document_content,
                     ]
                 )
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(parts=[TextPart('text2'), ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4})]),
-        ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
-        ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
-        ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
-        ModelRequest(parts=[UserPromptPart('simple text prompt')]),
+        ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')], timestamp=IsDatetime()),
+        ModelRequest(
+            parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart('simple text prompt')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings(include_content=False)
@@ -1460,7 +1481,7 @@ def test_deprecated_event_mode_warning():
 async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
     model = InstrumentedModel(MyModel())
 
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')])]
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
     monkeypatch.setattr(ModelResponse, 'cost', None)
 
     with warns(
@@ -1619,7 +1640,9 @@ def test_cache_point_in_user_prompt():
     OpenTelemetry message parts output.
     """
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=['text before', CachePoint(), 'text after'])]),
+        ModelRequest(
+            parts=[UserPromptPart(content=['text before', CachePoint(), 'text after'])], timestamp=IsDatetime()
+        ),
     ]
     settings = InstrumentationSettings()
 
@@ -1641,7 +1664,8 @@ def test_cache_point_in_user_prompt():
         ModelRequest(
             parts=[
                 UserPromptPart(content=['first', CachePoint(), 'second', CachePoint(), 'third']),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
     ]
     assert settings.messages_to_otel_messages(messages_multi) == snapshot(
@@ -1670,7 +1694,8 @@ def test_cache_point_in_user_prompt():
                         'question',
                     ]
                 ),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
     ]
     assert settings.messages_to_otel_messages(messages_mixed) == snapshot(
