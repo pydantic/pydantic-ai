@@ -30,7 +30,6 @@ from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBe
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.prompt_config import (
     DEFAULT_FINAL_RESULT_PROCESSED,
-    PromptConfig,
     ToolConfig,
 )
 from pydantic_ai.tools import ToolDefinition
@@ -1055,7 +1054,7 @@ async def test_generate_prompt_config_from_agent():
         parameters_json_schema={'type': 'object'},
     )
 
-    agent: Agent[None, OutputModel] = Agent(
+    agent = Agent(
         'test',
         output_type=OutputModel,
         toolsets=[ExternalToolset(tool_defs=[schema_tool_def, empty_schema_tool_def])],
@@ -1086,7 +1085,7 @@ async def test_generate_prompt_config_from_agent():
         return f'Hello {name}'  # pragma: no cover
 
     model = TestModel()
-    generated_config = await PromptConfig.generate_prompt_config_from_agent(agent, model)
+    generated_config = await agent.generate_prompt_config_from_agent(deps=None, model=model)
 
     assert generated_config.templates is not None
     templates = generated_config.templates
@@ -1125,7 +1124,7 @@ async def test_generate_prompt_config_from_agent():
 
     # Cover the branch where the agent has no output toolset
     agent_no_output: Agent[None, str] = Agent('test')
-    generated_config_no_output = await PromptConfig.generate_prompt_config_from_agent(agent_no_output, model)
+    generated_config_no_output = await agent_no_output.generate_prompt_config_from_agent(deps=None, model=model)
     assert generated_config_no_output.tool_config == {}
 
 
