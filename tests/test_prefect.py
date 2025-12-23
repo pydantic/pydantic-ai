@@ -68,7 +68,7 @@ except ImportError:  # pragma: lax no cover
 
 from inline_snapshot import snapshot
 
-from .conftest import IsStr
+from .conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -645,6 +645,19 @@ async def test_prefect_agent():
     assert external_toolset.id == 'external'
 
 
+def test_prefect_wrapper_visit_and_replace():
+    """Prefect wrapper toolsets should not be replaced by visit_and_replace."""
+    toolsets = complex_prefect_agent.toolsets
+    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectFunctionToolset)]
+    assert len(prefect_function_toolsets) >= 1
+
+    prefect_toolset = prefect_function_toolsets[0]
+
+    # visit_and_replace should return self for Prefect wrappers
+    result = prefect_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
+    assert result is prefect_toolset
+
+
 async def test_prefect_agent_run(allow_model_requests: None) -> None:
     """Test that agent.run() works (auto-wrapped as flow)."""
     result = await simple_prefect_agent.run('What is the capital of Mexico?')
@@ -1037,7 +1050,9 @@ async def test_cache_policy_custom():
 
     # First set of messages
     messages1 = [
-        ModelRequest(parts=[UserPromptPart(content='What is the capital of France?', timestamp=time1)]),
+        ModelRequest(
+            parts=[UserPromptPart(content='What is the capital of France?', timestamp=time1)], timestamp=IsDatetime()
+        ),
         ModelResponse(
             parts=[TextPart(content='The capital of France is Paris.')],
             usage=RequestUsage(input_tokens=10, output_tokens=10),
@@ -1048,7 +1063,9 @@ async def test_cache_policy_custom():
 
     # Second set of messages - same content, different timestamps
     messages2 = [
-        ModelRequest(parts=[UserPromptPart(content='What is the capital of France?', timestamp=time2)]),
+        ModelRequest(
+            parts=[UserPromptPart(content='What is the capital of France?', timestamp=time2)], timestamp=IsDatetime()
+        ),
         ModelResponse(
             parts=[TextPart(content='The capital of France is Paris.')],
             usage=RequestUsage(input_tokens=10, output_tokens=10),
@@ -1077,7 +1094,9 @@ async def test_cache_policy_custom():
 
     # Also test that different content produces different hashes
     messages3 = [
-        ModelRequest(parts=[UserPromptPart(content='What is the capital of Spain?', timestamp=time1)]),
+        ModelRequest(
+            parts=[UserPromptPart(content='What is the capital of Spain?', timestamp=time1)], timestamp=IsDatetime()
+        ),
         ModelResponse(
             parts=[TextPart(content='The capital of Spain is Madrid.')],
             usage=RequestUsage(input_tokens=10, output_tokens=10),
