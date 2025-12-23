@@ -47,13 +47,13 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         if is_search_tool(tool.tool_def):
-            return await self._search_tools(ctx, tool_args['regex'])
+            return await self.search_tools(ctx, tool_args['regex'])
         elif isinstance(tool, _SearchToolsetToolWrapper):
             return await self.wrapped.call_tool(name, tool_args, ctx, tool.wrapped)
         else:
             return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    async def _search_tools(self, ctx: RunContext[AgentDepsT], regex: str) -> list[str]:
+    async def search_tools(self, ctx: RunContext[AgentDepsT], regex: str) -> list[str]:
         """Searches for tools matching the query, activates them and returns their names."""
         toolset_tools = await self.wrapped.get_tools(ctx)
         matching_tool_names: list[str] = []
@@ -73,7 +73,7 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
 
 def _search_tool(toolset: SearchableToolset) -> tuple[Tool, ToolsetTool[AgentDepsT]]:
     async def search(ctx: RunContext[AgentDepsT], regex: str) -> list[str]:
-        return await toolset._search_tools(ctx, regex)
+        return await toolset.search_tools(ctx, regex)
 
     # TODO Check if pattern is a better name than regex.
     # TODO Are examples allowed to be defined somewhere to expose to the model?
@@ -94,7 +94,7 @@ def _search_tool(toolset: SearchableToolset) -> tuple[Tool, ToolsetTool[AgentDep
     metadata = _update_metadata(tool.metadata, is_search_tool=True)
     tool = replace(tool, metadata=metadata)
 
-    return tool, ToolsetTool(
+    return tool, ToolsetTool[AgentDepsT](
         toolset=toolset,
         tool_def=tool.tool_def,
         max_retries=tool.max_retries or 3,
