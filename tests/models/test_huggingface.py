@@ -171,9 +171,12 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
             ],
             usage=RequestUsage(input_tokens=30, output_tokens=29),
             model_name='Qwen/Qwen2.5-72B-Instruct-fast',
-            timestamp=datetime(2025, 7, 8, 13, 42, 33, tzinfo=timezone.utc),
+            timestamp=IsNow(tz=timezone.utc),
             provider_name='huggingface',
-            provider_details={'finish_reason': 'stop'},
+            provider_details={
+                'finish_reason': 'stop',
+                'timestamp': datetime(2025, 7, 8, 13, 42, 33, tzinfo=timezone.utc),
+            },
             provider_response_id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
             run_id=IsStr(),
         )
@@ -241,10 +244,13 @@ async def test_request_structured_response(
                 )
             ],
             model_name='hf-model',
-            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            timestamp=IsNow(tz=timezone.utc),
             provider_name='huggingface',
             provider_url='https://api-inference.huggingface.co',
-            provider_details={'finish_reason': 'stop'},
+            provider_details={
+                'finish_reason': 'stop',
+                'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            },
             provider_response_id='123',
             run_id=IsStr(),
         )
@@ -366,6 +372,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -378,10 +385,13 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -394,6 +404,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -406,10 +417,13 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -422,15 +436,19 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -648,15 +666,19 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello! How can I assist you with this image of a potato?')],
                 usage=RequestUsage(input_tokens=269, output_tokens=15),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
-                timestamp=datetime(2025, 7, 8, 14, 4, 39, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 7, 8, 14, 4, 39, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
                 run_id=IsStr(),
             ),
@@ -717,6 +739,7 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -726,7 +749,10 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
                 model_name='Qwen/Qwen2.5-72B-Instruct-fast',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 7, 2, 15, 39, 17, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-b3936940372c481b8d886e596dc75524',
                 run_id=IsStr(),
             ),
@@ -815,15 +841,19 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='invalid-response')],
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -836,15 +866,19 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -868,7 +902,7 @@ async def test_thinking_part_in_history(allow_model_requests: None):
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(model)
     messages = [
-        ModelRequest(parts=[UserPromptPart(content='request')]),
+        ModelRequest(parts=[UserPromptPart(content='request')], timestamp=IsDatetime()),
         ModelResponse(
             parts=[
                 TextPart(content='text 1'),
@@ -935,6 +969,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -946,7 +981,10 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 7, 9, 13, 17, 45, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
                 run_id=IsStr(),
             ),
@@ -969,6 +1007,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -980,7 +1019,10 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 7, 9, 13, 18, 14, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
                 run_id=IsStr(),
             ),
@@ -1010,6 +1052,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1020,7 +1063,10 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 7, 23, 19, 58, 41, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-357f347a3f5d4897b36a128fb4e4cf7b',
                 run_id=IsStr(),
             ),
