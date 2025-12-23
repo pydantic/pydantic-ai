@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(rg:*)",
-      "Bash(make:*)",
+      "Bash(make format)",
+      "Bash(make lint)",
       "Bash(uv run pytest:*)",
       "Bash(uv run:*)",
       "Bash(git push:*)",
