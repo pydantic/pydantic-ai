@@ -18,6 +18,7 @@ from pydantic_ai import (
     ModelResponse,
     RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -1701,9 +1702,38 @@ def test_map_from_pai_messages_with_binary_content():
         map_from_pai_messages([message_with_video])
 
 
-def test_map_from_model_response():
+def test_map_from_model_response_unexpected_part_raises_error():
     with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ToolCallPart, expected TextPart'):
         map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='test-tool')]))
+
+
+def test_map_from_model_response_with_thinking_part():
+    result = map_from_model_response(
+        ModelResponse(parts=[ThinkingPart(content='Let me think about this...'), TextPart(content='The answer is 42.')])
+    )
+    assert result.type == 'text'
+    assert result.text == 'The answer is 42.'
+
+
+def test_map_from_model_response_only_thinking_part():
+    result = map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking deeply...')]))
+    assert result.type == 'text'
+    assert result.text == ''
+
+
+def test_map_from_model_response_mixed_parts():
+    result = map_from_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(content='Hello '),
+                ThinkingPart(content='Should I say world?'),
+                TextPart(content='world!'),
+                ThinkingPart(content='That sounded good.'),
+            ]
+        )
+    )
+    assert result.type == 'text'
+    assert result.text == 'Hello world!'
 
 
 async def test_elicitation_callback_functionality(run_context: RunContext[int]):
