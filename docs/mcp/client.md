@@ -134,25 +134,21 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 MCP also offers [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
 
-In this example [mcp-run-python](https://github.com/pydantic/mcp-run-python) is used as the MCP server.
+In this example we use a simple MCP server that provides weather tools.
 
 ```python {title="mcp_stdio_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
-server = MCPServerStdio(  # (1)!
-    'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
-)
+server = MCPServerStdio('python', args=['mcp_server.py'], timeout=10)
 agent = Agent('openai:gpt-5', toolsets=[server])
 
 
 async def main():
-    result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+    result = await agent.run('What is the weather in Paris?')
     print(result.output)
-    #> There are 9,208 days between January 1, 2000, and March 18, 2025.
+    #> The weather in Paris is sunny and 26 degrees Celsius.
 ```
-
-1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
 
 ## Loading MCP Servers from Configuration
 
@@ -168,8 +164,12 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 {
   "mcpServers": {
     "python-runner": {
-      "command": "uv",
-      "args": ["run", "mcp-run-python", "stdio"]
+        "command": "uv",
+        "args": ["run", "mcp-run-python", "stdio"]
+    },
+    "weather": {
+      "command": "python",
+      "args": ["mcp_server.py"]
     },
     "weather-api": {
       "url": "http://localhost:3001/sse"
