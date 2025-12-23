@@ -5,9 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from botocore.exceptions import ClientError
 from inline_snapshot import snapshot
-from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -49,6 +47,9 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
+    from botocore.exceptions import ClientError
+    from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
+
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -554,6 +555,16 @@ async def test_bedrock_model_other_parameters(allow_model_requests: None, bedroc
         bedrock_request_metadata={'test': 'test'},
         bedrock_additional_model_response_fields_paths=['test'],
     )
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+    )
+
+
+async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(bedrock_service_tier={'type': 'flex'})
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
