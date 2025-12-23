@@ -1011,19 +1011,76 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     ) as exc_info:
         await agent.run('Tell me a joke about a Brazilians.')
 
-    # Verify that we captured the safety settings in the exception body
     assert exc_info.value.body is not None
     body_json = json.loads(exc_info.value.body)
-    assert len(body_json) == 1
-    response_msg = body_json[0]
 
-    assert response_msg['finish_reason'] == 'content_filter'
-    details = response_msg['provider_details']
-    assert details['finish_reason'] == 'SAFETY'
-    assert len(details['safety_ratings']) > 0
-    # The first rating should reflect the blocking
-    assert details['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'
-    assert details['safety_ratings'][0]['blocked'] is True
+    assert body_json == snapshot(
+        [
+            {
+                'parts': [],
+                'usage': {
+                    'input_tokens': 14,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {'text_prompt_tokens': 14},
+                },
+                'model_name': 'gemini-1.5-flash',
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'provider_name': 'google-gla',
+                'provider_url': 'https://generativelanguage.googleapis.com/',
+                'provider_details': {
+                    'finish_reason': 'SAFETY',
+                    'safety_ratings': [
+                        {
+                            'blocked': True,
+                            'category': 'HARM_CATEGORY_HATE_SPEECH',
+                            'overwrittenThreshold': None,
+                            'probability': 'LOW',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                        {
+                            'blocked': None,
+                            'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+                            'overwrittenThreshold': None,
+                            'probability': 'NEGLIGIBLE',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                        {
+                            'blocked': None,
+                            'category': 'HARM_CATEGORY_HARASSMENT',
+                            'overwrittenThreshold': None,
+                            'probability': 'NEGLIGIBLE',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                        {
+                            'blocked': None,
+                            'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            'overwrittenThreshold': None,
+                            'probability': 'NEGLIGIBLE',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                    ],
+                },
+                'provider_response_id': IsStr(),
+                'finish_reason': 'content_filter',
+                'run_id': IsStr(),
+                'metadata': None,
+            }
+        ]
+    )
 
 
 async def test_google_model_web_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
@@ -5170,3 +5227,95 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
         }
     )
     assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
+
+
+async def test_google_stream_tool_call(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test streaming a tool call from Google to ensure function_call branch is covered."""
+    model_name = 'gemini-1.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    tool_call_mock = mocker.Mock()
+    tool_call_mock.name = 'get_weather'
+    tool_call_mock.args = {'location': 'Paris'}
+    tool_call_mock.id = 'call_123'
+
+    part_tool = mocker.Mock(
+        text=None,
+        thought=False,
+        function_call=tool_call_mock,
+        inline_data=None,
+        executable_code=None,
+        code_execution_result=None,
+        thought_signature=None,
+    )
+
+    candidate_tool = mocker.Mock(
+        finish_reason=GoogleFinishReason.STOP,
+        content=mocker.Mock(parts=[part_tool]),
+        grounding_metadata=None,
+        url_context_metadata=None,
+        safety_ratings=None,
+    )
+
+    chunk_tool = mocker.Mock(
+        candidates=[candidate_tool],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_tool',
+    )
+    chunk_tool.model_dump_json.return_value = '{"mock": "tool_call"}'
+
+    part_text = mocker.Mock(
+        text='It is sunny',
+        thought=False,
+        function_call=None,
+        inline_data=None,
+        executable_code=None,
+        code_execution_result=None,
+        thought_signature=None,
+    )
+
+    candidate_text = mocker.Mock(
+        finish_reason=GoogleFinishReason.STOP,
+        content=mocker.Mock(parts=[part_text]),
+        grounding_metadata=None,
+        url_context_metadata=None,
+        safety_ratings=None,
+    )
+
+    chunk_text = mocker.Mock(
+        candidates=[candidate_text],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_text',
+    )
+    chunk_text.model_dump_json.return_value = '{"mock": "text_response"}'
+
+    call_count = 0
+
+    async def stream_iterator(*args: Any, **kwargs: Any):
+        nonlocal call_count
+        if call_count == 0:
+            call_count += 1
+            yield chunk_tool
+        else:
+            yield chunk_text
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', side_effect=stream_iterator)
+
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    def get_weather(location: str) -> str:
+        return 'Sunny'
+
+    final_text = ''
+    async with agent.run_stream('weather in Paris') as result:
+        async for chunk in result.stream_text():
+            final_text += chunk
+
+    assert final_text == 'It is sunny'

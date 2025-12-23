@@ -3575,7 +3575,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                     'sexual': {'filtered': False, 'severity': 'safe'},
                     'violence': {'filtered': False, 'severity': 'medium'},
                     'jailbreak': {'filtered': False, 'detected': False},
-                    'profanity': {'filtered': False, 'detected': True},  # Added profanity
+                    'profanity': {'filtered': False, 'detected': True},
                 },
             },
         }
