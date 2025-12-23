@@ -64,6 +64,9 @@ async def test_function_toolset():
         return a + b
 
     no_prefix_context = build_run_context(PrefixDeps())
+    assert (
+        no_prefix_context.tool_use == 0
+    )  # tool_name is None(not set in RunContext), so tool_use returns 0, just adding for coverage
     no_prefix_toolset = await ToolManager[PrefixDeps](toolset).for_run_step(no_prefix_context)
     assert no_prefix_toolset.tool_defs == snapshot(
         [

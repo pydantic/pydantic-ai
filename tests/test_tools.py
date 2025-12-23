@@ -1349,7 +1349,7 @@ def test_tool_max_uses():
     agent = Agent(FunctionModel(my_model), output_type=str)
 
     @agent.tool(max_uses=1)
-    def tool_with_max_use(ctx: RunContext[None]) -> str:
+    def tool_with_max_use(ctx: RunContext[None]) -> str:  # pragma: no cover
         return 'Used'
 
     result = agent.run_sync('Hello')
@@ -1410,7 +1410,7 @@ def test_max_tools_uses():
     agent = Agent(TestModel(), max_tools_uses=0)
 
     @agent.tool_plain
-    def my_tool(x: int) -> int:
+    def my_tool(x: int) -> int:  # pragma: no cover
         return x + 1
 
     result = agent.run_sync('Hello')
