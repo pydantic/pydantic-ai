@@ -19,6 +19,8 @@ with try_import() as starlette_import_successful:
     from pydantic_ai.builtin_tools import WebSearchTool
     from pydantic_ai.ui._web import create_web_app
 
+with try_import() as openai_import_successful:
+    import openai  # noqa: F401 # pyright: ignore[reportUnusedImport]
 
 pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
@@ -168,6 +170,7 @@ def test_chat_app_configure_endpoint_empty():
         )
 
 
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
 def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.MonkeyPatch):
     """Test that openai-chat: and openai-responses: models are kept as separate entries."""
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')

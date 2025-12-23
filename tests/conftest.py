@@ -334,8 +334,8 @@ def audio_content(assets_path: Path) -> BinaryContent:
 
 @pytest.fixture(scope='session')
 def image_content(assets_path: Path) -> BinaryImage:
-    image_bytes = assets_path.joinpath('kiwi.png').read_bytes()
-    return BinaryImage(data=image_bytes, media_type='image/png')
+    image_bytes = assets_path.joinpath('kiwi.jpg').read_bytes()
+    return BinaryImage(data=image_bytes, media_type='image/jpeg')
 
 
 @pytest.fixture(scope='session')
@@ -369,7 +369,7 @@ def openai_api_key() -> str:
 
 @pytest.fixture(scope='session')
 def gemini_api_key() -> str:
-    return os.getenv('GEMINI_API_KEY', 'mock-api-key')
+    return os.getenv('GEMINI_API_KEY', os.getenv('GOOGLE_API_KEY', 'mock-api-key'))
 
 
 @pytest.fixture(scope='session')

@@ -22,12 +22,11 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
-from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
-
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
+    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),

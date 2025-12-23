@@ -39,10 +39,6 @@ jobs:
           enable-cache: true
           cache-suffix: claude-code
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.5.x
-
       - run: uv tool install pre-commit
 
       - run: make install
