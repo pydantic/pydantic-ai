@@ -7046,11 +7046,11 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolCallPart(
                         tool_name='final_result',
                         args={'dice_roll': 4},
-                        tool_call_id=IsStr(),
+                        tool_call_id='output-tool-call-id',
                     )
                 ]
             )
-        return ModelResponse(parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id=IsStr())])
+        return ModelResponse(parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='roll-dice-call-id')])
 
     class Result(BaseModel):
         dice_roll: int

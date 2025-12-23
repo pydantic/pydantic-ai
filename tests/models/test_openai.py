@@ -1304,7 +1304,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 4, 29, 20, 21, 33, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
@@ -1316,9 +1316,9 @@ async def test_image_as_binary_content_tool_response(
                         tool_name='get_image',
                         content=BinaryImage(
                             data=IsBytes(),
-                            media_type='image/png',
+                            media_type='image/jpeg',
                         ),
-                        tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY',
+                        tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1343,7 +1343,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 29, 20, 21, 36, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',

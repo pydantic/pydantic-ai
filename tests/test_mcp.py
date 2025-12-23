@@ -44,7 +44,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from .conftest import IsBytes, IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
@@ -707,11 +707,10 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource',
-                            content='See file 241a70',
+                            content=BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='241a70'),
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -802,11 +801,10 @@ async def test_tool_returning_image_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource_link',
-                            content='See file 241a70',
+                            content=BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='241a70'),
                             tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -875,11 +873,13 @@ async def test_tool_returning_audio_resource(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_audio_resource',
-                            content='See file 2d36ae',
+                            content=BinaryContent(
+                                data=IsBytes(),
+                                media_type='audio/mpeg',
+                            ),
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -949,17 +949,13 @@ async def test_tool_returning_audio_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_audio_resource_link',
-                            content='See file 2d36ae',
+                            content=BinaryContent(
+                                data=IsBytes(),
+                                media_type='audio/mpeg',
+                            ),
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=[
-                                'This is file 2d36ae:',
-                                audio_content,
-                            ],
-                            timestamp=IsDatetime(),
-                        ),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1037,14 +1033,10 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource',
-                            content='See file 241a70',
+                            content=BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='241a70'),
                             tool_call_id='call_KL2BXptkWmKifse91X727M7y',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=['This is file 241a70:', IsInstance(BinaryImage)],
-                            timestamp=IsDatetime(),
-                        ),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1515,14 +1507,11 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                                 'This is a string',
                                 'Another string',
                                 {'foo': 'bar', 'baz': 123},
-                                'See file 241a70',
+                                BinaryImage(data=IsBytes(), media_type='image/jpg'),
                             ],
                             tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()
-                        ),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1632,7 +1621,7 @@ def test_map_from_mcp_params_model_request():
                 parts=[
                     UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(
-                        content=[BinaryContent(data=b'img', media_type='image/png', identifier='978ea7')],
+                        content=[BinaryContent(data=b'img', media_type='image/png')],
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ]

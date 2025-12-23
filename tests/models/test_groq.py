@@ -668,9 +668,9 @@ async def test_image_as_binary_content_tool_response(
                         tool_name='get_image',
                         content=BinaryImage(
                             data=IsBytes(),
-                            media_type='image/png',
+                            media_type='image/jpeg',
                         ),
-                        tool_call_id='call_wkpd',
+                        tool_call_id='arq6emmq6',
                         timestamp=IsDatetime(),
                     )
                 ],

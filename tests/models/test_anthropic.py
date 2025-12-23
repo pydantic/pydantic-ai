@@ -1743,9 +1743,9 @@ async def test_image_as_binary_content_tool_response(
                         tool_name='get_image',
                         content=BinaryImage(
                             data=IsBytes(),
-                            media_type='image/png',
+                            media_type='image/jpeg',
                         ),
-                        tool_call_id='toolu_01WALUz3dC75yywrmL6dF3Bc',
+                        tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj',
                         timestamp=IsDatetime(),
                     )
                 ],

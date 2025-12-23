@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
@@ -37,6 +38,7 @@ __all__ = (
     'TestEnv',
     'ClientWithHandler',
     'try_import',
+    'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -108,6 +110,23 @@ else:
                 return super().equals(other)
             else:
                 return other == self._first_other
+
+
+SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
+
+
+@customize_repr
+def _(value: bytes):
+    """Use IsBytes() for large byte sequences in snapshots.
+
+    inline-snapshot serializes dataclass fields by calling repr() on each field value.
+    For BinaryContent.data (bytes), this would embed huge byte literals in snapshots.
+    By customizing bytes repr, we replace large byte sequences with IsBytes().
+    """
+    if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
+        return 'IsBytes()'
+    # Use object.__repr__ call pattern to avoid recursion through dispatch
+    return bytes.__repr__(value)
 
 
 class TestEnv:
