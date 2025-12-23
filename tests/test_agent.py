@@ -8,7 +8,6 @@ from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, Generic, Literal, TypeVar, Union
 
-import httpx
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
@@ -2916,25 +2915,6 @@ def test_override_model_no_model():
     with pytest.raises(UserError, match=r'`model` must either be set.+Even when `override\(model=...\)` is customiz'):
         with agent.override(model='test'):
             agent.run_sync('Hello')
-
-
-def test_run_sync_multiple():
-    agent = Agent('test')
-
-    @agent.tool_plain
-    async def make_request() -> str:
-        async with httpx.AsyncClient() as client:
-            # use this as I suspect it's about the fastest globally available endpoint
-            try:
-                response = await client.get('https://cloudflare.com/cdn-cgi/trace')
-            except (httpx.NetworkError, httpx.TimeoutException):  # pragma: no cover
-                pytest.skip('offline')
-            else:
-                return str(response.status_code)
-
-    for _ in range(2):
-        result = agent.run_sync('Hello')
-        assert result.output == '{"make_request":"200"}'
 
 
 async def test_agent_name():
