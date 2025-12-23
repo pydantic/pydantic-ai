@@ -332,12 +332,6 @@ class MCPServer(AbstractToolset[Any], ABC):
     max_retries: int
     """The maximum number of times to retry a tool call."""
 
-    max_uses: int | None
-    """The maximum number of successful calls allowed for each tool during a run.
-
-    Defaults to None (unlimited).
-    """
-
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""
 
@@ -388,7 +382,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         allow_sampling: bool = True,
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
-        max_uses: int | None = None,
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
@@ -405,7 +398,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.allow_sampling = allow_sampling
         self.sampling_model = sampling_model
         self.max_retries = max_retries
-        self.max_uses = max_uses
         self.elicitation_callback = elicitation_callback
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
@@ -600,7 +592,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             toolset=self,
             tool_def=tool_def,
             max_retries=self.max_retries,
-            max_uses=self.max_uses,
+            max_uses=None,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
