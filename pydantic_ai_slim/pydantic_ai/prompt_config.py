@@ -3,20 +3,13 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pydantic_core
 from typing_extensions import assert_never
 
-from pydantic_ai.usage import RunUsage
-
-from ._run_context import AgentDepsT, RunContext
-from ._tool_arg_descriptions import ToolArgDescriptions
+from ._run_context import RunContext
 from .messages import ModelMessage, ModelRequest, ModelRequestPart, RetryPromptPart, ToolReturnKind, ToolReturnPart
-
-if TYPE_CHECKING:
-    from pydantic_ai.agent import Agent
-    from pydantic_ai.models import Model
 
 __all__ = (
     # templates & configuration
@@ -407,62 +400,6 @@ class PromptConfig:
     """Configuration for customizing tool descriptions and metadata, keyed by tool name.
     See [`ToolConfig`][pydantic_ai.ToolConfig] for available configuration options.
     """
-
-    @staticmethod
-    async def generate_prompt_config_from_agent(agent: Agent[AgentDepsT], model: Model) -> PromptConfig:
-        """Generate a PromptConfig instance based on an Agent instance.
-
-        This fills in per-tool metadata and default templates, producing a `PromptConfig` that can be
-        used as a starting point for prompt optimizers.
-
-        If the agent already has a `prompt_config`, it is used to override the defaults.
-        """
-        tool_config: dict[str, ToolConfig] = {}
-
-        prompt_templates: PromptTemplates = DEFAULT_PROMPT_TEMPLATES
-
-        run_ctx = RunContext(deps=None, model=model, usage=RunUsage())
-
-        # Include both regular and output tools
-        from .toolsets import CombinedToolset
-
-        all_toolsets = [*agent.toolsets]
-        if output_toolset := getattr(agent, '_output_toolset', None):
-            all_toolsets.append(output_toolset)
-
-        toolset = CombinedToolset(all_toolsets)
-        tools = await toolset.get_tools(run_ctx)
-
-        for tool_name, toolset_tool in tools.items():
-            tool_def = toolset_tool.tool_def
-            tool_config[tool_name] = ToolConfig(
-                name=tool_name,
-                description=tool_def.description,
-                strict=tool_def.strict,
-                parameters_descriptions=ToolArgDescriptions.from_json_schema(tool_def.parameters_json_schema),
-            )
-
-        if agent.prompt_config:
-            if agent.prompt_config.templates:
-                current_templates = asdict(agent.prompt_config.templates)
-                updated_templates = {k: v for k, v in current_templates.items() if v is not None}
-                prompt_templates = replace(prompt_templates, **updated_templates)
-
-            if agent.prompt_config.tool_config:
-                for tool_name, config in agent.prompt_config.tool_config.items():
-                    if tool_name in tool_config:
-                        current_config = asdict(config)
-                        updates = {
-                            k: v for k, v in current_config.items() if v is not None and k != 'parameters_descriptions'
-                        }
-                        tool_config[tool_name] = replace(tool_config[tool_name], **updates)
-                    else:
-                        tool_config[tool_name] = config
-
-        return PromptConfig(
-            tool_config=tool_config,
-            templates=prompt_templates,
-        )
 
     def merge_prompt_config(self, other_prompt_config: PromptConfig | None) -> PromptConfig:
         """Merge two prompt configs, preferring non-None values from `self`.

@@ -118,6 +118,7 @@ print(result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -153,6 +154,7 @@ print(result.all_messages())
                 return_kind='tool-executed',
             )
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelRequest(
@@ -176,6 +178,7 @@ print(result.all_messages())
                 timestamp=datetime.datetime(...),
             ),
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -201,6 +204,7 @@ print(result.all_messages())
                 return_kind='tool-executed',
             )
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -328,6 +332,7 @@ async def main():
                     timestamp=datetime.datetime(...),
                 )
             ],
+            timestamp=datetime.datetime(...),
             run_id='...',
         ),
         ModelResponse(
@@ -355,6 +360,7 @@ async def main():
                     return_kind='tool-executed',
                 )
             ],
+            timestamp=datetime.datetime(...),
             run_id='...',
         ),
         ModelResponse(

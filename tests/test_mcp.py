@@ -226,6 +226,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -250,7 +251,10 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -265,6 +269,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -283,7 +288,10 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -398,6 +406,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -422,7 +431,10 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -437,6 +449,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -459,7 +472,10 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -481,6 +497,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -505,7 +522,10 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -520,6 +540,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -538,7 +559,10 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -560,6 +584,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -584,7 +609,10 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -599,6 +627,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -617,7 +646,10 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -641,6 +673,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -665,7 +698,10 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -681,6 +717,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                         ),
                         UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -703,7 +740,10 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -729,6 +769,7 @@ async def test_tool_returning_image_resource_link(
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -753,7 +794,10 @@ async def test_tool_returning_image_resource_link(
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -769,6 +813,7 @@ async def test_tool_returning_image_resource_link(
                         ),
                         UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -791,7 +836,10 @@ async def test_tool_returning_image_resource_link(
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -811,6 +859,7 @@ async def test_tool_returning_audio_resource(
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -838,6 +887,7 @@ async def test_tool_returning_audio_resource(
                         ),
                         UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -877,6 +927,7 @@ async def test_tool_returning_audio_resource_link(
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -917,6 +968,7 @@ async def test_tool_returning_audio_resource_link(
                             timestamp=IsDatetime(),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -953,6 +1005,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -977,7 +1030,10 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -999,6 +1055,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                             timestamp=IsDatetime(),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1017,7 +1074,10 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1039,6 +1099,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1057,7 +1118,10 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1072,6 +1136,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1090,7 +1155,10 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1112,6 +1180,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1134,7 +1203,10 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1149,6 +1221,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1167,7 +1240,10 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1191,6 +1267,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1215,7 +1292,10 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1229,6 +1309,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1253,7 +1334,10 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1268,6 +1352,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1290,7 +1375,10 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1312,6 +1400,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1330,7 +1419,10 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1345,6 +1437,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1363,7 +1456,10 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1387,6 +1483,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1411,7 +1508,10 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1438,6 +1538,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             timestamp=IsDatetime(),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1460,7 +1561,10 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
                     finish_reason='stop',
                     run_id=IsStr(),

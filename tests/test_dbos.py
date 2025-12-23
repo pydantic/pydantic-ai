@@ -8,7 +8,7 @@ import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 import pytest
@@ -44,7 +44,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsNow, IsStr
 
 try:
     import importlib.metadata
@@ -1407,6 +1407,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
             ),
@@ -1437,7 +1438,10 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1459,6 +1463,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         return_kind='tool-executed',
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
             ),
@@ -1480,7 +1485,10 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1542,6 +1550,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
             ),
@@ -1572,7 +1581,10 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1594,6 +1606,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         return_kind='tool-executed',
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
             ),
@@ -1615,7 +1628,10 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1653,6 +1669,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1677,7 +1694,10 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1691,6 +1711,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1715,7 +1736,10 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1730,6 +1754,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         return_kind='tool-executed',
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1748,7 +1773,10 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1806,3 +1834,18 @@ async def test_fastmcp_toolset(allow_model_requests: None, dbos: DBOS):
             'fastmcp_agent__model.request',
         ]
     )
+
+
+def test_dbos_mcp_wrapper_visit_and_replace():
+    """DBOS MCP wrapper toolsets should not be replaced by visit_and_replace."""
+    from pydantic_ai.durable_exec.dbos._fastmcp_toolset import DBOSFastMCPToolset
+
+    toolsets = fastmcp_dbos_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    dbos_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, DBOSFastMCPToolset)]
+    assert len(dbos_mcp_toolsets) >= 1
+
+    dbos_mcp_toolset = dbos_mcp_toolsets[0]
+
+    # visit_and_replace should return self for DBOS wrappers
+    result = dbos_mcp_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
+    assert result is dbos_mcp_toolset

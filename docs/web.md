@@ -16,7 +16,7 @@ pip/uv-add 'pydantic-ai-slim[web]'
 
 ## Basic Usage
 
-Create a web app from an agent instance using [`Agent.to_web()`][pydantic_ai.Agent.to_web]:
+Create a web app from an agent instance using [`Agent.to_web()`][pydantic_ai.agent.Agent.to_web]:
 
 ```python
 from pydantic_ai import Agent

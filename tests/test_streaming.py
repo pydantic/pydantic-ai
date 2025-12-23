@@ -74,6 +74,7 @@ async def test_streamed_text_response():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -94,6 +95,7 @@ async def test_streamed_text_response():
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -114,6 +116,7 @@ async def test_streamed_text_response():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -134,6 +137,7 @@ async def test_streamed_text_response():
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -174,6 +178,7 @@ def test_streamed_text_sync_response():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -194,6 +199,7 @@ def test_streamed_text_sync_response():
                         return_kind='tool-executed',
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -224,6 +230,7 @@ def test_streamed_text_sync_response():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -244,6 +251,7 @@ def test_streamed_text_sync_response():
                         return_kind='tool-executed',
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -606,6 +614,7 @@ async def test_call_tool():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -625,6 +634,7 @@ async def test_call_tool():
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -634,6 +644,7 @@ async def test_call_tool():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -653,6 +664,7 @@ async def test_call_tool():
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -678,6 +690,7 @@ async def test_call_tool():
                             return_kind='final-result-processed',
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -709,6 +722,7 @@ async def test_empty_response():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -718,7 +732,11 @@ async def test_empty_response():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelRequest(parts=[], run_id=IsStr()),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
@@ -753,6 +771,7 @@ async def test_call_tool_wrong_name():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -824,6 +843,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -869,6 +889,7 @@ class TestMultipleToolCalls:
                             return_kind='function-tool-not-executed',
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -922,6 +943,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test early output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -951,6 +973,7 @@ class TestMultipleToolCalls:
                             return_kind='output-tool-not-executed',
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -976,6 +999,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1005,6 +1029,7 @@ class TestMultipleToolCalls:
                             return_kind='output-tool-not-executed',
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1061,6 +1086,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1133,6 +1159,7 @@ class TestMultipleToolCalls:
                             return_kind='function-tool-not-executed',
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1202,6 +1229,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1240,6 +1268,7 @@ class TestMultipleToolCalls:
                             return_kind='function-tool-not-executed',
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1289,6 +1318,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1315,6 +1345,7 @@ class TestMultipleToolCalls:
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1349,6 +1380,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1375,6 +1407,7 @@ class TestMultipleToolCalls:
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1401,6 +1434,7 @@ class TestMultipleToolCalls:
                             return_kind='final-result-processed',
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1456,6 +1490,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1516,6 +1551,7 @@ class TestMultipleToolCalls:
                             return_kind='function-tool-not-executed',
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1569,6 +1605,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test exhaustive output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1598,6 +1635,7 @@ class TestMultipleToolCalls:
                             return_kind='final-result-processed',
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1732,6 +1770,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test valid first invalid second', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1761,6 +1800,7 @@ class TestMultipleToolCalls:
                             return_kind='output-validation-failed',
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1818,6 +1858,7 @@ class TestMultipleToolCalls:
                             content='test exhaustive with tool retry', timestamp=IsNow(tz=datetime.timezone.utc)
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1846,6 +1887,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -2380,6 +2422,7 @@ async def test_tool_raises_approval_required():
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -2399,6 +2442,7 @@ async def test_tool_raises_approval_required():
                             return_kind='tool-executed',
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -2803,3 +2847,59 @@ def test_structured_response_sync_validation():
         chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
+
+
+async def test_get_output_after_stream_output():
+    """Verify that we don't get duplicate messages in history when using tool output and `get_output` is called after `stream_output`."""
+    m = TestModel()
+
+    agent = Agent(m, output_type=bool)
+
+    async with agent.run_stream('Hello') as result:
+        outputs: list[bool] = []
+        async for o in result.stream_output():
+            outputs.append(o)
+        o = await result.get_output()
+        outputs.append(o)
+
+    assert outputs == snapshot([False, False])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'response': False},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )

@@ -154,6 +154,9 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
 _GOOGLE_IMAGE_SIZE = Literal['1K', '2K', '4K']
 _GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
 
+_GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
+_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
+
 
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
@@ -358,6 +361,48 @@ class GoogleModel(Model):
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
 
+    def _build_image_config(self, tool: ImageGenerationTool) -> ImageConfigDict:
+        """Build ImageConfigDict from ImageGenerationTool with validation."""
+        image_config = ImageConfigDict()
+
+        if tool.aspect_ratio is not None:
+            image_config['aspect_ratio'] = tool.aspect_ratio
+
+        if tool.size is not None:
+            if tool.size not in _GOOGLE_IMAGE_SIZES:
+                raise UserError(
+                    f'Google image generation only supports `size` values: {_GOOGLE_IMAGE_SIZES}. '
+                    f'Got: {tool.size!r}. Omit `size` to use the default (1K).'
+                )
+            image_config['image_size'] = tool.size
+
+        if self.system == 'google-vertex':
+            if tool.output_format is not None:
+                if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
+                    raise UserError(
+                        f'Google image generation only supports `output_format` values: {_GOOGLE_IMAGE_OUTPUT_FORMATS}. '
+                        f'Got: {tool.output_format!r}.'
+                    )
+                image_config['output_mime_type'] = f'image/{tool.output_format}'
+
+            output_compression = tool.output_compression
+            if output_compression is not None:
+                if not (0 <= output_compression <= 100):
+                    raise UserError(
+                        f'Google image generation `output_compression` must be between 0 and 100. '
+                        f'Got: {output_compression}.'
+                    )
+                if tool.output_format not in (None, 'jpeg'):
+                    raise UserError(
+                        f'Google image generation `output_compression` is only supported for JPEG format. '
+                        f'Got format: {tool.output_format!r}. Either set `output_format="jpeg"` or remove `output_compression`.'
+                    )
+                image_config['output_compression_quality'] = output_compression
+                if tool.output_format is None:
+                    image_config['output_mime_type'] = 'image/jpeg'
+
+        return image_config
+
     def _get_tools(
         self, model_request_parameters: ModelRequestParameters
     ) -> tuple[list[ToolDict] | None, ImageConfigDict | None]:
@@ -387,17 +432,7 @@ class GoogleModel(Model):
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
-
-                    image_config = ImageConfigDict()
-                    if tool.aspect_ratio is not None:
-                        image_config['aspect_ratio'] = tool.aspect_ratio
-                    if tool.size is not None:
-                        if tool.size not in _GOOGLE_IMAGE_SIZES:
-                            raise UserError(
-                                f'Google image generation only supports `size` values: {_GOOGLE_IMAGE_SIZES}. '
-                                f'Got: {tool.size!r}. Omit `size` to use the default (1K).'
-                            )
-                        image_config['image_size'] = tool.size
+                    image_config = self._build_image_config(tool)
                 else:  # pragma: no cover
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
@@ -529,12 +564,16 @@ class GoogleModel(Model):
         candidate = response.candidates[0]
 
         vendor_id = response.response_id
-        vendor_details: dict[str, Any] | None = None
         finish_reason: FinishReason | None = None
+        vendor_details: dict[str, Any] = {}
+
         raw_finish_reason = candidate.finish_reason
         if raw_finish_reason:  # pragma: no branch
-            vendor_details = {'finish_reason': raw_finish_reason.value}
+            vendor_details['finish_reason'] = raw_finish_reason.value
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        if response.create_time is not None:  # pragma: no branch
+            vendor_details['timestamp'] = response.create_time
 
         if candidate.content is None or candidate.content.parts is None:
             if finish_reason == 'content_filter' and raw_finish_reason:
@@ -554,7 +593,7 @@ class GoogleModel(Model):
             self._provider.base_url,
             usage,
             vendor_id=vendor_id,
-            vendor_details=vendor_details,
+            vendor_details=vendor_details or None,
             finish_reason=finish_reason,
             url_context_metadata=candidate.url_context_metadata,
         )
@@ -572,9 +611,9 @@ class GoogleModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
-            _timestamp=first_chunk.create_time or _utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=first_chunk.create_time,
         )
 
     async def _map_messages(
@@ -651,10 +690,18 @@ class GoogleModel(Model):
                     if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
-                elif isinstance(item, VideoUrl) and item.is_youtube:
+                elif isinstance(item, VideoUrl) and (
+                    item.is_youtube or (item.url.startswith('gs://') and self.system == 'google-vertex')
+                ):
+                    # YouTube URLs work on both google-gla and google-vertex
+                    # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
+                    # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
+                    # Other URLs fall through to FileUrl handling (download for google-gla)
+                    # Note: force_download is not checked here, mirroring the original YouTube behavior.
+                    # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
                     file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}
-                    if item.vendor_metadata:  # pragma: no branch
+                    if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
                 elif isinstance(item, FileUrl):
@@ -669,10 +716,18 @@ class GoogleModel(Model):
                             'data': downloaded_item['data'],
                             'mime_type': downloaded_item['data_type'],
                         }
-                        content.append({'inline_data': inline_data})
+                        part_dict: PartDict = {'inline_data': inline_data}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                        content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                        part_dict: PartDict = {'file_data': file_data_dict}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)  # pragma: lax no cover
                 elif isinstance(item, CachePoint):
                     # Google Gemini doesn't support prompt caching via CachePoint
                     pass
@@ -696,13 +751,16 @@ class GeminiStreamedResponse(StreamedResponse):
 
     _model_name: GoogleModelName
     _response: AsyncIterator[GenerateContentResponse]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        if self._provider_timestamp is not None:
+            self.provider_details = {'timestamp': self._provider_timestamp}  # pragma: no cover
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
@@ -714,9 +772,8 @@ class GeminiStreamedResponse(StreamedResponse):
             if chunk.response_id:  # pragma: no branch
                 self.provider_response_id = chunk.response_id
 
-            raw_finish_reason = candidate.finish_reason
-            if raw_finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason.value}
+            if raw_finish_reason := candidate.finish_reason:
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Google streams the grounding metadata (including the web search queries and results)

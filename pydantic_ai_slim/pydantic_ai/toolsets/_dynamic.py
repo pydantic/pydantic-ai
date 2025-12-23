@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
 from typing import Any, TypeAlias
 
 from typing_extensions import Self
@@ -19,34 +18,61 @@ ToolsetFunc: TypeAlias = Callable[
 """A sync/async function which takes a run context and returns a toolset."""
 
 
-@dataclass
 class DynamicToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that dynamically builds a toolset using a function that takes the run context.
+    """A toolset that dynamically builds a toolset using a function that takes the run context."""
 
-    It should only be used during a single agent run as it stores the generated toolset.
-    To use it multiple times, copy it using `dataclasses.replace`.
-    """
+    def __init__(
+        self,
+        toolset_func: ToolsetFunc[AgentDepsT],
+        *,
+        per_run_step: bool = True,
+        id: str | None = None,
+    ):
+        """Build a new dynamic toolset.
 
-    toolset_func: ToolsetFunc[AgentDepsT]
-    per_run_step: bool = True
-
-    _toolset: AbstractToolset[AgentDepsT] | None = None
-    _run_step: int | None = None
+        Args:
+            toolset_func: A function that takes the run context and returns a toolset or None.
+            per_run_step: Whether to re-evaluate the toolset for each run step.
+            id: An optional unique ID for the toolset. Required for durable execution environments like Temporal.
+        """
+        self.toolset_func = toolset_func
+        self.per_run_step = per_run_step
+        self._id = id
+        self._toolset: AbstractToolset[AgentDepsT] | None = None
+        self._run_step: int | None = None
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return self._id
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, DynamicToolset)
+            and self.toolset_func is other.toolset_func  # pyright: ignore[reportUnknownMemberType]
+            and self.per_run_step == other.per_run_step
+            and self._id == other._id
+        )
+
+    def copy(self) -> DynamicToolset[AgentDepsT]:
+        """Create a copy of this toolset for use in a new agent run."""
+        return DynamicToolset(
+            self.toolset_func,
+            per_run_step=self.per_run_step,
+            id=self._id,
+        )
 
     async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
         try:
+            result = None
             if self._toolset is not None:
-                return await self._toolset.__aexit__(*args)
+                result = await self._toolset.__aexit__(*args)
         finally:
             self._toolset = None
             self._run_step = None
+        return result
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if self._toolset is None or (self.per_run_step and ctx.run_step != self._run_step):
@@ -106,4 +132,7 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if self._toolset is None:
             return super().visit_and_replace(visitor)
         else:
-            return replace(self, _toolset=self._toolset.visit_and_replace(visitor))
+            new_toolset = self.copy()
+            new_toolset._toolset = self._toolset.visit_and_replace(visitor)
+            new_toolset._run_step = self._run_step
+            return new_toolset

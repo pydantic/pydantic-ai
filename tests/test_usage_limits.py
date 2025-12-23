@@ -100,6 +100,7 @@ async def test_streamed_text_limits() -> None:
                 [
                     ModelRequest(
                         parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                        timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
                     ),
                     ModelResponse(
@@ -126,6 +127,7 @@ async def test_streamed_text_limits() -> None:
                                 return_kind='tool-executed',
                             )
                         ],
+                        timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
                     ),
                 ]

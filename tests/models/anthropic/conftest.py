@@ -18,13 +18,12 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-AnthropicModelFactory = Callable[..., AnthropicModel]
+    AnthropicModelFactory = Callable[..., AnthropicModel]
 
 
-# Model factory fixture for live API tests
 @pytest.fixture
 def anthropic_model(anthropic_api_key: str) -> AnthropicModelFactory:
-    """Factory to create Anthropic models with custom configuration."""
+    """Factory to create Anthropic models. Used by VCR-recorded integration tests."""
 
     @cache
     def _create_model(
