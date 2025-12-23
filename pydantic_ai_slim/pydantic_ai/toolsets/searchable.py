@@ -64,7 +64,7 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
     # TODO Have a look at Wrapper Toolset.
     toolset: AbstractToolset[AgentDepsT]
 
-    _active_tool_names: dict[str, set[str]] = field(default_factory=dict)
+    _active_tool_names: set[str] = field(default_factory=set)
     """Tracks activate tool name sets indexed by RunContext.run_id"""
 
     @property
@@ -121,7 +121,7 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
             if rx.search(tool.tool_def.name) or rx.search(tool.tool_def.description):
                 matching_tool_names.append(tool.tool_def.name)
 
-        self._active_tool_names.setdefault(ctx.run_id, set()).update(matching_tool_names)
+        self._active_tool_names.update(matching_tool_names)
         return matching_tool_names
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
@@ -140,7 +140,7 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
         return await self.toolset.__aexit__(*args)
 
     def is_active(self, tool_def: ToolDefinition, run_id: str) -> bool:
-        return tool_def.name in self._active_tool_names.get(run_id, set())
+        return tool_def.name in self._active_tool_names
 
 
 @dataclass(kw_only=True)
