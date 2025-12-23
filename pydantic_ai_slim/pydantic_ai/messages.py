@@ -603,6 +603,11 @@ class BinaryContent:
         return self._type == 'document' or self.media_type in _document_format_lookup
 
     @property
+    def is_text(self) -> bool:
+        """Return `True` if the media type is a text type."""
+        return self._type == 'text' or self.media_type.startswith('text/')
+
+    @property
     def format(self) -> str:
         """The file format of the binary content.
 
@@ -1411,7 +1416,10 @@ class ModelResponse:
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
                 body.setdefault('content', []).append(
-                    {'kind': kind, **({'text': part.content} if settings.include_content else {})}
+                    {
+                        'kind': kind,
+                        **({'text': part.content} if settings.include_content else {}),
+                    }
                 )
             elif isinstance(part, FilePart):
                 body.setdefault('content', []).append(
