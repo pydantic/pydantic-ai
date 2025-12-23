@@ -75,6 +75,7 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
+pydantic-docs = { git = "https://github.com/pydantic/pydantic-docs" }
 
 [tool.uv.workspace]
 members = [
@@ -103,7 +104,7 @@ dev = [
     "pytest-pretty>=1.3.0",
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
-    "boto3-stubs[bedrock-runtime]",
+    "boto3-stubs[bedrock-runtime]>=1.42.13",
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
@@ -118,10 +119,11 @@ docs = [
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
     "mkdocs-llmstxt>=0.2.0",
-    'mkdocs-redirects>=1.2.2',
-    "mkdocs-material[imaging]>=9.5.45",
-    "mkdocstrings-python>=1.12.2",
+    "mkdocs-redirects>=1.2.2",
+    "mkdocs-material[imaging]>=9.7.0",
+    "mkdocstrings-python>=2.0.0",
     "griffe-warnings-deprecated>=1.1.0",
+    "pydantic-docs",
 ]
 docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
 
@@ -129,7 +131,10 @@ docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
 bypass-selection = true
 
 [tool.hatch.build.targets.sdist]
-include = ["/README.md", "/Makefile", "/tests"]
+include = ["/README.md", "/Makefile"]
+# We are excluding the tests because we have 100MB of test data in this repository.
+# Obviously that's a problem, but for now, we'll just exclude them.
+exclude = ["/tests"]
 
 [tool.ruff]
 line-length = 120
@@ -142,7 +147,6 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
-    "typings/**/*.pyi",
 ]
 
 [tool.ruff.lint]
@@ -190,11 +194,9 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
-"typings/**/*.pyi" = ["F401", "PYI044", "PYI035", "ANN401"]
 
 [tool.pyright]
-stubPath = "typings"
-pythonVersion = "3.12"
+pythonVersion = "3.10"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
@@ -223,7 +225,6 @@ exclude = [
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
-mypy_path = "typings"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "docs/.hooks"]
@@ -244,7 +245,6 @@ filterwarnings = [
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
 ]
-# addopts = ["--inline-snapshot=create,fix"]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
@@ -260,9 +260,11 @@ include = [
     "tests/**/*.py",
 ]
 omit = [
-    "tests/test_live.py",
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
+    # TODO(Marcelo): Enable prefect coverage again.
+    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
+    "tests/test_prefect.py",
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
@@ -306,6 +308,8 @@ exclude_lines = [
     'except ImportError as _import_error:',
     '$\s*pass$',
     'assert False',
+    '@pytest\.mark\.skip',
+    '@pytest\.mark\.xfail',
 ]
 
 [tool.logfire]

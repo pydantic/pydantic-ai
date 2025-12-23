@@ -309,6 +309,13 @@ def test_binary_content_is_methods():
     assert document_content.format == 'pdf'
 
 
+def test_binary_content_base64():
+    bc = BinaryContent(data=b'Hello, world!', media_type='image/png')
+    assert bc.base64 == 'SGVsbG8sIHdvcmxkIQ=='
+    assert not bc.base64.startswith('data:')
+    assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
@@ -331,6 +338,16 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 def test_video_url_invalid():
     with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
         VideoUrl('foobar.potato').media_type
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="'Python 3.10's mimetypes module does not support query parameters'"
+)
+def test_url_with_query_parameters() -> None:
+    """Test that Url types correctly infer media type from URLs with query parameters"""
+    video_url = VideoUrl('https://example.com/video.mp4?query=param')
+    assert video_url.media_type == 'video/mp4'
+    assert video_url.format == 'mp4'
 
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
@@ -372,6 +389,39 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     result = provider_details_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
     assert result.provider_details == {'foo': 'qux', 'baz': 'qux', 'finish_reason': 'STOP'}
+
+    # Test chaining callable provider_details in delta-to-delta
+    delta1 = ThinkingPartDelta(
+        content_delta='first',
+        provider_details=lambda d: {**(d or {}), 'first': 1},
+    )
+    delta2 = ThinkingPartDelta(
+        content_delta=' second',
+        provider_details=lambda d: {**(d or {}), 'second': 2},
+    )
+    chained = delta2.apply(delta1)
+    assert isinstance(chained, ThinkingPartDelta)
+    assert callable(chained.provider_details)
+    # Apply chained delta to actual ThinkingPart to verify both callables ran
+    part = ThinkingPart(content='')
+    result_part = chained.apply(part)
+    assert result_part.provider_details == {'first': 1, 'second': 2}
+
+    # Test applying dict delta to callable delta (dict should merge with callable result)
+    delta_callable = ThinkingPartDelta(
+        content_delta='callable',
+        provider_details=lambda d: {**(d or {}), 'from_callable': 'yes'},
+    )
+    delta_dict = ThinkingPartDelta(
+        content_delta=' dict',
+        provider_details={'from_dict': 'also'},
+    )
+    chained = delta_dict.apply(delta_callable)
+    assert isinstance(chained, ThinkingPartDelta)
+    assert callable(chained.provider_details)
+    part = ThinkingPart(content='')
+    result_part = chained.apply(part)
+    assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
 
 
 def test_pre_usage_refactor_messages_deserializable():
@@ -416,7 +466,7 @@ def test_pre_usage_refactor_messages_deserializable():
                         content='What is the capital of Mexico?',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City.')],
@@ -480,6 +530,7 @@ def test_file_part_serialization_roundtrip():
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
+                'provider_url': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,

@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -21,7 +21,7 @@ from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition, PromptedOutputSchema
+from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
@@ -64,17 +64,17 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-3-opus-latest',
         'anthropic:claude-4-opus-20250514',
         'anthropic:claude-4-sonnet-20250514',
-        'anthropic:claude-haiku-4-5',
         'anthropic:claude-haiku-4-5-20251001',
+        'anthropic:claude-haiku-4-5',
         'anthropic:claude-opus-4-0',
         'anthropic:claude-opus-4-1-20250805',
         'anthropic:claude-opus-4-20250514',
-        'anthropic:claude-opus-4-5',
         'anthropic:claude-opus-4-5-20251101',
+        'anthropic:claude-opus-4-5',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
-        'anthropic:claude-sonnet-4-5',
         'anthropic:claude-sonnet-4-5-20250929',
+        'anthropic:claude-sonnet-4-5',
         'bedrock:amazon.titan-text-express-v1',
         'bedrock:amazon.titan-text-lite-v1',
         'bedrock:amazon.titan-tg1-large',
@@ -90,8 +90,8 @@ KnownModelName = TypeAliasType(
         'bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'bedrock:anthropic.claude-v2',
         'bedrock:anthropic.claude-v2:1',
+        'bedrock:anthropic.claude-v2',
         'bedrock:cohere.command-light-text-v14',
         'bedrock:cohere.command-r-plus-v1:0',
         'bedrock:cohere.command-r-v1:0',
@@ -134,7 +134,6 @@ KnownModelName = TypeAliasType(
         'cerebras:llama-3.3-70b',
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-235b-a22b-thinking-2507',
         'cerebras:qwen-3-32b',
         'cerebras:zai-glm-4.6',
         'cohere:c4ai-aya-expanse-32b',
@@ -145,80 +144,269 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
+        'gateway/anthropic:claude-3-5-haiku-20241022',
+        'gateway/anthropic:claude-3-5-haiku-latest',
+        'gateway/anthropic:claude-3-7-sonnet-20250219',
+        'gateway/anthropic:claude-3-7-sonnet-latest',
+        'gateway/anthropic:claude-3-haiku-20240307',
+        'gateway/anthropic:claude-3-opus-20240229',
+        'gateway/anthropic:claude-3-opus-latest',
+        'gateway/anthropic:claude-4-opus-20250514',
+        'gateway/anthropic:claude-4-sonnet-20250514',
+        'gateway/anthropic:claude-haiku-4-5-20251001',
+        'gateway/anthropic:claude-haiku-4-5',
+        'gateway/anthropic:claude-opus-4-0',
+        'gateway/anthropic:claude-opus-4-1-20250805',
+        'gateway/anthropic:claude-opus-4-20250514',
+        'gateway/anthropic:claude-opus-4-5-20251101',
+        'gateway/anthropic:claude-opus-4-5',
+        'gateway/anthropic:claude-sonnet-4-0',
+        'gateway/anthropic:claude-sonnet-4-20250514',
+        'gateway/anthropic:claude-sonnet-4-5-20250929',
+        'gateway/anthropic:claude-sonnet-4-5',
+        'gateway/bedrock:amazon.titan-text-express-v1',
+        'gateway/bedrock:amazon.titan-text-lite-v1',
+        'gateway/bedrock:amazon.titan-tg1-large',
+        'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
+        'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
+        'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+        'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
+        'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
+        'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+        'gateway/bedrock:anthropic.claude-instant-v1',
+        'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
+        'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
+        'gateway/bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:anthropic.claude-v2:1',
+        'gateway/bedrock:anthropic.claude-v2',
+        'gateway/bedrock:cohere.command-light-text-v14',
+        'gateway/bedrock:cohere.command-r-plus-v1:0',
+        'gateway/bedrock:cohere.command-r-v1:0',
+        'gateway/bedrock:cohere.command-text-v14',
+        'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
+        'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
+        'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
+        'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
+        'gateway/bedrock:meta.llama3-1-8b-instruct-v1:0',
+        'gateway/bedrock:meta.llama3-70b-instruct-v1:0',
+        'gateway/bedrock:meta.llama3-8b-instruct-v1:0',
+        'gateway/bedrock:mistral.mistral-7b-instruct-v0:2',
+        'gateway/bedrock:mistral.mistral-large-2402-v1:0',
+        'gateway/bedrock:mistral.mistral-large-2407-v1:0',
+        'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'gateway/bedrock:us.amazon.nova-lite-v1:0',
+        'gateway/bedrock:us.amazon.nova-micro-v1:0',
+        'gateway/bedrock:us.amazon.nova-pro-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+        'gateway/bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
+        'gateway/bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'gateway/bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
+        'gateway/bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
+        'gateway/bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:us.meta.llama3-1-70b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-1-8b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-2-11b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-2-1b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+        'gateway/google-vertex:gemini-2.0-flash-lite',
+        'gateway/google-vertex:gemini-2.0-flash',
+        'gateway/google-vertex:gemini-2.5-flash-image',
+        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
+        'gateway/google-vertex:gemini-2.5-flash-lite',
+        'gateway/google-vertex:gemini-2.5-flash-preview-09-2025',
+        'gateway/google-vertex:gemini-2.5-flash',
+        'gateway/google-vertex:gemini-2.5-pro',
+        'gateway/google-vertex:gemini-3-flash-preview',
+        'gateway/google-vertex:gemini-3-pro-image-preview',
+        'gateway/google-vertex:gemini-3-pro-preview',
+        'gateway/google-vertex:gemini-flash-latest',
+        'gateway/google-vertex:gemini-flash-lite-latest',
+        'gateway/groq:llama-3.1-8b-instant',
+        'gateway/groq:llama-3.3-70b-versatile',
+        'gateway/groq:meta-llama/llama-guard-4-12b',
+        'gateway/groq:openai/gpt-oss-120b',
+        'gateway/groq:openai/gpt-oss-20b',
+        'gateway/groq:whisper-large-v3',
+        'gateway/groq:whisper-large-v3-turbo',
+        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
+        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
+        'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
+        'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
+        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
+        'gateway/groq:openai/gpt-oss-safeguard-20b',
+        'gateway/groq:playai-tts',
+        'gateway/groq:playai-tts-arabic',
+        'gateway/groq:qwen/qwen-3-32b',
+        'gateway/openai:chatgpt-4o-latest',
+        'gateway/openai:codex-mini-latest',
+        'gateway/openai:computer-use-preview-2025-03-11',
+        'gateway/openai:computer-use-preview',
+        'gateway/openai:gpt-3.5-turbo-0125',
+        'gateway/openai:gpt-3.5-turbo-0301',
+        'gateway/openai:gpt-3.5-turbo-0613',
+        'gateway/openai:gpt-3.5-turbo-1106',
+        'gateway/openai:gpt-3.5-turbo-16k-0613',
+        'gateway/openai:gpt-3.5-turbo-16k',
+        'gateway/openai:gpt-3.5-turbo',
+        'gateway/openai:gpt-4-0125-preview',
+        'gateway/openai:gpt-4-0314',
+        'gateway/openai:gpt-4-0613',
+        'gateway/openai:gpt-4-1106-preview',
+        'gateway/openai:gpt-4-32k-0314',
+        'gateway/openai:gpt-4-32k-0613',
+        'gateway/openai:gpt-4-32k',
+        'gateway/openai:gpt-4-turbo-2024-04-09',
+        'gateway/openai:gpt-4-turbo-preview',
+        'gateway/openai:gpt-4-turbo',
+        'gateway/openai:gpt-4-vision-preview',
+        'gateway/openai:gpt-4.1-2025-04-14',
+        'gateway/openai:gpt-4.1-mini-2025-04-14',
+        'gateway/openai:gpt-4.1-mini',
+        'gateway/openai:gpt-4.1-nano-2025-04-14',
+        'gateway/openai:gpt-4.1-nano',
+        'gateway/openai:gpt-4.1',
+        'gateway/openai:gpt-4',
+        'gateway/openai:gpt-4o-2024-05-13',
+        'gateway/openai:gpt-4o-2024-08-06',
+        'gateway/openai:gpt-4o-2024-11-20',
+        'gateway/openai:gpt-4o-audio-preview-2024-10-01',
+        'gateway/openai:gpt-4o-audio-preview-2024-12-17',
+        'gateway/openai:gpt-4o-audio-preview-2025-06-03',
+        'gateway/openai:gpt-4o-audio-preview',
+        'gateway/openai:gpt-4o-mini-2024-07-18',
+        'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
+        'gateway/openai:gpt-4o-mini-audio-preview',
+        'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
+        'gateway/openai:gpt-4o-mini-search-preview',
+        'gateway/openai:gpt-4o-mini',
+        'gateway/openai:gpt-4o-search-preview-2025-03-11',
+        'gateway/openai:gpt-4o-search-preview',
+        'gateway/openai:gpt-4o',
+        'gateway/openai:gpt-5-2025-08-07',
+        'gateway/openai:gpt-5-chat-latest',
+        'gateway/openai:gpt-5-codex',
+        'gateway/openai:gpt-5-mini-2025-08-07',
+        'gateway/openai:gpt-5-mini',
+        'gateway/openai:gpt-5-nano-2025-08-07',
+        'gateway/openai:gpt-5-nano',
+        'gateway/openai:gpt-5-pro-2025-10-06',
+        'gateway/openai:gpt-5-pro',
+        'gateway/openai:gpt-5.1-2025-11-13',
+        'gateway/openai:gpt-5.1-chat-latest',
+        'gateway/openai:gpt-5.1-codex-max',
+        'gateway/openai:gpt-5.1-codex',
+        'gateway/openai:gpt-5.1-mini',
+        'gateway/openai:gpt-5.1',
+        'gateway/openai:gpt-5.2-2025-12-11',
+        'gateway/openai:gpt-5.2-chat-latest',
+        'gateway/openai:gpt-5.2-pro-2025-12-11',
+        'gateway/openai:gpt-5.2-pro',
+        'gateway/openai:gpt-5.2',
+        'gateway/openai:gpt-5',
+        'gateway/openai:o1-2024-12-17',
+        'gateway/openai:o1-mini-2024-09-12',
+        'gateway/openai:o1-mini',
+        'gateway/openai:o1-preview-2024-09-12',
+        'gateway/openai:o1-preview',
+        'gateway/openai:o1-pro-2025-03-19',
+        'gateway/openai:o1-pro',
+        'gateway/openai:o1',
+        'gateway/openai:o3-2025-04-16',
+        'gateway/openai:o3-deep-research-2025-06-26',
+        'gateway/openai:o3-deep-research',
+        'gateway/openai:o3-mini-2025-01-31',
+        'gateway/openai:o3-mini',
+        'gateway/openai:o3-pro-2025-06-10',
+        'gateway/openai:o3-pro',
+        'gateway/openai:o3',
+        'gateway/openai:o4-mini-2025-04-16',
+        'gateway/openai:o4-mini-deep-research-2025-06-26',
+        'gateway/openai:o4-mini-deep-research',
+        'gateway/openai:o4-mini',
+        'google-gla:gemini-2.0-flash-lite',
+        'google-gla:gemini-2.0-flash',
+        'google-gla:gemini-2.5-flash-image',
+        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
+        'google-gla:gemini-2.5-flash-lite',
+        'google-gla:gemini-2.5-flash-preview-09-2025',
+        'google-gla:gemini-2.5-flash',
+        'google-gla:gemini-2.5-pro',
+        'google-gla:gemini-3-flash-preview',
+        'google-gla:gemini-3-pro-image-preview',
+        'google-gla:gemini-3-pro-preview',
         'google-gla:gemini-flash-latest',
         'google-gla:gemini-flash-lite-latest',
-        'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.0-flash-lite',
-        'google-gla:gemini-2.5-flash',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
-        'google-gla:gemini-2.5-flash-image',
-        'google-gla:gemini-2.5-flash-lite',
-        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-2.5-pro',
-        'google-gla:gemini-3-pro-preview',
-        'google-gla:gemini-3-pro-image-preview',
+        'google-vertex:gemini-2.0-flash-lite',
+        'google-vertex:gemini-2.0-flash',
+        'google-vertex:gemini-2.5-flash-image',
+        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
+        'google-vertex:gemini-2.5-flash-lite',
+        'google-vertex:gemini-2.5-flash-preview-09-2025',
+        'google-vertex:gemini-2.5-flash',
+        'google-vertex:gemini-2.5-pro',
+        'google-vertex:gemini-3-flash-preview',
+        'google-vertex:gemini-3-pro-image-preview',
+        'google-vertex:gemini-3-pro-preview',
         'google-vertex:gemini-flash-latest',
         'google-vertex:gemini-flash-lite-latest',
-        'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.0-flash-lite',
-        'google-vertex:gemini-2.5-flash',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
-        'google-vertex:gemini-2.5-flash-image',
-        'google-vertex:gemini-2.5-flash-lite',
-        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-2.5-pro',
-        'google-vertex:gemini-3-pro-preview',
-        'google-vertex:gemini-3-pro-image-preview',
         'grok:grok-2-image-1212',
         'grok:grok-2-vision-1212',
-        'grok:grok-3',
         'grok:grok-3-fast',
-        'grok:grok-3-mini',
         'grok:grok-3-mini-fast',
-        'grok:grok-4',
+        'grok:grok-3-mini',
+        'grok:grok-3',
         'grok:grok-4-0709',
+        'grok:grok-4-latest',
         'grok:grok-4-1-fast-non-reasoning',
         'grok:grok-4-1-fast-reasoning',
+        'grok:grok-4-1-fast',
         'grok:grok-4-fast-non-reasoning',
         'grok:grok-4-fast-reasoning',
+        'grok:grok-4-fast',
+        'grok:grok-4',
         'grok:grok-code-fast-1',
         'xai:grok-2-image-1212',
         'xai:grok-2-vision-1212',
-        'xai:grok-3',
         'xai:grok-3-fast',
-        'xai:grok-3-mini',
         'xai:grok-3-mini-fast',
-        'xai:grok-4',
+        'xai:grok-3-mini',
+        'xai:grok-3',
         'xai:grok-4-0709',
+        'grok:grok-4-latest',
         'xai:grok-4-1-fast-non-reasoning',
         'xai:grok-4-1-fast-reasoning',
+        'xai:grok-4-1-fast',
         'xai:grok-4-fast-non-reasoning',
         'xai:grok-4-fast-reasoning',
-        'xai:grok-code-fast-1',
-        'groq:deepseek-r1-distill-llama-70b',
-        'groq:deepseek-r1-distill-qwen-32b',
-        'groq:distil-whisper-large-v3-en',
-        'groq:gemma2-9b-it',
+        'xai:grok-4-fast',
+        'xai:grok-4',
         'groq:llama-3.1-8b-instant',
-        'groq:llama-3.2-11b-vision-preview',
-        'groq:llama-3.2-1b-preview',
-        'groq:llama-3.2-3b-preview',
-        'groq:llama-3.2-90b-vision-preview',
-        'groq:llama-3.3-70b-specdec',
         'groq:llama-3.3-70b-versatile',
-        'groq:llama-guard-3-8b',
-        'groq:llama3-70b-8192',
-        'groq:llama3-8b-8192',
-        'groq:mistral-saba-24b',
-        'groq:moonshotai/kimi-k2-instruct',
-        'groq:playai-tts',
-        'groq:playai-tts-arabic',
-        'groq:qwen-2.5-32b',
-        'groq:qwen-2.5-coder-32b',
-        'groq:qwen-qwq-32b',
+        'groq:meta-llama/llama-guard-4-12b',
+        'groq:openai/gpt-oss-120b',
+        'groq:openai/gpt-oss-20b',
         'groq:whisper-large-v3',
         'groq:whisper-large-v3-turbo',
-        'heroku:amazon-rerank-1-0',
+        'groq:meta-llama/llama-4-maverick-17b-128e-instruct',
+        'groq:meta-llama/llama-4-scout-17b-16e-instruct',
+        'groq:meta-llama/llama-prompt-guard-2-22m',
+        'groq:meta-llama/llama-prompt-guard-2-86m',
+        'groq:moonshotai/kimi-k2-instruct-0905',
+        'groq:openai/gpt-oss-safeguard-20b',
+        'groq:playai-tts',
+        'groq:playai-tts-arabic',
+        'groq:qwen/qwen-3-32b',
         'heroku:claude-3-5-haiku',
         'heroku:claude-3-5-sonnet-latest',
         'heroku:claude-3-7-sonnet',
@@ -226,18 +414,23 @@ KnownModelName = TypeAliasType(
         'heroku:claude-4-5-haiku',
         'heroku:claude-4-5-sonnet',
         'heroku:claude-4-sonnet',
-        'heroku:cohere-rerank-3-5',
+        'heroku:claude-opus-4-5',
         'heroku:gpt-oss-120b',
+        'heroku:kimi-k2-thinking',
+        'heroku:minimax-m2',
+        'heroku:qwen3-235b',
+        'heroku:qwen3-coder-480b',
+        'heroku:nova-2-lite',
         'heroku:nova-lite',
         'heroku:nova-pro',
-        'huggingface:Qwen/QwQ-32B',
-        'huggingface:Qwen/Qwen2.5-72B-Instruct',
-        'huggingface:Qwen/Qwen3-235B-A22B',
-        'huggingface:Qwen/Qwen3-32B',
         'huggingface:deepseek-ai/DeepSeek-R1',
         'huggingface:meta-llama/Llama-3.3-70B-Instruct',
         'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
         'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
+        'huggingface:Qwen/Qwen2.5-72B-Instruct',
+        'huggingface:Qwen/Qwen3-235B-A22B',
+        'huggingface:Qwen/Qwen3-32B',
+        'huggingface:Qwen/QwQ-32B',
         'mistral:codestral-latest',
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
@@ -245,92 +438,98 @@ KnownModelName = TypeAliasType(
         'moonshotai:kimi-k2-0711-preview',
         'moonshotai:kimi-latest',
         'moonshotai:kimi-thinking-preview',
-        'moonshotai:moonshot-v1-128k',
         'moonshotai:moonshot-v1-128k-vision-preview',
-        'moonshotai:moonshot-v1-32k',
+        'moonshotai:moonshot-v1-128k',
         'moonshotai:moonshot-v1-32k-vision-preview',
-        'moonshotai:moonshot-v1-8k',
+        'moonshotai:moonshot-v1-32k',
         'moonshotai:moonshot-v1-8k-vision-preview',
+        'moonshotai:moonshot-v1-8k',
         'openai:chatgpt-4o-latest',
         'openai:codex-mini-latest',
-        'openai:computer-use-preview',
         'openai:computer-use-preview-2025-03-11',
-        'openai:gpt-3.5-turbo',
+        'openai:computer-use-preview',
         'openai:gpt-3.5-turbo-0125',
         'openai:gpt-3.5-turbo-0301',
         'openai:gpt-3.5-turbo-0613',
         'openai:gpt-3.5-turbo-1106',
-        'openai:gpt-3.5-turbo-16k',
         'openai:gpt-3.5-turbo-16k-0613',
-        'openai:gpt-4',
+        'openai:gpt-3.5-turbo-16k',
+        'openai:gpt-3.5-turbo',
         'openai:gpt-4-0125-preview',
         'openai:gpt-4-0314',
         'openai:gpt-4-0613',
         'openai:gpt-4-1106-preview',
-        'openai:gpt-4-32k',
         'openai:gpt-4-32k-0314',
         'openai:gpt-4-32k-0613',
-        'openai:gpt-4-turbo',
+        'openai:gpt-4-32k',
         'openai:gpt-4-turbo-2024-04-09',
         'openai:gpt-4-turbo-preview',
+        'openai:gpt-4-turbo',
         'openai:gpt-4-vision-preview',
-        'openai:gpt-4.1',
         'openai:gpt-4.1-2025-04-14',
-        'openai:gpt-4.1-mini',
         'openai:gpt-4.1-mini-2025-04-14',
-        'openai:gpt-4.1-nano',
+        'openai:gpt-4.1-mini',
         'openai:gpt-4.1-nano-2025-04-14',
-        'openai:gpt-4o',
+        'openai:gpt-4.1-nano',
+        'openai:gpt-4.1',
+        'openai:gpt-4',
         'openai:gpt-4o-2024-05-13',
         'openai:gpt-4o-2024-08-06',
         'openai:gpt-4o-2024-11-20',
-        'openai:gpt-4o-audio-preview',
         'openai:gpt-4o-audio-preview-2024-10-01',
         'openai:gpt-4o-audio-preview-2024-12-17',
         'openai:gpt-4o-audio-preview-2025-06-03',
-        'openai:gpt-4o-mini',
+        'openai:gpt-4o-audio-preview',
         'openai:gpt-4o-mini-2024-07-18',
-        'openai:gpt-4o-mini-audio-preview',
         'openai:gpt-4o-mini-audio-preview-2024-12-17',
-        'openai:gpt-4o-mini-search-preview',
+        'openai:gpt-4o-mini-audio-preview',
         'openai:gpt-4o-mini-search-preview-2025-03-11',
-        'openai:gpt-4o-search-preview',
+        'openai:gpt-4o-mini-search-preview',
+        'openai:gpt-4o-mini',
         'openai:gpt-4o-search-preview-2025-03-11',
-        'openai:gpt-5',
+        'openai:gpt-4o-search-preview',
+        'openai:gpt-4o',
         'openai:gpt-5-2025-08-07',
         'openai:gpt-5-chat-latest',
         'openai:gpt-5-codex',
-        'openai:gpt-5-mini',
         'openai:gpt-5-mini-2025-08-07',
-        'openai:gpt-5-nano',
+        'openai:gpt-5-mini',
         'openai:gpt-5-nano-2025-08-07',
-        'openai:gpt-5-pro',
+        'openai:gpt-5-nano',
         'openai:gpt-5-pro-2025-10-06',
-        'openai:gpt-5.1',
+        'openai:gpt-5-pro',
         'openai:gpt-5.1-2025-11-13',
         'openai:gpt-5.1-chat-latest',
+        'openai:gpt-5.1-codex-max',
         'openai:gpt-5.1-codex',
         'openai:gpt-5.1-mini',
-        'openai:o1',
+        'openai:gpt-5.1',
+        'openai:gpt-5.2-2025-12-11',
+        'openai:gpt-5.2-chat-latest',
+        'openai:gpt-5.2-pro-2025-12-11',
+        'openai:gpt-5.2-pro',
+        'openai:gpt-5.2',
+        'openai:gpt-5',
         'openai:o1-2024-12-17',
-        'openai:o1-mini',
         'openai:o1-mini-2024-09-12',
-        'openai:o1-preview',
+        'openai:o1-mini',
         'openai:o1-preview-2024-09-12',
-        'openai:o1-pro',
+        'openai:o1-preview',
         'openai:o1-pro-2025-03-19',
-        'openai:o3',
+        'openai:o1-pro',
+        'openai:o1',
         'openai:o3-2025-04-16',
-        'openai:o3-deep-research',
         'openai:o3-deep-research-2025-06-26',
-        'openai:o3-mini',
+        'openai:o3-deep-research',
         'openai:o3-mini-2025-01-31',
-        'openai:o3-pro',
+        'openai:o3-mini',
         'openai:o3-pro-2025-06-10',
-        'openai:o4-mini',
+        'openai:o3-pro',
+        'openai:o3',
         'openai:o4-mini-2025-04-16',
-        'openai:o4-mini-deep-research',
         'openai:o4-mini-deep-research-2025-06-26',
+        'openai:o4-mini-deep-research',
+        'openai:o4-mini',
         'test',
     ],
 )
@@ -360,8 +559,8 @@ class ModelRequestParameters:
 
     @cached_property
     def prompted_output_instructions(self) -> str | None:
-        if self.output_mode == 'prompted' and self.prompted_output_template and self.output_object:
-            return PromptedOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
+        if self.prompted_output_template and self.output_object:
+            return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
         return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -489,11 +688,14 @@ class Model(ABC):
             params = replace(params, output_tools=[])
         if params.output_object and params.output_mode not in ('native', 'prompted'):
             params = replace(params, output_object=None)
-        if params.prompted_output_template and params.output_mode != 'prompted':
+        if params.prompted_output_template and params.output_mode not in ('prompted', 'native'):
             params = replace(params, prompted_output_template=None)  # pragma: no cover
 
         # Set default prompted output template
-        if params.output_mode == 'prompted' and not params.prompted_output_template:
+        if (
+            params.output_mode == 'prompted'
+            or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
+        ) and not params.prompted_output_template:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 
         # Check if output mode is supported
@@ -504,6 +706,17 @@ class Model(ABC):
         if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
+        # Check if builtin tools are supported
+        if params.builtin_tools:
+            supported_types = self.profile.supported_builtin_tools
+            unsupported = [tool for tool in params.builtin_tools if not isinstance(tool, tuple(supported_types))]
+            if unsupported:
+                unsupported_names = [type(tool).__name__ for tool in unsupported]
+                supported_names = [t.__name__ for t in supported_types]
+                raise UserError(
+                    f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
+                )
+
         return model_settings, params
 
     @property
@@ -512,15 +725,68 @@ class Model(ABC):
         """The model name."""
         raise NotImplementedError()
 
+    @property
+    def label(self) -> str:
+        """Human-friendly display label for the model.
+
+        Handles common patterns:
+        - gpt-5 -> GPT 5
+        - claude-sonnet-4-5 -> Claude Sonnet 4.5
+        - gemini-2.5-pro -> Gemini 2.5 Pro
+        - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
+        """
+        label = self.model_name
+        # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
+        if '/' in label:
+            label = label.split('/')[-1]
+
+        parts = label.split('-')
+        result: list[str] = []
+
+        for i, part in enumerate(parts):
+            if i == 0 and part.lower() == 'gpt':
+                result.append(part.upper())
+            elif part.replace('.', '').isdigit():
+                if result and result[-1].replace('.', '').isdigit():
+                    result[-1] = f'{result[-1]}.{part}'
+                else:
+                    result.append(part)
+            else:
+                result.append(part.capitalize())
+
+        return ' '.join(result)
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model class can handle.
+
+        Subclasses should override this to reflect their actual capabilities.
+        Default is empty set - subclasses must explicitly declare support.
+        """
+        return frozenset()
+
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile."""
+        """The model profile.
+
+        We use this to compute the intersection of the profile's supported_builtin_tools
+        and the model's implemented tools, ensuring model.profile.supported_builtin_tools
+        is the single source of truth for what builtin tools are actually usable.
+        """
         _profile = self._profile
         if callable(_profile):
             _profile = _profile(self.model_name)
 
         if _profile is None:
-            return DEFAULT_PROFILE
+            _profile = DEFAULT_PROFILE
+
+        # Compute intersection: profile's allowed tools & model's implemented tools
+        model_supported = self.__class__.supported_builtin_tools()
+        profile_supported = _profile.supported_builtin_tools
+        effective_tools = profile_supported & model_supported
+
+        if effective_tools != profile_supported:
+            _profile = replace(_profile, supported_builtin_tools=effective_tools)
 
         return _profile
 
@@ -543,7 +809,7 @@ class Model(ABC):
 
     @staticmethod
     def _get_instructions(
-        messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
     ) -> str | None:
         """Get instructions from the first ModelRequest found when iterating messages in reverse.
 
@@ -697,6 +963,7 @@ class StreamedResponse(ABC):
             timestamp=self.timestamp,
             usage=self.usage(),
             provider_name=self.provider_name,
+            provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
@@ -717,6 +984,12 @@ class StreamedResponse(ABC):
     @abstractmethod
     def provider_name(self) -> str | None:
         """Get the provider name."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
         raise NotImplementedError()
 
     @property
@@ -823,7 +1096,6 @@ def infer_model(  # noqa: C901
         'openai',
         'azure',
         'deepseek',
-        'cerebras',
         'fireworks',
         'github',
         'grok',
@@ -836,6 +1108,7 @@ def infer_model(  # noqa: C901
         'litellm',
         'nebius',
         'ovhcloud',
+        'alibaba',
     ):
         model_kind = 'openai-chat'
     elif model_kind in ('google-gla', 'google-vertex'):
@@ -861,14 +1134,14 @@ def infer_model(  # noqa: C901
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif model_kind == 'openrouter':
-        from .openrouter import OpenRouterModel
-
-        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'mistral':
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -881,6 +1154,10 @@ def infer_model(  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
+    elif model_kind == 'cerebras':
+        from .cerebras import CerebrasModel
+
+        return CerebrasModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
@@ -973,6 +1250,8 @@ async def download_item(
     """
     if item.url.startswith('gs://'):
         raise UserError('Downloading from protocol "gs://" is not supported.')
+    elif item.url.startswith('s3://'):
+        raise UserError('Downloading from protocol "s3://" is not supported.')
     elif isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
 

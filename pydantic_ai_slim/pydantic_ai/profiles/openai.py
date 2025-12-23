@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
+from ..exceptions import UserError
 from . import ModelProfile
 
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
@@ -18,6 +19,27 @@ class OpenAIModelProfile(ModelProfile):
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
+
+    openai_chat_thinking_field: str | None = None
+    """Non-standard field name used by some providers for model thinking content in Chat Completions API responses.
+
+    Plenty of providers use custom field names for thinking content. Ollama and newer versions of vLLM use `reasoning`,
+    while DeepSeek, older vLLM and some others use `reasoning_content`.
+
+    Notice that the thinking field configured here is currently limited to `str` type content.
+
+    If `openai_chat_send_back_thinking_parts` is set to `'field'`, this field must be set to a non-None value."""
+
+    openai_chat_send_back_thinking_parts: Literal['tags', 'field', False] = 'tags'
+    """Whether the model includes thinking content in requests.
+
+    This can be:
+    * `'tags'` (default): The thinking content is included in the main `content` field, enclosed within thinking tags as
+    specified in `thinking_tags` profile option.
+    * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
+    * `False`: No thinking content is sent in the request.
+
+    Defaults to `'thinking_tags'` for backward compatibility reasons."""
 
     openai_supports_strict_tool_definition: bool = True
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
@@ -41,6 +63,13 @@ class OpenAIModelProfile(ModelProfile):
     openai_chat_supports_web_search: bool = False
     """Whether the model supports web search in Chat Completions API."""
 
+    openai_chat_audio_input_encoding: Literal['base64', 'uri'] = 'base64'
+    """The encoding to use for audio input in Chat Completions requests.
+
+    - `'base64'`: Raw base64 encoded string. (Default, used by OpenAI)
+    - `'uri'`: Data URI (e.g. `data:audio/wav;base64,...`).
+    """
+
     openai_supports_encrypted_reasoning_content: bool = False
     """Whether the model supports including encrypted reasoning content in the response."""
 
@@ -57,6 +86,11 @@ class OpenAIModelProfile(ModelProfile):
                 'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
                 'Use `openai_unsupported_model_settings` instead.',
                 DeprecationWarning,
+            )
+        if self.openai_chat_send_back_thinking_parts == 'field' and not self.openai_chat_thinking_field:
+            raise UserError(
+                'If `openai_chat_send_back_thinking_parts` is "field", '
+                '`openai_chat_thinking_field` must be set to a non-None value.'
             )
 
 

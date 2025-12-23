@@ -149,6 +149,7 @@ def test_docs_examples(
 
     mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
     mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
+    mocker.patch('pydantic_ai.toolsets.fastmcp.FastMCPToolset', return_value=MockMCPServer())
     mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
@@ -179,6 +180,7 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
+    env.set('ALIBABA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
 
@@ -301,6 +303,9 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
     @property
     def id(self) -> str | None:
         return None  # pragma: no cover
@@ -329,11 +334,15 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
     'What is 7 plus 5?': 'The answer is 12.',
+    'What is the weather like?': "It's currently raining in London.",
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
     'What will the weather be like in Paris on Tuesday?': ToolCallPart(
         tool_name='weather_forecast', args={'location': 'Paris', 'forecast_date': '2030-01-01'}, tool_call_id='0001'
+    ),
+    'What is the weather in Paris?': ToolCallPart(
+        tool_name='get_weather_forecast', args={'location': 'Paris'}, tool_call_id='0001'
     ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
     'Tell me a different joke.': 'No.',
@@ -539,6 +548,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
     'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
     'What is the first sentence on https://ai.pydantic.dev?': 'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
+    'Create a record with name "test" and value 42': ToolCallPart(
+        tool_name='final_result',
+        args={'name': 'test', 'value': 42},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -692,6 +706,18 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
                 ]
             )
+        elif m.content == 'Generate a wide illustration of an axolotl city skyline.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='wide-axolotl-city')),
+                ]
+            )
+        elif m.content == 'Generate a high-resolution wide landscape illustration of an axolotl.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='high-res-axolotl')),
+                ]
+            )
         elif m.content == 'Generate a chart of y=x^2 for x=-5 to 5.':
             return ModelResponse(
                 parts=[
@@ -794,6 +820,8 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
+        return ModelResponse(parts=[TextPart(m.content)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':

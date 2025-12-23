@@ -26,8 +26,10 @@ except ImportError as _import_error:  # pragma: no cover
 GrokModelName = Literal[
     'grok-4',
     'grok-4-0709',
+    'grok-4-1-fast',
     'grok-4-1-fast-reasoning',
     'grok-4-1-fast-non-reasoning',
+    'grok-4-fast',
     'grok-4-fast-reasoning',
     'grok-4-fast-non-reasoning',
     'grok-code-fast-1',

@@ -8,6 +8,7 @@ import pytest
 from typing_extensions import TypedDict
 
 from pydantic_ai.models import KnownModelName
+from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
 
@@ -20,8 +21,16 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import OpenAIModelName
+    from pydantic_ai.models.xai import XaiModelName
+    from pydantic_ai.providers.deepseek import DeepSeekModelName
     from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
+
+if not imports_successful():
+    # Define placeholders so the module can be loaded for test collection
+    AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
+    GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    DeepSeekModelName = GrokModelName = XaiModelName = MoonshotAIModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -49,6 +58,23 @@ def vcr_config():  # pragma: lax no cover
     }
 
 
+_PROVIDER_TO_MODEL_NAMES = {
+    'anthropic': AnthropicModelName,
+    'bedrock': BedrockModelName,
+    'cohere': CohereModelName,
+    'deepseek': DeepSeekModelName,
+    'google-gla': GoogleModelName,
+    'google-vertex': GoogleModelName,
+    'grok': GrokModelName,
+    'xai': XaiModelName,
+    'groq': GroqModelName,
+    'huggingface': HuggingFaceModelName,
+    'mistral': MistralModelName,
+    'moonshotai': MoonshotAIModelName,
+    'openai': OpenAIModelName,
+}
+
+
 def test_known_model_names():  # pragma: lax no cover
     # Coverage seems to be misbehaving..?
     def get_model_names(model_name_type: Any) -> Iterator[str]:
@@ -58,44 +84,35 @@ def test_known_model_names():  # pragma: lax no cover
             else:
                 yield from get_model_names(arg)
 
-    anthropic_names = [f'anthropic:{n}' for n in get_model_names(AnthropicModelName)]
-    cohere_names = [f'cohere:{n}' for n in get_model_names(CohereModelName)]
-    google_names = [f'google-gla:{n}' for n in get_model_names(GoogleModelName)] + [
-        f'google-vertex:{n}' for n in get_model_names(GoogleModelName)
+    all_generated_names = [
+        f'{provider}:{n}'
+        for provider, model_names in _PROVIDER_TO_MODEL_NAMES.items()
+        for n in get_model_names(model_names)
     ]
-    xai_names = [f'xai:{n}' for n in get_model_names(GrokModelName)]
-    grok_names = [f'grok:{n}' for n in get_model_names(GrokModelName)]
-    groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
-    moonshotai_names = [f'moonshotai:{n}' for n in get_model_names(MoonshotAIModelName)]
-    mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
-    openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)]
-    bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
-    deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
-    huggingface_names = [f'huggingface:{n}' for n in get_model_names(HuggingFaceModelName)]
-    heroku_names = get_heroku_model_names()
+
     cerebras_names = get_cerebras_model_names()
+    heroku_names = get_heroku_model_names()
+    gateway_names = [
+        f'gateway/{provider}:{model_name}'
+        for provider in GatewayModelProvider.__args__
+        for model_name in get_model_names(_PROVIDER_TO_MODEL_NAMES[provider])
+    ]
+
     extra_names = ['test']
 
-    generated_names = sorted(
-        anthropic_names
-        + cohere_names
-        + google_names
-        + xai_names
-        + grok_names
-        + groq_names
-        + mistral_names
-        + moonshotai_names
-        + openai_names
-        + bedrock_names
-        + deepseek_names
-        + huggingface_names
-        + heroku_names
-        + cerebras_names
-        + extra_names
-    )
+    generated_names = sorted(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
 
     known_model_names = sorted(get_args(KnownModelName.__value__))
-    assert generated_names == known_model_names
+
+    if generated_names != known_model_names:
+        errors: list[str] = []
+        missing_names = set(generated_names) - set(known_model_names)
+        if missing_names:
+            errors.append(f'Missing names: {missing_names}')
+        extra_names = set(known_model_names) - set(generated_names)
+        if extra_names:
+            errors.append(f'Extra names: {extra_names}')
+        raise AssertionError('\n'.join(errors))
 
 
 class HerokuModel(TypedDict):

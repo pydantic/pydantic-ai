@@ -49,13 +49,13 @@ async def get_weather_forecast(location: str) -> str:
 
 @mcp.tool()
 async def get_image_resource() -> EmbeddedResource:
-    data = Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
     return EmbeddedResource(
         type='resource',
         resource=BlobResourceContents(
-            uri=AnyUrl('resource://kiwi.png'),
+            uri=AnyUrl('resource://kiwi.jpg'),
             blob=base64.b64encode(data).decode('utf-8'),
-            mimeType='image/png',
+            mimeType='image/jpeg',
         ),
     )
 
@@ -64,14 +64,14 @@ async def get_image_resource() -> EmbeddedResource:
 async def get_image_resource_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
-        uri=AnyUrl('resource://kiwi.png'),
-        name='kiwi.png',
+        uri=AnyUrl('resource://kiwi.jpg'),
+        name='kiwi.jpeg',
     )
 
 
-@mcp.resource('resource://kiwi.png', mime_type='image/png')
+@mcp.resource('resource://kiwi.jpg', mime_type='image/jpeg')
 async def kiwi_resource() -> bytes:
-    return Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
+    return Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
 
 
 @mcp.tool()
@@ -138,8 +138,8 @@ async def greeting_resource_template(name: str) -> str:
 
 @mcp.tool()
 async def get_image() -> Image:
-    data = Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
-    return Image(data=data, format='png')
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
+    return Image(data=data, format='jpg')
 
 
 @mcp.tool()
@@ -224,6 +224,25 @@ class UserResponse(BaseModel):
 
 
 @mcp.tool()
+async def get_client_info(ctx: Context[ServerSession, None]) -> dict[str, Any] | None:
+    """Get information about the connected MCP client.
+
+    Returns:
+        Dictionary with client info (name, version, etc.) or None if not available.
+    """
+    client_params = ctx.session.client_params
+    if client_params is None:
+        return None
+    client_info = client_params.clientInfo
+    return {
+        'name': client_info.name,
+        'version': client_info.version,
+        'title': getattr(client_info, 'title', None),
+        'websiteUrl': getattr(client_info, 'websiteUrl', None),
+    }
+
+
+@mcp.tool()
 async def use_elicitation(ctx: Context[ServerSession, None], question: str) -> str:
     """Use elicitation callback to ask the user a question."""
 
@@ -233,6 +252,19 @@ async def use_elicitation(ctx: Context[ServerSession, None], question: str) -> s
         return f'User responded: {result.data.response}'
     else:
         return f'User {result.action}ed the elicitation'
+
+
+async def hidden_tool() -> str:
+    """A tool that is hidden by default."""
+    return 'I was hidden!'
+
+
+@mcp.tool()
+async def enable_hidden_tool(ctx: Context[ServerSession, None]) -> str:
+    """Enable the hidden tool, triggering a ToolListChangedNotification."""
+    mcp._tool_manager.add_tool(hidden_tool)  # pyright: ignore[reportPrivateUsage]
+    await ctx.session.send_tool_list_changed()
+    return 'Hidden tool enabled'
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]

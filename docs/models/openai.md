@@ -134,30 +134,28 @@ The Responses API has built-in tools that you can use instead of building your o
 - [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
 
-Web search, Code interpreter, and Image generation are natively supported through the [Built-in tools](../builtin-tools.md) feature.
+Web search, Code interpreter, Image generation, and File search are natively supported through the [Built-in tools](../builtin-tools.md) feature.
 
-File search and Computer use can be enabled by passing an [`openai.types.responses.FileSearchToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/file_search_tool_param.py) or [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. They don't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for these built-in tools.
+Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
 
-```python {title="file_search_tool.py"}
-from openai.types.responses import FileSearchToolParam
+```python {title="computer_use_tool.py" test="skip"}
+from openai.types.responses import ComputerToolParam
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model_settings = OpenAIResponsesModelSettings(
     openai_builtin_tools=[
-        FileSearchToolParam(
-            type='file_search',
-            vector_store_ids=['your-history-book-vector-store-id']
+        ComputerToolParam(
+            type='computer_use',
         )
     ],
 )
 model = OpenAIResponsesModel('gpt-5')
 agent = Agent(model=model, model_settings=model_settings)
 
-result = agent.run_sync('Who was Albert Einstein?')
+result = agent.run_sync('Open a new browser tab')
 print(result.output)
-#> Albert Einstein was a German-born theoretical physicist.
 ```
 
 #### Referencing earlier responses
@@ -303,6 +301,50 @@ model = OpenAIChatModel(
     'deepseek-chat',
     provider=DeepSeekProvider(
         api_key='your-deepseek-api-key', http_client=custom_http_client
+    ),
+)
+agent = Agent(model)
+...
+```
+
+### Alibaba Cloud Model Studio (DashScope)
+
+To use Qwen models via [Alibaba Cloud Model Studio (DashScope)](https://www.alibabacloud.com/en/product/modelstudio), you can set the `ALIBABA_API_KEY` (or `DASHSCOPE_API_KEY`) environment variable and use [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('alibaba:qwen-max')
+...
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.alibaba import AlibabaProvider
+
+model = OpenAIChatModel(
+    'qwen-max',
+    provider=AlibabaProvider(api_key='your-api-key'),
+)
+agent = Agent(model)
+...
+```
+
+The `AlibabaProvider` uses the international DashScope compatible endpoint `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` by default. You can override this by passing a custom `base_url`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.alibaba import AlibabaProvider
+
+model = OpenAIChatModel(
+    'qwen-max',
+    provider=AlibabaProvider(
+        api_key='your-api-key',
+        base_url='https://dashscope.aliyuncs.com/compatible-mode/v1',  # China region
     ),
 )
 agent = Agent(model)
@@ -602,39 +644,6 @@ model = OpenAIChatModel(
 )
 agent = Agent(model)
 ...
-```
-
-### Cerebras
-
-To use [Cerebras](https://cerebras.ai/), you need to create an API key in the [Cerebras Console](https://cloud.cerebras.ai/).
-
-You can set the `CEREBRAS_API_KEY` environment variable and use [`CerebrasProvider`][pydantic_ai.providers.cerebras.CerebrasProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('cerebras:llama3.3-70b')
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```
-
-Or initialise the model and provider directly:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.cerebras import CerebrasProvider
-
-model = OpenAIChatModel(
-    'llama3.3-70b',
-    provider=CerebrasProvider(api_key='your-cerebras-api-key'),
-)
-agent = Agent(model)
-
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
 ```
 
 ### LiteLLM

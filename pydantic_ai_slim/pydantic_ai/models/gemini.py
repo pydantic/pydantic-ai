@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import base64
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -148,8 +147,8 @@ class GeminiModel(Model):
 
     @property
     def base_url(self) -> str:
-        assert self._url is not None, 'URL not initialized'  # pragma: no cover
-        return self._url  # pragma: no cover
+        assert self._url is not None, 'URL not initialized'
+        return self._url
 
     @property
     def model_name(self) -> GeminiModelName:
@@ -298,6 +297,7 @@ class GeminiModel(Model):
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
+            provider_url=self.base_url,
         )
 
     async def _process_streamed_response(
@@ -329,6 +329,7 @@ class GeminiModel(Model):
             _content=content,
             _stream=aiter_bytes,
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
         )
 
     async def _message_to_gemini_content(
@@ -363,7 +364,7 @@ class GeminiModel(Model):
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            sys_prompt_parts.insert(0, _GeminiTextPart(text=instructions))
+            sys_prompt_parts.append(_GeminiTextPart(text=instructions))
         return sys_prompt_parts, contents
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[_GeminiPartUnion]:
@@ -375,9 +376,8 @@ class GeminiModel(Model):
                 if isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
-                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     content.append(
-                        _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
+                        _GeminiInlineDataPart(inline_data={'data': item.base64, 'mime_type': item.media_type})
                     )
                 elif isinstance(item, VideoUrl) and item.is_youtube:
                     file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
@@ -453,6 +453,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _provider_name: str
+    _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -465,11 +466,10 @@ class GeminiStreamedResponse(StreamedResponse):
                 if 'text' in gemini_part:
                     # Using vendor_part_id=None means we can produce multiple text parts if their deltas are sprinkled
                     # amongst the tool call deltas
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event in self._parts_manager.handle_text_delta(
                         vendor_part_id=None, content=gemini_part['text']
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 elif 'function_call' in gemini_part:
                     # Here, we assume all function_call parts are complete and don't have deltas.
@@ -527,6 +527,11 @@ class GeminiStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
@@ -714,6 +719,7 @@ def _process_response_from_parts(
     model_name: GeminiModelName,
     usage: usage.RequestUsage,
     vendor_id: str | None,
+    provider_url: str,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
@@ -732,7 +738,12 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, usage=usage, model_name=model_name, provider_response_id=vendor_id, provider_details=vendor_details
+        parts=items,
+        usage=usage,
+        model_name=model_name,
+        provider_response_id=vendor_id,
+        provider_details=vendor_details,
+        provider_url=provider_url,
     )
 
 

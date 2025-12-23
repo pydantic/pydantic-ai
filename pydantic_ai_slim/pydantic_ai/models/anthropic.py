@@ -13,7 +13,14 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import (
+    AbstractBuiltinTool,
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -64,7 +71,6 @@ try:
         omit as OMIT,
     )
     from anthropic.types.beta import (
-        BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
@@ -74,6 +80,7 @@ try:
         BetaCodeExecutionToolResultBlockContent,
         BetaCodeExecutionToolResultBlockParam,
         BetaCodeExecutionToolResultBlockParamContentParam,
+        BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaImageBlockParam,
@@ -97,6 +104,7 @@ try:
         BetaRawMessageStreamEvent,
         BetaRedactedThinkingBlock,
         BetaRedactedThinkingBlockParam,
+        BetaRequestDocumentBlockParam,
         BetaRequestMCPServerToolConfigurationParam,
         BetaRequestMCPServerURLDefinitionParam,
         BetaServerToolUseBlock,
@@ -172,6 +180,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     When enabled, the last tool in the `tools` array will have `cache_control` set,
     allowing Anthropic to cache tool definitions and reduce costs.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    TTL is automatically omitted for Bedrock, as it does not support explicit TTL.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
@@ -181,6 +190,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    TTL is automatically omitted for Bedrock, as it does not support explicit TTL.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
@@ -191,10 +201,21 @@ class AnthropicModelSettings(ModelSettings, total=False):
     in the final user message, which is useful for caching conversation history
     or context in multi-turn conversations.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    TTL is automatically omitted for Bedrock, as it does not support explicit TTL.
 
     Note: Uses 1 of Anthropic's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+    """
+
+    anthropic_container: BetaContainerParams | Literal[False]
+    """Container configuration for multi-turn conversations.
+
+    By default, if previous messages contain a container_id (from a prior response),
+    it will be reused automatically.
+
+    Set to `False` to force a fresh container (ignore any `container_id` from history).
+    Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
     """
 
 
@@ -253,6 +274,11 @@ class AnthropicModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """The set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
     async def request(
         self,
@@ -382,6 +408,7 @@ class AnthropicModel(Model):
         output_format = self._native_output_format(model_request_parameters)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
+        container = self._get_container(messages, model_settings)
         try:
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -400,6 +427,7 @@ class AnthropicModel(Model):
                 top_p=model_settings.get('top_p', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
+                container=container or OMIT,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -421,7 +449,7 @@ class AnthropicModel(Model):
         Handles merging custom `anthropic-beta` header from `extra_headers` into betas set
         and ensuring `User-Agent` is set.
         """
-        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         betas: set[str] = set()
@@ -435,6 +463,18 @@ class AnthropicModel(Model):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
         return betas, extra_headers
+
+    def _get_container(
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+    ) -> BetaContainerParams | None:
+        """Get container config for the API request."""
+        if (container := model_settings.get('anthropic_container')) is not None:
+            return None if container is False else container
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
+                if cid := m.provider_details.get('container_id'):
+                    return BetaContainerParams(id=cid)
+        return None
 
     async def _messages_count_tokens(
         self,
@@ -523,6 +563,9 @@ class AnthropicModel(Model):
         if raw_finish_reason := response.stop_reason:  # pragma: no branch
             provider_details = {'finish_reason': raw_finish_reason}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+        if response.container:
+            provider_details = provider_details or {}
+            provider_details['container_id'] = response.container.id
 
         return ModelResponse(
             parts=items,
@@ -530,6 +573,7 @@ class AnthropicModel(Model):
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -548,7 +592,6 @@ class AnthropicModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.message.model,
             _response=peekable_response,
-            _timestamp=_utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
         )
@@ -565,7 +608,7 @@ class AnthropicModel(Model):
             # If True, use '5m'; otherwise use the specified ttl value
             ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
             last_tool = tools[-1]
-            last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
+            last_tool['cache_control'] = self._build_cache_control(ttl)
 
         return tools
 
@@ -626,8 +669,8 @@ class AnthropicModel(Model):
                     mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
                 mcp_servers.append(mcp_server_url_definition_param)
                 beta_features.add('mcp-client-2025-04-04')
-            else:  # pragma: no cover
-                raise UserError(
+            else:
+                raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
         return tools, mcp_servers, beta_features
@@ -853,7 +896,7 @@ class AnthropicModel(Model):
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_parts.insert(0, instructions)
+            system_prompt_parts.append(instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Add cache_control to the last message content if anthropic_cache_messages is enabled
@@ -867,7 +910,7 @@ class AnthropicModel(Model):
                     BetaTextBlockParam(
                         text=content,
                         type='text',
-                        cache_control=BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl),
+                        cache_control=self._build_cache_control(ttl),
                     )
                 ]
             else:
@@ -883,7 +926,7 @@ class AnthropicModel(Model):
                 BetaTextBlockParam(
                     type='text',
                     text=system_prompt,
-                    cache_control=BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl),
+                    cache_control=self._build_cache_control(ttl),
                 )
             ]
             return system_prompt_blocks, anthropic_messages
@@ -959,11 +1002,31 @@ class AnthropicModel(Model):
                         # Exceeded limit, remove this cache point
                         del block_dict['cache_control']
 
-    @staticmethod
-    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m') -> None:
+    def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> BetaCacheControlEphemeralParam:
+        """Build cache control dict, automatically omitting TTL for Bedrock clients.
+
+        Args:
+            ttl: The cache time-to-live ('5m' or '1h'). Ignored for Bedrock clients.
+
+        Returns:
+            A cache control dict suitable for the current client type.
+        """
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            # Bedrock doesn't support TTL, use cast to satisfy type checker
+            return cast(BetaCacheControlEphemeralParam, {'type': 'ephemeral'})
+        return BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
+
+    def _add_cache_control_to_last_param(
+        self, params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m'
+    ) -> None:
         """Add cache control to the last content block param.
 
         See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+
+        Args:
+            params: List of content block params to modify.
+            ttl: The cache time-to-live ('5m' or '1h'). This is automatically ignored for
+                 Bedrock clients, which don't support explicit TTL parameters.
         """
         if not params:
             raise UserError(
@@ -981,7 +1044,32 @@ class AnthropicModel(Model):
             raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
 
         # Add cache_control to the last param
-        last_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
+        last_param['cache_control'] = self._build_cache_control(ttl)
+
+    @staticmethod
+    def _map_binary_data(data: bytes, media_type: str) -> BetaContentBlockParam:
+        # Anthropic SDK accepts file-like objects (IO[bytes]) and handles base64 encoding internally
+        if media_type.startswith('image/'):
+            return BetaImageBlockParam(
+                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # type: ignore
+                type='image',
+            )
+        elif media_type == 'application/pdf':
+            return BetaRequestDocumentBlockParam(
+                source=BetaBase64PDFSourceParam(
+                    data=io.BytesIO(data),
+                    media_type='application/pdf',
+                    type='base64',
+                ),
+                type='document',
+            )
+        elif media_type == 'text/plain':
+            return BetaRequestDocumentBlockParam(
+                source=BetaPlainTextSourceParam(data=data.decode('utf-8'), media_type=media_type, type='text'),
+                type='document',
+            )
+        else:
+            raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
     async def _map_user_prompt(
@@ -998,30 +1086,25 @@ class AnthropicModel(Model):
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, BinaryContent):
-                    if item.is_image:
-                        yield BetaImageBlockParam(
-                            source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
-                            type='image',
-                        )
-                    elif item.media_type == 'application/pdf':
-                        yield BetaBase64PDFBlockParam(
-                            source=BetaBase64PDFSourceParam(
-                                data=io.BytesIO(item.data),
-                                media_type='application/pdf',
-                                type='base64',
-                            ),
-                            type='document',
-                        )
-                    else:
-                        raise RuntimeError('Only images and PDFs are supported for binary content')
+                    yield AnthropicModel._map_binary_data(item.data, item.media_type)
                 elif isinstance(item, ImageUrl):
-                    yield BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
+                    if item.force_download:
+                        downloaded = await download_item(item, data_format='bytes')
+                        yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
+                    else:
+                        yield BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
-                        yield BetaBase64PDFBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
+                        if item.force_download:
+                            downloaded = await download_item(item, data_format='bytes')
+                            yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
+                        else:
+                            yield BetaRequestDocumentBlockParam(
+                                source={'url': item.url, 'type': 'url'}, type='document'
+                            )
                     elif item.media_type == 'text/plain':
                         downloaded_item = await download_item(item, data_format='text')
-                        yield BetaBase64PDFBlockParam(
+                        yield BetaRequestDocumentBlockParam(
                             source=BetaPlainTextSourceParam(
                                 data=downloaded_item['data'], media_type=item.media_type, type='text'
                             ),
@@ -1090,9 +1173,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     _model_name: AnthropicModelName
     _response: AsyncIterable[BetaRawMessageStreamEvent]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
@@ -1102,29 +1185,33 @@ class AnthropicStreamedResponse(StreamedResponse):
             if isinstance(event, BetaRawMessageStartEvent):
                 self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
                 self.provider_response_id = event.message.id
+                if event.message.container:
+                    self.provider_details = self.provider_details or {}
+                    self.provider_details['container_id'] = event.message.container.id
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event_ in self._parts_manager.handle_text_delta(
                         vendor_part_id=event.index, content=current_block.text
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event_
                 elif isinstance(current_block, BetaThinkingBlock):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event_ in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         content=current_block.thinking,
                         signature=current_block.signature,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield event_
                 elif isinstance(current_block, BetaRedactedThinkingBlock):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event_ in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         id='redacted_thinking',
                         signature=current_block.data,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield event_
                 elif isinstance(current_block, BetaToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=event.index,
@@ -1185,23 +1272,24 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event_ in self._parts_manager.handle_text_delta(
                         vendor_part_id=event.index, content=event.delta.text
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event_
                 elif isinstance(event.delta, BetaThinkingDelta):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event_ in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         content=event.delta.thinking,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield event_
                 elif isinstance(event.delta, BetaSignatureDelta):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event_ in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         signature=event.delta.signature,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield event_
                 elif isinstance(event.delta, BetaInputJSONDelta):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=event.index,
@@ -1216,7 +1304,8 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
                 if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
-                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.provider_details = self.provider_details or {}
+                    self.provider_details['finish_reason'] = raw_finish_reason
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
@@ -1240,6 +1329,11 @@ class AnthropicStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
