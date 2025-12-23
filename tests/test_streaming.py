@@ -836,7 +836,7 @@ class TestPartialOutput:
             ]
         )
 
-    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3804')
+    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3813')
     async def test_output_function_text(self):
         """Test that output functions receive correct value for `partial_output` with text output."""
         call_log: list[tuple[str, bool]] = []
@@ -852,9 +852,9 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(stream_function=sf), output_type=TextOutput(process_output))
 
         async with agent.run_stream('test') as result:
-            text_parts = [text_part async for text_part in result.stream_text(debounce_by=None)]
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
 
-        assert text_parts[-1] == 'HELLO WORLD!'
+        assert outputs[-1] == 'HELLO WORLD!'
         assert call_log == snapshot(
             [
                 ('Hello', True),
