@@ -3658,6 +3658,66 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
     )
 
 
+async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
+    """Test loading builtin tool error with provider_details - ensures ToolOutputErrorPart metadata is extracted."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ToolOutputErrorPart(
+                    type='tool-web_search',
+                    tool_call_id='bt_error',
+                    input='{"query": "test"}',
+                    error_text='Search failed: rate limit exceeded',
+                    state='output-error',
+                    provider_executed=True,
+                    call_provider_metadata={
+                        'pydantic_ai': {
+                            'call_meta': {
+                                'id': 'call_789',
+                                'provider_name': 'openai',
+                                'provider_details': {'tool_type': 'web_search_preview'},
+                            },
+                            'return_meta': {
+                                'provider_name': 'openai',
+                                'provider_details': {'error_code': 'RATE_LIMIT'},
+                            },
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'test'},
+                        tool_call_id='bt_error',
+                        id='call_789',
+                        provider_details={'tool_type': 'web_search_preview'},
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'error_text': 'Search failed: rate limit exceeded', 'is_error': True},
+                        tool_call_id='bt_error',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                        provider_details={'error_code': 'RATE_LIMIT'},
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
 async def test_adapter_load_messages_tool_input_streaming_part():
     """Test loading ToolInputStreamingPart which doesn't have call_provider_metadata yet."""
     from pydantic_ai.ui.vercel_ai.request_types import ToolInputStreamingPart

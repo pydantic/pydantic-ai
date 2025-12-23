@@ -204,44 +204,41 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             provider_details = provider_meta.get('provider_details')
 
                         if builtin_tool:
-                            # For builtin tools, the call and return metadata are combined in the ToolOutputAvailablePart.
+                            # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
+                            # The call and return metadata are combined in the output part.
                             # We extract and return them to the respective parts for pydantic_ai.
                             call_meta = return_meta = {}
-                            if isinstance(part, ToolOutputAvailablePart):
-                                call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
-                                call_meta = call_meta or {}
-                                return_meta = return_meta or {}
+                            output: Any | None = None
+                            has_output = isinstance(part, (ToolOutputAvailablePart, ToolOutputErrorPart))
 
-                            call_id = call_meta.get('id') or part_id
-                            call_provider_name = call_meta.get('provider_name') or provider_name
-                            call_provider_details = call_meta.get('provider_details') or provider_details
-
-                            return_provider_name = return_meta.get('provider_name') or provider_name
-                            return_provider_details = return_meta.get('provider_details') or provider_details
-
-                            call_part = BuiltinToolCallPart(
-                                tool_name=tool_name,
-                                tool_call_id=tool_call_id,
-                                args=args,
-                                id=call_id,
-                                provider_name=call_provider_name,
-                                provider_details=call_provider_details,
-                            )
-                            builder.add(call_part)
-
-                            if isinstance(part, ToolOutputAvailablePart | ToolOutputErrorPart):
-                                if part.state == 'output-available':
+                            if has_output:
+                                loaded_call_meta, loaded_return_meta = cls._load_builtin_tool_meta(provider_meta)
+                                call_meta = loaded_call_meta or {}
+                                return_meta = loaded_return_meta or {}
+                                if isinstance(part, ToolOutputAvailablePart):
                                     output = part.output
-                                else:
+                                elif isinstance(part, ToolOutputErrorPart):
                                     output = {'error_text': part.error_text, 'is_error': True}
 
+                            builder.add(
+                                BuiltinToolCallPart(
+                                    tool_name=tool_name,
+                                    tool_call_id=tool_call_id,
+                                    args=args,
+                                    id=call_meta.get('id') or part_id,
+                                    provider_name=call_meta.get('provider_name') or provider_name,
+                                    provider_details=call_meta.get('provider_details') or provider_details,
+                                )
+                            )
+
+                            if has_output:
                                 builder.add(
                                     BuiltinToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=output,
-                                        provider_name=return_provider_name,
-                                        provider_details=return_provider_details,
+                                        provider_name=return_meta.get('provider_name') or provider_name,
+                                        provider_details=return_meta.get('provider_details') or provider_details,
                                     )
                                 )
                         else:
