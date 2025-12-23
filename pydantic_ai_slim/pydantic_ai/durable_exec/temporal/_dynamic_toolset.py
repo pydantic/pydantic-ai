@@ -56,11 +56,6 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         super().__init__(toolset)
         from datetime import timedelta
 
-        if activity_name_prefix is None:  # pragma: no cover
-            raise UserError('activity_name_prefix is required for TemporalDynamicToolset')
-        if deps_type is None:  # pragma: no cover
-            raise UserError('deps_type is required for TemporalDynamicToolset')
-
         self.activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(minutes=1))
         self.tool_activity_config = tool_activity_config or {}
         self.run_context_type = run_context_type
@@ -79,6 +74,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         get_tools_activity.__annotations__['deps'] = deps_type or Any
 
+        activity_name_prefix = activity_name_prefix or ''
         self.get_tools_activity = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{self.id}__get_tools')(
             get_tools_activity
         )
@@ -99,7 +95,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                 return await self._call_tool_in_activity(params.name, params.tool_args, ctx, tool)
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
-        call_tool_activity.__annotations__['deps'] = deps_type | None
+        call_tool_activity.__annotations__['deps'] = deps_type or Any
 
         self.call_tool_activity = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{self.id}__call_tool')(
             call_tool_activity
