@@ -319,11 +319,6 @@ When the model calls other tools in parallel with an output tool, you can contro
 
 The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-!!! warning "Streaming Methods Behavior Difference"
-    [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] select the first tool call that can produce a final result ([output](#tool-output) or [deferred](deferred-tools.md)), while all [other](agents.md#running-agents) run methods prioritize [output tools](#tool-output) first.
-
-    See [Streaming Events and Final Output](agents.md#streaming-events-and-final-output) for a detailed explanation.
-
 #### Native Output
 
 Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, Gemini cannot use tools at the same time as structured output, and attempting to do so will result in an error.
