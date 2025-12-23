@@ -1025,6 +1025,41 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
+def _handle_tool_calls_parts(
+    tool_calls: list[_messages.ToolCallPart],
+    can_make_tool_calls: bool,
+    output_parts: list[_messages.ModelRequestPart],
+    tool_manager: ToolManager[DepsT],
+    tool_call_counts: Counter[str],
+    calls_to_run: list[_messages.ToolCallPart],
+):
+    # Seperating the two scenarios to allow for granular overriding via prompt_templates
+    for call in tool_calls:
+        if not can_make_tool_calls:  # We cannot use any tools because of the max_tools_uses limit
+            return_part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content='Tool use limit reached for all tools. Please produce an output without calling any tools.',
+                tool_call_id=call.tool_call_id,
+                # TODO: Add return kind and prompt_config here once supported by #3656
+            )
+            output_parts.append(return_part)
+            yield _messages.FunctionToolResultEvent(return_part)
+        elif not tool_manager.can_use_tool(
+            call.tool_name, tool_call_counts[call.tool_name]
+        ):  # We cannot use this tool because of the max_uses limit
+            return_part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content=f'Tool use limit reached for tool "{call.tool_name}".',
+                tool_call_id=call.tool_call_id,
+                # TODO: Add return kind and prompt_config here once supported by #3656
+            )
+            output_parts.append(return_part)
+            yield _messages.FunctionToolResultEvent(return_part)
+        else:
+            yield _messages.FunctionToolCallEvent(call)
+            calls_to_run.append(call)
+
+
 async def _call_tools(
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -1055,29 +1090,9 @@ async def _call_tools(
     # For each tool, check how many calls are going to be made
     tool_call_counts = Counter(call.tool_name for call in tool_calls)
 
-    for call in tool_calls:
-        # Seprarating to allow for different return parts for each case(When supported by #3656)
-        if not can_make_tool_calls: # We cannot use any tools because of the max_tools_uses limit
-            return_part = _messages.ToolReturnPart(
-                tool_name=call.tool_name,
-                content='Tool use limit reached for all tools. Please produce an output without calling any tools.',
-                tool_call_id=call.tool_call_id,
-                # TODO: Add return kind and prompt_config here once supported by #3656
-            )
-            output_parts.append(return_part)
-            yield _messages.FunctionToolResultEvent(return_part)
-        elif not tool_manager.can_use_tool(call.tool_name, tool_call_counts[call.tool_name]): # We cannot use this tool because of the max_uses limit
-            return_part = _messages.ToolReturnPart(
-                tool_name=call.tool_name,
-                content=f'Tool use limit reached for tool "{call.tool_name}".',
-                tool_call_id=call.tool_call_id,
-                # TODO: Add return kind and prompt_config here once supported by #3656
-            )
-            output_parts.append(return_part)
-            yield _messages.FunctionToolResultEvent(return_part)
-        else:
-            yield _messages.FunctionToolCallEvent(call)
-            calls_to_run.append(call)
+    _handle_tool_calls_parts(
+        tool_calls, can_make_tool_calls, output_parts, tool_manager, tool_call_counts, calls_to_run
+    )
 
     with tracer.start_as_current_span(
         'running tools',

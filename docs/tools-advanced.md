@@ -473,7 +473,7 @@ def search_database(ctx: RunContext[None], query: str) -> str:
 
 result = agent.run_sync('Search for users named John, then Jane, then Bob')
 print(result.output)
-#> {"search_database":"Results for: a"}
+#> {"search_database":"Results for: a (This tool can only be called 2 more times.)"}
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -537,6 +537,10 @@ print(result.output)
 You can override the limit per-run:
 
 ```python
+from pydantic_ai import Agent
+
+agent = Agent('test', max_tools_uses=5)
+
 # Use a stricter limit for this specific run
 result = agent.run_sync('Quick search only', max_tools_uses=2)
 ```
