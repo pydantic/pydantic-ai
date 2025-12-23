@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from inline_snapshot import snapshot
 
@@ -36,6 +38,7 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -56,7 +59,10 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
                 timestamp=IsDatetime(),
                 provider_name='deepseek',
                 provider_url='https://api.deepseek.com',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 4, 22, 14, 9, 11, tzinfo=timezone.utc),
+                },
                 provider_response_id='181d9669-2b3a-445e-bd13-2ebff2c378f6',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -84,6 +90,7 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -104,7 +111,10 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
                 timestamp=IsDatetime(),
                 provider_name='deepseek',
                 provider_url='https://api.deepseek.com',
-                provider_details={'finish_reason': 'stop'},
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 7, 10, 17, 41, 44, tzinfo=timezone.utc),
+                },
                 provider_response_id='33be18fc-3842-486c-8c29-dd8e578f7f20',
                 finish_reason='stop',
                 run_id=IsStr(),
