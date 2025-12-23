@@ -1835,28 +1835,18 @@ class OpenAIResponsesModel(Model):
 
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system and send_item_ids:  # pragma: no branch
+                            content_is_dict = isinstance(item.content, dict)
+                            status = item.content.get('status') if content_is_dict else None
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and code_interpreter_item is not None
-                                and isinstance(item.content, dict)
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
-                                and (status := content.get('status'))
+                                and status
                             ):
                                 code_interpreter_item['status'] = status
-                            elif (
-                                item.tool_name == WebSearchTool.kind
-                                and web_search_item is not None
-                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
-                                and (status := content.get('status'))
-                            ):
+                            elif item.tool_name == WebSearchTool.kind and web_search_item is not None and status:
                                 web_search_item['status'] = status
                             elif (  # pragma: no cover
-                                item.tool_name == FileSearchTool.kind
-                                and file_search_item is not None
-                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
-                                and (status := content.get('status'))
+                                item.tool_name == FileSearchTool.kind and file_search_item is not None and status
                             ):
                                 file_search_item['status'] = status
                             elif item.tool_name == ImageGenerationTool.kind:
