@@ -88,6 +88,7 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             ),
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -110,6 +111,7 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -132,6 +134,7 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
