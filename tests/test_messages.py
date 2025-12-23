@@ -492,6 +492,25 @@ def test_file_part_has_content():
     assert filepart.has_content()
 
 
+def test_tool_call_part_has_content():
+    # Empty args should return False
+    assert not ToolCallPart(tool_name='test', args={}).has_content()
+
+    # Args with falsy values should return True (this was the bug)
+    assert ToolCallPart(tool_name='test', args={'enabled': False}).has_content()
+    assert ToolCallPart(tool_name='test', args={'count': 0}).has_content()
+    assert ToolCallPart(tool_name='test', args={'name': ''}).has_content()
+    assert ToolCallPart(tool_name='test', args={'items': []}).has_content()
+    assert ToolCallPart(tool_name='test', args={'data': None}).has_content()
+
+    # Args with truthy values should return True
+    assert ToolCallPart(tool_name='test', args={'name': 'value'}).has_content()
+
+    # String args should return True if non-empty
+    assert ToolCallPart(tool_name='test', args='{"key": "value"}').has_content()
+    assert not ToolCallPart(tool_name='test', args='').has_content()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
