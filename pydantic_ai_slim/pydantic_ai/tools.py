@@ -275,6 +275,7 @@ class Tool(Generic[ToolAgentDepsT]):
     metadata: dict[str, Any] | None
     timeout: float | None
     function_schema: _function_schema.FunctionSchema
+    defer_loading: bool
     """
     The base JSON schema for the tool's parameters.
 
@@ -296,9 +297,10 @@ class Tool(Generic[ToolAgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        metadata: dict[str, Any] | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
+        defer_loading: bool = False,
     ):
         """Create a new tool instance.
 
@@ -357,6 +359,7 @@ class Tool(Generic[ToolAgentDepsT]):
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
+            defer_loading: If True, hide the tool by default and only activate it when the model searches for tools.
         """
         self.function = function
         self.function_schema = function_schema or _function_schema.function_schema(
@@ -378,6 +381,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
+        self.defer_loading = defer_loading
 
     @classmethod
     def from_schema(
@@ -435,6 +439,7 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata=self.metadata,
             timeout=self.timeout,
             kind='unapproved' if self.requires_approval else 'function',
+            defer_loading=self.defer_loading,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -525,6 +530,14 @@ class ToolDefinition:
 
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
+    """
+
+    defer_loading: bool = False
+    """Whether to defer loading this tool until it is discovered via tool search.
+
+    When `True`, this tool will not be loaded into the model's context initially.
+
+    Instead, the model will discover it on-demand when needed, reducing token usage.
     """
 
     @property
