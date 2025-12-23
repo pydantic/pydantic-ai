@@ -421,8 +421,7 @@ def handle_slash_command(
             console.print('[dim]Markdown output of last question:[/dim]\n')
             for part in parts:
                 if isinstance(part, FileUrl):
-                    # URL types don't have text content to display
-                    continue
+                    continue  # pragma: no cover
                 if part.part_kind == 'text':
                     console.print(
                         Syntax(
