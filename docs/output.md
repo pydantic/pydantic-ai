@@ -262,17 +262,14 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-#### Handling partial output
+#### Handling partial output in output functions
 
-When streaming with `run_stream()`, output validators and output functions are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+When streaming with `run_stream()` or `run_stream_sync()`, output functions are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
 
-For output validators or functions with **side effects** (e.g., sending notifications, logging, database updates), you should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag to avoid executing side effects on partial data.
+You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when your output function has **side effects** (e.g., sending notifications, logging, database updates) that should only execute on the final output
 
-`partial_output` is `True` for each partial output when streaming with `run_stream()` and `False` for the final complete output. For all other run methods (`run()`, `run_sync()`, `run_stream_sync()`, `iter()`, `run_stream_events()`), `partial_output` is always `False` as the validator/function is only called once with the complete output.
-
-**Example with output functions:**
-
-When using output functions with side effects, you should check `partial_output` to avoid executing those side effects on partial data:
+When streaming, `partial_output` is `True` for each partial output and `False` for the final complete output.
+For all [other run methods](agents.md#running-agents), `partial_output` is always `False` as the function is only called once with the complete output.
 
 ```python {title="output_function_with_side_effects.py"}
 from pydantic import BaseModel
@@ -309,43 +306,6 @@ async def main():
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
-
-**Example with output validators:**
-
-The same pattern applies to output validators. You can use `partial_output` to skip validation for partial outputs during streaming:
-
-```python {title="partial_validation_streaming.py" line_length="120"}
-from pydantic_ai import Agent, ModelRetry, RunContext
-
-agent = Agent('openai:gpt-5')
-
-
-@agent.output_validator
-def validate_output(ctx: RunContext, output: str) -> str:
-    if ctx.partial_output:
-        return output
-
-    if len(output) < 50:
-        raise ModelRetry('Output is too short.')
-    return output
-
-
-async def main():
-    async with agent.run_stream('Write a long story about a cat') as result:
-        async for message in result.stream_text():
-            print(message)
-            #> Once upon a
-            #> Once upon a time, there was
-            #> Once upon a time, there was a curious cat
-            #> Once upon a time, there was a curious cat named Whiskers who
-            #> Once upon a time, there was a curious cat named Whiskers who loved to explore
-            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around
-            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...
-```
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
-
-If your output validator or function only **transforms** data (formatting, validation, normalization) without side effects, you typically don't need to check the `partial_output` flag
 
 ### Output modes
 
@@ -624,6 +584,45 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+#### Handling partial output in output validators
+
+When streaming with `run_stream()` or `run_stream_sync()`, output validators are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+
+You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when you want to **validate only the complete result**, not intermediate partial values.
+
+When streaming, `partial_output` is `True` for each partial output and `False` for the final complete output.
+For all [other run methods](agents.md#running-agents), `partial_output` is always `False` as the validator is only called once with the complete output.
+
+```python {title="partial_validation_streaming.py" line_length="120"}
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+agent = Agent('openai:gpt-5')
+
+
+@agent.output_validator
+def validate_output(ctx: RunContext, output: str) -> str:
+    if ctx.partial_output:
+        return output
+
+    if len(output) < 50:
+        raise ModelRetry('Output is too short.')
+    return output
+
+
+async def main():
+    async with agent.run_stream('Write a long story about a cat') as result:
+        async for message in result.stream_text():
+            print(message)
+            #> Once upon a
+            #> Once upon a time, there was
+            #> Once upon a time, there was a curious cat
+            #> Once upon a time, there was a curious cat named Whiskers who
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Image output
 
