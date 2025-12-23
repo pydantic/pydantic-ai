@@ -825,12 +825,18 @@ class GeminiStreamedResponse(StreamedResponse):
                         continue
                     if part.thought:
                         for event in self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=None, content=part.text, provider_details=provider_details
+                            vendor_part_id=None,
+                            content=part.text,
+                            provider_name=self.provider_name if provider_details else None,
+                            provider_details=provider_details,
                         ):
                             yield event
                     else:
                         for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=None, content=part.text, provider_details=provider_details
+                            vendor_part_id=None,
+                            content=part.text,
+                            provider_name=self.provider_name if provider_details else None,
+                            provider_details=provider_details,
                         ):
                             yield event
                 elif part.function_call:
@@ -839,6 +845,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         tool_name=part.function_call.name,
                         args=part.function_call.args,
                         tool_call_id=part.function_call.id,
+                        provider_name=self.provider_name if provider_details else None,
                         provider_details=provider_details,
                     )
                     if maybe_event is not None:  # pragma: no branch
@@ -855,7 +862,11 @@ class GeminiStreamedResponse(StreamedResponse):
                     content = BinaryContent(data=data, media_type=mime_type)
                     yield self._parts_manager.handle_part(
                         vendor_part_id=uuid4(),
-                        part=FilePart(content=BinaryContent.narrow_type(content), provider_details=provider_details),
+                        part=FilePart(
+                            content=BinaryContent.narrow_type(content),
+                            provider_name=self.provider_name if provider_details else None,
+                            provider_details=provider_details,
+                        ),
                     )
                 elif part.executable_code is not None:
                     part_obj = self._handle_executable_code_streaming(part.executable_code)
@@ -1099,6 +1110,8 @@ def _process_response_from_parts(
 
         if provider_details:
             item.provider_details = {**(item.provider_details or {}), **provider_details}
+            if provider_name:
+                item.provider_name = item.provider_name or provider_name
 
         items.append(item)
     return ModelResponse(

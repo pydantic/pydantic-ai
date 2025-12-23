@@ -4735,7 +4735,13 @@ def test_binary_content_serializable():
             },
             {
                 'parts': [
-                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                    {
+                        'content': 'success (no tool calls)',
+                        'id': None,
+                        'provider_name': None,
+                        'part_kind': 'text',
+                        'provider_details': None,
+                    }
                 ],
                 'usage': {
                     'input_tokens': 56,
@@ -4799,7 +4805,13 @@ def test_image_url_serializable_missing_media_type():
             },
             {
                 'parts': [
-                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                    {
+                        'content': 'success (no tool calls)',
+                        'id': None,
+                        'provider_name': None,
+                        'part_kind': 'text',
+                        'provider_details': None,
+                    }
                 ],
                 'usage': {
                     'input_tokens': 51,
@@ -4870,7 +4882,13 @@ def test_image_url_serializable():
             },
             {
                 'parts': [
-                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                    {
+                        'content': 'success (no tool calls)',
+                        'id': None,
+                        'provider_name': None,
+                        'part_kind': 'text',
+                        'provider_details': None,
+                    }
                 ],
                 'usage': {
                     'input_tokens': 51,
