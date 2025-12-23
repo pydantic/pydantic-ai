@@ -62,18 +62,18 @@ class Recipe(BaseModel):
         description='The skill level required for the recipe',
     )
     special_preferences: list[SpecialPreferences] = Field(
-        default_factory=list,
+        default_factory=list[SpecialPreferences],
         description='Any special preferences for the recipe',
     )
     cooking_time: CookingTime = Field(
         default=CookingTime.FIVE_MIN, description='The cooking time of the recipe'
     )
     ingredients: list[Ingredient] = Field(
-        default_factory=list,
+        default_factory=list[Ingredient],
         description='Ingredients for the recipe',
     )
     instructions: list[str] = Field(
-        default_factory=list, description='Instructions for the recipe'
+        default_factory=list[str], description='Instructions for the recipe'
     )
 
 

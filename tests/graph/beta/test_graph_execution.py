@@ -14,7 +14,7 @@ pytestmark = pytest.mark.anyio
 
 @dataclass
 class ExecutionState:
-    log: list[str] = field(default_factory=list)
+    log: list[str] = field(default_factory=list[str])
     counter: int = 0
 
 

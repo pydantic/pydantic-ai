@@ -105,7 +105,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
-                self.add_tool(tool)
+                self.add_tool(tool)  # pyright: ignore[reportUnknownArgumentType]
             else:
                 self.add_function(tool)
 

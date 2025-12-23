@@ -220,7 +220,7 @@ async def group_by_temporal(
             if task is None:
                 # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
                 # so far, this doesn't seem to be a problem
-                task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType]
+                task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
 
             # we use asyncio.wait to avoid cancelling the coroutine if it's not done
             done, _ = await asyncio.wait((task,), timeout=wait_time)
@@ -411,7 +411,7 @@ def is_async_callable(obj: Any) -> Any:
     while isinstance(obj, functools.partial):
         obj = obj.func
 
-    return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))  # type: ignore
+    return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
 
 
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
@@ -431,7 +431,7 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
 
     # Handle arrays
     if 'items' in s and isinstance(s['items'], dict):
-        items: dict[str, Any] = s['items']
+        items: dict[str, Any] = s['items']  # pyright: ignore[reportUnknownVariableType]
         _update_mapped_json_schema_refs(items, name_mapping)
     if 'prefixItems' in s:
         prefix_items: list[dict[str, Any]] = s['prefixItems']

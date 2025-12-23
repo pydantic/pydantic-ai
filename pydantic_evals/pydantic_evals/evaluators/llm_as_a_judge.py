@@ -232,10 +232,12 @@ def _make_section(content: Any, tag: str) -> list[str | UserContent]:
         list[str | UserContent]: the tagged section as a list of strings or UserContent
     """
     sections: list[str | UserContent] = []
-    content = content if isinstance(content, Sequence) and not isinstance(content, str) else [content]
+    items: Sequence[str | UserContent] = (  # pyright: ignore[reportUnknownVariableType]
+        content if isinstance(content, Sequence) and not isinstance(content, str) else [content]
+    )
 
     sections.append(f'<{tag}>')
-    for item in content:
+    for item in items:
         sections.append(item if isinstance(item, str | MultiModalContent) else _stringify(item))
     sections.append(f'</{tag}>')
     return sections

@@ -189,7 +189,7 @@ async def test_evaluator_serialization():
         value: int = 42
         optional: str | None = None
         default_value: bool = False
-        default_factory_value: list[int] = field(default_factory=list)
+        default_factory_value: list[int] = field(default_factory=list[int])
 
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             raise NotImplementedError
