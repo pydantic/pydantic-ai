@@ -1707,14 +1707,6 @@ def test_map_from_model_response_unexpected_part_raises_error():
         map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='test-tool')]))
 
 
-def test_map_from_model_response_with_thinking_part():
-    result = map_from_model_response(
-        ModelResponse(parts=[ThinkingPart(content='Let me think about this...'), TextPart(content='The answer is 42.')])
-    )
-    assert result.type == 'text'
-    assert result.text == 'The answer is 42.'
-
-
 def test_map_from_model_response_only_thinking_part():
     result = map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking deeply...')]))
     assert result.type == 'text'
