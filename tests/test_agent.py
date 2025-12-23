@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, Generic, Literal, TypeVar, Union
@@ -65,7 +65,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
@@ -366,83 +366,90 @@ def test_output_validator():
     )
 
 
-def test_output_validator_partial_sync():
-    """Test that output validators receive correct value for `partial_output` in sync mode."""
-    call_log: list[tuple[str, bool]] = []
+class TestPartialOutput:
+    """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
-    agent = Agent[None, str](TestModel(custom_output_text='test output'))
+    # NOTE: When changing these tests:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_streaming.py::TestPartialOutput` as well
 
-    @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: str) -> str:
-        call_log.append((output, ctx.partial_output))
-        return output
+    def test_output_validator_text(self):
+        """Test that output validators receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
 
-    result = agent.run_sync('Hello')
-    assert result.output == 'test output'
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Hello world!')])
 
-    assert call_log == snapshot([('test output', False)])
+        agent = Agent(FunctionModel(return_model))
 
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: str) -> str:
+            call_log.append((output, ctx.partial_output))
+            return output
 
-async def test_output_validator_partial_stream_text():
-    """Test that output validators receive correct value for `partial_output` when using stream_text()."""
-    call_log: list[tuple[str, bool]] = []
+        result = agent.run_sync('test')
 
-    async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        for chunk in ['Hello', ' ', 'world', '!']:
-            yield chunk
+        assert result.output == 'Hello world!'
+        assert call_log == snapshot([('Hello world!', False)])
 
-    agent = Agent(FunctionModel(stream_function=stream_text))
+    def test_output_validator_structured(self):
+        """Test that output validators receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
 
-    @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: str) -> str:
-        call_log.append((output, ctx.partial_output))
-        return output
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 42, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
 
-    async with agent.run_stream('Hello') as result:
-        text_parts = []
-        async for chunk in result.stream_text(debounce_by=None):
-            text_parts.append(chunk)
+        agent = Agent(FunctionModel(return_model), output_type=Foo)
 
-    assert text_parts[-1] == 'Hello world!'
-    assert call_log == snapshot(
-        [
-            ('Hello', True),
-            ('Hello ', True),
-            ('Hello world', True),
-            ('Hello world!', True),
-            ('Hello world!', False),
-        ]
-    )
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+            call_log.append((output, ctx.partial_output))
+            return output
 
+        result = agent.run_sync('test')
 
-async def test_output_validator_partial_stream_output():
-    """Test that output validators receive correct value for `partial_output` when using stream_output()."""
-    call_log: list[tuple[Foo, bool]] = []
+        assert result.output == Foo(a=42, b='foo')
+        assert call_log == snapshot([(Foo(a=42, b='foo'), False)])
 
-    async def stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        assert info.output_tools is not None
-        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42')}
-        yield {0: DeltaToolCall(json_args=', "b": "f')}
-        yield {0: DeltaToolCall(json_args='oo"}')}
+    def test_output_function_text(self):
+        """Test that output functions receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
 
-    agent = Agent(FunctionModel(stream_function=stream_model), output_type=Foo)
+        def process_output(ctx: RunContext[None], text: str) -> str:
+            call_log.append((text, ctx.partial_output))
+            return text.upper()
 
-    @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
-        call_log.append((output, ctx.partial_output))
-        return output
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Hello world!')])
 
-    async with agent.run_stream('Hello') as result:
-        outputs = [output async for output in result.stream_output(debounce_by=None)]
+        agent = Agent(FunctionModel(return_model), output_type=TextOutput(process_output))
+        result = agent.run_sync('test')
 
-    assert outputs[-1] == Foo(a=42, b='foo')
-    assert call_log == snapshot(
-        [
-            (Foo(a=42, b='f'), True),
-            (Foo(a=42, b='foo'), True),
-            (Foo(a=42, b='foo'), False),
-        ]
-    )
+        assert result.output == 'HELLO WORLD!'
+        assert call_log == snapshot([('Hello world!', False)])
+
+    def test_output_function_structured(self):
+        """Test that output functions receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 21, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
+
+        agent = Agent(FunctionModel(return_model), output_type=process_foo)
+        result = agent.run_sync('test')
+
+        assert result.output == Foo(a=42, b='FOO')
+        assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
 
 
 def test_plain_response_then_tuple():

@@ -262,6 +262,51 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+#### Handling partial output in output functions
+
+When streaming with `run_stream()` or `run_stream_sync()`, output functions are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+
+You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when your output function has **side effects** (e.g., sending notifications, logging, database updates) that should only execute on the final output.
+
+When streaming, `partial_output` is `True` for each partial output and `False` for the final complete output.
+For all [other run methods](agents.md#running-agents), `partial_output` is always `False` as the function is only called once with the complete output.
+
+```python {title="output_function_with_side_effects.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, RunContext
+
+
+class DatabaseRecord(BaseModel):
+    name: str
+    value: int | None = None  # Make optional to allow partial output
+
+
+def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
+    """Output function with side effect - only save final output to database."""
+    if ctx.partial_output:
+        # Skip side effects for partial outputs
+        return record
+
+    # Only execute side effect for the final output
+    print(f'Saving to database: {record.name} = {record.value}')
+    #> Saving to database: test = 42
+    return record
+
+
+agent = Agent('openai:gpt-5', output_type=save_to_database)
+
+
+async def main():
+    async with agent.run_stream('Create a record with name "test" and value 42') as result:
+        async for output in result.stream_output(debounce_by=None):
+            print(output)
+            #> name='test' value=None
+            #> name='test' value=42
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
 ### Output modes
 
 Pydantic AI implements three different methods to get a model to output structured data:
@@ -539,23 +584,29 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-#### Handling partial output in output validators {#partial-output}
+#### Handling partial output in output validators
 
-You can use the `partial_output` field on `RunContext` to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
+When streaming with `run_stream()` or `run_stream_sync()`, output validators are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+
+You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when you want to **validate only the complete result**, not intermediate partial values.
+
+When streaming, `partial_output` is `True` for each partial output and `False` for the final complete output.
+For all [other run methods](agents.md#running-agents), `partial_output` is always `False` as the validator is only called once with the complete output.
 
 ```python {title="partial_validation_streaming.py" line_length="120"}
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 agent = Agent('openai:gpt-5')
 
+
 @agent.output_validator
 def validate_output(ctx: RunContext, output: str) -> str:
     if ctx.partial_output:
         return output
-    else:
-        if len(output) < 50:
-            raise ModelRetry('Output is too short.')
-        return output
+
+    if len(output) < 50:
+        raise ModelRetry('Output is too short.')
+    return output
 
 
 async def main():
