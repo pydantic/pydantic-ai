@@ -571,6 +571,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
+        if self.is_complete:
+            return
         self.is_complete = True
         if message is not None:
             if self._stream_response:  # pragma: no branch

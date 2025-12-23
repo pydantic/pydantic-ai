@@ -15,6 +15,7 @@ else:
 
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
 FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
+ALLOWED_HEADERS = {'x-goog-upload-url', 'x-goog-upload-status'}  # required for test_google_model_file_search_tool
 
 
 class LiteralDumper(Dumper):
@@ -55,7 +56,9 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
             headers = {k: v for k, v in headers.items() if k not in FILTERED_HEADERS}
             # filter headers by prefix
             headers = {
-                k: v for k, v in headers.items() if not any(k.startswith(prefix) for prefix in FILTERED_HEADER_PREFIXES)
+                k: v
+                for k, v in headers.items()
+                if not any(k.startswith(prefix) for prefix in FILTERED_HEADER_PREFIXES) or k in ALLOWED_HEADERS
             }
             # update headers on source object
             data['headers'] = headers

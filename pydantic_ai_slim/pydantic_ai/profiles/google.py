@@ -44,6 +44,17 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
         if (const := schema.pop('const', None)) is not None:
             # Gemini doesn't support const, but it does support enum with a single value
             schema['enum'] = [const]
+            # If type is not present, infer it from the const value for Gemini API compatibility
+            if 'type' not in schema:
+                if isinstance(const, str):
+                    schema['type'] = 'string'
+                elif isinstance(const, bool):
+                    # bool must be checked before int since bool is a subclass of int in Python
+                    schema['type'] = 'boolean'
+                elif isinstance(const, int):
+                    schema['type'] = 'integer'
+                elif isinstance(const, float):
+                    schema['type'] = 'number'
         schema.pop('discriminator', None)
         schema.pop('examples', None)
 

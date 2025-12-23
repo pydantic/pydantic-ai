@@ -15,7 +15,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..builtin_tools import WebSearchTool
+from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
@@ -65,33 +65,26 @@ except ImportError as _import_error:
     ) from _import_error
 
 ProductionGroqModelNames = Literal[
-    'distil-whisper-large-v3-en',
-    'gemma2-9b-it',
-    'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant',
-    'llama-guard-3-8b',
-    'llama3-70b-8192',
-    'llama3-8b-8192',
+    'llama-3.3-70b-versatile',
+    'meta-llama/llama-guard-4-12b',
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
     'whisper-large-v3',
     'whisper-large-v3-turbo',
 ]
 """Production Groq models from <https://console.groq.com/docs/models#production-models>."""
 
 PreviewGroqModelNames = Literal[
+    'meta-llama/llama-4-maverick-17b-128e-instruct',
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+    'meta-llama/llama-prompt-guard-2-22m',
+    'meta-llama/llama-prompt-guard-2-86m',
+    'moonshotai/kimi-k2-instruct-0905',
+    'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
-    'qwen-qwq-32b',
-    'mistral-saba-24b',
-    'qwen-2.5-coder-32b',
-    'qwen-2.5-32b',
-    'deepseek-r1-distill-qwen-32b',
-    'deepseek-r1-distill-llama-70b',
-    'llama-3.3-70b-specdec',
-    'llama-3.2-1b-preview',
-    'llama-3.2-3b-preview',
-    'llama-3.2-11b-vision-preview',
-    'llama-3.2-90b-vision-preview',
-    'moonshotai/kimi-k2-instruct',
+    'qwen/qwen-3-32b',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -180,6 +173,11 @@ class GroqModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool})
 
     async def request(
         self,
@@ -389,7 +387,7 @@ class GroqModel(Model):
             if isinstance(tool, WebSearchTool):
                 if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
-            else:
+            else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `GroqModel`. If it should be, please file an issue.'
                 )
@@ -436,7 +434,10 @@ class GroqModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
+            system_prompt_count = sum(1 for m in groq_messages if m.get('role') == 'system')
+            groq_messages.insert(
+                system_prompt_count, chat.ChatCompletionSystemMessageParam(role='system', content=instructions)
+            )
         return groq_messages
 
     @staticmethod

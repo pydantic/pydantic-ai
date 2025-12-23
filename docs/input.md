@@ -104,19 +104,19 @@ print(result.output)
 
 ## User-side download vs. direct file URL
 
-When using one of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI will default to sending the URL to the model, so the file is downloaded on their side.
+When using one of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI will default to sending the URL to the model provider, so the file is downloaded on their side.
 
-Support for file URLs varies depending on type and provider. Pydantic AI handles this as follows:
+Support for file URLs varies depending on type and provider:
 
-| Model | Supported URL types | Sends URL directly |
-|-------|---------------------|-------------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | `ImageUrl` only |
-| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | Yes |
-| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` | Yes, except `DocumentUrl` (`text/plain`) |
-| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | Yes |
-| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA) | All URL types | [YouTube](models/google.md#document-image-audio-and-video-input) and [Files API](https://ai.google.dev/gemini-api/docs/files) URLs only |
-| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | Yes |
-| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | No, defaults to `force_download` |
+| Model | Send URL directly | Download and send bytes | Unsupported |
+|-------|-------------------|-------------------------|-------------|
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl` |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
+| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | — | — |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA) | [YouTube](models/google.md#document-image-audio-and-video-input), [Files API](models/google.md#document-image-audio-and-video-input) | All other URLs | — |
+| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | — | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF) |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 
 A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request. In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
 
@@ -131,23 +131,7 @@ DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 
 ## Uploaded Files
 
-Some model providers like Google's Gemini API support [uploading files](https://ai.google.dev/gemini-api/docs/files). You can upload a file using the provider's client and passing the resulting URL as input:
+Some model providers support passing URLs to files hosted on their platform:
 
-```py {title="file_upload.py" test="skip"}
-from pydantic_ai import Agent, DocumentUrl
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
-
-provider = GoogleProvider()
-file = provider.client.files.upload(file='pydantic-ai-logo.png')
-assert file.uri is not None
-
-agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
-result = agent.run_sync(
-    [
-        'What company is this logo from?',
-        DocumentUrl(url=file.uri, media_type=file.mime_type),
-    ]
-)
-print(result.output)
-```
+- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] supports the [Files API](models/google.md#document-image-audio-and-video-input) for uploading and referencing files.
+- [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] supports `s3://<bucket-name>/<object-key>` URIs, provided that the assumed role has the `s3:GetObject` permission. An optional `bucketOwner` query parameter must be specified if the bucket is not owned by the account making the request. For example: `s3://my-bucket/my-file.png?bucketOwner=123456789012`.

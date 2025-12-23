@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
         ConverseStreamResponseTypeDef,
         CountTokensRequestTypeDef,
         DocumentBlockTypeDef,
+        DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
         ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
@@ -69,6 +71,7 @@ if TYPE_CHECKING:
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ReasoningContentBlockOutputTypeDef,
+        S3LocationTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
@@ -462,9 +465,6 @@ class BedrockConverseModel(Model):
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
 
-        if model_request_parameters.builtin_tools:
-            raise UserError('Bedrock does not support built-in tools')
-
         # Bedrock supports a set of specific extra parameters
         if model_settings:
             if guardrail_config := model_settings.get('bedrock_guardrail_config', None):
@@ -545,7 +545,7 @@ class BedrockConverseModel(Model):
 
     async def _map_messages(  # noqa: C901
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
@@ -663,7 +663,7 @@ class BedrockConverseModel(Model):
             last_message = cast(dict[str, Any], current_message)
 
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt.insert(0, {'text': instructions})
+            system_prompt.append({'text': instructions})
 
         if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
             system_prompt.append({'cachePoint': {'type': 'default'}})
@@ -733,12 +733,21 @@ class BedrockConverseModel(Model):
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
                 elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
-                    downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
-                    format = downloaded_item['data_type']
+                    source: DocumentSourceTypeDef
+                    if item.url.startswith('s3://'):
+                        parsed = urlparse(item.url)
+                        s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+                        if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+                            s3_location['bucketOwner'] = bucket_owner
+                        source = {'s3Location': s3_location}
+                    else:
+                        downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
+                        source = {'bytes': downloaded_item['data']}
+
                     if item.kind == 'image-url':
                         format = item.media_type.split('/')[1]
                         assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
+                        image: ImageBlockTypeDef = {'format': format, 'source': source}
                         content.append({'image': image})
 
                     elif item.kind == 'document-url':
@@ -746,7 +755,7 @@ class BedrockConverseModel(Model):
                         document: DocumentBlockTypeDef = {
                             'name': name,
                             'format': item.format,
-                            'source': {'bytes': downloaded_item['data']},
+                            'source': source,
                         }
                         content.append({'document': document})
 
@@ -763,7 +772,7 @@ class BedrockConverseModel(Model):
                             'wmv',
                             'three_gp',
                         ), f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
+                        video: VideoBlockTypeDef = {'format': format, 'source': source}
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
