@@ -74,6 +74,7 @@ async def test_streamed_text_response():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -90,6 +91,7 @@ async def test_streamed_text_response():
                             tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -110,6 +112,7 @@ async def test_streamed_text_response():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -126,6 +129,7 @@ async def test_streamed_text_response():
                             tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -166,6 +170,7 @@ def test_streamed_text_sync_response():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -182,6 +187,7 @@ def test_streamed_text_sync_response():
                         tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -212,6 +218,7 @@ def test_streamed_text_sync_response():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -228,6 +235,7 @@ def test_streamed_text_sync_response():
                         tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -590,6 +598,7 @@ async def test_call_tool():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -608,6 +617,7 @@ async def test_call_tool():
                             tool_call_id=IsStr(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -617,6 +627,7 @@ async def test_call_tool():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -635,6 +646,7 @@ async def test_call_tool():
                             tool_call_id=IsStr(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -659,6 +671,7 @@ async def test_call_tool():
                             tool_call_id=IsStr(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -690,6 +703,7 @@ async def test_empty_response():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -699,7 +713,11 @@ async def test_empty_response():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelRequest(parts=[], run_id=IsStr()),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
@@ -734,6 +752,7 @@ async def test_call_tool_wrong_name():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -805,6 +824,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -846,6 +866,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -899,6 +920,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test early output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -926,6 +948,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -951,6 +974,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -978,6 +1002,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1034,6 +1059,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1102,6 +1128,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1173,6 +1200,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1209,6 +1237,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1258,6 +1287,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1283,6 +1313,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1317,6 +1348,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1342,6 +1374,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1367,6 +1400,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1422,6 +1456,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1474,6 +1509,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1527,6 +1563,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test exhaustive output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1554,6 +1591,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1688,6 +1726,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test valid first invalid second', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1715,6 +1754,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -1772,6 +1812,7 @@ class TestMultipleToolCalls:
                             content='test exhaustive with tool retry', timestamp=IsNow(tz=datetime.timezone.utc)
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1799,6 +1840,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -2332,6 +2374,7 @@ async def test_tool_raises_approval_required():
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -2350,6 +2393,7 @@ async def test_tool_raises_approval_required():
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -2774,6 +2818,7 @@ async def test_get_output_after_stream_output():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2799,6 +2844,7 @@ async def test_get_output_after_stream_output():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
