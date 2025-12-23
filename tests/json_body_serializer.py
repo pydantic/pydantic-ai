@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-# Smart quote and special character normalization
+# Smart quote and special character normalization.
+# LLM APIs sometimes return smart quotes and special Unicode characters in responses.
+# When captured in cassettes, these can cause linter complaints about non-ASCII characters
+# and snapshot instability across different environments. Normalizing to ASCII equivalents
+# ensures consistent, portable cassette files.
 SMART_CHAR_MAP = {
     '\u2018': "'",  # LEFT SINGLE QUOTATION MARK
     '\u2019': "'",  # RIGHT SINGLE QUOTATION MARK

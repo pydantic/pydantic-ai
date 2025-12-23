@@ -466,6 +466,7 @@ class GoogleModel(Model):
         if isinstance(validated_tool_choice, tuple):
             tool_names, tool_choice_mode = validated_tool_choice
             if tool_choice_mode == 'auto':
+                # Google doesn't support AUTO mode with allowed_function_names, so we filter tool_defs instead
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
                 allowed_function_names = tool_names

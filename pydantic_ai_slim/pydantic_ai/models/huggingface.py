@@ -329,11 +329,6 @@ class HuggingFaceModel(Model):
         validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
-        def _force_one(name: str) -> ChatCompletionInputToolChoiceClass:
-            return ChatCompletionInputToolChoiceClass(
-                function=ChatCompletionInputFunctionName(name=name)  # pyright: ignore[reportCallIssue]
-            )
-
         tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
         if validated_tool_choice in ('auto', 'required'):
             tool_choice = validated_tool_choice
@@ -342,12 +337,15 @@ class HuggingFaceModel(Model):
             tool_choice = 'none'
         elif isinstance(validated_tool_choice, tuple):
             tool_names, tool_choice_mode = validated_tool_choice
-            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             if tool_choice_mode == 'auto':
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = 'auto'
             elif len(tool_names) == 1:
-                tool_choice = _force_one(tool_names[0])
+                tool_choice = ChatCompletionInputToolChoiceClass(
+                    function=ChatCompletionInputFunctionName(name=tool_names[0])  # pyright: ignore[reportCallIssue]
+                )
             else:
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = 'required'
         else:
             assert_never(validated_tool_choice)

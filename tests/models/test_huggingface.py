@@ -1134,7 +1134,7 @@ def test_tool_choice_none_sends_tools_with_none_mode() -> None:
 
 
 def test_tool_choice_specific_tool_single() -> None:
-    """Single tool entries should use ChatCompletionInputToolChoiceClass and filter tools."""
+    """Single tool entries should use ChatCompletionInputToolChoiceClass, all tools sent for caching."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',
@@ -1156,8 +1156,8 @@ def test_tool_choice_specific_tool_single() -> None:
     settings: HuggingFaceModelSettings = {'tool_choice': ['tool_a']}
     tools, result_tool_choice = model._get_tool_choice(settings, mrp)  # pyright: ignore[reportPrivateUsage]
 
-    assert len(tools) == 1
-    assert tools[0].function['name'] == 'tool_a'
+    # All tools are sent (not filtered) for caching benefits
+    assert len(tools) == 2
     assert isinstance(result_tool_choice, ChatCompletionInputToolChoiceClass)
     assert result_tool_choice.function == ChatCompletionInputFunctionName(name='tool_a')  # type: ignore[call-arg]
 

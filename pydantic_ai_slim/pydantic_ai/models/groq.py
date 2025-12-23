@@ -391,8 +391,8 @@ class GroqModel(Model):
             tool_choice = 'none'
         elif isinstance(validated_tool_choice, tuple):
             tool_names, tool_choice_mode = validated_tool_choice
-            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             if tool_choice_mode == 'auto':
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = 'auto'
             elif len(tool_names) == 1:
                 tool_choice = ChatCompletionNamedToolChoiceParam(
@@ -400,6 +400,7 @@ class GroqModel(Model):
                     function={'name': tool_names[0]},
                 )
             else:
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = 'required'
         else:
             assert_never(validated_tool_choice)

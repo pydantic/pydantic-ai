@@ -2306,7 +2306,7 @@ async def test_tool_choice_none_filters_out_function_tools(bedrock_provider: Bed
 
 
 async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvider) -> None:
-    """Single tool names should emit the {tool: {name}} payload."""
+    """Single tool names should emit the {tool: {name}} payload, all tools sent for caching."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',
@@ -2325,7 +2325,7 @@ async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvide
     settings: BedrockModelSettings = {'tool_choice': ['tool_a']}
     tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
 
-    # With tool filtering, only the specified tool is sent
+    # All tools are sent (not filtered) for caching benefits
     assert tool_config == snapshot(
         {
             'tools': [
@@ -2333,6 +2333,13 @@ async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvide
                     'toolSpec': {
                         'name': 'tool_a',
                         'description': 'Test tool A',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
+                    }
+                },
+                {
+                    'toolSpec': {
+                        'name': 'tool_b',
+                        'description': 'Test tool B',
                         'inputSchema': {'json': {'type': 'object', 'properties': {}}},
                     }
                 },
