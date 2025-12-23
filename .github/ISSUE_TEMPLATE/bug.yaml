@@ -5,17 +5,20 @@ labels: ["need confirmation"]
 body:
   - type: markdown
     attributes:
-      value: Thank you for contributing to Pydantic AI! ✊
+      value: |
+        Thank you for contributing to Pydantic AI! ✊
+
+        Please provide as much information as possible to help us reproduce and fix your issue quickly.
 
   - type: checkboxes
     id: checks
     attributes:
       label: Initial Checks
-      description: Just making sure you're using the latest version of Pydantic AI.
+      description: Just making sure we're on the same page.
       options:
-        - label: I confirm that I'm using the latest version of Pydantic AI
+        - label: I'm using the [latest version](https://github.com/pydantic/pydantic-ai/releases/latest) of Pydantic AI
           required: true
-        - label: I confirm that I searched for my issue in https://github.com/pydantic/pydantic-ai/issues before opening this issue
+        - label: I've searched for my issue in [the issue tracker](https://github.com/pydantic/pydantic-ai/issues) before opening this issue
           required: true
 
   - type: textarea
@@ -25,18 +28,21 @@ body:
       description: |
         Please explain what you're seeing and what you would expect to see.
 
-        Please provide as much detail as possible to make understanding and solving your problem as quick as possible. 🙏
+        - **A line of code is worth a thousand words**: you can include minimal, reproducible example code below.
+        - **A trace is worth a thousand log lines**: you can link to a [Pydantic Logfire](https://ai.pydantic.dev/logfire) trace below.
     validations:
       required: true
 
   - type: textarea
     id: example
     attributes:
-      label: Example Code
+      label: Minimal, Reproducible Example
       description: >
-        If applicable, please add a self-contained,
-        [minimal, reproducible, example](https://stackoverflow.com/help/minimal-reproducible-example)
-        demonstrating the bug.
+        If at all possible, please add a self-contained,
+        [minimal, reproducible example](https://stackoverflow.com/help/minimal-reproducible-example)
+        that demonstrates the bug.
+
+        (This will be automatically formatted as code, so no need for backticks.)
 
       placeholder: |
         from pydantic_ai import Agent
@@ -44,12 +50,23 @@ body:
         ...
       render: Python
 
+  - type: input
+    id: logfire_trace
+    attributes:
+      label: Logfire Trace
+      description: >
+        If at all possible, please capture the agent run or model request leading up to the bug or error using [Pydantic Logfire](https://ai.pydantic.dev/logfire)
+        and share a link to the [public trace](https://logfire.pydantic.dev/docs/guides/web-ui/public-traces/) here.
+
   - type: textarea
     id: version
     attributes:
       label: Python, Pydantic AI & LLM client version
       description: |
-        Which version of Python, Pydantic and LLM client are you using?
-      render: Text
+        Which version of Python, Pydantic AI, and LLM provider SDK are you using?
+      value: |
+        - Python:
+        - Pydantic AI:
+        - LLM provider SDK:
     validations:
       required: true

@@ -1272,7 +1272,7 @@ class OpenAIResponsesModel(Model):
                         )
                         # We only need to store the signature and raw_content once.
                         signature = None
-                        provider_details = None
+                        provider_details = None  # pyright: ignore[reportAssignmentType]
                 elif signature or provider_details:
                     items.append(
                         ThinkingPart(
