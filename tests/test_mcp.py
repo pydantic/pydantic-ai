@@ -18,7 +18,6 @@ from pydantic_ai import (
     ModelResponse,
     RetryPromptPart,
     TextPart,
-    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -1703,8 +1702,8 @@ def test_map_from_pai_messages_with_binary_content():
 
 
 def test_map_from_model_response():
-    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
-        map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ToolCallPart, expected TextPart'):
+        map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='test-tool')]))
 
 
 async def test_elicitation_callback_functionality(run_context: RunContext[int]):
