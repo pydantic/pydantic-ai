@@ -95,6 +95,12 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
+if not imports_successful():
+    # Define placeholder errors module so parametrize decorators can be parsed
+    from types import SimpleNamespace
+
+    errors = SimpleNamespace(ServerError=Exception, ClientError=Exception, APIError=Exception)
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
@@ -4938,7 +4944,7 @@ async def test_google_api_errors_are_handled(
     allow_model_requests: None,
     google_provider: GoogleProvider,
     mocker: MockerFixture,
-    error_class: type[errors.APIError],
+    error_class: Any,
     error_response: dict[str, Any],
     expected_status: int,
 ):

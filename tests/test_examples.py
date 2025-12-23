@@ -149,6 +149,7 @@ def test_docs_examples(
 
     mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
     mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
+    mocker.patch('pydantic_ai.toolsets.fastmcp.FastMCPToolset', return_value=MockMCPServer())
     mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
@@ -301,6 +302,9 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
     @property
     def id(self) -> str | None:
         return None  # pragma: no cover
@@ -335,6 +339,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     ),
     'What will the weather be like in Paris on Tuesday?': ToolCallPart(
         tool_name='weather_forecast', args={'location': 'Paris', 'forecast_date': '2030-01-01'}, tool_call_id='0001'
+    ),
+    'What is the weather in Paris?': ToolCallPart(
+        tool_name='get_weather_forecast', args={'location': 'Paris'}, tool_call_id='0001'
     ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
     'Tell me a different joke.': 'No.',
@@ -808,6 +815,8 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
+        return ModelResponse(parts=[TextPart(m.content)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
