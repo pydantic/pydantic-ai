@@ -164,8 +164,6 @@ jobs:
 
       - run: uv sync --only-dev
 
-      - run: uv run mcp-run-python example --deps=numpy
-
       - name: cache HuggingFace models
         uses: actions/cache@v4
         with:
@@ -214,8 +212,6 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --group dev
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
