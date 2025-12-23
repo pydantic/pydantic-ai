@@ -334,7 +334,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Skip ModelRequestNode and go directly to CallToolsNode
         return CallToolsNode[DepsT, NodeRunEndT](
-            last_model_response, tool_call_results=tool_call_results, user_prompt=self.user_prompt
+            last_model_response,
+            tool_call_results=tool_call_results,
+            tool_call_metadata=deferred_tool_results.metadata or None,
+            user_prompt=self.user_prompt,
         )
 
     async def _reevaluate_dynamic_prompts(
@@ -558,6 +561,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     model_response: _messages.ModelResponse
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
+    tool_call_metadata: dict[str, dict[str, Any]] | None = None
+    """Metadata for deferred tool calls, keyed by `tool_call_id`."""
     user_prompt: str | Sequence[_messages.UserContent] | None = None
     """Optional user prompt to include alongside tool call results.
 
@@ -734,6 +739,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             tool_manager=ctx.deps.tool_manager,
             tool_calls=tool_calls,
             tool_call_results=self.tool_call_results,
+            tool_call_metadata=self.tool_call_metadata,
             final_result=None,
             ctx=ctx,
             output_parts=output_parts,
@@ -846,6 +852,7 @@ async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
     final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
@@ -978,6 +985,7 @@ async def process_tool_calls(  # noqa: C901
             tool_manager=tool_manager,
             tool_calls=calls_to_run,
             tool_call_results=calls_to_run_results,
+            tool_call_metadata=tool_call_metadata,
             tracer=ctx.deps.tracer,
             usage=ctx.state.usage,
             usage_limits=ctx.deps.usage_limits,
@@ -1030,6 +1038,7 @@ async def _call_tools(
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
     tracer: Tracer,
     usage: _usage.RunUsage,
     usage_limits: _usage.UsageLimits,
@@ -1091,7 +1100,7 @@ async def _call_tools(
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
                     index,
                 ):
                     yield event
@@ -1099,7 +1108,7 @@ async def _call_tools(
         else:
             tasks = [
                 asyncio.create_task(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
                     name=call.tool_name,
                 )
                 for call in tool_calls
@@ -1143,6 +1152,7 @@ async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:
@@ -1150,7 +1160,9 @@ async def _call_tool(
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            tool_result = await tool_manager.handle_call(tool_call, approved=True)
+            # Get metadata from the tool_call_metadata dict by tool_call_id
+            metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
+            tool_result = await tool_manager.handle_call(tool_call, approved=True, metadata=metadata)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
