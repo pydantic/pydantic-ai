@@ -89,6 +89,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
         device = settings.get('sentence_transformers_device', None)
         normalize = settings.get('sentence_transformers_normalize_embeddings', False)
         batch_size = settings.get('sentence_transformers_batch_size', None)
+        dimensions = settings.get('dimensions', None)
 
         model = await self._get_model()
         encode_func = model.encode_query if input_type == 'query' else model.encode_document  # type: ignore[reportUnknownReturnType]
@@ -101,6 +102,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
             convert_to_tensor=False,
             device=device,
             normalize_embeddings=normalize,
+            truncate_dim=dimensions,
             **{'batch_size': batch_size} if batch_size is not None else {},  # type: ignore[reportArgumentType]
         )
         embeddings = np_embeddings.tolist()  # type: ignore[reportAttributeAccessIssue]

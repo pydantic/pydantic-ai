@@ -15,6 +15,7 @@ class EmbeddingSettings(TypedDict, total=False):
 
     * OpenAI
     * Cohere
+    * Sentence Transformers
     """
 
     extra_headers: dict[str, str]
