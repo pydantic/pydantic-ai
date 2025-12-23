@@ -1715,16 +1715,16 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='Let me get the image and check what fruit is shown.'),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01WALUz3dC75yywrmL6dF3Bc'),
+                    TextPart(content="I'll get the image and identify the fruit in it."),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=372,
+                    input_tokens=555,
                     output_tokens=49,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 372,
+                        'input_tokens': 555,
                         'output_tokens': 49,
                     },
                 ),
@@ -1755,17 +1755,17 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's flesh has the typical fuzzy brown skin visible around the edges. The image is a clean, well-lit close-up shot of the kiwi slice against a white background."
+                        content='The fruit in the image is a **kiwi** (also known as kiwifruit). The image shows a cross-section of the kiwi, revealing its distinctive bright green flesh, small black seeds arranged in a radial pattern around the pale center, and the brown fuzzy skin around the edge.'
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=2025,
-                    output_tokens=81,
+                    input_tokens=1100,
+                    output_tokens=68,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2025,
-                        'output_tokens': 81,
+                        'input_tokens': 1100,
+                        'output_tokens': 68,
                     },
                 ),
                 model_name='claude-sonnet-4-5-20250929',

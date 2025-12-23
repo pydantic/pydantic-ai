@@ -1287,10 +1287,10 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ')],
                 usage=RequestUsage(
                     input_tokens=46,
-                    output_tokens=11,
+                    output_tokens=10,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1326,10 +1326,10 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The image shows a kiwi fruit.')],
+                parts=[TextPart(content='The fruit in the image is a kiwi.')],
                 usage=RequestUsage(
-                    input_tokens=1185,
-                    output_tokens=9,
+                    input_tokens=847,
+                    output_tokens=10,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,

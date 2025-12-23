@@ -18,6 +18,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FinalResultEvent,
@@ -42,7 +43,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
-    BinaryImage,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
@@ -623,7 +623,7 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
 ):
-    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('meta-llama/llama-4-maverick-17b-128e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -648,15 +648,15 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
-                usage=RequestUsage(input_tokens=192, output_tokens=8),
-                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='arq6emmq6')],
+                usage=RequestUsage(input_tokens=712, output_tokens=20),
+                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 4, 29, 20, 21, 45, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
@@ -679,14 +679,14 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=RequestUsage(input_tokens=2552, output_tokens=11),
-                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                usage=RequestUsage(input_tokens=1501, output_tokens=11),
+                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 29, 20, 21, 47, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',

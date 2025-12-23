@@ -120,6 +120,7 @@ def test_logfire(
         model=TestModel(),
         toolsets=[toolset],
         instrument=instrument,
+        metadata={'env': 'test'},
     )
 
     result = my_agent.run_sync('Hello')
@@ -314,12 +315,14 @@ def test_logfire(
                         ]
                     )
                 ),
+                'metadata': '{"env": "test"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
                                 'pydantic_ai.all_messages': {'type': 'array'},
+                                'metadata': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
                         }
@@ -379,12 +382,14 @@ def test_logfire(
                     )
                 ),
                 'final_result': '{"my_ret":"1"}',
+                'metadata': '{"env": "test"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
                                 'all_messages_events': {'type': 'array'},
+                                'metadata': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
                         }
@@ -568,6 +573,40 @@ def test_logfire(
             'gen_ai.usage.output_tokens': 4,
         }
     )
+
+
+def _test_logfire_metadata_values_callable_dict(ctx: RunContext[Any]) -> dict[str, str]:
+    return {'model_name': ctx.model.model_name}
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(
+    ('metadata', 'expected'),
+    [
+        pytest.param({'env': 'test'}, '{"env": "test"}', id='dict'),
+        pytest.param(_test_logfire_metadata_values_callable_dict, '{"model_name": "test"}', id='callable-dict'),
+    ],
+)
+def test_logfire_metadata_values(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    metadata: dict[str, Any] | Callable[[RunContext[Any]], dict[str, Any]],
+    expected: dict[str, Any],
+) -> None:
+    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata=metadata)
+    agent.run_sync('Hello')
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0]['metadata'] == expected
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata={'env': 'base'})
+    with agent.override(metadata={'env': 'override'}):
+        agent.run_sync('Hello')
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0]['metadata'] == '{"env": "override"}'
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
