@@ -2856,19 +2856,19 @@ def _warn_on_dict_typed_params(provider_name: str, tool_name: str, json_schema: 
 
     properties: dict[str, dict[str, Any]] = json_schema.get('properties', {})
     for prop_schema in properties.values():
-        # Check for object type with additionalProperties
-        if prop_schema.get('type') == 'object':
-            additional_props: Any = prop_schema.get('additionalProperties')
-            # If additionalProperties is True or a schema object (not False/absent)
-            if additional_props not in (False, None):
-                has_dict_params = True
+        # Check for object type with non False/absent additionalProperties
+        if (prop_schema.get('type') == 'object') and (prop_schema.get('additionalProperties') not in (False, None)):
+            has_dict_params = True
 
-        # Check arrays of objects with additionalProperties
+        # Check arrays of objects with non False/absent additionalProperties
         if prop_schema.get('type') == 'array':
             items: Any = prop_schema.get('items', {})
-            if isinstance(items, dict) and items.get('type') == 'object':  # type: ignore[reportUnknownMemberType]
-                if items.get('additionalProperties') not in (False, None):  # type: ignore[reportUnknownMemberType]
-                    has_dict_params = True
+            if (
+                isinstance(items, dict)
+                and (items.get('type') == 'object')  # type: ignore[reportUnknownMemberType]
+                and (items.get('additionalProperties') not in (False, None))  # type: ignore[reportUnknownMemberType]
+            ):
+                has_dict_params = True
 
     # Check $defs for nested model definitions (Pydantic uses $ref to reference these)
     defs: dict[str, Any] = json_schema.get('$defs', {})
