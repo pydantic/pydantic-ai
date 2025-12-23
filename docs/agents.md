@@ -125,9 +125,9 @@ It also takes an optional `event_stream_handler` argument that you can use to ga
 The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
 
 !!! note
-    The `run_stream()` method will consider the first output that matches the [output type](output.md#structured-output) to be the final output of the agent run, even when the model generates tool calls after this "final" output.
+    The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first tool call that can produce a final result (both [output](output.md#tool-output) and [deferred](deferred-tools.md) tools) to be the final output of the agent run. This is different behavior from all [other](#running-agents) agent run methods, which prioritize **output** tools over deferred tools.
 
-	These "dangling" tool calls will not be executed unless the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] is set to `'exhaustive'`, and even then their results will not be sent back to the model as the agent run will already be considered completed.
+	"Dangling" tool calls generated after the "final output" will not be executed unless the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] is set to `'exhaustive'`, and even then their results will not be sent back to the model as the agent run will already be considered completed.
 
     If you want to always keep running the agent when it performs tool calls, and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
@@ -225,6 +225,8 @@ if __name__ == '__main__':
     ]
     """
 ```
+
+_(This example is complete, it can be run "as is")_
 
 ### Streaming All Events
 
