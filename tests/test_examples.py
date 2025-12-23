@@ -25,7 +25,9 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
@@ -557,16 +559,26 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
+def _has_multimodal_content(part: ToolReturnPart, content_type: type) -> bool:
+    """Check if a ToolReturnPart contains multimodal content of the given type."""
+    if isinstance(part.content, content_type):
+        return True
+    if isinstance(part.content, list):
+        return any(isinstance(item, content_type) for item in part.content)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    return False
+
+
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
-    if isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
+    # Handle multimodal tool returns (content directly in ToolReturnPart)
+    if isinstance(m, ToolReturnPart):
+        if m.tool_name == 'get_company_logo' and _has_multimodal_content(m, ImageUrl):
             return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
-        elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
+        elif m.tool_name == 'get_document' and _has_multimodal_content(m, DocumentUrl):
             return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
-
+    if isinstance(m, UserPromptPart):
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
