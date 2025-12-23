@@ -138,8 +138,8 @@ async def greeting_resource_template(name: str) -> str:
 
 @mcp.tool()
 async def get_image() -> Image:
-    data = Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
-    return Image(data=data, format='png')
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
+    return Image(data=data, format='jpg')
 
 
 @mcp.tool()

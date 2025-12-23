@@ -1463,7 +1463,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
     async with agent:
         result = await agent.run('Get me multiple items and summarize in one sentence')
         assert result.output == snapshot(
-            'The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
+            'The content includes two strings, a dictionary with keys "foo" and "baz," and an image of a kiwi fruit.'
         )
         assert result.all_messages() == snapshot(
             [
@@ -1482,12 +1482,12 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                         ToolCallPart(
                             tool_name='get_multiple_items',
                             args='{}',
-                            tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
+                            tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=195,
-                        output_tokens=12,
+                        input_tokens=398,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1503,18 +1503,26 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
+                    provider_response_id='chatcmpl-CpzU5Mhbq7bf8kaSOksp2KUTqG4u0',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
-                            content="Error executing tool get_multiple_items: [Errno 2] No such file or directory: '/Users/marcelotryle/dev/pydantic/pydantic-ai/tests/assets/kiwi.png'",
+                        ToolReturnPart(
                             tool_name='get_multiple_items',
-                            tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
+                            content=[
+                                'This is a string',
+                                'Another string',
+                                {'foo': 'bar', 'baz': 123},
+                                'See file 241a70',
+                            ],
+                            tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
                             timestamp=IsDatetime(),
-                        )
+                        ),
+                        UserPromptPart(
+                            content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()
+                        ),
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1522,12 +1530,12 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
+                            content='The content includes two strings, a dictionary with keys "foo" and "baz," and an image of a kiwi fruit.'
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=1355,
-                        output_tokens=24,
+                        input_tokens=1220,
+                        output_tokens=26,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1543,7 +1551,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
+                    provider_response_id='chatcmpl-CpzU6VAYJTRYnthvYDAolptinBLkS',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
