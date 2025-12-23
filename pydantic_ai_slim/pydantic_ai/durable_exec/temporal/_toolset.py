@@ -75,6 +75,10 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         # Temporalized toolsets cannot be swapped out after the fact.
         return self
 
+    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
+        # Stop recursion at temporalized toolsets - they're already wrapped and validated.
+        visitor(self)
+
     async def __aenter__(self) -> Self:
         if not workflow.in_workflow():
             await self.wrapped.__aenter__()

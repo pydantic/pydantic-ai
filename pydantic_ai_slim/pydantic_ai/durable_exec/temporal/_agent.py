@@ -67,11 +67,11 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]],
             'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
         )
 
-    def validate_toolset(t: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+    def validate_toolset(t: AbstractToolset[AgentDepsT]) -> None:
         # If we encounter a TemporalWrapperToolset, we don't need to check its children
         # since they're already wrapped
         if isinstance(t, TemporalWrapperToolset):  # pragma: no cover
-            return t
+            return
 
         if isinstance(t, FunctionToolset):
             raise UserError(error_msg)
@@ -101,12 +101,12 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]],
                 raise UserError(error_msg)
 
         # For other toolsets (like CombinedToolset, WrapperToolset, etc.),
-        # we return them unchanged - visit_and_replace will handle recursion
-        return t  # pragma: no cover - defensive code for future toolset types
+        # we return them unchanged - apply will handle recursion
+        return  # pragma: no cover - defensive code for future toolset types
 
     # Visit and validate each toolset recursively
     for toolset in toolsets:
-        toolset.visit_and_replace(validate_toolset)
+        toolset.apply(validate_toolset)
 
 
 @dataclass
