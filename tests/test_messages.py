@@ -761,7 +761,7 @@ def test_binary_content_from_path(tmp_path: Path):
     )
     if find_spec('magika') is None:
         # test image file
-        # magika will ignore fake jpeg data and detact it to text/plain
+        # magika will ignore fake jpeg data and scan it to text/plain
         test_jpg_file = tmp_path / 'test.jpg'
         test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
         binary_content = BinaryContent.from_path(test_jpg_file)
