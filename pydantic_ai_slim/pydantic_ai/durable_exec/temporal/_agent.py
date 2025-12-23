@@ -795,7 +795,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
 
     @overload
@@ -815,7 +814,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
 
     def run_stream_events(
@@ -834,12 +832,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
-        This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
-        uses the `event_stream_handler` kwarg to get a stream of events from the run.
+        This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run].
 
         Example:
         ```python
@@ -867,8 +863,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             '''
         ```
 
-        Arguments are the same as for [`self.run`][pydantic_ai.agent.AbstractAgent.run],
-        except that `event_stream_handler` is now allowed.
+        Arguments are the same as for [`self.run`][pydantic_ai.agent.AbstractAgent.run].
 
         Args:
             user_prompt: User input to start/continue the conversation.
@@ -886,7 +881,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run. Can be toolset instances or strings
                 referencing toolsets registered by name in the agent constructor's `toolsets` parameter.
             builtin_tools: Optional additional builtin tools for this run.
-            event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
 
         Returns:
             An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
