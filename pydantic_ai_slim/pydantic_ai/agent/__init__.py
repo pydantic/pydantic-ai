@@ -1506,7 +1506,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = CombinedToolset(toolsets)
 
         def copy_dynamic_toolsets(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            if isinstance(toolset, DynamicToolset):
+            if isinstance(toolset, DynamicToolset) or isinstance(toolset, SearchableToolset):
                 return toolset.copy()
             else:
                 return toolset
