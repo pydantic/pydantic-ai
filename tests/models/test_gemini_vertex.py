@@ -141,6 +141,7 @@ async def test_url_input(
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -181,6 +182,7 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
