@@ -63,10 +63,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
             return {name: tool.tool_def for name, tool in tools.items()}
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
-        if deps_type is not None:
-            get_tools_activity.__annotations__['deps'] = deps_type
-        else:  # pragma: no cover - deps_type is always provided in practice by TemporalAgent
-            pass
+        get_tools_activity.__annotations__['deps'] = deps_type or Any
 
         activity_name_prefix = activity_name_prefix or ''
 
@@ -87,10 +84,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
             )
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
-        if deps_type is not None:
-            call_tool_activity.__annotations__['deps'] = deps_type
-        else:  # pragma: no cover - deps_type is always provided in practice by TemporalAgent
-            pass
+        call_tool_activity.__annotations__['deps'] = deps_type or Any
 
         self.call_tool_activity = activity.defn(name=f'{activity_name_prefix}__mcp_server__{self.id}__call_tool')(
             call_tool_activity

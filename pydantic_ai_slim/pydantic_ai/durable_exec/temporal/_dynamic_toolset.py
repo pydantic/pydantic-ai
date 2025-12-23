@@ -76,7 +76,8 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                     for name, tool in tools.items()
                 }
 
-        get_tools_activity.__annotations__['deps'] = deps_type
+        # Set type hint explicitly so that Temporal can take care of serialization and deserialization
+        get_tools_activity.__annotations__['deps'] = deps_type or Any
 
         self.get_tools_activity = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{self.id}__get_tools')(
             get_tools_activity
@@ -97,7 +98,8 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
 
                 return await self._call_tool_in_activity(params.name, params.tool_args, ctx, tool)
 
-        call_tool_activity.__annotations__['deps'] = deps_type
+        # Set type hint explicitly so that Temporal can take care of serialization and deserialization
+        call_tool_activity.__annotations__['deps'] = deps_type | None
 
         self.call_tool_activity = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{self.id}__call_tool')(
             call_tool_activity

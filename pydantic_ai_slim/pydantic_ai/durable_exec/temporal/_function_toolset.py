@@ -50,8 +50,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
             return await self._call_tool_in_activity(name, params.tool_args, ctx, tool)
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
-        if deps_type is not None:
-            call_tool_activity.__annotations__['deps'] = deps_type
+        call_tool_activity.__annotations__['deps'] = deps_type or Any
 
         activity_name_prefix = activity_name_prefix or ''
         self.call_tool_activity = activity.defn(name=f'{activity_name_prefix}__toolset__{self.id}__call_tool')(
