@@ -65,7 +65,7 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
     toolset: AbstractToolset[AgentDepsT]
 
     _active_tool_names: set[str] = field(default_factory=set)
-    """Tracks activate tool name sets indexed by RunContext.run_id"""
+    """Tracks activated tool names."""
 
     @property
     def id(self) -> str | None:
@@ -173,7 +173,7 @@ class _SearchToolsetToolWrapper(ToolsetTool[AgentDepsT]):
         # execution, so storing a callable is not going to work I'm afraid.
 
         # Also overriding metadata is not going to work if something underneath is already having it.
-        metadata["active"] = lambda run_id: toolset.is_active(tool_def=tool, run_id=run_id)
+        metadata["active"] = lambda run_id: toolset.is_active(tool_def=tool)
         return replace(self._tool_def, metadata=metadata)
 
     @tool_def.setter
@@ -181,13 +181,13 @@ class _SearchToolsetToolWrapper(ToolsetTool[AgentDepsT]):
         self._tool_def = value
 
 
-def is_active(tool_def: ToolDefinition, run_id: str) -> bool:
+def is_active(tool_def: ToolDefinition) -> bool:
     """Filters out not-yet-active defer_loading tools."""
     if not tool_def.defer_loading:
         return True
     metadata = (tool_def.metadata or {}).copy()
     predicate = metadata.get("active")
-    return predicate and predicate(run_id)
+    return predicate and predicate()
 
 
 def is_search_tool(tool_def: ToolDefinition) -> bool:
