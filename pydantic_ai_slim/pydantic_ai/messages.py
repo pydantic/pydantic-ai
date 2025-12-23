@@ -825,6 +825,22 @@ class BaseToolReturnPart:
         else:
             return {'return_value': json_content}
 
+    def model_response_parts(self) -> list[Any]:
+        """Return content parts for the model, supporting multimodal content.
+
+        This method is used by model implementations to extract content parts from a tool return,
+        handling both simple string content and multimodal content (images, documents, etc.).
+
+        Returns a list that may contain strings, MultiModalContent objects (ImageUrl, AudioUrl,
+        DocumentUrl, VideoUrl, BinaryContent), or serialized representations for other types.
+        """
+        if isinstance(self.content, str | FileUrl | BinaryContent):
+            return [self.content]
+        elif isinstance(self.content, list):
+            return cast(list[Any], self.content)  # pyright: ignore[reportUnknownMemberType]
+        else:
+            return [self.model_response_str()]
+
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         return LogRecord(
             attributes={'event.name': 'gen_ai.tool.message'},

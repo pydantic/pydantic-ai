@@ -21,6 +21,7 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
+    FileUrl,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -569,6 +570,28 @@ class BedrockConverseModel(Model):
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
+                        tool_result_content: list[Any] = []
+                        for item in part.model_response_parts():
+                            if isinstance(item, str):
+                                tool_result_content.append({'text': item})
+                            elif isinstance(item, (FileUrl, BinaryContent)):
+                                user_msgs = await self._map_user_prompt(
+                                    UserPromptPart(content=[item]),  # pyright: ignore[reportArgumentType]
+                                    document_count,
+                                    profile.bedrock_supports_prompt_caching,
+                                )
+                                for msg in user_msgs:
+                                    tool_result_content.extend(msg.get('content', []))
+                            else:
+                                if profile.bedrock_tool_result_format == 'text':
+                                    tool_result_content.append({'text': part.model_response_str()})
+                                else:
+                                    tool_result_content.append({'json': part.model_response_object()})
+                        if not tool_result_content:
+                            if profile.bedrock_tool_result_format == 'text':
+                                tool_result_content.append({'text': part.model_response_str()})
+                            else:
+                                tool_result_content.append({'json': part.model_response_object()})
                         bedrock_messages.append(
                             {
                                 'role': 'user',
@@ -576,11 +599,7 @@ class BedrockConverseModel(Model):
                                     {
                                         'toolResult': {
                                             'toolUseId': part.tool_call_id,
-                                            'content': [
-                                                {'text': part.model_response_str()}
-                                                if profile.bedrock_tool_result_format == 'text'
-                                                else {'json': part.model_response_object()}
-                                            ],
+                                            'content': tool_result_content,
                                             'status': 'success',
                                         }
                                     }

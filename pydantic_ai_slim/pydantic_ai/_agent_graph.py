@@ -1177,43 +1177,22 @@ async def _call_tool(
         contents = cast(list[Any], tool_result) if result_is_list else [tool_result]
 
         return_values: list[Any] = []
-        user_contents: list[str | _messages.UserContent] = []
         for content in contents:
             if isinstance(content, _messages.ToolReturn):
                 raise exceptions.UserError(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
-            elif isinstance(content, _messages.MultiModalContent):
-                identifier = content.identifier
-
-                return_values.append(f'See file {identifier}')
-                user_contents.extend([f'This is file {identifier}:', content])
-            else:
-                return_values.append(content)
+            return_values.append(content)
 
         tool_return = _messages.ToolReturn(
             return_value=return_values[0] if len(return_values) == 1 and not result_is_list else return_values,
-            content=user_contents,
-        )
-
-    if (
-        isinstance(tool_return.return_value, _messages.MultiModalContent)
-        or isinstance(tool_return.return_value, list)
-        and any(
-            isinstance(content, _messages.MultiModalContent)
-            for content in tool_return.return_value  # type: ignore
-        )
-    ):
-        raise exceptions.UserError(
-            f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
-            f'Please use `content` instead.'
         )
 
     return_part = _messages.ToolReturnPart(
         tool_name=tool_call.tool_name,
         tool_call_id=tool_call.tool_call_id,
-        content=tool_return.return_value,  # type: ignore
+        content=tool_return.return_value,
         metadata=tool_return.metadata,
     )
 

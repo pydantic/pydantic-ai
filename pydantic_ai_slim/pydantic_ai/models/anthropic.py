@@ -29,6 +29,7 @@ from ..messages import (
     CachePoint,
     DocumentUrl,
     FilePart,
+    FileUrl,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -718,10 +719,27 @@ class AnthropicModel(Model):
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
+                        tool_result_content: list[BetaContentBlockParam] = []
+                        for part in request_part.model_response_parts():
+                            if isinstance(part, str):
+                                if part:
+                                    tool_result_content.append(BetaTextBlockParam(text=part, type='text'))
+                            elif isinstance(part, (FileUrl, BinaryContent)):
+                                user_prompt = UserPromptPart(content=[part])  # pyright: ignore[reportArgumentType]
+                                async for block in self._map_user_prompt(user_prompt):
+                                    if not isinstance(block, CachePoint):
+                                        tool_result_content.append(block)
+                            else:
+                                tool_result_content.append(
+                                    BetaTextBlockParam(text=request_part.model_response_str(), type='text')
+                                )
+                        result_content: str | list[BetaContentBlockParam] = (
+                            tool_result_content or request_part.model_response_str()
+                        )
                         tool_result_block_param = BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
                             type='tool_result',
-                            content=request_part.model_response_str(),
+                            content=result_content,  # pyright: ignore[reportArgumentType]
                             is_error=False,
                         )
                         user_content_params.append(tool_result_block_param)

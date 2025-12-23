@@ -4852,25 +4852,20 @@ def test_tool_returning_binary_content_with_identifier():
         return BinaryContent(png_data, media_type='image/png', identifier='image_id_1')
 
     # This should work without the serialization error
+    # Note: Multimodal content is now kept directly in ToolReturnPart.content instead of being
+    # split into a separate UserPromptPart. This fixes issue #3253 for Bedrock and other providers.
     result = agent.run_sync('Get an image')
     assert result.all_messages()[2] == snapshot(
         ModelRequest(
             parts=[
                 ToolReturnPart(
                     tool_name='get_image',
-                    content='See file image_id_1',
+                    content=BinaryContent(
+                        data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
+                        media_type='image/png',
+                        _identifier='image_id_1',
+                    ),
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
-                    content=[
-                        'This is file image_id_1:',
-                        BinaryContent(
-                            data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
-                            media_type='image/png',
-                            _identifier='image_id_1',
-                        ),
-                    ],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
@@ -4901,29 +4896,21 @@ def test_tool_returning_file_url_with_identifier():
             DocumentUrl(url='https://example.com/document.pdf', identifier='doc_004'),
         ]
 
+    # Note: Multimodal content is now kept directly in ToolReturnPart.content instead of being
+    # split into a separate UserPromptPart. This fixes issue #3253 for Bedrock and other providers.
     result = agent.run_sync('Get some files')
     assert result.all_messages()[2] == snapshot(
         ModelRequest(
             parts=[
                 ToolReturnPart(
                     tool_name='get_files',
-                    content=['See file img_001', 'See file vid_002', 'See file aud_003', 'See file doc_004'],
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
                     content=[
-                        'This is file img_001:',
-                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001', identifier='img_001'),
-                        'This is file vid_002:',
-                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002', identifier='vid_002'),
-                        'This is file aud_003:',
-                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003', identifier='aud_003'),
-                        'This is file doc_004:',
-                        DocumentUrl(
-                            url='https://example.com/document.pdf', _identifier='doc_004', identifier='doc_004'
-                        ),
+                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001'),
+                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002'),
+                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003'),
+                        DocumentUrl(url='https://example.com/document.pdf', _identifier='doc_004'),
                     ],
+                    tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
@@ -5532,13 +5519,13 @@ def test_many_multimodal_tool_response():
 
 
 def test_multimodal_tool_response_nested():
-    """Test ToolReturn with custom content and tool return."""
+    """Test ToolReturn with multimodal content directly in `return_value`."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
         else:
-            return ModelResponse(  # pragma: no cover
+            return ModelResponse(
                 parts=[
                     TextPart('Analysis completed'),
                 ]
@@ -5550,19 +5537,17 @@ def test_multimodal_tool_response_nested():
     def analyze_data() -> ToolReturn:
         return ToolReturn(
             return_value=ImageUrl('https://example.com/chart.jpg'),
-            content=[
-                'Here are the analysis results:',
-                ImageUrl('https://example.com/chart.jpg'),
-                'The chart shows positive trends.',
-            ],
             metadata={'foo': 'bar'},
         )
 
-    with pytest.raises(
-        UserError,
-        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContent` objects. Please use `content` instead.",
-    ):
-        agent.run_sync('Please analyze the data')
+    result = agent.run_sync('Please analyze the data')
+    assert result.output == 'Analysis completed'
+    # The ToolReturnPart.content should contain the ImageUrl directly
+    tool_return_part = result.all_messages()[2].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+    assert isinstance(tool_return_part.content, ImageUrl)
+    assert tool_return_part.content.url == 'https://example.com/chart.jpg'
+    assert tool_return_part.metadata == {'foo': 'bar'}
 
 
 def test_deprecated_kwargs_validation_agent_init():

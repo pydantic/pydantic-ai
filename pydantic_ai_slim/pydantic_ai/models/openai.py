@@ -39,6 +39,7 @@ from ..messages import (
     CachePoint,
     DocumentUrl,
     FilePart,
+    FileUrl,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -994,11 +995,17 @@ class OpenAIChatModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                response_parts = part.model_response_parts()
+                multimodal_parts = [p for p in response_parts if isinstance(p, (FileUrl, BinaryContent))]
+                text_parts = [p for p in response_parts if isinstance(p, str)]
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
+                    content=' '.join(text_parts) if text_parts else part.model_response_str(),
                 )
+                if multimodal_parts:
+                    user_prompt = UserPromptPart(content=multimodal_parts)  # pyright: ignore[reportArgumentType]
+                    yield await self._map_user_prompt(user_prompt)
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())

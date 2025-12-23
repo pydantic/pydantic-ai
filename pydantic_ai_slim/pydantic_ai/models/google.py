@@ -632,15 +632,7 @@ class GoogleModel(Model):
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.append(
-                            {
-                                'function_response': {
-                                    'name': part.tool_name,
-                                    'response': part.model_response_object(),
-                                    'id': part.tool_call_id,
-                                }
-                            }
-                        )
+                        message_parts.extend(await self._map_tool_return(part))
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
@@ -675,6 +667,38 @@ class GoogleModel(Model):
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
         return system_instruction, contents
+
+    async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
+        """Map a ToolReturnPart to Google API format, handling multimodal content."""
+        response_parts = part.model_response_parts()
+        has_multimodal = any(isinstance(p, (FileUrl, BinaryContent)) for p in response_parts)
+        if has_multimodal:
+            text_parts = [p for p in response_parts if isinstance(p, str)]
+            response_text = ' '.join(text_parts) if text_parts else ''
+            result: list[PartDict] = [
+                {
+                    'function_response': {
+                        'name': part.tool_name,
+                        'response': {'result': response_text} if response_text else {},
+                        'id': part.tool_call_id,
+                    }
+                }
+            ]
+            for item in response_parts:
+                if isinstance(item, (FileUrl, BinaryContent)):
+                    user_prompt = UserPromptPart(content=[item])  # pyright: ignore[reportArgumentType]
+                    result.extend(await self._map_user_prompt(user_prompt))
+            return result
+        else:
+            return [
+                {
+                    'function_response': {
+                        'name': part.tool_name,
+                        'response': part.model_response_object(),
+                        'id': part.tool_call_id,
+                    }
+                }
+            ]
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
         if isinstance(part.content, str):
