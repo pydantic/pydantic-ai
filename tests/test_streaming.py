@@ -1265,9 +1265,11 @@ class TestMultipleToolCalls:
     async def test_early_strategy_with_external_tool_call(self):
         """Test that early strategy handles external tool calls correctly.
 
-        Streaming mode expects the first output tool call to be the final result,
-        and has different behavior from sync mode in this regard.
-        See https://github.com/pydantic/pydantic-ai/issues/3636 for details.
+        Streaming and non-streaming modes differ in how they choose the final result:
+        - Streaming: First tool call (in response order) that can produce a final result (output or deferred)
+        - Non-streaming: First output tool (if none called, all deferred tools become final result)
+
+        See https://github.com/pydantic/pydantic-ai/issues/3636#issuecomment-3618800480 for details.
         """
         tool_called: list[str] = []
 
