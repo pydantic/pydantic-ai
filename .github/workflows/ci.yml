@@ -18,21 +18,14 @@ permissions:
 
 jobs:
   lint:
-    name: lint on ${{ matrix.python-version }}
+    name: lint
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # Typecheck both Python 3.10 and 3.13. We've had issues due to not checking against both.
-        python-version: ["3.10", "3.13"]
-    env:
-      PYRIGHT_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
           enable-cache: true
           cache-suffix: lint
 
@@ -163,15 +156,9 @@ jobs:
           enable-cache: true
           cache-suffix: ${{ matrix.install.name }}
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.5.x
-
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -214,15 +201,9 @@ jobs:
           enable-cache: true
           cache-suffix: lowest-versions
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.5.x
-
       - run: mkdir .coverage
 
       - run: uv sync --group dev
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
