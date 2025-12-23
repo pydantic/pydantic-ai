@@ -152,6 +152,35 @@ def allow_model_requests():
 
 
 @pytest.fixture
+def mock_tiktoken_encoding(monkeypatch: pytest.MonkeyPatch):
+    """Mock `tiktoken.encoding_for_model` to avoid downloading encoding files.
+
+    The fake encoder estimates token counts by assuming roughly 4 characters per token,
+    which is sufficient for tests that only need consistent, deterministic counts.
+    """
+
+    try:
+        import tiktoken
+    except ImportError:  # pragma: no cover - tiktoken might not be installed
+        yield
+        return
+
+    class _FakeEncoding:
+        @staticmethod
+        def encode(text: object) -> list[int]:
+            # Convert to string and estimate tokens as ceil(len/4), minimum 1.
+            s = '' if text is None else str(text)
+            approx_tokens = max(1, (len(s)) // 4)
+            return list(range(approx_tokens))
+
+    def _fake_encoding_for_model(_model_name: str) -> _FakeEncoding:  # pragma: no cover - trivial
+        return _FakeEncoding()
+
+    monkeypatch.setattr(tiktoken, 'encoding_for_model', _fake_encoding_for_model)
+    yield
+
+
+@pytest.fixture
 async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
     client: httpx.AsyncClient | None = None
 
