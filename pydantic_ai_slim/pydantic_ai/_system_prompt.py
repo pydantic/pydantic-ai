@@ -21,15 +21,15 @@ class SystemPromptRunner(Generic[AgentDepsT]):
         self._takes_ctx = len(inspect.signature(self.function).parameters) > 0
         self._is_async = _utils.is_async_callable(self.function)
 
-    async def run(self, run_context: RunContext[AgentDepsT]) -> str:
+    async def run(self, run_context: RunContext[AgentDepsT]) -> str | None:
         if self._takes_ctx:
             args = (run_context,)
         else:
             args = ()
 
         if self._is_async:
-            function = cast(Callable[[Any], Awaitable[str]], self.function)
+            function = cast(Callable[[Any], Awaitable[str | None]], self.function)
             return await function(*args)
         else:
-            function = cast(Callable[[Any], str], self.function)
+            function = cast(Callable[[Any], str | None], self.function)
             return await _utils.run_in_executor(function, *args)

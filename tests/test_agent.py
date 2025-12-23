@@ -4410,6 +4410,57 @@ def test_dynamic_system_prompt_no_changes():
     assert result2.output == 'success (no tool calls)'
 
 
+def test_dynamic_system_prompt_none_return():
+    """Test dynamic system prompts with None return values."""
+    agent = Agent('test')
+
+    dynamic_values = [None, 'DYNAMIC']
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_sys() -> str | None:
+        return dynamic_values.pop(0)
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
+    # The None value should have a '' placeholder due to keeping a reference to the dynamic prompt
+    assert '' in sys_texts
+    assert 'DYNAMIC' not in sys_texts
+
+    # Run a second time to capture the updated system prompt
+    with capture_run_messages() as messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
+    # The None value should have a '' placeholder due to keep a reference to the dynamic prompt
+    assert '' not in sys_texts
+    assert 'DYNAMIC' in sys_texts
+
+
+def test_system_prompt_none_return_are_omitted():
+    """Test dynamic system prompts with None return values."""
+    agent = Agent('test', system_prompt='STATIC')
+
+    @agent.system_prompt
+    def dynamic_sys() -> str | None:
+        return None
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
+    # The None value should be omitted
+    assert 'STATIC' in sys_texts
+    assert '' not in sys_texts
+
+
 def test_capture_run_messages_tool_agent() -> None:
     agent_outer = Agent('test')
     agent_inner = Agent(TestModel(custom_output_text='inner agent result'))
