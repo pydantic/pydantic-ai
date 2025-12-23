@@ -28,7 +28,7 @@ from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBe
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.toolsets.searchable import is_active, is_search_tool
+from pydantic_ai.toolsets._searchable import is_active, is_search_tool
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -1003,6 +1003,11 @@ async def test_searchable_toolset_load_tools_name_conflict():
         """A tool that conflicts with the reserved name"""
         return x
 
+    @base_toolset.tool(defer_loading=True)
+    def some_deferred_tool(y: str) -> str:
+        """A deferred tool to trigger search tool creation"""
+        return y
+
     searchable = SearchableToolset[None](base_toolset)
     ctx = build_run_context(None)
 
@@ -1010,7 +1015,7 @@ async def test_searchable_toolset_load_tools_name_conflict():
         UserError,
         match=re.escape(
             "Tool name 'load_tools' is reserved by Pydantic AI for implementing defer_loading=True tools. "
-            "Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid the conflict."
+            'Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid the conflict.'
         ),
     ):
         await searchable.get_tools(ctx)

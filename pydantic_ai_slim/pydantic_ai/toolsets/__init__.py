@@ -1,4 +1,5 @@
 from ._dynamic import ToolsetFunc
+from ._searchable import SearchableToolset
 from .abstract import AbstractToolset, ToolsetTool
 from .approval_required import ApprovalRequiredToolset
 from .combined import CombinedToolset
@@ -8,7 +9,6 @@ from .function import FunctionToolset
 from .prefixed import PrefixedToolset
 from .prepared import PreparedToolset
 from .renamed import RenamedToolset
-from .searchable import SearchableToolset
 from .wrapper import WrapperToolset
 
 __all__ = (

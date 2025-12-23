@@ -50,7 +50,7 @@ from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
-from ..toolsets.searchable import is_active
+from ..toolsets._searchable import is_active
 from ..usage import RequestUsage
 
 KnownModelName = TypeAliasType(

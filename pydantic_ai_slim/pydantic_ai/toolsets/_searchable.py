@@ -40,8 +40,8 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
 
         if search_tool.name in all_tools:
             raise UserError(
-                f"Tool name {search_tool.name!r} is reserved by Pydantic AI for implementing defer_loading=True tools. "
-                f"Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid the conflict."
+                f'Tool name {search_tool.name!r} is reserved by Pydantic AI for implementing defer_loading=True tools. '
+                f'Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid the conflict.'
             )
         all_tools[search_tool.name] = search_toolset_tool
 
