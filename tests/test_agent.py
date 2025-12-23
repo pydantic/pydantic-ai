@@ -3356,9 +3356,9 @@ class TestMultipleToolCalls:
     def test_early_strategy_with_external_tool_call(self):
         """Test that early strategy handles external tool calls correctly.
 
-        Streaming and sync modes differ in how they choose the final result:
+        Streaming and non-streaming modes differ in how they choose the final result:
         - Streaming: First tool call (in response order) that can produce a final result (output or deferred)
-        - Sync: First output tool (if none called, all deferred tools become final result)
+        - Non-streaming: First output tool (if none called, all deferred tools become final result)
 
         See https://github.com/pydantic/pydantic-ai/issues/3636#issuecomment-3618800480 for details.
         """
