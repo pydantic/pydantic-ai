@@ -671,7 +671,7 @@ except UsageLimitExceeded as e:
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
     - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
-##### Soft Tool Use Limits with `max_tools_uses`
+##### Soft Tool Use Limits
 
 If you want to limit successful tool uses but let the model decide how to proceed instead of raising an error, use the `max_tools_uses` parameter. When exceeded, instead of executing the tool, the agent returns a message to the model (`'Tool call limit reached for tool "{tool_name}".'`), allowing it to adapt gracefully rather than raising a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception.
 

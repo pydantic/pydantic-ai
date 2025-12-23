@@ -508,7 +508,7 @@ print(result.output)
 
 This is useful when you want to limit specific expensive or rate-limited tools while leaving others unrestricted.
 
-#### Limiting All Tools with `max_tools_uses`
+#### Limiting All Tools
 
 Limit the total number of tool calls across all tools within a run using the `max_tools_uses` parameter on the agent or run method. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
 
