@@ -12,7 +12,7 @@ from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 from urllib.parse import urlparse
-
+from importlib.util import find_spec
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
@@ -517,6 +517,8 @@ class BinaryContent:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
+        if find_spec('magika'):
+            return cls.narrow_type(cls(data=path.read_bytes()))
         media_type, _ = _mime_types.guess_type(path)
         if media_type is None:
             media_type = 'application/octet-stream'

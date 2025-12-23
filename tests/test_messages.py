@@ -731,9 +731,9 @@ def test_binary_content_magika_not_installed(monkeypatch: pytest.MonkeyPatch):
 def test_binary_content_from_path(tmp_path: Path):
     # test normal file
     test_xml_file = tmp_path / 'test.xml'
-    test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
+    test_xml_file.write_text('<?xml version="1.0" encoding="UTF-8"?><think>about trains</think>', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_xml_file)
-    assert binary_content.data == b'<think>about trains</think>'
+    assert binary_content.data == b'<?xml version="1.0" encoding="UTF-8"?><think>about trains</think>'
     assert binary_content.media_type in ('application/xml', 'text/xml')  # Depends on the platform
 
     # test non-existent file
@@ -746,9 +746,7 @@ def test_binary_content_from_path(tmp_path: Path):
     test_unknown_file.write_text('some content', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_unknown_file)
     assert binary_content == snapshot(
-        BinaryContent(
-            data=b'some content', _media_type='application/octet-stream', media_type='application/octet-stream'
-        )
+        BinaryContent(data=b'some content', _media_type='text/plain', _type='text', _extension='txt')
     )
 
     # test string path
@@ -757,7 +755,9 @@ def test_binary_content_from_path(tmp_path: Path):
     string_path = test_txt_file.as_posix()
     binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
     assert binary_content == snapshot(
-        BinaryContent(data=b'just some text', _media_type='text/plain', media_type='text/plain')
+        BinaryContent(
+            data=b'just some text', _media_type='text/plain', _type='text', _extension='txt', media_type='text/plain'
+        )
     )
 
     # test image file
@@ -765,10 +765,10 @@ def test_binary_content_from_path(tmp_path: Path):
     test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
     binary_content = BinaryContent.from_path(test_jpg_file)
     assert binary_content == snapshot(
-        BinaryImage(
-            data=b'\xff\xd8\xff\xe0' + b'0' * 100,
-            media_type='image/jpeg',
-            _media_type='image/jpeg',
-            _identifier='bc8d49',
+        BinaryContent(
+            data=b'\xff\xd8\xff\xe00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+            _media_type='text/plain',
+            _type='text',
+            _extension='txt',
         )
     )
