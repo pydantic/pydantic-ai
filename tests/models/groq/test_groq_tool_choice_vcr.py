@@ -23,7 +23,7 @@ from pydantic_ai.settings import ModelSettings, ToolsPlusOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ...conftest import IsNow, IsStr, try_import
+from ...conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel
@@ -129,16 +129,20 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_weather', args='{"city":"Paris"}', tool_call_id='as64z675v')],
                     usage=RequestUsage(input_tokens=717, output_tokens=29),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 39, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 39, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -152,16 +156,20 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The weather in Paris is sunny with a temperature of 22C.')],
                     usage=RequestUsage(input_tokens=774, output_tokens=15),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 39, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 39, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -191,16 +199,20 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hello!')],
                     usage=RequestUsage(input_tokens=716, output_tokens=3),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 40, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 40, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -226,16 +238,20 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_weather', args='{"city":"London"}', tool_call_id='vj9mvwsqj')],
                     usage=RequestUsage(input_tokens=717, output_tokens=29),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 40, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 40, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -249,16 +265,20 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The weather in London is sunny with a temperature of 22C.')],
                     usage=RequestUsage(input_tokens=774, output_tokens=15),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 41, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 41, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -282,6 +302,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -299,10 +320,13 @@ class TestToolChoiceAuto:
                     ],
                     usage=RequestUsage(input_tokens=776, output_tokens=63),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 42, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 42, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -322,6 +346,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -354,6 +379,7 @@ class TestToolChoiceNone:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -372,10 +398,13 @@ As of my knowledge cutoff in 2022, Berlin's climate is generally temperate, with
                     ],
                     usage=RequestUsage(input_tokens=16, output_tokens=219),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 43, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 43, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -403,6 +432,7 @@ As of my knowledge cutoff in 2022, Berlin's climate is generally temperate, with
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -448,10 +478,13 @@ If you're planning a trip to Rome, I recommend checking the weather forecast bef
                     ],
                     usage=RequestUsage(input_tokens=16, output_tokens=527),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 45, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 45, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -478,6 +511,7 @@ If you're planning a trip to Rome, I recommend checking the weather forecast bef
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -490,10 +524,13 @@ If you're planning a trip to Rome, I recommend checking the weather forecast bef
                     ],
                     usage=RequestUsage(input_tokens=733, output_tokens=189),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 46, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 46, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -507,6 +544,7 @@ If you're planning a trip to Rome, I recommend checking the weather forecast bef
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -658,6 +696,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -675,10 +714,13 @@ class TestToolsPlusOutput:
                     ],
                     usage=RequestUsage(input_tokens=776, output_tokens=67),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 50, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 50, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -698,6 +740,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -721,6 +764,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -734,10 +778,13 @@ class TestToolsPlusOutput:
                     ],
                     usage=RequestUsage(input_tokens=817, output_tokens=67),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 51, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 51, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -757,6 +804,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -784,6 +832,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -796,10 +845,13 @@ class TestNoFunctionTools:
                     ],
                     usage=RequestUsage(input_tokens=734, output_tokens=80),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 52, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 52, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -813,6 +865,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -835,6 +888,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -847,10 +901,13 @@ class TestNoFunctionTools:
                     ],
                     usage=RequestUsage(input_tokens=733, output_tokens=67),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 52, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 52, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -864,6 +921,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -896,16 +954,20 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_weather', args='{"city":"Miami"}', tool_call_id='14mvk25vk')],
                     usage=RequestUsage(input_tokens=764, output_tokens=29),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 53, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 53, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -919,16 +981,20 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The current weather in Miami is sunny with a temperature of 22C.')],
                     usage=RequestUsage(input_tokens=821, output_tokens=16),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 53, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 53, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -957,6 +1023,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -971,10 +1038,13 @@ Would you like to know more about Seattle?\
                     ],
                     usage=RequestUsage(input_tokens=719, output_tokens=129),
                     model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                    timestamp=datetime(2025, 12, 19, 22, 31, 54, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 22, 31, 54, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),

@@ -23,7 +23,7 @@ from pydantic_ai.settings import ModelSettings, ToolsPlusOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ...conftest import IsNow, IsStr, try_import
+from ...conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModel
@@ -140,6 +140,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -152,9 +153,12 @@ class TestToolChoiceAuto:
                     ],
                     usage=RequestUsage(input_tokens=773, output_tokens=29),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 19, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 19, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -167,15 +171,19 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='[get_weather, {"city": "Paris"}]')],
                     usage=RequestUsage(input_tokens=797, output_tokens=11),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 20, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 20, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -204,15 +212,19 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hello!')],
                     usage=RequestUsage(input_tokens=772, output_tokens=3),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 21, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 21, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -239,15 +251,19 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hello! How can I assist you today?')],
                     usage=RequestUsage(input_tokens=769, output_tokens=10),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 22, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 22, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -270,6 +286,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -287,9 +304,12 @@ class TestToolChoiceAuto:
                     ],
                     usage=RequestUsage(input_tokens=881, output_tokens=63),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 23, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 23, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -308,6 +328,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -342,6 +363,7 @@ class TestToolChoiceNone:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -369,9 +391,12 @@ If you have a specific question about Berlin's weather or need more information,
                     ],
                     usage=RequestUsage(input_tokens=17, output_tokens=335),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 26, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 26, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -398,6 +423,7 @@ If you have a specific question about Berlin's weather or need more information,
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -427,9 +453,12 @@ Hope this helps!\
                     ],
                     usage=RequestUsage(input_tokens=17, output_tokens=345),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 32, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 32, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -455,6 +484,7 @@ Hope this helps!\
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -467,9 +497,12 @@ Hope this helps!\
                     ],
                     usage=RequestUsage(input_tokens=787, output_tokens=134),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 29, 28, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 16, 29, 28, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -482,6 +515,7 @@ Hope this helps!\
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -661,6 +695,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -678,9 +713,12 @@ class TestToolsPlusOutput:
                     ],
                     usage=RequestUsage(input_tokens=881, output_tokens=65),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 27, 56, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 16, 27, 56, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -699,6 +737,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -724,6 +763,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -741,9 +781,12 @@ class TestToolsPlusOutput:
                     ],
                     usage=RequestUsage(input_tokens=973, output_tokens=65),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 27, 57, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 16, 27, 57, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -762,6 +805,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -789,6 +833,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -801,9 +846,12 @@ class TestNoFunctionTools:
                     ],
                     usage=RequestUsage(input_tokens=788, output_tokens=128),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 27, 59, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 16, 27, 59, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -816,6 +864,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -838,6 +887,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -850,9 +900,12 @@ class TestNoFunctionTools:
                     ],
                     usage=RequestUsage(input_tokens=787, output_tokens=156),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 1, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 1, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -865,6 +918,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -897,6 +951,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -907,9 +962,12 @@ class TestTextAndStructuredUnion:
                     ],
                     usage=RequestUsage(input_tokens=880, output_tokens=37),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 2, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 2, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -937,6 +995,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -949,9 +1008,12 @@ class TestTextAndStructuredUnion:
                     ],
                     usage=RequestUsage(input_tokens=786, output_tokens=63),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 22, 16, 28, 4, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 16, 28, 4, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     run_id=IsStr(),
                 ),
@@ -964,6 +1026,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]

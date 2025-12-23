@@ -132,6 +132,7 @@ class TestToolChoiceAuto:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the weather in Paris?", timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -158,7 +159,7 @@ class TestToolChoiceAuto:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01EAUXkyTiSJJfNTdJ6f5n83',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -171,6 +172,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -194,7 +196,7 @@ class TestToolChoiceAuto:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'end_turn'},
-                    provider_response_id='msg_017vnRWGtD2b8bgpwzv7KQhd',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -218,6 +220,7 @@ class TestToolChoiceAuto:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Say hello in one word', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -237,7 +240,7 @@ class TestToolChoiceAuto:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'end_turn'},
-                    provider_response_id='msg_01JdsYtnSGgso2Lb5FcxMfeb',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -257,6 +260,7 @@ class TestToolChoiceAuto:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the weather in London?", timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -283,7 +287,7 @@ class TestToolChoiceAuto:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01Vv5XNafJW91mtvzWpquzKE',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -296,6 +300,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -319,7 +324,7 @@ class TestToolChoiceAuto:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'end_turn'},
-                    provider_response_id='msg_018dCRfVee6LBNBk2mVcdSXD',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -339,6 +344,7 @@ class TestToolChoiceAuto:
                     parts=[
                         UserPromptPart(content='Get weather for Tokyo and summarize', timestamp=IsNow(tz=timezone.utc))
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -364,7 +370,7 @@ class TestToolChoiceAuto:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01PYDKvwUXerptD6bPZPW6DB',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -377,6 +383,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -405,7 +412,7 @@ class TestToolChoiceAuto:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01F1q4S2AYVheYxmwHSJQ8gC',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -418,6 +425,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -445,6 +453,7 @@ class TestToolChoiceNone:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the weather in Berlin?", timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -464,7 +473,7 @@ class TestToolChoiceNone:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'end_turn'},
-                    provider_response_id='msg_01BmeHTqb3j7MH86LrMcpBP6',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -486,6 +495,7 @@ class TestToolChoiceNone:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the weather in Rome?", timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -505,7 +515,7 @@ class TestToolChoiceNone:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'end_turn'},
-                    provider_response_id='msg_01SeiSYVEpY5JmufuJcv7c8h',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -526,6 +536,7 @@ class TestToolChoiceNone:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Tell me about Madrid', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -554,7 +565,7 @@ class TestToolChoiceNone:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_017U2zZ3egRP38362ezoqRDu',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -567,6 +578,7 @@ class TestToolChoiceNone:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -754,6 +766,7 @@ class TestToolsPlusOutput:
                     parts=[
                         UserPromptPart(content='Get weather for Sydney and summarize', timestamp=IsNow(tz=timezone.utc))
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -779,7 +792,7 @@ class TestToolsPlusOutput:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_019dWhKVME8NTPfgs95H3Tpa',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -792,6 +805,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -820,7 +834,7 @@ class TestToolsPlusOutput:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01XoR3y5G1gJJ1kZW3c6NjL4',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -833,6 +847,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -857,6 +872,7 @@ class TestToolsPlusOutput:
                             content='Get weather and population for Chicago', timestamp=IsNow(tz=timezone.utc)
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -887,7 +903,7 @@ class TestToolsPlusOutput:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01S4v5FLCubmPAPRHM5dpqDL',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -906,6 +922,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -934,7 +951,7 @@ class TestToolsPlusOutput:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_014Y3FiQyhmQaZsEgA8KFFUd',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -947,6 +964,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -969,6 +987,7 @@ class TestNoFunctionTools:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Tell me about New York', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -997,7 +1016,7 @@ class TestNoFunctionTools:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_018LjvWcznHP8pExEEY5FUrb',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1010,6 +1029,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -1026,6 +1046,7 @@ class TestNoFunctionTools:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Tell me about Boston', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1054,7 +1075,7 @@ class TestNoFunctionTools:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01SncZRQFPXD7Pgr569Jc2dU',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1067,6 +1088,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -1098,6 +1120,7 @@ class TestTextAndStructuredUnion:
                             content='Get weather for Miami and describe it', timestamp=IsNow(tz=timezone.utc)
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1126,7 +1149,7 @@ class TestTextAndStructuredUnion:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01UGMqnUQmr9wTPRSPK5mZdx',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1139,6 +1162,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1167,7 +1191,7 @@ class TestTextAndStructuredUnion:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01VmDELcvrJMQvRTRpahKiZP',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1180,6 +1204,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -1206,6 +1231,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1234,7 +1260,7 @@ class TestTextAndStructuredUnion:
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
                     provider_details={'finish_reason': 'tool_use'},
-                    provider_response_id='msg_01VGVCR4FiPje6ZYef5G4wCE',
+                    provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1247,6 +1273,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]

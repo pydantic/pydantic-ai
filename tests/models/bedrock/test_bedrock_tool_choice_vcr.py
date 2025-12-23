@@ -142,6 +142,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -170,6 +171,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -212,6 +214,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -248,6 +251,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -276,6 +280,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -312,6 +317,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -340,6 +346,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -371,6 +378,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -409,6 +417,7 @@ class TestToolChoiceNone:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -458,6 +467,7 @@ Would you like me to help you with something else about Berlin, such as typical 
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -507,6 +517,7 @@ Is there anything else about Rome I can help you with?\
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -538,6 +549,7 @@ Is there anything else about Rome I can help you with?\
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -706,6 +718,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -734,6 +747,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -765,6 +779,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -793,6 +808,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -821,6 +837,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -852,6 +869,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -879,6 +897,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -910,6 +929,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -931,6 +951,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -962,6 +983,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -994,6 +1016,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1023,6 +1046,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1054,6 +1078,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -1080,6 +1105,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1111,6 +1137,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]

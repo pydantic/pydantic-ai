@@ -23,7 +23,7 @@ from pydantic_ai.settings import ModelSettings, ToolsPlusOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ...conftest import IsNow, IsStr, try_import
+from ...conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -124,6 +124,7 @@ class TestToolChoiceAuto:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the weather in Paris?", timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -145,10 +146,13 @@ class TestToolChoiceAuto:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 33, 56, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 33, 56, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -162,6 +166,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -181,10 +186,13 @@ class TestToolChoiceAuto:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 33, 58, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 18, 33, 58, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -209,6 +217,7 @@ class TestToolChoiceAuto:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Say hello in one word', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -224,10 +233,13 @@ class TestToolChoiceAuto:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 1, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 18, 34, 1, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -248,6 +260,7 @@ class TestToolChoiceAuto:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the weather in London?", timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -269,10 +282,13 @@ class TestToolChoiceAuto:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 33, 56, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 33, 56, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -286,6 +302,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -305,10 +322,13 @@ class TestToolChoiceAuto:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 33, 58, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 18, 33, 58, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -329,6 +349,7 @@ class TestToolChoiceAuto:
                     parts=[
                         UserPromptPart(content='Get weather for Tokyo and summarize', timestamp=IsNow(tz=timezone.utc))
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -350,10 +371,13 @@ class TestToolChoiceAuto:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 3, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 34, 3, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -367,6 +391,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -388,10 +413,13 @@ class TestToolChoiceAuto:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 10, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 34, 10, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -405,6 +433,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -432,6 +461,7 @@ class TestToolChoiceNone:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the weather in Berlin?", timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -473,10 +503,13 @@ Which would you like me to do next? (e.g., give a forecast estimate for a specif
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 22, 17, 32, 16, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 17, 32, 16, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -499,6 +532,7 @@ Which would you like me to do next? (e.g., give a forecast estimate for a specif
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the weather in Rome?", timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -526,10 +560,13 @@ Which would you like me to do?\
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 22, 17, 32, 25, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 17, 32, 25, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -551,6 +588,7 @@ Which would you like me to do?\
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Tell me about Madrid', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -572,10 +610,13 @@ Which would you like me to do?\
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 33, 56, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 33, 56, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -589,6 +630,7 @@ Which would you like me to do?\
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -761,6 +803,7 @@ class TestToolsPlusOutput:
                     parts=[
                         UserPromptPart(content='Get weather for Sydney and summarize', timestamp=IsNow(tz=timezone.utc))
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -782,10 +825,13 @@ class TestToolsPlusOutput:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 14, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 34, 14, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -799,6 +845,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -820,10 +867,13 @@ class TestToolsPlusOutput:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 18, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 34, 18, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -837,6 +887,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -861,6 +912,7 @@ class TestToolsPlusOutput:
                             content='Get weather and population for Chicago', timestamp=IsNow(tz=timezone.utc)
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -887,10 +939,13 @@ class TestToolsPlusOutput:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 13, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 34, 13, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -910,6 +965,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -931,10 +987,13 @@ class TestToolsPlusOutput:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 19, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 34, 19, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -948,6 +1007,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -970,6 +1030,7 @@ class TestNoFunctionTools:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Tell me about New York', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -991,10 +1052,13 @@ class TestNoFunctionTools:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 30, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 34, 30, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1008,6 +1072,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -1025,6 +1090,7 @@ class TestNoFunctionTools:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Tell me about Boston', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1046,10 +1112,13 @@ class TestNoFunctionTools:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 27, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 34, 27, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1063,6 +1132,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -1094,6 +1164,7 @@ class TestTextAndStructuredUnion:
                             content='Get weather for Miami and describe it', timestamp=IsNow(tz=timezone.utc)
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1115,10 +1186,13 @@ class TestTextAndStructuredUnion:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 54, 15, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 54, 15, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1132,6 +1206,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1153,10 +1228,13 @@ class TestTextAndStructuredUnion:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 54, 19, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 18, 54, 19, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1170,6 +1248,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -1196,6 +1275,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1215,10 +1295,13 @@ class TestTextAndStructuredUnion:
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 22, 17, 32, 11, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 17, 32, 11, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),

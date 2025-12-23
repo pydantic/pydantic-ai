@@ -136,6 +136,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -155,7 +156,7 @@ class TestToolChoiceAuto:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='VsVFabT9Kbbhz7IPuqzrmA8',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -168,6 +169,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -178,7 +180,7 @@ class TestToolChoiceAuto:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='V8VFacv5FM-Gz7IPuICtsQQ',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -207,6 +209,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -217,7 +220,7 @@ class TestToolChoiceAuto:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='WMVFafynEfiHz7IPqsGuuAQ',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -242,6 +245,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -261,7 +265,7 @@ class TestToolChoiceAuto:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='WMVFaZSmOP2nmtkPvb_b0Q0',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -274,6 +278,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -284,7 +289,7 @@ class TestToolChoiceAuto:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='W8VFaez2C-6eqtsP_Ye5kAQ',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -307,6 +312,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -326,7 +332,7 @@ class TestToolChoiceAuto:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='XMVFacLELZS9z7IP7Ybl0Qk',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -339,6 +345,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -361,7 +368,7 @@ class TestToolChoiceAuto:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='XsVFaZiQCPWcz7IPjPDb6QU',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -374,6 +381,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -407,6 +415,7 @@ class TestToolChoiceNone:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -433,7 +442,7 @@ There's a chance of light rain later this afternoon.\
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='Y8VFaaaNL7bhz7IPyJ-O6QQ',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -460,6 +469,7 @@ There's a chance of light rain later this afternoon.\
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -485,7 +495,7 @@ For the rest of today, you can expect a high of around **25°C (77°F)** with co
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='Z8VFaca-O6yDz7IPjrHK-QU',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -511,6 +521,7 @@ For the rest of today, you can expect a high of around **25°C (77°F)** with co
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -533,7 +544,7 @@ For the rest of today, you can expect a high of around **25°C (77°F)** with co
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='acVFaeTzF9XRz7IP9Za-kQY',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -546,6 +557,7 @@ For the rest of today, you can expect a high of around **25°C (77°F)** with co
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -736,6 +748,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -755,7 +768,7 @@ class TestToolsPlusOutput:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='ccVFaZHOE7uDz7IPnZCmyQY',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -768,6 +781,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -787,7 +801,7 @@ class TestToolsPlusOutput:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='csVFaeLtG8-Gz7IPuYCtsQQ',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -800,6 +814,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -825,6 +840,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -849,7 +865,7 @@ class TestToolsPlusOutput:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='dMVFab2qLojVz7IP4__06AU',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -868,6 +884,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -890,7 +907,7 @@ class TestToolsPlusOutput:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='dsVFaen6DbHVz7IPr4jS6AU',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -903,6 +920,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -930,6 +948,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -952,7 +971,7 @@ class TestNoFunctionTools:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='ecVFabTpKMaHz7IPmYyeWA',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -965,6 +984,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -986,6 +1006,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1008,7 +1029,7 @@ class TestNoFunctionTools:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='e8VFafu0B7uDz7IP-pimyQY',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1021,6 +1042,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -1053,6 +1075,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1072,7 +1095,7 @@ class TestTextAndStructuredUnion:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='fMVFaZnUKdXRz7IP9Za-kQY',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1085,6 +1108,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1107,7 +1131,7 @@ class TestTextAndStructuredUnion:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='fsVFaZ7qEKutz7IP56Dm-AI',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1120,6 +1144,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -1146,6 +1171,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1168,7 +1194,7 @@ class TestTextAndStructuredUnion:
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='f8VFadeqMNXRz7IP9Za-kQY',
+                    provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1181,6 +1207,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]

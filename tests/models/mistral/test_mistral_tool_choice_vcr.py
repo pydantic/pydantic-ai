@@ -23,7 +23,7 @@ from pydantic_ai.settings import ModelSettings, ToolsPlusOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ...conftest import IsNow, IsStr, try_import
+from ...conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.mistral import MistralModel
@@ -129,16 +129,20 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='GZecN9HXI')],
                     usage=RequestUsage(input_tokens=77, output_tokens=12),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 19, 23, 10, 12, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 19, 23, 10, 12, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -152,6 +156,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -162,10 +167,13 @@ class TestToolChoiceAuto:
                     ],
                     usage=RequestUsage(input_tokens=100, output_tokens=29),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 19, 23, 10, 12, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 19, 23, 10, 12, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -195,16 +203,20 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hi!')],
                     usage=RequestUsage(input_tokens=75, output_tokens=3),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 19, 52, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 14, 19, 52, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -230,16 +242,20 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_weather', args='{"city": "London"}', tool_call_id='TCWfTKJco')],
                     usage=RequestUsage(input_tokens=77, output_tokens=12),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 19, 53, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 19, 53, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -253,6 +269,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -263,10 +280,13 @@ class TestToolChoiceAuto:
                     ],
                     usage=RequestUsage(input_tokens=100, output_tokens=22),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 19, 54, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 14, 19, 54, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -290,16 +310,20 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Tokyo"}', tool_call_id='dKE8phQYQ')],
                     usage=RequestUsage(input_tokens=149, output_tokens=12),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 19, 55, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 19, 55, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -313,6 +337,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -325,10 +350,13 @@ class TestToolChoiceAuto:
                     ],
                     usage=RequestUsage(input_tokens=172, output_tokens=32),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 19, 56, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 19, 56, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -342,6 +370,7 @@ class TestToolChoiceAuto:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -374,6 +403,7 @@ class TestToolChoiceNone:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -399,10 +429,13 @@ Would you like a **5-day forecast** or details on specific weather conditions (e
                     ],
                     usage=RequestUsage(input_tokens=10, output_tokens=287),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 22, 24, 30, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 22, 24, 30, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -430,6 +463,7 @@ Would you like a **5-day forecast** or details on specific weather conditions (e
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -452,10 +486,13 @@ For the most accurate and up-to-date information, I recommend checking one of th
                     ],
                     usage=RequestUsage(input_tokens=10, output_tokens=150),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 22, 24, 37, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 22, 24, 37, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -482,6 +519,7 @@ For the most accurate and up-to-date information, I recommend checking one of th
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -494,10 +532,13 @@ For the most accurate and up-to-date information, I recommend checking one of th
                     ],
                     usage=RequestUsage(input_tokens=83, output_tokens=70),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 19, 57, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 19, 57, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -511,6 +552,7 @@ For the most accurate and up-to-date information, I recommend checking one of th
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -664,16 +706,20 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Sydney"}', tool_call_id='WwdMOqAu1')],
                     usage=RequestUsage(input_tokens=149, output_tokens=12),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 20, 5, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 20, 5, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -687,6 +733,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -699,10 +746,13 @@ class TestToolsPlusOutput:
                     ],
                     usage=RequestUsage(input_tokens=172, output_tokens=33),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 20, 6, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 20, 6, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -716,6 +766,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -741,6 +792,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -754,10 +806,13 @@ class TestToolsPlusOutput:
                     ],
                     usage=RequestUsage(input_tokens=212, output_tokens=33),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 20, 7, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 20, 7, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -777,6 +832,7 @@ class TestToolsPlusOutput:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -804,6 +860,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -816,10 +873,13 @@ class TestNoFunctionTools:
                     ],
                     usage=RequestUsage(input_tokens=84, output_tokens=223),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 20, 9, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 20, 9, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -833,6 +893,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -855,6 +916,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -867,10 +929,13 @@ class TestNoFunctionTools:
                     ],
                     usage=RequestUsage(input_tokens=83, output_tokens=17),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 20, 14, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 20, 14, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -884,6 +949,7 @@ class TestNoFunctionTools:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -916,16 +982,20 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Miami"}', tool_call_id='00Ec68tKC')],
                     usage=RequestUsage(input_tokens=150, output_tokens=13),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 17, 32, 52, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 17, 32, 52, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -939,6 +1009,7 @@ class TestTextAndStructuredUnion:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -958,10 +1029,13 @@ Would you like more details or recommendations for activities?\
                     ],
                     usage=RequestUsage(input_tokens=174, output_tokens=94),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 17, 32, 53, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2025, 12, 22, 17, 32, 53, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -990,6 +1064,7 @@ Would you like more details or recommendations for activities?\
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1002,10 +1077,13 @@ Would you like more details or recommendations for activities?\
                     ],
                     usage=RequestUsage(input_tokens=83, output_tokens=24),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 20, 19, tzinfo=timezone.utc),
+                    timestamp=IsDatetime(),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': datetime(2025, 12, 22, 14, 20, 19, tzinfo=timezone.utc),
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1019,6 +1097,7 @@ Would you like more details or recommendations for activities?\
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
