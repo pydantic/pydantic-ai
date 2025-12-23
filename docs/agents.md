@@ -124,13 +124,14 @@ It also takes an optional `event_stream_handler` argument that you can use to ga
 
 The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
 
-!!! note
-    The `run_stream()` method will consider the first output that matches the [output type](output.md#structured-output) to be the final output of the agent run, even when the model generates tool calls after this "final" output.
+!!! note "Streaming Methods Behavior Difference"
+    [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] behave differently from the other run methods when choosing the final result:
 
-	These "dangling" tool calls will not be executed unless the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] is set to `'exhaustive'`, and even then their results will not be sent back to the model as the agent run will already be considered completed.
+    - **Streaming methods** ([`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync]): The first tool call in response order that **can** produce a final result becomes the final output. This includes both [output tools](output.md#tool-output) and [deferred tools](deferred-tools.md). Since these methods process the model's response as it streams, they eagerly select the first "final" tool encountered and immediately return, stopping the agent run.
 
-    If you want to always keep running the agent when it performs tool calls, and stream all events from the model's streaming response and the agent's execution of tools,
-    use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
+    - **Non-streaming methods** ([`run()`][pydantic_ai.agent.AbstractAgent.run], [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`iter()`][pydantic_ai.agent.AbstractAgent.iter], [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events]): These methods get to see the complete model response before processing. They prioritize output tools first. Only if no output tools are called, all deferred tools become the final result as [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests].
+
+If you want to always keep running the agent when it performs tool calls, and stream all events from the model's streaming response and the agent's execution of tools, use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
 
 ```python {title="run_stream_event_stream_handler.py"}
 import asyncio
