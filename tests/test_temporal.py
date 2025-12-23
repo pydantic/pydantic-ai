@@ -3329,3 +3329,32 @@ async def test_temporal_agent_run_with_unwrapped_fastmcp_toolset_error(allow_mod
                 id=WorkflowWithUnwrappedFastMCPToolset.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+def test_validate_temporal_toolsets_logic():
+    from collections.abc import Callable
+    from typing import Any
+
+    from pydantic_ai import FunctionToolset
+    from pydantic_ai.durable_exec.temporal import TemporalWrapperToolset
+    from pydantic_ai.durable_exec.temporal._agent import (
+        _validate_temporal_toolsets,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    class MockTemporalWrapper(TemporalWrapperToolset):
+        @property
+        def temporal_activities(self) -> list[Callable[..., Any]]:
+            return []
+
+    def tool_func(x: int) -> int:
+        return x
+
+    # 1. Test Wrapped Toolset (Should Pass)
+    func_toolset = FunctionToolset(tools=[tool_func], id='test_func_pass')
+    wrapper = MockTemporalWrapper(func_toolset)
+    _validate_temporal_toolsets([wrapper])
+
+    # 2. Test Unwrapped Toolset (Should Fail)
+    func_toolset_fail = FunctionToolset(tools=[tool_func], id='test_func_fail')
+    with pytest.raises(UserError, match='must be wrapped in a `TemporalWrapperToolset`'):
+        _validate_temporal_toolsets([func_toolset_fail])

@@ -64,7 +64,7 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]])
     def validate_toolset(t: AbstractToolset[AgentDepsT]) -> None:
         # If we encounter a TemporalWrapperToolset, we don't need to check its children
         # since they're already wrapped
-        if isinstance(t, TemporalWrapperToolset):  # pragma: no cover
+        if isinstance(t, TemporalWrapperToolset):
             return
 
         if isinstance(t, FunctionToolset):
