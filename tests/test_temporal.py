@@ -3344,10 +3344,10 @@ def test_validate_temporal_toolsets_logic():
     class MockTemporalWrapper(TemporalWrapperToolset):
         @property
         def temporal_activities(self) -> list[Callable[..., Any]]:
-            return []
+            return []  # pragma: no cover
 
     def tool_func(x: int) -> int:
-        return x
+        return x  # pragma: no cover
 
     # 1. Test Wrapped Toolset (Should Pass)
     func_toolset = FunctionToolset(tools=[tool_func], id='test_func_pass')
@@ -3358,3 +3358,57 @@ def test_validate_temporal_toolsets_logic():
     func_toolset_fail = FunctionToolset(tools=[tool_func], id='test_func_fail')
     with pytest.raises(UserError, match='must be wrapped in a `TemporalWrapperToolset`'):
         _validate_temporal_toolsets([func_toolset_fail])
+
+
+def test_resolve_toolsets_logic():
+    from collections.abc import Callable
+    from typing import Any
+
+    from pydantic_ai import Agent, FunctionToolset
+    from pydantic_ai.durable_exec.temporal import TemporalAgent, TemporalWrapperToolset
+
+    class MockWrapper(TemporalWrapperToolset):
+        @property
+        def temporal_activities(self) -> list[Callable[..., Any]]:
+            return []  # pragma: no cover
+
+    base_agent = Agent(TestModel(), name='test-agent')
+
+    # 1. No toolsets (None)
+    agent = TemporalAgent(base_agent)
+    assert agent._resolve_toolsets(None) is None  # pyright: ignore[reportPrivateUsage]
+
+    # 2. String lookup
+    t1 = FunctionToolset(tools=[], id='t1')
+    w1 = MockWrapper(t1)
+    agent_with_tools = TemporalAgent(base_agent, toolsets={'my_tool': w1})
+
+    # Found
+    assert agent_with_tools._resolve_toolsets(['my_tool']) == [w1]  # pyright: ignore[reportPrivateUsage]
+
+    # Not found - No named toolsets registered
+    with pytest.raises(UserError, match=r"Unknown toolset name: 'missing'. No named toolsets registered."):
+        agent._resolve_toolsets(['missing'])  # pyright: ignore[reportPrivateUsage]
+
+    # Not found - With available toolsets
+    with pytest.raises(UserError, match=r"Unknown toolset name: 'missing'. Available toolsets: \['my_tool'\]"):
+        agent_with_tools._resolve_toolsets(['missing'])  # pyright: ignore[reportPrivateUsage]
+
+    # 3. Already a wrapper
+    assert agent._resolve_toolsets([w1]) == [w1]  # pyright: ignore[reportPrivateUsage]
+
+    # 4. Original instance auto-resolution - wrapper found
+    # w1 wraps t1, so passing t1 should return w1 if it's in named_toolsets
+    result = agent_with_tools._resolve_toolsets([t1])  # pyright: ignore[reportPrivateUsage]
+    assert result is not None
+    assert result == [w1]
+    assert len(result) == 1
+    assert isinstance(result[0], MockWrapper)
+
+    # 5. Original instance not found - returns as-is
+    t2 = FunctionToolset(tools=[], id='t2')
+    result = agent_with_tools._resolve_toolsets([t2])  # pyright: ignore[reportPrivateUsage]
+    assert result is not None
+    assert result == [t2]
+    assert len(result) == 1
+    assert result[0] is t2
