@@ -1530,3 +1530,77 @@ class TestFileStoreProcessorUserContentUrlHandling:
             )
         )
         mock_store.store.assert_not_called()
+
+    async def test_image_url_in_user_content_unchanged_when_url_matches(
+        self, mock_store: AsyncMock, openai_model: TestModel
+    ):
+        """ImageUrl in user content passes through when URL already matches."""
+        processor = file_store_processor(mock_store)
+
+        ctx = RunContext(deps=None, model=openai_model, usage=RunUsage())
+
+        # First, upload content via a response to track the file
+        content = BinaryContent(data=b'image data', media_type='image/png')
+        key = generate_file_key(content)
+        response = ModelResponse(parts=[FilePart(content=content)])
+        await processor(ctx, [response])
+
+        # Create ImageUrl with URL that already matches what get_download_uri returns
+        image_url = ImageUrl(
+            url=f'https://cdn.example.com/{key}',  # Already correct URL
+            media_type='image/png',
+            identifier=key,
+        )
+
+        request = ModelRequest(
+            parts=[UserPromptPart(content=[image_url])],
+        )
+
+        result = await processor(ctx, [request])
+
+        # URL should pass through unchanged
+        assert result == snapshot([request])
+
+    async def test_binary_content_deduplication_in_user_content(self, mock_store: AsyncMock, openai_model: TestModel):
+        """Same BinaryContent in user content is only uploaded once."""
+        processor = file_store_processor(mock_store)
+
+        ctx = RunContext(deps=None, model=openai_model, usage=RunUsage())
+
+        # First, upload content via a response to track the file
+        content1 = BinaryContent(data=b'same image', media_type='image/png')
+        response = ModelResponse(parts=[FilePart(content=content1)])
+        await processor(ctx, [response])
+
+        # Now send the same content in a user prompt
+        content2 = BinaryContent(data=b'same image', media_type='image/png')
+        request = ModelRequest(
+            parts=[UserPromptPart(content=[content2])],
+        )
+
+        _ = await processor(ctx, [request])
+
+        # Should only have been uploaded once (in the response), not again
+        assert mock_store.store.call_count == 1
+
+    async def test_external_image_url_passes_through_unchanged(self, mock_store: AsyncMock, openai_model: TestModel):
+        """External ImageUrl (not uploaded by processor) passes through unchanged."""
+        processor = file_store_processor(mock_store)
+
+        ctx = RunContext(deps=None, model=openai_model, usage=RunUsage())
+
+        # Create an external ImageUrl (no identifier or identifier not in uploaded_keys)
+        external_url = ImageUrl(
+            url='https://example.com/external-image.png',
+            media_type='image/png',
+            identifier='external-key',  # Not tracked by processor
+        )
+
+        request = ModelRequest(
+            parts=[UserPromptPart(content=[external_url])],
+        )
+
+        result = await processor(ctx, [request])
+
+        # Should pass through unchanged
+        assert result == snapshot([request])
