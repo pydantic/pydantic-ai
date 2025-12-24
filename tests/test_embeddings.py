@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import pytest
 from inline_snapshot import snapshot
-from logfire.testing import CaptureLogfire
 
 from pydantic_ai.embeddings import (
     Embedder,
@@ -26,6 +25,9 @@ from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, try_import
 pytestmark = [
     pytest.mark.anyio,
 ]
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
@@ -131,6 +133,7 @@ class TestOpenAI:
         with pytest.raises(ModelHTTPError, match='model_not_found'):
             await embedder.embed_query('Hello, world!')
 
+    @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
         embedder = Embedder(model, instrument=True)
@@ -509,6 +512,7 @@ def test_result():
     assert result[4] == result['e'] == snapshot([1.0])
 
 
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_limited_instrumentation(capfire: CaptureLogfire):
     model = TestEmbeddingModel()
     embedder = Embedder(model, instrument=InstrumentationSettings(include_content=False))

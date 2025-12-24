@@ -146,10 +146,10 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
             truncate_dim=dimensions,
             **{'batch_size': batch_size} if batch_size is not None else {},  # type: ignore[reportArgumentType]
         )
-        embeddings = np_embeddings.tolist()  # type: ignore[reportAttributeAccessIssue]
+        embeddings = np_embeddings.tolist()
 
         return EmbeddingResult(
-            embeddings=embeddings,  # type: ignore[reportUnknownArgumentType]
+            embeddings=embeddings,
             inputs=inputs,
             input_type=input_type,
             model_name=self.model_name,
