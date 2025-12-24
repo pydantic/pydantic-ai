@@ -104,7 +104,7 @@ class ToolManager(Generic[AgentDepsT]):
             allow_partial: Whether to allow partial validation of the tool arguments.
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
             approved: Whether the tool call has been approved.
-            metadata: Additional metadata from ToolApproved.metadata.
+            metadata: Additional metadata from DeferredToolResults.metadata.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
