@@ -305,12 +305,19 @@ class ToolManager(Generic[AgentDepsT]):
     def can_make_tool_calls(self, projected_usage: RunUsage, tool_calls_in_this_step: int) -> bool:
         """Check if tool calls can proceed within the tools usage policy limit."""
         ctx = self._assert_ctx()
-        if (policy := ctx.tools_usage_policy) is not None and policy.max_uses is not None:
-            if (
-                policy.max_uses_per_step is not None and tool_calls_in_this_step > policy.max_uses_per_step
-            ):  # Ensuring we do not exceed the max_uses_per_step limit
+        if (policy := ctx.tools_usage_policy) is not None:
+            max_uses = policy.max_uses
+            min_uses = policy.min_uses
+            max_uses_per_step = policy.max_uses_per_step
+            min_uses_per_step = policy.min_uses_per_step
+            if max_uses is not None and projected_usage.tool_calls > max_uses:
                 return False
-            return projected_usage.tool_calls <= policy.max_uses
+            if min_uses is not None and projected_usage.tool_calls < min_uses:
+                return False
+            if max_uses_per_step is not None and tool_calls_in_this_step > max_uses_per_step:
+                return False
+            if min_uses_per_step is not None and tool_calls_in_this_step < min_uses_per_step:
+                return False
         return True
 
     def get_max_uses_per_step_of_tool(self, tool_name: str) -> int | None:
