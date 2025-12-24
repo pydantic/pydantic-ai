@@ -510,12 +510,12 @@ This is useful when you want to limit specific expensive or rate-limited tools w
 
 #### Limiting All Tools
 
-Limit the total number of tool calls across all tools within a run using the `max_tools_uses` parameter on the agent or run method. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
+Limit the total number of tool calls across all tools within a run using the [`ToolsUsagePolicy`][pydantic_ai.ToolsUsagePolicy] on the agent or run method. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
 
 ```python
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolsUsagePolicy
 
-agent = Agent('anthropic:claude-sonnet-4-5', max_tools_uses=5)
+agent = Agent('anthropic:claude-sonnet-4-5', tools_usage_policy=ToolsUsagePolicy(max_uses=5))
 
 
 @agent.tool_plain
@@ -537,15 +537,15 @@ print(result.output)
 You can override the limit per-run:
 
 ```python
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolsUsagePolicy
 
-agent = Agent('test', max_tools_uses=5)
+agent = Agent('test', tools_usage_policy=ToolsUsagePolicy(max_uses=5))
 
 # Use a stricter limit for this specific run
-result = agent.run_sync('Quick search only', max_tools_uses=2)
+result = agent.run_sync('Quick search only', tools_usage_policy=ToolsUsagePolicy(max_uses=2))
 ```
 
-For more details on `max_tools_uses`, see [Usage Limits](agents.md#soft-tool-use-limits-with-max_tools_uses).
+For more details on `ToolsUsagePolicy`, see [Usage Limits](agents.md#soft-tool-use-limits-with-toolsusagepolicy).
 
 #### Choosing the Right Limit
 
@@ -554,7 +554,7 @@ All three options count only **successful** tool invocations:
 | Parameter | Scope | Behavior | Use Case |
 | --------- | ----- | -------- | -------- |
 | `max_uses` | Per-tool | Tool removed from available tools | Limit specific expensive/rate-limited tools |
-| `max_tools_uses` | All tools | Returns message to model | Soft limit; model adapts gracefully |
+| `tools_usage_policy.max_uses` | All tools | Returns message to model | Soft limit; model adapts gracefully |
 | `tool_calls_limit` | All tools | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop to prevent runaway costs |
 
 #### Output Tool Calls

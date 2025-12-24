@@ -1,5 +1,6 @@
 from importlib.metadata import version as _metadata_version
 
+from ._tool_usage_policy import ToolsUsagePolicy, ToolUsageLimits
 from .agent import (
     Agent,
     CallToolsNode,
@@ -113,8 +114,6 @@ from .toolsets import (
     WrapperToolset,
 )
 from .usage import RequestUsage, RunUsage, UsageLimits
-
-from ._tool_usage_policy import AgentToolsPolicy, ToolUsageLimits
 
 __all__ = (
     '__version__',
@@ -245,9 +244,8 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
-
     # tool usage limits
-    'AgentToolsPolicy',
+    'ToolsUsagePolicy',
     'ToolUsageLimits',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

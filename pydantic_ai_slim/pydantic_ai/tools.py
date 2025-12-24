@@ -6,9 +6,10 @@ from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cas
 
 from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_ai._tool_usage_policy import ToolUsageLimits
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
+
+from pydantic_ai._tool_usage_policy import ToolUsageLimits
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
@@ -356,6 +357,7 @@ class Tool(Generic[ToolAgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            usage_limits: Optional usage limits for this tool (max calls, per-step limits, etc.).
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.

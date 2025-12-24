@@ -19,6 +19,7 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
+from pydantic_ai._tool_usage_policy import ToolsUsagePolicy
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
@@ -136,7 +137,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     model_settings: ModelSettings | None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
-    max_tools_uses: int | None
+    tools_usage_policy: ToolsUsagePolicy | None
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
@@ -822,7 +823,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
-        max_tools_uses=ctx.deps.max_tools_uses,
+        tools_usage_policy=ctx.deps.tools_usage_policy,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
@@ -1035,7 +1036,7 @@ def _handle_tool_calls_parts(
 ):
     # Separating the two scenarios to allow for granular overriding via prompt_templates
     for call in tool_calls:
-        if not can_make_tool_calls:  # We cannot use any tools because of the max_tools_uses limit
+        if not can_make_tool_calls:  # We cannot use any tools because of the tools usage policy limit
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Tool use limit reached for all tools. Please produce an output without calling any tools.',

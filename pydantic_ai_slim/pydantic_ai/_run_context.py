@@ -11,6 +11,7 @@ from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._tool_usage_policy import ToolsUsagePolicy
 
 from . import _utils, messages as _messages
 
@@ -70,8 +71,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
-    max_tools_uses: int | None = None
-    """The maximum number of successful tool uses to allow across all tools for this run, or `None` if unlimited."""
+    tools_usage_policy: ToolsUsagePolicy | None = None
+    """The tools usage policy for this run, if not provided, the default policy will be used."""
 
     @property
     def last_attempt(self) -> bool:

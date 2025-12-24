@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import ConfigDict, with_config
-from pydantic_ai._tool_usage_policy import ToolUsageLimits
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
+from pydantic_ai._tool_usage_policy import ToolUsageLimits
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset

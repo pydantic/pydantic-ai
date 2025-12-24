@@ -11,6 +11,8 @@ from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
+from pydantic_ai._tool_usage_policy import ToolsUsagePolicy
+
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
@@ -35,6 +37,8 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
+    tools_usage_policy: ToolsUsagePolicy | None = None
+    """The tools usage policy for this run step."""
 
     @classmethod
     @contextmanager
@@ -304,11 +308,11 @@ class ToolManager(Generic[AgentDepsT]):
         return ctx.tools_use_counts.get(tool_name, 0)
 
     def can_make_tool_calls(self, projected_usage: RunUsage) -> bool:
-        """Check if tool calls can proceed within the max_tools_uses limit."""
+        """Check if tool calls can proceed within the tools usage policy limit."""
         ctx = self._assert_ctx()
-
-        max_tools_uses = ctx.max_tools_uses
-        return max_tools_uses is None or projected_usage.tool_calls <= max_tools_uses
+        policy = ctx.tools_usage_policy
+        max_uses = policy.max_uses if policy else None
+        return max_uses is None or projected_usage.tool_calls <= max_uses
 
     def can_use_tool(self, tool_name: str, pending_uses: int) -> bool:
         """Check if a tool can be used within its max_uses limit.
@@ -317,6 +321,9 @@ class ToolManager(Generic[AgentDepsT]):
             tool_name: The name of the tool to check.
             pending_uses: Number of additional uses being requested (e.g., in current batch).
         """
+        # If I can use this tool or not will depend on the tool usage limits
+        # First we need to resolve the correct limits or maybe overwrite it at the correct place
+        # I would have preferred to merge this with the ToolsUsagePolicy limits in resolution scoping.
         current_uses = self.get_current_uses_of_tool(tool_name)
         max_uses = self.get_max_uses_of_tool(tool_name)
         if max_uses is not None and current_uses + pending_uses > max_uses:

@@ -4,7 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
 
-from pydantic_ai._tool_usage_policy import ToolUsageLimits
 import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
@@ -32,6 +31,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai._tool_usage_policy import ToolUsageLimits
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1408,7 +1408,9 @@ def test_tool_max_uses():
 
 
 def test_max_tools_uses():
-    agent = Agent(TestModel(), max_tools_uses=0)
+    from pydantic_ai import ToolsUsagePolicy
+
+    agent = Agent(TestModel(), tools_usage_policy=ToolsUsagePolicy(max_uses=0))
 
     @agent.tool_plain
     def my_tool(x: int) -> int:  # pragma: no cover

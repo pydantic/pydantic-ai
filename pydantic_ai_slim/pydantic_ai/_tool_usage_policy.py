@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic import dataclasses
+
 
 @dataclass
 class ToolUsageLimits:
@@ -51,8 +53,15 @@ class ToolUsageLimits:
     min_uses_per_step: int | None = None
 
 
+# Let us think of this scenario, we added some config for the tool before
+# These are the default limits
+# But allowing them to be overridden per run or for a particular Agent is also powerful
+# Let us allow that via ToolsUsagePolicy
+# I want to add behavioural quirks on this class as well although we do not have any at the moment.
+
+
 @dataclass
-class AgentToolsPolicy:
+class ToolsUsagePolicy:
     """Agent-level usage policy applied to all tools in a run.
 
     This class defines constraints that apply collectively to all tools during
@@ -89,6 +98,15 @@ class AgentToolsPolicy:
           A typical agent run may have multiple steps if the model needs to call tools
           and then reason about the results before producing a final output.
     """
+
+    tool_usage_limits: dict[str, ToolUsageLimits] = dataclasses.field(default_factory=dict)
+    # tool_name -> ToolUsageLimits
+
+    # With this we will allow overriding the default limits for a particular tool or a group of tools
+    # So this should take precedence over the default limits / toolset limits in resolution scoping.
+    # It should be pretty useful
+
+    # These are for the entire run / all the tools together with the Agent
 
     max_uses: int | None = None
     max_uses_per_step: int | None = None
