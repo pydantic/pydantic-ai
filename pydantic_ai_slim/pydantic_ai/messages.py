@@ -1179,7 +1179,7 @@ class BaseToolCallPart:
 
     def has_content(self) -> bool:
         """Return `True` if the arguments contain any data."""
-        return True
+        return self.args not in ('', {}, None)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
