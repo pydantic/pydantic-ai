@@ -1084,7 +1084,7 @@ async def _call_tools(
         usage_limits.check_before_tool_call(projected_usage)
 
     # Checks for total tool calls limit
-    can_make_tool_calls = tool_manager.can_make_tool_calls(projected_usage)
+    can_make_tool_calls = tool_manager.can_make_tool_calls(projected_usage, len(tool_calls))
 
     calls_to_run: list[_messages.ToolCallPart] = []
 

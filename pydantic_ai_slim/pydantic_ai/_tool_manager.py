@@ -302,26 +302,73 @@ class ToolManager(Generic[AgentDepsT]):
         ctx = self._assert_ctx()
         return ctx.tools_use_counts.get(tool_name, 0)
 
-    def can_make_tool_calls(self, projected_usage: RunUsage) -> bool:
+    def can_make_tool_calls(self, projected_usage: RunUsage, tool_calls_in_this_step: int) -> bool:
         """Check if tool calls can proceed within the tools usage policy limit."""
         ctx = self._assert_ctx()
         if (policy := ctx.tools_usage_policy) is not None and policy.max_uses is not None:
+            if (
+                policy.max_uses_per_step is not None and tool_calls_in_this_step > policy.max_uses_per_step
+            ):  # Ensuring we do not exceed the max_uses_per_step limit
+                return False
             return projected_usage.tool_calls <= policy.max_uses
         return True
+
+    def get_max_uses_per_step_of_tool(self, tool_name: str) -> int | None:
+        """Get the maximum number of uses allowed for a given tool within a step, or `None` if unlimited."""
+        if self.tools is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        if (
+            (tool := self.tools.get(tool_name)) is not None
+            and (usage_limits := tool.usage_limits) is not None
+            and (max_uses_per_step := usage_limits.max_uses_per_step) is not None
+        ):
+            return max_uses_per_step
+        return None
+
+    def get_min_uses_of_tool(self, tool_name: str) -> int | None:
+        """Get the minimum number of uses allowed for a given tool, or `None` if unlimited."""
+        if self.tools is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        if (
+            (tool := self.tools.get(tool_name)) is not None
+            and (usage_limits := tool.usage_limits) is not None
+            and (min_uses := usage_limits.min_uses) is not None
+        ):
+            return min_uses
+        return None
+
+    def get_min_uses_per_step_of_tool(self, tool_name: str) -> int | None:
+        """Get the minimum number of uses allowed for a given tool within a step, or `None` if unlimited."""
+        if self.tools is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        if (
+            (tool := self.tools.get(tool_name)) is not None
+            and (usage_limits := tool.usage_limits) is not None
+            and (min_uses_per_step := usage_limits.min_uses_per_step) is not None
+        ):
+            return min_uses_per_step
+        return None
 
     def can_use_tool(self, tool_name: str, pending_uses: int) -> bool:
         """Check if a tool can be used within its max_uses limit.
 
         Args:
             tool_name: The name of the tool to check.
-            pending_uses: Number of additional uses being requested (e.g., in current batch).
+            pending_uses: Number of additional uses being requested (in current batch).
         """
         # If I can use this tool or not will depend on the tool usage limits
         # First we need to resolve the correct limits or maybe overwrite it at the correct place
         # I would have preferred to merge this with the ToolsUsagePolicy limits in resolution scoping.
         current_uses = self.get_current_uses_of_tool(tool_name)
         max_uses = self.get_max_uses_of_tool(tool_name)
+        min_uses = self.get_min_uses_of_tool(tool_name)
+
+        if (
+            min_uses is not None and current_uses + pending_uses < min_uses
+        ):  # Ensuring we do not fall below the min_uses limit for the tool
+            return False
         if max_uses is not None and current_uses + pending_uses > max_uses:
+            # Ensuring we do not exceed the max_uses limit for the tool
             return False
         return True
 
