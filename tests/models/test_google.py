@@ -5399,7 +5399,7 @@ async def test_google_stream_tool_call(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):
     """Test streaming a tool call from Google to ensure function_call branch is covered."""
-    model_name = 'gemini-1.5-flash'
+    model_name = 'gemini-2.5-flash'
     model = GoogleModel(model_name, provider=google_provider)
 
     tool_call_mock = mocker.Mock()
@@ -5485,3 +5485,59 @@ async def test_google_stream_tool_call(
             final_text += chunk
 
     assert final_text == 'It is sunny'
+
+
+async def test_google_stream_safety_filter(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that safety ratings are captured in the exception body when streaming."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    safety_rating = mocker.Mock(category='HARM_CATEGORY_HATE_SPEECH', probability='HIGH', blocked=True)
+
+    safety_rating.model_dump.return_value = {
+        'category': 'HARM_CATEGORY_HATE_SPEECH',
+        'probability': 'HIGH',
+        'blocked': True,
+    }
+
+    candidate = mocker.Mock(
+        finish_reason=GoogleFinishReason.SAFETY,
+        content=None,
+        safety_ratings=[safety_rating],
+        grounding_metadata=None,
+        url_context_metadata=None,
+    )
+
+    chunk = mocker.Mock(
+        candidates=[candidate],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_123',
+    )
+    chunk.model_dump_json.return_value = '{"mock": "json"}'
+
+    async def stream_iterator():
+        yield chunk
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        async with agent.run_stream('bad content'):
+            pass
+
+    # Verify exception message
+    assert 'Content filter triggered' in str(exc_info.value)
+
+    # Verify safety ratings are present in the body (serialized ModelResponse)
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+
+    # body_json is a list of messages, check the first one
+    response_msg = body_json[0]
+    assert response_msg['provider_details']['finish_reason'] == 'SAFETY'
+    assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'

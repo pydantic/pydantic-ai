@@ -47,7 +47,7 @@ def load_dataset(
     """
     # begin load data from hf
     builder = datasets.load_dataset_builder(path)  # pyright: ignore[reportUnknownMemberType]
-    splits: dict[str, datasets.SplitInfo] = builder.info.splits or {}
+    splits: dict[str, datasets.SplitInfo] = builder.info.splits or {}  # pyright: ignore[reportUnknownMemberType]
     if split not in splits:
         raise ModelRetry(
             f'{split} is not valid for dataset {path}. Valid splits are {",".join(splits.keys())}'
@@ -87,7 +87,7 @@ def run_duckdb(ctx: RunContext[AnalystAgentDeps], dataset: str, sql: str) -> str
     data = ctx.deps.get(dataset)
     result = duckdb.query_df(df=data, virtual_table_name='dataset', sql_query=sql)
     # pass the result as ref (because DuckDB SQL can select many rows, creating another huge dataframe)
-    ref = ctx.deps.store(result.df())
+    ref = ctx.deps.store(result.df())  # pyright: ignore[reportUnknownMemberType]
     return f'Executed SQL, result is `{ref}`'
 
 
