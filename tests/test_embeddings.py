@@ -40,6 +40,10 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.embeddings.cohere import CohereEmbeddingModel, LatestCohereEmbeddingModelNames
     from pydantic_ai.providers.cohere import CohereProvider
 
+with try_import() as google_imports_successful:
+    from pydantic_ai.embeddings.google import GoogleEmbeddingModel, LatestGoogleEmbeddingModelNames
+    from pydantic_ai.providers.google import GoogleProvider
+
 with try_import() as sentence_transformers_imports_successful:
     from sentence_transformers import SentenceTransformer
 
@@ -318,6 +322,98 @@ class TestCohere:
             await embedder.embed_query('Hello, world!')
 
 
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.vcr
+class TestGoogle:
+    async def test_infer_model_gla(self, gemini_api_key: str):
+        with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
+            model = infer_embedding_model('google-gla:gemini-embedding-001')
+        assert isinstance(model, GoogleEmbeddingModel)
+        assert model.model_name == 'gemini-embedding-001'
+        assert model.system == 'google-gla'
+        assert 'generativelanguage.googleapis.com' in model.base_url
+
+    async def test_infer_model_vertex(self):
+        # Vertex AI requires project setup, so we just test the model creation
+        # without actually calling the API
+        with patch.dict(
+            os.environ,
+            {
+                'GOOGLE_API_KEY': 'mock-api-key',
+            },
+        ):
+            model = infer_embedding_model('google-vertex:gemini-embedding-001')
+        assert isinstance(model, GoogleEmbeddingModel)
+        assert model.model_name == 'gemini-embedding-001'
+        assert model.system == 'google-vertex'
+
+    async def test_query(self, gemini_api_key: str):
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            )
+        )
+
+    async def test_documents(self, gemini_api_key: str):
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=2),
+                inputs=['hello', 'world'],
+                input_type='document',
+                usage=RequestUsage(),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            )
+        )
+
+    async def test_query_with_dimensions(self, gemini_api_key: str):
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!', settings={'dimensions': 768})
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=768), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            )
+        )
+
+    async def test_max_input_tokens(self, gemini_api_key: str):
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(2048)
+
+    async def test_count_tokens(self, gemini_api_key: str):
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model)
+        count = await embedder.count_tokens('Hello, world!')
+        assert count == snapshot(5)
+
+    async def test_embed_error(self, gemini_api_key: str):
+        model = GoogleEmbeddingModel('nonexistent-model', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model)
+        with pytest.raises(ModelHTTPError, match='not found'):
+            await embedder.embed_query('Hello, world!')
+
+
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
     @pytest.fixture(scope='session')
@@ -373,7 +469,7 @@ class TestSentenceTransformers:
 
 
 @pytest.mark.skipif(
-    not openai_imports_successful() or not cohere_imports_successful(),
+    not openai_imports_successful() or not cohere_imports_successful() or not google_imports_successful(),
     reason='some embedding package was not installed',
 )
 def test_known_embedding_model_names():  # pragma: lax no cover
@@ -387,8 +483,10 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 
     openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
+    google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleEmbeddingModelNames)]
+    google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleEmbeddingModelNames)]
 
-    generated_names = sorted(openai_names + cohere_names)
+    generated_names = sorted(openai_names + cohere_names + google_gla_names + google_vertex_names)
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
     if generated_names != known_model_names:
