@@ -166,7 +166,7 @@ class MockChatInstance:
 def get_mock_chat_create_kwargs(async_client: AsyncClient) -> list[dict[str, Any]]:
     """Extract the kwargs passed to chat.create from a mock client.
 
-    Messages are automatically converted from protobuf to dicts for easier testing.
+    Messages, tools, and response_format are automatically converted from protobuf to dicts for easier testing.
     """
     if isinstance(async_client, MockXai):
         result: list[dict[str, Any]] = []
@@ -176,6 +176,14 @@ def get_mock_chat_create_kwargs(async_client: AsyncClient) -> list[dict[str, Any
                 kwargs_copy['messages'] = [
                     MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs_copy['messages']
                 ]
+            if 'tools' in kwargs_copy and kwargs_copy['tools'] is not None:
+                kwargs_copy['tools'] = [
+                    MessageToDict(tool, preserving_proto_field_name=True) for tool in kwargs_copy['tools']
+                ]
+            if 'response_format' in kwargs_copy and kwargs_copy['response_format'] is not None:
+                kwargs_copy['response_format'] = MessageToDict(
+                    kwargs_copy['response_format'], preserving_proto_field_name=True
+                )
             result.append(kwargs_copy)
         return result
     else:  # pragma: no cover

@@ -403,6 +403,19 @@ async def test_xai_request_tool_call(allow_model_requests: None):
     )
     assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=5, output_tokens=3, tool_calls=1))
 
+    # Verify tool definitions were passed correctly to the API
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert kwargs['tools'] == snapshot(
+        [
+            {
+                'function': {
+                    'name': 'get_location',
+                    'parameters': '{"additionalProperties": false, "properties": {"loc_name": {"type": "string"}}, "required": ["loc_name"], "type": "object"}',
+                }
+            }
+        ]
+    )
+
 
 # Helpers for creating Grok streaming chunks
 def grok_chunk(response: chat_types.Response, chunk: Any) -> tuple[chat_types.Response, Any]:
@@ -883,6 +896,24 @@ async def test_xai_instructions(allow_model_requests: None):
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
+        ]
+    )
+
+    # Verify instructions are passed as a system message in the API request
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {'content': [{'text': 'You are a helpful assistant.'}], 'role': 'ROLE_SYSTEM'},
+                    {'content': [{'text': 'What is the capital of France?'}], 'role': 'ROLE_USER'},
+                ],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
         ]
     )
 
@@ -2511,6 +2542,18 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
             ),
         ]
     )
+
+    # Verify response_format was passed correctly to the API
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    # Both requests should have response_format with the JSON schema (xAI always includes it for native output)
+    expected_response_format = snapshot(
+        {
+            'format_type': 'FORMAT_TYPE_JSON_SCHEMA',
+            'schema': '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}',
+        }
+    )
+    assert kwargs[0]['response_format'] == expected_response_format
+    assert kwargs[1]['response_format'] == expected_response_format
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
