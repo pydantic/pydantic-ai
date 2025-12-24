@@ -16,9 +16,12 @@ from .._run_context import RunContext
 from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
+    AudioUrl,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -29,6 +32,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    VideoUrl,
 )
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
@@ -340,6 +344,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, FilePart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
                 assert False, "This should be unreachable — we don't generate FilePart on TestModel."
+            elif isinstance(part, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):  # pragma: no cover
+                # URL types in model responses are passed through as-is
+                pass
             else:
                 assert_never(part)
 
