@@ -41,7 +41,11 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as google_imports_successful:
-    from pydantic_ai.embeddings.google import GoogleEmbeddingModel, LatestGoogleEmbeddingModelNames
+    from pydantic_ai.embeddings.google import (
+        GoogleEmbeddingModel,
+        LatestGoogleGLAEmbeddingModelNames,
+        LatestGoogleVertexEmbeddingModelNames,
+    )
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as sentence_transformers_imports_successful:
@@ -521,8 +525,8 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 
     openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
-    google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleEmbeddingModelNames)]
-    google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleEmbeddingModelNames)]
+    google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
+    google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
 
     generated_names = sorted(openai_names + cohere_names + google_gla_names + google_vertex_names)
 

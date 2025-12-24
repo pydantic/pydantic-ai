@@ -37,8 +37,6 @@ KnownEmbeddingModelName = TypeAliasType(
     'KnownEmbeddingModelName',
     Literal[
         'google-gla:gemini-embedding-001',
-        'google-gla:text-embedding-005',
-        'google-gla:text-multilingual-embedding-002',
         'google-vertex:gemini-embedding-001',
         'google-vertex:text-embedding-005',
         'google-vertex:text-multilingual-embedding-002',

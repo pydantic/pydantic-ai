@@ -20,19 +20,26 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-LatestGoogleEmbeddingModelNames = Literal[
-    'gemini-embedding-001',
-    'text-embedding-004',
-    'text-embedding-005',
-    'text-multilingual-embedding-002',
-]
-"""Latest Google embeddings models.
+LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001']
+"""Latest Google Gemini API (GLA) embedding models.
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
 for available models and their capabilities.
-
-Note: `text-embedding-005` and `text-multilingual-embedding-002` are only available on Vertex AI.
 """
+
+LatestGoogleVertexEmbeddingModelNames = Literal[
+    'gemini-embedding-001',
+    'text-embedding-005',
+    'text-multilingual-embedding-002',
+]
+"""Latest Google Vertex AI embedding models.
+
+See the [Vertex AI Embeddings documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/embeddings/get-text-embeddings)
+for available models and their capabilities.
+"""
+
+LatestGoogleEmbeddingModelNames = LatestGoogleGLAEmbeddingModelNames | LatestGoogleVertexEmbeddingModelNames
+"""All latest Google embedding models (union of GLA and Vertex AI models)."""
 
 GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 """Possible Google embeddings model names."""
@@ -46,7 +53,6 @@ class _GoogleEmbeddingModelConfig:
 
 _GOOGLE_EMBEDDING_MODELS: dict[GoogleEmbeddingModelName, _GoogleEmbeddingModelConfig] = {
     'gemini-embedding-001': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
-    'text-embedding-004': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
     'text-embedding-005': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
     'text-multilingual-embedding-002': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
 }

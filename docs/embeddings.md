@@ -134,7 +134,7 @@ embedder = Embedder(
 async def main():
     result = await embedder.embed_query('Hello world')
     print(len(result.embeddings[0]))
-    #> 1536
+    #> 256
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -230,7 +230,6 @@ Google provides several embedding models:
 | Model | Dimensions | Availability |
 |-------|------------|--------------|
 | `gemini-embedding-001` | 128-3072 | Gemini API + Vertex AI |
-| `text-embedding-004` | 768 | Gemini API |
 | `text-embedding-005` | 768 | Vertex AI only |
 | `text-multilingual-embedding-002` | 768 | Vertex AI only |
 
@@ -458,7 +457,7 @@ async def main():
         settings=EmbeddingSettings(dimensions=256),
     )
     print(len(result.embeddings[0]))
-    #> 1536
+    #> 256
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
