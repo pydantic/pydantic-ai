@@ -1,0 +1,48 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '76'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      encoding_format: base64
+      input:
+      - Hello, world!
+      model: nonexistent
+    uri: https://api.openai.com/v1/embeddings
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '217'
+      content-type:
+      - application/json; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      error:
+        code: model_not_found
+        message: The model `nonexistent` does not exist or you do not have access to it.
+        param: null
+        type: invalid_request_error
+    status:
+      code: 404
+      message: Not Found
+version: 1

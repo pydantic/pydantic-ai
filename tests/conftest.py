@@ -23,7 +23,7 @@ from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage
+from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.models import Model, cached_async_http_client
 
 __all__ = (
@@ -34,6 +34,7 @@ __all__ = (
     'IsBytes',
     'IsInt',
     'IsInstance',
+    'IsList',
     'TestEnv',
     'ClientWithHandler',
     'try_import',
@@ -62,8 +63,9 @@ if TYPE_CHECKING:
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
+    def IsList(*args: T, **kwargs: Any) -> list[T]: ...
 else:
-    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
+    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -254,6 +256,7 @@ def event_loop() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
+    Embedder.instrument_all(False)
 
 
 try:
