@@ -175,6 +175,36 @@ def get_mock_chat_create_kwargs(async_client: AsyncClient) -> list[dict[str, Any
 # =============================================================================
 
 
+def create_logprob(
+    token: str,
+    logprob: float,
+    token_bytes: bytes | list[int] | None = None,
+    top_logprobs: list[chat_pb2.TopLogProb] | None = None,
+) -> chat_pb2.LogProb:
+    """Create a LogProb proto.
+
+    Args:
+        token: The token string.
+        logprob: The log probability value.
+        token_bytes: The bytes representation of the token. Can be bytes or list of ints.
+        top_logprobs: Optional list of top log probabilities.
+
+    Example:
+        >>> logprob = create_logprob('Hello', -0.5, b'Hello')
+    """
+    if token_bytes is None:
+        token_bytes = token.encode('utf-8')
+    elif isinstance(token_bytes, list):
+        token_bytes = bytes(token_bytes)
+
+    return chat_pb2.LogProb(
+        token=token,
+        logprob=logprob,
+        bytes=token_bytes,
+        top_logprobs=top_logprobs or [],
+    )
+
+
 def create_response(
     content: str = '',
     tool_calls: list[chat_pb2.ToolCall] | None = None,
@@ -182,6 +212,7 @@ def create_response(
     usage: Any | None = None,
     reasoning_content: str = '',
     encrypted_content: str = '',
+    logprobs: list[chat_pb2.LogProb] | None = None,
 ) -> chat_types.Response:
     """Create a Response with a single output."""
     output = chat_pb2.CompletionOutput(
@@ -195,6 +226,9 @@ def create_response(
             tool_calls=tool_calls or [],
         ),
     )
+
+    if logprobs is not None:
+        output.logprobs.CopyFrom(chat_pb2.LogProbs(content=logprobs))
 
     return _build_response_with_outputs('grok-123', [output], usage)
 

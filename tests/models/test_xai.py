@@ -71,6 +71,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_responses,
+    create_logprob,
     create_mcp_server_responses,
     create_mixed_tools_response,
     create_response,
@@ -83,6 +84,7 @@ from .mock_xai import (
 
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
+    from google.protobuf.json_format import MessageToDict
     from xai_sdk.proto.v6 import chat_pb2, usage_pb2
 
     from pydantic_ai.models.xai import XaiModel
@@ -215,6 +217,22 @@ async def test_xai_image_input(allow_model_requests: None):
 
     result = await agent.run(['Describe these inputs.', image_url, binary_image])
     assert result.output == 'done'
+
+    # Verify the generated API payload contains the image parts
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    messages = [MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs[0]['messages']]
+    assert messages == snapshot(
+        [
+            {
+                'content': [
+                    {'text': 'Describe these inputs.'},
+                    {'image_url': {'image_url': 'https://example.com/image.png', 'detail': 'DETAIL_AUTO'}},
+                    {'image_url': {'image_url': 'data:image/png;base64,iVBORw==', 'detail': 'DETAIL_AUTO'}},
+                ],
+                'role': 'ROLE_USER',
+            }
+        ]
+    )
 
 
 async def test_xai_request_structured_response(allow_model_requests: None):
@@ -875,8 +893,26 @@ async def test_xai_image_url_input(allow_model_requests: None):
         ]
     )
     assert result.output == 'world'
-    # Verify that the image URL was included in the messages
-    assert len(get_mock_chat_create_kwargs(mock_client)) == 1
+
+    # Verify the generated API payload contains the image URL
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    messages = [MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs[0]['messages']]
+    assert messages == snapshot(
+        [
+            {
+                'content': [
+                    {'text': 'hello'},
+                    {
+                        'image_url': {
+                            'image_url': 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                            'detail': 'DETAIL_AUTO',
+                        }
+                    },
+                ],
+                'role': 'ROLE_USER',
+            }
+        ]
+    )
 
 
 async def test_xai_image_url_tool_response(allow_model_requests: None):
@@ -1038,11 +1074,18 @@ async def test_xai_image_as_binary_content_input(allow_model_requests: None, ima
     agent = Agent(m)
 
     result = await agent.run(['What fruit is in the image?', image_content])
+    assert result.output == 'The image shows a kiwi fruit.'
 
-    # Verify the model received and processed the image
-    assert result.output
-    response_text = result.output.lower()
-    assert 'kiwi' in response_text or 'fruit' in response_text
+    # Verify the generated API payload contains the image as a data URI
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    messages = [MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs[0]['messages']]
+    assert len(messages) == 1
+    content = messages[0]['content']
+    assert content[0] == {'text': 'What fruit is in the image?'}
+    # Verify the image is base64-encoded as a data URI (don't snapshot the full base64)
+    assert 'image_url' in content[1]
+    assert content[1]['image_url']['image_url'].startswith('data:image/jpeg;base64,')
+    assert content[1]['image_url']['detail'] == 'DETAIL_AUTO'
 
 
 async def test_xai_document_url_input(allow_model_requests: None):
@@ -1075,9 +1118,22 @@ async def test_xai_binary_content_document_input(allow_model_requests: None):
     )
 
     result = await agent.run(['What is in this document?', document_content])
-
-    # Verify the response
     assert result.output == 'The document discusses testing.'
+
+    # Verify the generated API payload contains the file reference
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    messages = [MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs[0]['messages']]
+    assert messages == snapshot(
+        [
+            {
+                'content': [
+                    {'text': 'What is in this document?'},
+                    {'file': {'file_id': 'file-86a6ad'}},
+                ],
+                'role': 'ROLE_USER',
+            }
+        ]
+    )
 
 
 async def test_xai_audio_url_not_supported(allow_model_requests: None):
@@ -1120,6 +1176,44 @@ async def test_xai_binary_content_audio_not_supported(allow_model_requests: None
 
     with pytest.raises(NotImplementedError, match='AudioUrl/BinaryContent with audio is not supported by xAI SDK'):
         await agent.run(['What is in this audio?', audio_content])
+
+
+async def test_xai_response_with_logprobs(allow_model_requests: None):
+    """Test that logprobs are correctly extracted from xAI responses."""
+    response = create_response(
+        content='Belo Horizonte.',
+        logprobs=[
+            create_logprob('Belo', -0.5, b'Belo'),
+            create_logprob(' Horizonte', -0.25, b' Horizonte'),
+            create_logprob('.', -0.0, b'.'),
+        ],
+    )
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('What is the capital of Minas Gerais?')
+    messages = result.all_messages()
+    response_msg = messages[1]
+    assert isinstance(response_msg, ModelResponse)
+    text_part = response_msg.parts[0]
+    assert isinstance(text_part, TextPart)
+    assert text_part.provider_details is not None
+    assert 'logprobs' in text_part.provider_details
+    assert text_part.provider_details['logprobs'] == snapshot(
+        {
+            'content': [
+                {'token': 'Belo', 'logprob': -0.5, 'bytes': [66, 101, 108, 111], 'top_logprobs': []},
+                {
+                    'token': ' Horizonte',
+                    'logprob': -0.25,
+                    'bytes': [32, 72, 111, 114, 105, 122, 111, 110, 116, 101],
+                    'top_logprobs': [],
+                },
+                {'token': '.', 'logprob': -0.0, 'bytes': [46], 'top_logprobs': []},
+            ]
+        }
+    )
 
 
 # Grok built-in tools tests

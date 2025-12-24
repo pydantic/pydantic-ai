@@ -85,6 +85,9 @@ class XaiModelSettings(ModelSettings, total=False):
     See [xAI SDK documentation](https://docs.x.ai/docs) for more details on these parameters.
     """
 
+    xai_logprobs: bool
+    """Whether to return log probabilities of the output tokens or not."""
+
     xai_top_logprobs: int
     """An integer between 0 and 20 specifying the number of most likely tokens to return at each position."""
 
@@ -507,8 +510,8 @@ class XaiModel(Model):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_x_search_outputs'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
-        if model_settings.get('xai_include_document_search_outputs'):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_DOCUMENT_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_attachment_search_outputs'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_collections_search_outputs'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_mcp_outputs'):
@@ -622,7 +625,10 @@ class XaiModel(Model):
 
             # Add text content before tool calls
             if message.content and message.role != chat_types.chat_pb2.MessageRole.ROLE_TOOL:
-                parts.append(TextPart(content=message.content))
+                part_provider_details: dict[str, Any] | None = None
+                if output.logprobs and output.logprobs.content:
+                    part_provider_details = {'logprobs': self._map_logprobs(output.logprobs)}
+                parts.append(TextPart(content=message.content, provider_details=part_provider_details))
 
             # Process tool calls in this output
             for tool_call in message.tool_calls:
@@ -821,6 +827,7 @@ class XaiModel(Model):
             'parallel_tool_calls': 'parallel_tool_calls',
             'presence_penalty': 'presence_penalty',
             'frequency_penalty': 'frequency_penalty',
+            'logprobs': 'xai_logprobs',
             'top_logprobs': 'xai_top_logprobs',
             'user': 'xai_user',
             'store_messages': 'xai_store_messages',
@@ -885,6 +892,29 @@ class XaiModel(Model):
                     f'If XSearchTool should be supported, please file an issue.'
                 )
         return tools
+
+    @staticmethod
+    def _map_logprobs(
+        logprobs: chat_types.chat_pb2.LogProbs,
+    ) -> dict[str, Any]:
+        return {
+            'content': [
+                {
+                    'token': lp.token,
+                    'bytes': list(lp.bytes) if lp.bytes else None,
+                    'logprob': lp.logprob,
+                    'top_logprobs': [
+                        {
+                            'token': tlp.token,
+                            'bytes': list(tlp.bytes) if tlp.bytes else None,
+                            'logprob': tlp.logprob,
+                        }
+                        for tlp in lp.top_logprobs
+                    ],
+                }
+                for lp in logprobs.content
+            ]
+        }
 
 
 @dataclass
