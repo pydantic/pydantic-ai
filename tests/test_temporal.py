@@ -2438,6 +2438,22 @@ def test_temporal_run_context_preserves_run_id():
     assert reconstructed.run_id == 'run-123'
 
 
+def test_temporal_run_context_serializes_metadata():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        metadata={'env': 'prod'},
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['metadata'] == {'env': 'prod'}
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.metadata == {'env': 'prod'}
+
+
 def test_temporal_run_context_serializes_usage():
     ctx = RunContext(
         deps=None,
