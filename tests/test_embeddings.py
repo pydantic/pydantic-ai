@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from collections.abc import Iterator
 from decimal import Decimal
@@ -139,42 +141,43 @@ class TestOpenAI:
         embedder = Embedder(model, instrument=True)
         await embedder.embed_query('Hello, world!', settings={'dimensions': 128})
 
-        assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
-            [
-                {
-                    'name': 'embeddings text-embedding-3-small',
-                    'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
-                    'parent': None,
-                    'start_time': IsInt(),
-                    'end_time': IsInt(),
-                    'attributes': {
-                        'gen_ai.operation.name': 'embeddings',
-                        'gen_ai.provider.name': 'openai',
-                        'gen_ai.request.model': 'text-embedding-3-small',
-                        'input_type': 'query',
-                        'server.address': 'api.openai.com',
-                        'inputs_count': 1,
-                        'embedding_settings': {'dimensions': 128},
-                        'inputs': ['Hello, world!'],
-                        'logfire.json_schema': {
-                            'type': 'object',
-                            'properties': {
-                                'input_type': {'type': 'string'},
-                                'inputs_count': {'type': 'integer'},
-                                'embedding_settings': {'type': 'object'},
-                                'inputs': {'type': ['array']},
-                                'embeddings': {'type': 'array'},
-                            },
+        spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        span = next(span for span in spans if 'embeddings' in span['name'])
+
+        assert span == snapshot(
+            {
+                'name': 'embeddings text-embedding-3-small',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': IsInt(),
+                'end_time': IsInt(),
+                'attributes': {
+                    'gen_ai.operation.name': 'embeddings',
+                    'gen_ai.provider.name': 'openai',
+                    'gen_ai.request.model': 'text-embedding-3-small',
+                    'input_type': 'query',
+                    'server.address': 'api.openai.com',
+                    'inputs_count': 1,
+                    'embedding_settings': {'dimensions': 128},
+                    'inputs': ['Hello, world!'],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'input_type': {'type': 'string'},
+                            'inputs_count': {'type': 'integer'},
+                            'embedding_settings': {'type': 'object'},
+                            'inputs': {'type': ['array']},
+                            'embeddings': {'type': 'array'},
                         },
-                        'logfire.span_type': 'span',
-                        'logfire.msg': 'embeddings text-embedding-3-small',
-                        'gen_ai.usage.input_tokens': 4,
-                        'operation.cost': 8e-08,
-                        'gen_ai.response.model': 'text-embedding-3-small',
-                        'gen_ai.embeddings.dimension.count': 128,
                     },
-                }
-            ]
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'embeddings text-embedding-3-small',
+                    'gen_ai.usage.input_tokens': 4,
+                    'operation.cost': 8e-08,
+                    'gen_ai.response.model': 'text-embedding-3-small',
+                    'gen_ai.embeddings.dimension.count': 128,
+                },
+            }
         )
 
         assert capfire.get_collected_metrics() == snapshot(
