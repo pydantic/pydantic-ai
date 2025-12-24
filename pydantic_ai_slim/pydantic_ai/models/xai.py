@@ -118,12 +118,6 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
     """
 
-    xai_include_x_search_outputs: bool
-    """Whether to include the x search results in the response.
-
-    Corresponds to the `x_search_call.action.sources` value of the `include` parameter in the Responses API.
-    """
-
     xai_include_document_search_outputs: bool
     """Whether to include the document search results in the response.
 
@@ -508,8 +502,7 @@ class XaiModel(Model):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
         if model_settings.get('xai_include_web_search_outputs'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
-        if model_settings.get('xai_include_x_search_outputs'):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
+        # x_search not yet supported
         if model_settings.get('xai_include_attachment_search_outputs'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_collections_search_outputs'):
