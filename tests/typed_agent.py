@@ -159,7 +159,7 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[arg-type]
+union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[call-overload]
 assert_type(union_agent, Agent[None, Foo | Bar])
 
 

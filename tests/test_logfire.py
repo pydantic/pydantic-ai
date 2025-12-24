@@ -426,13 +426,13 @@ def test_logfire(
                                     'zero_count': 0,
                                     'positive': {
                                         'offset': 23234,
-                                        'bucket_counts': IsList(length=...),
+                                        'bucket_counts': IsList(length=...),  # type: ignore
                                     },
                                     'negative': {'offset': 0, 'bucket_counts': [0]},
                                     'flags': 0,
                                     'min': 51,
                                     'max': 52,
-                                    'exemplars': IsList(length=...),
+                                    'exemplars': IsList(length=...),  # type: ignore
                                 },
                                 {
                                     'attributes': {
@@ -450,13 +450,13 @@ def test_logfire(
                                     'zero_count': 0,
                                     'positive': {
                                         'offset': 255,
-                                        'bucket_counts': IsList(length=...),
+                                        'bucket_counts': IsList(length=...),  # type: ignore
                                     },
                                     'negative': {'offset': 0, 'bucket_counts': [0]},
                                     'flags': 0,
                                     'min': 4,
                                     'max': 8,
-                                    'exemplars': IsList(length=...),
+                                    'exemplars': IsList(length=...),  # type: ignore
                                 },
                             ],
                             'aggregation_temporality': 1,
