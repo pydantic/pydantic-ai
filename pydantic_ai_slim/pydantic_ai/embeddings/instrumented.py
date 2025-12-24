@@ -139,7 +139,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     record_metrics = _record_metrics
 
                     if not span.is_recording():
-                        return  # pragma: no cover
+                        return
 
                     attributes_to_set: dict[str, AttributeValue] = {
                         **result.usage.opentelemetry_attributes(),

@@ -95,7 +95,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)  # pragma: no cover
+            provider = infer_provider(provider)
         self._provider = provider
         self._client = provider.client
 
