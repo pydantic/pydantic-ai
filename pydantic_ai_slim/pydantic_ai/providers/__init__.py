@@ -102,9 +102,9 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return CohereProvider
     elif provider == 'grok':
-        from .grok import GrokProvider
+        from .grok import GrokProvider  # pyright: ignore[reportDeprecated]
 
-        return GrokProvider
+        return GrokProvider  # pyright: ignore[reportDeprecated]
     elif provider == 'xai':
         from .xai import XaiProvider
 

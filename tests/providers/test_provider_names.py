@@ -23,7 +23,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google import GoogleProvider
-    from pydantic_ai.providers.grok import GrokProvider
+    from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
@@ -51,7 +51,7 @@ with try_import() as imports_successful:
         ('google-gla', GoogleProvider, 'GOOGLE_API_KEY'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
-        ('grok', GrokProvider, 'GROK_API_KEY'),
+        ('grok', GrokProvider, 'GROK_API_KEY'),  # pyright: ignore[reportDeprecated]
         ('xai', XaiProvider, 'XAI_API_KEY'),
         ('moonshotai', MoonshotAIProvider, 'MOONSHOTAI_API_KEY'),
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
@@ -85,6 +85,7 @@ def empty_env():
 
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
+@pytest.mark.filterwarnings('ignore:.*GrokProvider.*:DeprecationWarning')
 def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
     if exception_has is not None:
         with pytest.raises((UserError, OpenAIError, GoogleAuthError), match=rf'.*{exception_has}.*'):

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
 
-from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from . import ModelProfile
 
 
@@ -32,7 +32,9 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     is_reasoning_model = model_name == 'grok-4' or 'reasoning' in model_name and 'non-reasoning' not in model_name
 
     # Set supported builtin tools based on model capability
-    supported_builtin_tools = SUPPORTED_BUILTIN_TOOLS if grok_supports_builtin_tools else frozenset()
+    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = (
+        SUPPORTED_BUILTIN_TOOLS if grok_supports_builtin_tools else frozenset()
+    )
 
     return GrokModelProfile(
         # xAI supports tool calling

@@ -59,14 +59,14 @@ try:
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
     from xai_sdk.proto.v6 import chat_pb2, usage_pb2
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
-    from xai_sdk.types.model import AllModels
+    from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:
     raise ImportError(
         'Please install `xai-sdk` to use the xAI model, '
         'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
     ) from _import_error
 
-XaiModelName = str | AllModels
+XaiModelName = str | ChatModel
 """Possible xAI model names."""
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {

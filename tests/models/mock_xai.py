@@ -274,11 +274,15 @@ def create_server_tool_call(
     arguments: ToolCallArgumentsType,
     *,
     tool_call_id: str = 'server_tool_001',
-    tool_type: chat_pb2.ToolCallType = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
-    status: chat_pb2.ToolCallStatus = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+    tool_type: chat_pb2.ToolCallType | None = None,
+    status: chat_pb2.ToolCallStatus | None = None,
     error_message: str = '',
 ) -> chat_pb2.ToolCall:
     """Create a server-side (builtin) ToolCall proto."""
+    if tool_type is None:
+        tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+    if status is None:
+        status = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
     return chat_pb2.ToolCall(
         id=tool_call_id,
         type=tool_type,

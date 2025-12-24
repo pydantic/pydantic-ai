@@ -10,7 +10,7 @@ from pydantic_ai.providers import Provider
 
 try:
     from xai_sdk import AsyncClient
-    from xai_sdk.types.model import AllModels
+    from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `xai-sdk` package to use the xAI provider, '
@@ -19,7 +19,7 @@ except ImportError as _import_error:  # pragma: no cover
 
 
 # https://docs.x.ai/docs/models
-XaiModelName = str | AllModels
+XaiModelName = str | ChatModel
 
 
 class XaiProvider(Provider[AsyncClient]):
