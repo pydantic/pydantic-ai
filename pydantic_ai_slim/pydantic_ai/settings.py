@@ -37,7 +37,7 @@ class ModelSettings(TypedDict, total=False):
     Note that even with `temperature` of `0.0`, the results will not be fully deterministic.
 
     Supported by:
-
+q
     * Gemini
     * Anthropic
     * OpenAI
@@ -90,7 +90,6 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
-    * Grok
     * xAI
     """
 
@@ -105,6 +104,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Gemini
     * Outlines (LlamaCpp, VLLMOffline)
+    * xAI
     """
 
     presence_penalty: float
