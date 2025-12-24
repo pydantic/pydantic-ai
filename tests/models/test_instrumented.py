@@ -175,6 +175,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'end_time': 16000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'openai',
                     'gen_ai.system': 'openai',
                     'gen_ai.request.model': 'gpt-4o',
                     'server.address': 'example.com',
@@ -415,6 +416,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'end_time': 6000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'openai',
                     'gen_ai.system': 'openai',
                     'gen_ai.request.model': 'gpt-4o',
                     'server.address': 'example.com',
@@ -515,6 +517,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'end_time': 7000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'openai',
                     'gen_ai.system': 'openai',
                     'gen_ai.request.model': 'gpt-4o',
                     'server.address': 'example.com',
@@ -637,6 +640,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                     'end_time': 2000000000,
                     'attributes': {
                         'gen_ai.operation.name': 'chat',
+                        'gen_ai.provider.name': 'openai',
                         'gen_ai.system': 'openai',
                         'gen_ai.request.model': 'gpt-4o',
                         'server.address': 'example.com',
@@ -771,6 +775,7 @@ Fix the errors and try again.\
                     'end_time': 2000000000,
                     'attributes': {
                         'gen_ai.operation.name': 'chat',
+                        'gen_ai.provider.name': 'openai',
                         'gen_ai.system': 'openai',
                         'gen_ai.request.model': 'gpt-4o',
                         'server.address': 'example.com',
@@ -789,14 +794,9 @@ Fix the errors and try again.\
                         'logfire.msg': 'chat gpt-4o',
                         'logfire.span_type': 'span',
                         'gen_ai.input.messages': [
+                            {'role': 'system', 'parts': [{'type': 'text', 'content': 'system_prompt'}]},
                             {
-                                'role': 'system',
-                                'parts': [
-                                    {'type': 'text', 'content': 'system_prompt'},
-                                ],
-                            },
-                            {
-                                'role': 'user',
+                                'role': 'tool',
                                 'parts': [
                                     {'type': 'text', 'content': 'user_prompt'},
                                     {
@@ -845,7 +845,10 @@ Fix the errors and try again.\
                             }
                         ],
                         'gen_ai.response.model': 'gpt-4o-2024-11-20',
-                        'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
+                        'gen_ai.system_instructions': [
+                            {'type': 'text', 'content': 'instructions'},
+                            {'type': 'text', 'content': 'system_prompt'},
+                        ],
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
                         'gen_ai.usage.details.reasoning_tokens': 30,
@@ -880,6 +883,7 @@ Fix the errors and try again.\
                     'data_points': [
                         {
                             'attributes': {
+                                'gen_ai.provider.name': 'openai',
                                 'gen_ai.system': 'openai',
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
@@ -901,6 +905,7 @@ Fix the errors and try again.\
                         },
                         {
                             'attributes': {
+                                'gen_ai.provider.name': 'openai',
                                 'gen_ai.system': 'openai',
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
@@ -932,6 +937,7 @@ Fix the errors and try again.\
                     'data_points': [
                         {
                             'attributes': {
+                                'gen_ai.provider.name': 'openai',
                                 'gen_ai.system': 'openai',
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
@@ -953,6 +959,7 @@ Fix the errors and try again.\
                         },
                         {
                             'attributes': {
+                                'gen_ai.provider.name': 'openai',
                                 'gen_ai.system': 'openai',
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
@@ -1014,7 +1021,7 @@ def test_messages_to_otel_events_serialization_errors():
                 'parts': [{'type': 'tool_call', 'id': 'tool_call_id', 'name': 'tool', 'arguments': {'arg': 'Foo()'}}],
             },
             {
-                'role': 'user',
+                'role': 'tool',
                 'parts': [
                     {
                         'type': 'tool_call_response',
@@ -1406,8 +1413,8 @@ def test_messages_without_content(document_content: BinaryContent):
                     {'type': 'tool_call', 'id': IsStr(), 'name': 'my_tool'},
                 ],
             },
-            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
-            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
+            {'role': 'tool', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
+            {'role': 'tool', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'binary', 'media_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'assistant', 'parts': [{'type': 'binary', 'media_type': 'application/pdf'}]},
@@ -1503,6 +1510,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                 'end_time': 2000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'openai',
                     'gen_ai.system': 'openai',
                     'gen_ai.request.model': 'gpt-4o',
                     'server.address': 'example.com',
