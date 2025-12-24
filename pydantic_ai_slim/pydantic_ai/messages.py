@@ -198,6 +198,36 @@ class FileUrl(ABC):
         self.force_download = force_download
         self.vendor_metadata = vendor_metadata
 
+    @staticmethod
+    def create(
+        url: str,
+        *,
+        media_type: str | None = None,
+        identifier: str | None = None,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+    ) -> FileUrl:
+        mime_type = media_type or _mime_types.guess_type(url)[0]
+        kwargs: dict[str, Any] = {
+            'url': url,
+            'media_type': media_type,
+            'identifier': identifier,
+            'force_download': force_download,
+            'vendor_metadata': vendor_metadata,
+        }
+        if mime_type is None:
+            raise ValueError(f'Could not infer media type from URL: {url}. Explicitly provide a `media_type` instead.')
+        elif mime_type.startswith('video/'):
+            return VideoUrl(**kwargs)
+        elif mime_type.startswith('audio/'):
+            return AudioUrl(**kwargs)
+        elif mime_type.startswith('image/'):
+            return ImageUrl(**kwargs)
+        elif mime_type in _document_format_lookup:
+            return DocumentUrl(**kwargs)
+        else:
+            raise ValueError(f'Could not classify file from URL: {url}.')
+
     @pydantic.computed_field
     @property
     def media_type(self) -> str:

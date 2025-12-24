@@ -15,6 +15,7 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
+    FileUrl,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -759,17 +760,66 @@ def test_binary_content_from_path(tmp_path: Path):
             data=b'just some text', _media_type='text/plain', _type='text', _extension='txt', media_type='text/plain'
         )
     )
-    if find_spec('magika') is None:
-        # test image file
-        # magika will ignore fake jpeg data and scan it to text/plain
-        test_jpg_file = tmp_path / 'test.jpg'
-        test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
-        binary_content = BinaryContent.from_path(test_jpg_file)
-        assert binary_content == snapshot(
-            BinaryImage(
-                data=b'\xff\xd8\xff\xe0' + b'0' * 100,
-                media_type='image/jpeg',
-                _media_type='image/jpeg',
-                _identifier='bc8d49',
-            )
+    if find_spec('magika') is not None:
+        pytest.skip('Magika will ignore fake jpeg data and classify it to text/plain')
+    # test image file
+    test_jpg_file = tmp_path / 'test.jpg'
+    test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
+    binary_content = BinaryContent.from_path(test_jpg_file)
+    assert binary_content == snapshot(
+        BinaryImage(
+            data=b'\xff\xd8\xff\xe0' + b'0' * 100,
+            media_type='image/jpeg',
+            _media_type='image/jpeg',
+            _identifier='bc8d49',
         )
+    )
+
+
+@pytest.mark.parametrize(
+    [
+        'type',
+        'url',
+    ],
+    [
+        pytest.param(
+            'image-url',
+            'https://example.com/image.jpg',
+            id='image-url',
+        ),
+        pytest.param(
+            'document-url',
+            'https://example.com/document.pdf',
+            id='document-url',
+        ),
+        pytest.param(
+            'video-url',
+            'https://example.com/video.mp4',
+            id='video-url',
+        ),
+        pytest.param(
+            'audio-url',
+            'https://example.com/audio.mp3',
+            id='audio-url',
+        ),
+    ],
+)
+def test_create_from_file_url(type: str, url: str):
+    instance = FileUrl.create(
+        url=url,
+    )
+    if type == 'image-url':
+        assert isinstance(instance, ImageUrl)
+    elif type == 'document-url':
+        assert isinstance(instance, DocumentUrl)
+    elif type == 'video-url':
+        assert isinstance(instance, VideoUrl)
+    elif type == 'audio-url':
+        assert isinstance(instance, AudioUrl)
+
+
+def test_create_from_file_url_invalid():
+    with pytest.raises(ValueError, match='Could not infer media type'):
+        FileUrl.create('https://example.com/file.unknown')
+    with pytest.raises(ValueError, match='Could not classify file from URL'):
+        FileUrl.create('https://example.com/file.exe')
