@@ -372,7 +372,12 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                         'content': [{'text': ''}],
                         'role': 'ROLE_ASSISTANT',
                         'tool_calls': [
-                            {'id': 'call_get_country', 'function': {'name': 'get_user_country', 'arguments': '{}'}}
+                            {
+                                'id': 'call_get_country',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'get_user_country', 'arguments': '{}'},
+                            }
                         ],
                     },
                     {
@@ -513,7 +518,12 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                         'content': [{'text': ''}],
                         'role': 'ROLE_ASSISTANT',
                         'tool_calls': [
-                            {'id': 'call_get_country', 'function': {'name': 'get_user_country', 'arguments': '{}'}}
+                            {
+                                'id': 'call_get_country',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'get_user_country', 'arguments': '{}'},
+                            }
                         ],
                     },
                     {

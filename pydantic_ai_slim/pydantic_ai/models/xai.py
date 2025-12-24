@@ -118,18 +118,6 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
     """
 
-    xai_include_document_search_outputs: bool
-    """Whether to include the document search results in the response.
-
-    Corresponds to the `document_search_call.action.sources` value of the `include` parameter in the Responses API.
-    """
-
-    xai_include_collections_search_outputs: bool
-    """Whether to include the collections search results in the response.
-
-    Corresponds to the `collections_search_call.action.sources` value of the `include` parameter in the Responses API.
-    """
-
     xai_include_mcp_outputs: bool
     """Whether to include the MCP results in the response.
 
@@ -249,16 +237,16 @@ class XaiModel(Model):
                 texts.append(item.content)
             elif isinstance(item, ThinkingPart):
                 # xAI models (grok) support reasoning_content directly
-                if item.content:
+                if item.content and item.provider_name == self.system:
                     reasoning_contents.append(item.content)
-                if item.signature:
+                if item.signature and item.provider_name == self.system:
                     encrypted_contents.append(item.signature)
             elif isinstance(item, ToolCallPart):
                 tool_calls.append(self._map_tool_call(item))
             elif isinstance(item, BuiltinToolCallPart):
                 # Map builtin tool calls with appropriate status
                 builtin_call = self._map_builtin_tool_call_part(item)
-                if builtin_call:
+                if builtin_call and item.provider_name == self.system:
                     tool_calls.append(builtin_call)
                     # Track specific tool calls for status updates
                     if item.tool_name == CodeExecutionTool.kind:
@@ -284,6 +272,8 @@ class XaiModel(Model):
         """Map a ToolCallPart to an xAI SDK ToolCall."""
         return chat_types.chat_pb2.ToolCall(
             id=tool_call_part.tool_call_id,
+            type=chat_types.chat_pb2.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL,
+            status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
             function=chat_types.chat_pb2.FunctionCall(
                 name=tool_call_part.tool_name,
                 arguments=tool_call_part.args_as_json_str(),
@@ -372,7 +362,8 @@ class XaiModel(Model):
         if reasoning_contents:
             msg.reasoning_content = ''.join(reasoning_contents)
         if encrypted_contents:
-            msg.encrypted_content = ''.join(encrypted_contents)
+            # TODO: validate that we can concat contents
+            msg.encrypted_content = '\n'.join(encrypted_contents)
         if tool_calls:
             msg.tool_calls.extend(tool_calls)
         return msg
@@ -503,10 +494,7 @@ class XaiModel(Model):
         if model_settings.get('xai_include_web_search_outputs'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
         # x_search not yet supported
-        if model_settings.get('xai_include_attachment_search_outputs'):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT)
-        if model_settings.get('xai_include_collections_search_outputs'):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
+        # collections_search not yet supported (could be mapped to file search)
         if model_settings.get('xai_include_mcp_outputs'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
