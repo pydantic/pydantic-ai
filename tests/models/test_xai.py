@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -61,7 +62,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
-from pydantic_ai.output import NativeOutput
+from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -242,23 +243,65 @@ async def test_xai_image_input(allow_model_requests: None):
     )
 
 
-async def test_xai_request_structured_response(allow_model_requests: None):
-    tool_call = create_tool_call(
-        id='123',
-        name='final_result',
-        arguments={'response': [1, 2, 123]},
-    )
-    response = create_response(tool_calls=[tool_call])
-    mock_client = MockXai.create_mock(response)
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, output_type=list[int])
+async def test_xai_request_structured_response_tool_output(allow_model_requests: None):
+    """Test structured output using ToolOutput (tool-based structured output)."""
 
-    result = await agent.run('Hello')
-    assert result.output == [1, 2, 123]
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # First response: call the get_user_country tool
+    response1 = create_response(
+        tool_calls=[create_tool_call('call_get_country', 'get_user_country', {})],
+        usage=create_usage(prompt_tokens=70, completion_tokens=12),
+    )
+    # Second response: return structured output via final_result tool
+    response2 = create_response(
+        tool_calls=[create_tool_call('call_final', 'final_result', {'city': 'Mexico City', 'country': 'Mexico'})],
+        usage=create_usage(prompt_tokens=90, completion_tokens=15),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    # Use ToolOutput explicitly to use tool-based structured output (not native)
+    agent = Agent(m, output_type=ToolOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_get_country')],
+                usage=RequestUsage(input_tokens=70, output_tokens=12),
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id='call_get_country',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -266,10 +309,11 @@ async def test_xai_request_structured_response(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args='{"response": [1, 2, 123]}',
-                        tool_call_id='123',
+                        args='{"city": "Mexico City", "country": "Mexico"}',
+                        tool_call_id='call_final',
                     )
                 ],
+                usage=RequestUsage(input_tokens=90, output_tokens=15),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -282,13 +326,217 @@ async def test_xai_request_structured_response(allow_model_requests: None):
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='123',
+                        tool_call_id='call_final',
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
+        ]
+    )
+
+    # With ToolOutput, we should send tool definitions, not response_format
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': 'grok-4-1-fast-non-reasoning',
+                'messages': [
+                    {'content': [{'text': 'What is the largest city in the user country?'}], 'role': 'ROLE_USER'}
+                ],
+                'tools': [
+                    {
+                        'function': {
+                            'name': 'get_user_country',
+                            'parameters': '{"additionalProperties": false, "properties": {}, "type": "object"}',
+                        }
+                    },
+                    {
+                        'function': {
+                            'name': 'final_result',
+                            'description': 'The final response which ends this conversation',
+                            'parameters': '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}',
+                        }
+                    },
+                ],
+                'tool_choice': 'required',
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            },
+            {
+                'model': 'grok-4-1-fast-non-reasoning',
+                'messages': [
+                    {'content': [{'text': 'What is the largest city in the user country?'}], 'role': 'ROLE_USER'},
+                    {
+                        'content': [{'text': ''}],
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {'id': 'call_get_country', 'function': {'name': 'get_user_country', 'arguments': '{}'}}
+                        ],
+                    },
+                    {
+                        'content': [{'text': 'Mexico'}],
+                        'role': 'ROLE_TOOL',
+                    },
+                ],
+                'tools': [
+                    {
+                        'function': {
+                            'name': 'get_user_country',
+                            'parameters': '{"additionalProperties": false, "properties": {}, "type": "object"}',
+                        }
+                    },
+                    {
+                        'function': {
+                            'name': 'final_result',
+                            'description': 'The final response which ends this conversation',
+                            'parameters': '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}',
+                        }
+                    },
+                ],
+                'tool_choice': 'required',
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            },
+        ]
+    )
+
+
+async def test_xai_request_structured_response_native_output(allow_model_requests: None):
+    """Test structured output using native JSON schema output (the default for xAI)."""
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # First response: call the get_user_country tool
+    response1 = create_response(
+        tool_calls=[create_tool_call('call_get_country', 'get_user_country', {})],
+        usage=create_usage(prompt_tokens=70, completion_tokens=12),
+    )
+    # Second response: native output returns JSON text (not a tool call)
+    response2 = create_response(
+        content='{"city":"Mexico City","country":"Mexico"}',
+        usage=create_usage(prompt_tokens=90, completion_tokens=15),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    # Plain output_type uses native output by default for xAI (per GrokModelProfile)
+    agent = Agent(m, output_type=CityLocation)
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_get_country')],
+                usage=RequestUsage(input_tokens=70, output_tokens=12),
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id='call_get_country',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
+                usage=RequestUsage(input_tokens=90, output_tokens=15),
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Verify API request parameters
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    # With native output + tools, both requests should have response_format with JSON schema
+    assert kwargs == snapshot(
+        [
+            {
+                'model': 'grok-4-1-fast-non-reasoning',
+                'messages': [
+                    {'content': [{'text': 'What is the largest city in the user country?'}], 'role': 'ROLE_USER'}
+                ],
+                'tools': [
+                    {
+                        'function': {
+                            'name': 'get_user_country',
+                            'parameters': '{"additionalProperties": false, "properties": {}, "type": "object"}',
+                        }
+                    }
+                ],
+                'tool_choice': 'auto',
+                'response_format': {
+                    'format_type': 'FORMAT_TYPE_JSON_SCHEMA',
+                    'schema': '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}',
+                },
+                'use_encrypted_content': False,
+                'include': [],
+            },
+            {
+                'model': 'grok-4-1-fast-non-reasoning',
+                'messages': [
+                    {'content': [{'text': 'What is the largest city in the user country?'}], 'role': 'ROLE_USER'},
+                    {
+                        'content': [{'text': ''}],
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {'id': 'call_get_country', 'function': {'name': 'get_user_country', 'arguments': '{}'}}
+                        ],
+                    },
+                    {
+                        'content': [{'text': 'Mexico'}],
+                        'role': 'ROLE_TOOL',
+                    },
+                ],
+                'tools': [
+                    {
+                        'function': {
+                            'name': 'get_user_country',
+                            'parameters': '{"additionalProperties": false, "properties": {}, "type": "object"}',
+                        }
+                    }
+                ],
+                'tool_choice': 'auto',
+                'response_format': {
+                    'format_type': 'FORMAT_TYPE_JSON_SCHEMA',
+                    'schema': '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}',
+                },
+                'use_encrypted_content': False,
+                'include': [],
+            },
         ]
     )
 
