@@ -61,7 +61,16 @@ from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+from . import (
+    Model,
+    ModelRequestParameters,
+    OpenAIChatCompatibleProvider,
+    OpenAIResponsesCompatibleProvider,
+    StreamedResponse,
+    check_allow_model_requests,
+    download_item,
+    get_user_agent,
+)
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
@@ -415,24 +424,10 @@ class OpenAIChatModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal[
-            'azure',
-            'deepseek',
-            'cerebras',
-            'fireworks',
-            'github',
-            'grok',
-            'heroku',
-            'moonshotai',
-            'ollama',
+        provider: OpenAIChatCompatibleProvider
+        | Literal[
             'openai',
             'openai-chat',
-            'openrouter',
-            'together',
-            'vercel',
-            'litellm',
-            'nebius',
-            'ovhcloud',
             'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
@@ -446,24 +441,10 @@ class OpenAIChatModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal[
-            'azure',
-            'deepseek',
-            'cerebras',
-            'fireworks',
-            'github',
-            'grok',
-            'heroku',
-            'moonshotai',
-            'ollama',
+        provider: OpenAIChatCompatibleProvider
+        | Literal[
             'openai',
             'openai-chat',
-            'openrouter',
-            'together',
-            'vercel',
-            'litellm',
-            'nebius',
-            'ovhcloud',
             'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
@@ -476,24 +457,10 @@ class OpenAIChatModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal[
-            'azure',
-            'deepseek',
-            'cerebras',
-            'fireworks',
-            'github',
-            'grok',
-            'heroku',
-            'moonshotai',
-            'ollama',
+        provider: OpenAIChatCompatibleProvider
+        | Literal[
             'openai',
             'openai-chat',
-            'openrouter',
-            'together',
-            'vercel',
-            'litellm',
-            'nebius',
-            'ovhcloud',
             'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
@@ -1223,16 +1190,9 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal[
+        provider: OpenAIResponsesCompatibleProvider
+        | Literal[
             'openai',
-            'deepseek',
-            'azure',
-            'openrouter',
-            'grok',
-            'fireworks',
-            'together',
-            'nebius',
-            'ovhcloud',
             'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
