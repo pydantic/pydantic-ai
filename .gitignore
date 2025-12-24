@@ -2,9 +2,14 @@ site
 .venv
 dist
 __pycache__
+.logfire
+.mypy_cache
+.ruff_cache
+.pytest_cache
 .env
 .dev.vars
 /scratch/
+htmlcov
 /.coverage
 env*/
 /TODO.md
@@ -18,6 +23,7 @@ env*/
 node_modules/
 **.idea/
 .coverage*
+!.coveragerc*
 /test_tmp/
 .mcp.json
 .claude/

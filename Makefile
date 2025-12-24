@@ -59,9 +59,9 @@ test: ## Run tests and collect coverage data (excludes durable execution tests)
 
 .PHONY: test-durable
 test-durable: ## Run durable execution tests (temporal, dbos, prefect)
-	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -m durable -n auto --dist=loadgroup --durations=20
-	@uv run coverage combine
-	@uv run coverage report
+	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run --rcfile=.coveragerc-durable -m pytest -m durable -n auto --dist=loadgroup --durations=20
+	@uv run coverage combine --rcfile=.coveragerc-durable
+	@uv run coverage report --rcfile=.coveragerc-durable
 
 .PHONY: test-all
 test-all: ## Run all tests including durable execution tests
