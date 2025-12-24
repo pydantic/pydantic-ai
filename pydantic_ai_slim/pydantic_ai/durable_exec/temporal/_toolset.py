@@ -80,12 +80,12 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         visitor(self)
 
     async def __aenter__(self) -> Self:
-        if not workflow.in_workflow():  # pragma: no cover
+        if not workflow.in_workflow():
             await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if not workflow.in_workflow():  # pragma: no cover
+        if not workflow.in_workflow():
             return await self.wrapped.__aexit__(*args)
         return None
 
