@@ -325,6 +325,10 @@ class TestCohere:
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
 @pytest.mark.vcr
 class TestGoogle:
+    @pytest.fixture
+    def embedder(self, gemini_api_key: str) -> Embedder:
+        return Embedder(GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key)))
+
     async def test_infer_model_gla(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
             model = infer_embedding_model('google-gla:gemini-embedding-001')
@@ -347,9 +351,7 @@ class TestGoogle:
         assert model.model_name == 'gemini-embedding-001'
         assert model.system == 'google-vertex'
 
-    async def test_query(self, gemini_api_key: str):
-        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
-        embedder = Embedder(model)
+    async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
             EmbeddingResult(
@@ -363,9 +365,7 @@ class TestGoogle:
             )
         )
 
-    async def test_documents(self, gemini_api_key: str):
-        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
-        embedder = Embedder(model)
+    async def test_documents(self, embedder: Embedder):
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
             EmbeddingResult(
@@ -379,9 +379,7 @@ class TestGoogle:
             )
         )
 
-    async def test_query_with_dimensions(self, gemini_api_key: str):
-        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
-        embedder = Embedder(model)
+    async def test_query_with_dimensions(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!', settings={'dimensions': 768})
         assert result == snapshot(
             EmbeddingResult(
@@ -395,15 +393,11 @@ class TestGoogle:
             )
         )
 
-    async def test_max_input_tokens(self, gemini_api_key: str):
-        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
-        embedder = Embedder(model)
+    async def test_max_input_tokens(self, embedder: Embedder):
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(2048)
 
-    async def test_count_tokens(self, gemini_api_key: str):
-        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
-        embedder = Embedder(model)
+    async def test_count_tokens(self, embedder: Embedder):
         count = await embedder.count_tokens('Hello, world!')
         assert count == snapshot(5)
 
@@ -412,6 +406,50 @@ class TestGoogle:
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='not found'):
             await embedder.embed_query('Hello, world!')
+
+    @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+    async def test_instrumentation(self, gemini_api_key: str, capfire: CaptureLogfire):
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model, instrument=True)
+        await embedder.embed_query('Hello, world!', settings={'dimensions': 768})
+
+        spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        span = next(span for span in spans if 'embeddings' in span['name'])
+
+        assert span == snapshot(
+            {
+                'name': 'embeddings gemini-embedding-001',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': IsInt(),
+                'end_time': IsInt(),
+                'attributes': {
+                    'gen_ai.operation.name': 'embeddings',
+                    'gen_ai.provider.name': 'google-gla',
+                    'gen_ai.request.model': 'gemini-embedding-001',
+                    'input_type': 'query',
+                    'server.address': 'generativelanguage.googleapis.com',
+                    'inputs_count': 1,
+                    'embedding_settings': {'dimensions': 768},
+                    'inputs': ['Hello, world!'],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'input_type': {'type': 'string'},
+                            'inputs_count': {'type': 'integer'},
+                            'embedding_settings': {'type': 'object'},
+                            'inputs': {'type': ['array']},
+                            'embeddings': {'type': 'array'},
+                        },
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'embeddings gemini-embedding-001',
+                    'gen_ai.response.model': 'gemini-embedding-001',
+                    'operation.cost': 0.0,
+                    'gen_ai.embeddings.dimension.count': 768,
+                },
+            }
+        )
 
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')

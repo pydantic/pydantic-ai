@@ -185,6 +185,125 @@ embedder = Embedder('ollama:nomic-embed-text')
 
 See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for the full list of supported providers.
 
+### Google
+
+[`GoogleEmbeddingModel`][pydantic_ai.embeddings.google.GoogleEmbeddingModel] works with Google's embedding models via the Gemini API (Google AI Studio) or Vertex AI.
+
+#### Install
+
+To use Google embedding models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[google]"
+```
+
+#### Configuration
+
+To use `GoogleEmbeddingModel` with the Gemini API, go to [aistudio.google.com](https://aistudio.google.com/) and generate an API key. Once you have the API key, you can set it as an environment variable:
+
+```bash
+export GOOGLE_API_KEY='your-api-key'
+```
+
+You can then use the model:
+
+```python {title="google_embeddings.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('google-gla:gemini-embedding-001')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 3072
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
+
+#### Available Models
+
+Google provides several embedding models:
+
+| Model | Dimensions | Availability |
+|-------|------------|--------------|
+| `gemini-embedding-001` | 128-3072 | Gemini API + Vertex AI |
+| `text-embedding-004` | 768 | Gemini API |
+| `text-embedding-005` | 768 | Vertex AI only |
+| `text-multilingual-embedding-002` | 768 | Vertex AI only |
+
+#### Dimension Control
+
+Google's embedding models support dimension reduction via the `dimensions` setting:
+
+```python {title="google_dimensions.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingSettings
+
+embedder = Embedder(
+    'google-gla:gemini-embedding-001',
+    settings=EmbeddingSettings(dimensions=768),
+)
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 768
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+#### Google-Specific Settings
+
+Google models support additional settings via [`GoogleEmbeddingSettings`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings]:
+
+```python {title="google_settings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingSettings
+
+embedder = Embedder(
+    'google-gla:gemini-embedding-001',
+    settings=GoogleEmbeddingSettings(
+        dimensions=768,
+        google_task_type='SEMANTIC_SIMILARITY',  # Optimize for similarity comparison
+    ),
+)
+```
+
+Available task types optimize embeddings for specific use cases:
+
+- `RETRIEVAL_QUERY` — Optimized for search queries (default for `embed_query()`)
+- `RETRIEVAL_DOCUMENT` — Optimized for document indexing (default for `embed_documents()`)
+- `SEMANTIC_SIMILARITY` — Optimized for measuring text similarity
+- `CLASSIFICATION` — Optimized for text categorization
+- `CLUSTERING` — Optimized for grouping similar texts
+- `CODE_RETRIEVAL_QUERY` — Optimized for code search queries
+- `QUESTION_ANSWERING` — Optimized for QA systems
+- `FACT_VERIFICATION` — Optimized for fact-checking tasks
+
+#### Vertex AI
+
+To use Google's embedding models via Vertex AI instead of the Gemini API, use the `google-vertex` provider prefix:
+
+```python {title="google_vertex_embeddings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingModel
+from pydantic_ai.providers.google import GoogleProvider
+
+# Using provider prefix
+embedder = Embedder('google-vertex:gemini-embedding-001')
+
+# Or with explicit provider configuration
+model = GoogleEmbeddingModel(
+    'gemini-embedding-001',
+    provider=GoogleProvider(vertexai=True, project='my-project', location='us-central1'),
+)
+embedder = Embedder(model)
+```
+
 ### Cohere
 
 [`CohereEmbeddingModel`][pydantic_ai.embeddings.cohere.CohereEmbeddingModel] provides access to Cohere's embedding models, which offer multilingual support and various model sizes.

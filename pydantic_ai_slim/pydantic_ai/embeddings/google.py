@@ -1,10 +1,6 @@
-from __future__ import annotations
-
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
-
-from google.genai.types import ContentListUnion
 
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.providers import Provider, infer_provider
@@ -16,7 +12,7 @@ from .settings import EmbeddingSettings
 
 try:
     from google.genai import Client, errors
-    from google.genai.types import EmbedContentConfig, EmbedContentResponse
+    from google.genai.types import ContentListUnion, EmbedContentConfig, EmbedContentResponse
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google embeddings model, '
@@ -26,6 +22,7 @@ except ImportError as _import_error:
 
 LatestGoogleEmbeddingModelNames = Literal[
     'gemini-embedding-001',
+    'text-embedding-004',
     'text-embedding-005',
     'text-multilingual-embedding-002',
 ]
@@ -33,22 +30,25 @@ LatestGoogleEmbeddingModelNames = Literal[
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
 for available models and their capabilities.
+
+Note: `text-embedding-005` and `text-multilingual-embedding-002` are only available on Vertex AI.
 """
 
 GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 """Possible Google embeddings model names."""
 
 
-_MAX_INPUT_TOKENS: dict[GoogleEmbeddingModelName, int] = {
-    'gemini-embedding-001': 2048,
-    'text-embedding-005': 2048,
-    'text-multilingual-embedding-002': 2048,
-}
+@dataclass
+class _GoogleEmbeddingModelConfig:
+    max_input_tokens: int
+    """Maximum number of input tokens supported by the model."""
 
-_DEFAULT_DIMENSIONS: dict[GoogleEmbeddingModelName, int] = {
-    'gemini-embedding-001': 3072,
-    'text-embedding-005': 768,
-    'text-multilingual-embedding-002': 768,
+
+_GOOGLE_EMBEDDING_MODELS: dict[GoogleEmbeddingModelName, _GoogleEmbeddingModelConfig] = {
+    'gemini-embedding-001': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
+    'text-embedding-004': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
+    'text-embedding-005': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
+    'text-multilingual-embedding-002': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
 }
 
 
@@ -159,7 +159,6 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
     @property
     def base_url(self) -> str:
-        """The base URL for the provider API."""
         return self._provider.base_url
 
     @property
@@ -175,7 +174,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
-        inputs_list, settings = self.prepare_embed(inputs, settings)
+        inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(GoogleEmbeddingSettings, settings)
 
         google_task_type = settings.get('google_task_type')
@@ -191,7 +190,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
         try:
             response = await self._client.aio.models.embed_content(
                 model=self._model_name,
-                contents=cast(ContentListUnion, inputs_list),
+                contents=cast(ContentListUnion, inputs),
                 config=config,
             )
         except errors.APIError as e:
@@ -211,7 +210,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs_list,
+            inputs=inputs,
             input_type=input_type,
             usage=_map_usage(response, self.system, self.base_url, self._model_name),
             model_name=self._model_name,
@@ -219,13 +218,10 @@ class GoogleEmbeddingModel(EmbeddingModel):
         )
 
     async def max_input_tokens(self) -> int | None:
-        return _MAX_INPUT_TOKENS.get(self._model_name)
+        config = _GOOGLE_EMBEDDING_MODELS.get(self._model_name)
+        return config.max_input_tokens if config else None
 
     async def count_tokens(self, text: str) -> int:
-        """Count tokens in the text using the Google API.
-
-        Note: This makes an API call to count tokens.
-        """
         response = await self._client.aio.models.count_tokens(
             model=self._model_name,
             contents=text,
@@ -243,7 +239,15 @@ def _map_usage(
 ) -> RequestUsage:
     """Map Google embedding response to RequestUsage.
 
-    Note: Google's embedding API doesn't return token usage information,
-    so we return an empty RequestUsage.
+    Note: The Gemini API (google-gla) doesn't return token usage information.
+    Vertex AI (google-vertex) returns token_count in embedding statistics.
     """
+    total_tokens = 0
+    if response.embeddings:
+        for emb in response.embeddings:
+            if emb.statistics and emb.statistics.token_count:
+                total_tokens += int(emb.statistics.token_count)
+
+    if total_tokens > 0:
+        return RequestUsage(input_tokens=total_tokens)
     return RequestUsage()

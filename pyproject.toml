@@ -245,6 +245,10 @@ filterwarnings = [
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
+    # google-genai SDK creates SSL connections that aren't always properly closed during garbage
+    # collection, triggering PytestUnraisableExceptionWarning in older Python/package versions
+    "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
+    "ignore:.*unclosed.*ssl.SSLSocket.*:pytest.PytestUnraisableExceptionWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
