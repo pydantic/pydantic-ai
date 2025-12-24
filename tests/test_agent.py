@@ -3,12 +3,11 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, Generic, Literal, TypeVar, Union
 
-import httpx
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
@@ -65,7 +64,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
@@ -185,6 +184,7 @@ def test_result_pydantic_model_retry():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -210,6 +210,7 @@ def test_result_pydantic_model_retry():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -228,6 +229,7 @@ def test_result_pydantic_model_retry():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -318,6 +320,7 @@ def test_output_validator():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -336,6 +339,7 @@ def test_output_validator():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -354,89 +358,97 @@ def test_output_validator():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
     )
 
 
-def test_output_validator_partial_sync():
-    """Test that output validators receive correct value for `partial_output` in sync mode."""
-    call_log: list[tuple[str, bool]] = []
+class TestPartialOutput:
+    """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
-    agent = Agent[None, str](TestModel(custom_output_text='test output'))
+    # NOTE: When changing these tests:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_streaming.py::TestPartialOutput` as well
 
-    @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: str) -> str:
-        call_log.append((output, ctx.partial_output))
-        return output
+    def test_output_validator_text(self):
+        """Test that output validators receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
 
-    result = agent.run_sync('Hello')
-    assert result.output == 'test output'
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Hello world!')])
 
-    assert call_log == snapshot([('test output', False)])
+        agent = Agent(FunctionModel(return_model))
 
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: str) -> str:
+            call_log.append((output, ctx.partial_output))
+            return output
 
-async def test_output_validator_partial_stream_text():
-    """Test that output validators receive correct value for `partial_output` when using stream_text()."""
-    call_log: list[tuple[str, bool]] = []
+        result = agent.run_sync('test')
 
-    async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        for chunk in ['Hello', ' ', 'world', '!']:
-            yield chunk
+        assert result.output == 'Hello world!'
+        assert call_log == snapshot([('Hello world!', False)])
 
-    agent = Agent(FunctionModel(stream_function=stream_text))
+    def test_output_validator_structured(self):
+        """Test that output validators receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
 
-    @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: str) -> str:
-        call_log.append((output, ctx.partial_output))
-        return output
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 42, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
 
-    async with agent.run_stream('Hello') as result:
-        text_parts = []
-        async for chunk in result.stream_text(debounce_by=None):
-            text_parts.append(chunk)
+        agent = Agent(FunctionModel(return_model), output_type=Foo)
 
-    assert text_parts[-1] == 'Hello world!'
-    assert call_log == snapshot(
-        [
-            ('Hello', True),
-            ('Hello ', True),
-            ('Hello world', True),
-            ('Hello world!', True),
-            ('Hello world!', False),
-        ]
-    )
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+            call_log.append((output, ctx.partial_output))
+            return output
 
+        result = agent.run_sync('test')
 
-async def test_output_validator_partial_stream_output():
-    """Test that output validators receive correct value for `partial_output` when using stream_output()."""
-    call_log: list[tuple[Foo, bool]] = []
+        assert result.output == Foo(a=42, b='foo')
+        assert call_log == snapshot([(Foo(a=42, b='foo'), False)])
 
-    async def stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        assert info.output_tools is not None
-        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42')}
-        yield {0: DeltaToolCall(json_args=', "b": "f')}
-        yield {0: DeltaToolCall(json_args='oo"}')}
+    def test_output_function_text(self):
+        """Test that output functions receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
 
-    agent = Agent(FunctionModel(stream_function=stream_model), output_type=Foo)
+        def process_output(ctx: RunContext[None], text: str) -> str:
+            call_log.append((text, ctx.partial_output))
+            return text.upper()
 
-    @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
-        call_log.append((output, ctx.partial_output))
-        return output
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Hello world!')])
 
-    async with agent.run_stream('Hello') as result:
-        outputs = [output async for output in result.stream_output(debounce_by=None)]
+        agent = Agent(FunctionModel(return_model), output_type=TextOutput(process_output))
+        result = agent.run_sync('test')
 
-    assert outputs[-1] == Foo(a=42, b='foo')
-    assert call_log == snapshot(
-        [
-            (Foo(a=42, b='f'), True),
-            (Foo(a=42, b='foo'), True),
-            (Foo(a=42, b='foo'), False),
-        ]
-    )
+        assert result.output == 'HELLO WORLD!'
+        assert call_log == snapshot([('Hello world!', False)])
+
+    def test_output_function_structured(self):
+        """Test that output functions receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 21, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
+
+        agent = Agent(FunctionModel(return_model), output_type=process_foo)
+        result = agent.run_sync('test')
+
+        assert result.output == Foo(a=42, b='FOO')
+        assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
 
 
 def test_plain_response_then_tuple():
@@ -462,6 +474,7 @@ def test_plain_response_then_tuple():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -479,6 +492,7 @@ def test_plain_response_then_tuple():
                         tool_call_id=IsStr(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -499,6 +513,7 @@ def test_plain_response_then_tuple():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -511,6 +526,7 @@ def test_plain_response_then_tuple():
                     tool_name='final_result', content='foobar', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                 )
             ],
+            timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         )
     )
@@ -524,6 +540,7 @@ def test_plain_response_then_tuple():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ],
+            timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         )
     )
@@ -1050,6 +1067,7 @@ def test_output_type_function_with_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1074,6 +1092,7 @@ def test_output_type_function_with_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1098,6 +1117,7 @@ def test_output_type_function_with_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -1137,6 +1157,7 @@ def test_output_type_text_output_function_with_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1154,6 +1175,7 @@ def test_output_type_text_output_function_with_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1329,6 +1351,7 @@ def test_output_type_text_output_function():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1385,6 +1408,7 @@ def test_output_type_handoff_to_agent():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1409,6 +1433,7 @@ def test_output_type_handoff_to_agent():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -1423,6 +1448,7 @@ def test_output_type_handoff_to_agent():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1447,6 +1473,7 @@ def test_output_type_handoff_to_agent():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -1787,6 +1814,7 @@ def test_prompted_output():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1823,6 +1851,7 @@ def test_prompted_output_with_template():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1888,6 +1917,7 @@ def test_prompted_output_with_defs():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1935,6 +1965,7 @@ def test_native_output():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1959,6 +1990,7 @@ def test_native_output():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2016,6 +2048,7 @@ def test_prompted_output_function_with_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2033,6 +2066,7 @@ def test_prompted_output_function_with_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2063,6 +2097,7 @@ def test_run_with_history_new():
                     SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2078,6 +2113,7 @@ def test_run_with_history_new():
                         tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2099,6 +2135,7 @@ def test_run_with_history_new():
                     SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2114,6 +2151,7 @@ def test_run_with_history_new():
                         tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2125,6 +2163,7 @@ def test_run_with_history_new():
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2164,6 +2203,7 @@ def test_run_with_history_new():
                     SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2179,6 +2219,7 @@ def test_run_with_history_new():
                         tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2190,6 +2231,7 @@ def test_run_with_history_new():
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2228,6 +2270,7 @@ def test_run_with_history_new_structured():
                     SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2243,6 +2286,7 @@ def test_run_with_history_new_structured():
                         tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2267,6 +2311,7 @@ def test_run_with_history_new_structured():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -2280,6 +2325,7 @@ def test_run_with_history_new_structured():
                     SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2295,6 +2341,7 @@ def test_run_with_history_new_structured():
                         tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2313,6 +2360,7 @@ def test_run_with_history_new_structured():
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             # second call, notice no repeated system prompt
@@ -2320,6 +2368,7 @@ def test_run_with_history_new_structured():
                 parts=[
                     UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2338,6 +2387,7 @@ def test_run_with_history_new_structured():
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -2405,6 +2455,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='New instructions',
                 run_id=IsStr(),
             ),
@@ -2463,6 +2514,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2560,6 +2612,7 @@ async def test_message_history_ending_on_model_response_with_instructions():
         [
             ModelRequest(
                 parts=[],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions="""\
 Summarize this conversation to include all important facts about the user and
         what their interactions were about.\
@@ -2597,6 +2650,7 @@ def test_empty_response():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2608,6 +2662,7 @@ def test_empty_response():
             ),
             ModelRequest(
                 parts=[],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2640,6 +2695,7 @@ def test_empty_response_without_recovery():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2651,6 +2707,7 @@ def test_empty_response_without_recovery():
             ),
             ModelRequest(
                 parts=[],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2675,6 +2732,124 @@ def test_agent_message_history_includes_run_id() -> None:
     assert len({*run_ids}) == snapshot(1)
 
 
+async def test_agent_run_result_metadata_available() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='metadata output'),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    result = await agent.run('metadata prompt')
+    assert result.output == 'metadata output'
+    assert result.metadata == {'prompt': 'metadata prompt'}
+
+
+async def test_agent_iter_metadata_surfaces_on_result() -> None:
+    agent = Agent(TestModel(custom_output_text='iter metadata output'), metadata={'env': 'tests'})
+
+    async with agent.iter('iter metadata prompt') as agent_run:
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.metadata == {'env': 'tests'}
+    assert agent_run.result is not None
+    assert agent_run.result.metadata == {'env': 'tests'}
+
+
+async def test_agent_metadata_persisted_when_run_fails() -> None:
+    agent = Agent(
+        TestModel(),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    @agent.tool
+    def explode(_: RunContext) -> str:
+        raise RuntimeError('explode')
+
+    failing_prompt = 'metadata failure prompt'
+    captured_run = None
+
+    with pytest.raises(RuntimeError, match='explode'):
+        async with agent.iter(failing_prompt) as agent_run:
+            captured_run = agent_run
+            async for _ in agent_run:
+                pass
+
+    assert captured_run is not None
+    assert captured_run.metadata == {'prompt': failing_prompt}
+    assert captured_run.result is None
+
+
+async def test_agent_metadata_recomputed_on_successful_run() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='recomputed metadata'),
+        metadata=lambda ctx: {'requests': ctx.usage.requests},
+    )
+
+    async with agent.iter('recompute metadata prompt') as agent_run:
+        initial_metadata = agent_run.metadata
+        async for _ in agent_run:
+            pass
+
+    assert initial_metadata == {'requests': 0}
+    assert agent_run.metadata == {'requests': 1}
+    assert agent_run.result is not None
+    assert agent_run.result.metadata == {'requests': 1}
+
+
+async def test_agent_metadata_override_with_dict() -> None:
+    agent = Agent(TestModel(custom_output_text='override dict base'), metadata={'env': 'base'})
+
+    with agent.override(metadata={'env': 'override'}):
+        result = await agent.run('override dict prompt')
+
+    assert result.metadata == {'env': 'override'}
+
+
+async def test_agent_metadata_override_with_callable() -> None:
+    agent = Agent(TestModel(custom_output_text='override callable base'), metadata={'env': 'base'})
+
+    with agent.override(metadata=lambda ctx: {'computed': ctx.prompt}):
+        result = await agent.run('callable override prompt')
+
+    assert result.metadata == {'computed': 'callable override prompt'}
+
+
+async def test_agent_run_metadata_kwarg_dict() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg dict output'))
+
+    result = await agent.run('kwarg dict prompt', metadata={'env': 'run'})
+
+    assert result.metadata == {'env': 'run'}
+
+
+async def test_agent_run_metadata_kwarg_callable() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg callable output'))
+
+    def run_meta(ctx: RunContext[None]) -> dict[str, Any]:
+        return {'prompt': ctx.prompt}
+
+    result = await agent.run('kwarg callable prompt', metadata=run_meta)
+
+    assert result.metadata == {'prompt': 'kwarg callable prompt'}
+
+
+async def test_agent_run_metadata_kwarg_merges_agent_metadata() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg merge output'), metadata={'env': 'base', 'shared': 'agent'})
+
+    result = await agent.run('kwarg merge prompt', metadata={'run': 'value', 'shared': 'run'})
+
+    assert result.metadata == {'env': 'base', 'run': 'value', 'shared': 'run'}
+
+
+async def test_agent_run_metadata_kwarg_ignored_with_override() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg override output'), metadata={'env': 'base'})
+
+    with agent.override(metadata={'env': 'override', 'override_only': True}):
+        result = await agent.run('kwarg override prompt', metadata={'run_only': True})
+
+    assert result.metadata == {'env': 'override', 'override_only': True}
+
+
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
@@ -2688,6 +2863,7 @@ def test_unknown_tool():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2706,6 +2882,7 @@ def test_unknown_tool():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2734,6 +2911,7 @@ def test_unknown_tool_fix():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2752,6 +2930,7 @@ def test_unknown_tool_fix():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2861,25 +3040,6 @@ def test_override_model_no_model():
     with pytest.raises(UserError, match=r'`model` must either be set.+Even when `override\(model=...\)` is customiz'):
         with agent.override(model='test'):
             agent.run_sync('Hello')
-
-
-def test_run_sync_multiple():
-    agent = Agent('test')
-
-    @agent.tool_plain
-    async def make_request() -> str:
-        async with httpx.AsyncClient() as client:
-            # use this as I suspect it's about the fastest globally available endpoint
-            try:
-                response = await client.get('https://cloudflare.com/cdn-cgi/trace')
-            except httpx.ConnectError:  # pragma: no cover
-                pytest.skip('offline')
-            else:
-                return str(response.status_code)
-
-    for _ in range(2):
-        result = agent.run_sync('Hello')
-        assert result.output == '{"make_request":"200"}'
 
 
 async def test_agent_name():
@@ -3002,6 +3162,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3043,6 +3204,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3094,6 +3256,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test early output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3121,6 +3284,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3150,6 +3314,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3177,6 +3342,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3233,6 +3399,7 @@ class TestMultipleToolCalls:
                             content='test early strategy with final result in middle', timestamp=IsNow(tz=timezone.utc)
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3285,13 +3452,21 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
         )
 
     def test_early_strategy_with_external_tool_call(self):
-        """Test that early strategy handles external tool calls correctly."""
+        """Test that early strategy handles external tool calls correctly.
+
+        Streaming and non-streaming modes differ in how they choose the final result:
+        - Streaming: First tool call (in response order) that can produce a final result (output or deferred)
+        - Non-streaming: First output tool (if none called, all deferred tools become final result)
+
+        See https://github.com/pydantic/pydantic-ai/issues/3636#issuecomment-3618800480 for details.
+        """
         tool_called: list[str] = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3342,6 +3517,7 @@ class TestMultipleToolCalls:
                             content='test early strategy with external tool call', timestamp=IsNow(tz=timezone.utc)
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3384,6 +3560,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3435,6 +3612,7 @@ class TestMultipleToolCalls:
                             content='test early strategy with deferred tool call', timestamp=IsNow(tz=timezone.utc)
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3460,6 +3638,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3491,6 +3670,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3515,6 +3695,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3539,6 +3720,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3595,6 +3777,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3651,6 +3834,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3702,6 +3886,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test exhaustive output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3729,6 +3914,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3780,6 +3966,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test invalid first valid second', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3807,6 +3994,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3859,6 +4047,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test valid first invalid second', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3886,6 +4075,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -3938,6 +4128,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test exhaustive with tool retry', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3965,6 +4156,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -4020,6 +4212,7 @@ class TestMultipleToolCalls:
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -4054,6 +4247,7 @@ class TestMultipleToolCalls:
                             tool_call_id='second',
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
             ]
@@ -4117,6 +4311,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4138,6 +4333,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4166,6 +4362,7 @@ def test_nested_capture_run_messages() -> None:
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4193,6 +4390,7 @@ def test_double_capture_run_messages() -> None:
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4242,6 +4440,7 @@ def test_dynamic_false_no_reevaluate():
                     SystemPromptPart(content=dynamic_value, timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -4271,6 +4470,7 @@ def test_dynamic_false_no_reevaluate():
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -4283,7 +4483,8 @@ def test_dynamic_false_no_reevaluate():
                 kind='response',
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -4329,6 +4530,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -4359,6 +4561,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -4371,7 +4574,8 @@ def test_dynamic_true_reevaluate_system_prompt():
                 kind='response',
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -4410,6 +4614,57 @@ def test_dynamic_system_prompt_no_changes():
     assert result2.output == 'success (no tool calls)'
 
 
+def test_dynamic_system_prompt_none_return():
+    """Test dynamic system prompts with None return values."""
+    agent = Agent('test')
+
+    dynamic_values = [None, 'DYNAMIC']
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_sys() -> str | None:
+        return dynamic_values.pop(0)
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
+    # The None value should have a '' placeholder due to keeping a reference to the dynamic prompt
+    assert '' in sys_texts
+    assert 'DYNAMIC' not in sys_texts
+
+    # Run a second time to capture the updated system prompt
+    with capture_run_messages() as messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
+    # The None value should have a '' placeholder due to keep a reference to the dynamic prompt
+    assert '' not in sys_texts
+    assert 'DYNAMIC' in sys_texts
+
+
+def test_system_prompt_none_return_are_omitted():
+    """Test dynamic system prompts with None return values."""
+    agent = Agent('test', system_prompt='STATIC')
+
+    @agent.system_prompt
+    def dynamic_sys() -> str | None:
+        return None
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
+    # The None value should be omitted
+    assert 'STATIC' in sys_texts
+    assert '' not in sys_texts
+
+
 def test_capture_run_messages_tool_agent() -> None:
     agent_outer = Agent('test')
     agent_inner = Agent(TestModel(custom_output_text='inner agent result'))
@@ -4427,6 +4682,7 @@ def test_capture_run_messages_tool_agent() -> None:
         [
             ModelRequest(
                 parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4445,6 +4701,7 @@ def test_capture_run_messages_tool_agent() -> None:
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4521,6 +4778,7 @@ def test_binary_content_serializable():
                         'part_kind': 'user-prompt',
                     }
                 ],
+                'timestamp': IsStr(),
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
@@ -4584,6 +4842,7 @@ def test_image_url_serializable_missing_media_type():
                         'part_kind': 'user-prompt',
                     }
                 ],
+                'timestamp': IsStr(),
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
@@ -4654,6 +4913,7 @@ def test_image_url_serializable():
                         'part_kind': 'user-prompt',
                     }
                 ],
+                'timestamp': IsStr(),
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
@@ -4777,6 +5037,7 @@ def test_tool_returning_binary_content_with_identifier():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
+            timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         )
     )
@@ -4829,6 +5090,7 @@ def test_tool_returning_file_url_with_identifier():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
+            timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         )
     )
@@ -4848,6 +5110,7 @@ def test_instructions_raise_error_when_system_prompt_is_set():
                 SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
                 UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ],
+            timestamp=IsNow(tz=timezone.utc),
             instructions='An instructions!',
             run_id=IsStr(),
         )
@@ -4872,6 +5135,7 @@ def test_instructions_raise_error_when_instructions_is_set():
                 SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
                 UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ],
+            timestamp=IsNow(tz=timezone.utc),
             instructions='An instructions!',
             run_id=IsStr(),
         )
@@ -4887,6 +5151,7 @@ def test_instructions_both_instructions_and_system_prompt_are_set():
                 SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
                 UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ],
+            timestamp=IsNow(tz=timezone.utc),
             instructions='An instructions!',
             run_id=IsStr(),
         )
@@ -4904,6 +5169,7 @@ def test_instructions_decorator_without_parenthesis():
     assert result.all_messages()[0] == snapshot(
         ModelRequest(
             parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            timestamp=IsNow(tz=timezone.utc),
             instructions='You are a helpful assistant.',
             run_id=IsStr(),
         )
@@ -4921,6 +5187,7 @@ def test_instructions_decorator_with_parenthesis():
     assert result.all_messages()[0] == snapshot(
         ModelRequest(
             parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            timestamp=IsNow(tz=timezone.utc),
             instructions='You are a helpful assistant.',
             run_id=IsStr(),
         )
@@ -4940,6 +5207,7 @@ def test_instructions_with_message_history():
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -4968,6 +5236,7 @@ def test_instructions_parameter_with_sequence():
     assert result.all_messages()[0] == snapshot(
         ModelRequest(
             parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+            timestamp=IsNow(tz=timezone.utc),
             instructions="""\
 You are a helpful assistant.
 
@@ -4984,6 +5253,7 @@ def test_instructions_during_run():
     assert result.all_messages()[0] == snapshot(
         ModelRequest(
             parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+            timestamp=IsNow(tz=timezone.utc),
             instructions="""\
 You are a helpful assistant.
 Your task is to greet people.\
@@ -4996,6 +5266,7 @@ Your task is to greet people.\
     assert result2.all_messages()[0] == snapshot(
         ModelRequest(
             parts=[UserPromptPart(content='Hello again!', timestamp=IsDatetime())],
+            timestamp=IsNow(tz=timezone.utc),
             instructions="""\
 You are a helpful assistant.\
 """,
@@ -5024,7 +5295,12 @@ def test_multi_agent_instructions_with_structured_output():
 
     assert messages == snapshot(
         [
-            ModelRequest(parts=[], instructions='Agent 2 instructions', run_id=IsStr()),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='Agent 2 instructions',
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'text': 'a'}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=9),
@@ -5041,6 +5317,7 @@ def test_multi_agent_instructions_with_structured_output():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -5073,6 +5350,7 @@ def test_empty_final_response():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5091,6 +5369,7 @@ def test_empty_final_response():
                         tool_name='my_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5109,6 +5388,7 @@ def test_empty_final_response():
                         tool_name='my_tool', content=4, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5180,6 +5460,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'part_kind': 'retry-prompt',
                 }
             ],
+            'timestamp': IsStr(),
             'instructions': None,
             'kind': 'request',
             'run_id': IsStr(),
@@ -5252,6 +5533,7 @@ def test_multimodal_tool_response():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5286,6 +5568,7 @@ def test_multimodal_tool_response():
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5333,6 +5616,7 @@ def test_plain_tool_response():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5359,6 +5643,7 @@ def test_plain_tool_response():
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5637,6 +5922,7 @@ def test_adding_tools_during_run():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5655,6 +5941,7 @@ def test_adding_tools_during_run():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5673,6 +5960,7 @@ def test_adding_tools_during_run():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5728,6 +6016,7 @@ def test_prepare_output_tools():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5752,6 +6041,7 @@ def test_prepare_output_tools():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5776,6 +6066,7 @@ def test_prepare_output_tools():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -6049,6 +6340,7 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6066,6 +6358,7 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6123,6 +6416,7 @@ async def test_hitl_tool_approval():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6153,6 +6447,7 @@ async def test_hitl_tool_approval():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -6181,6 +6476,7 @@ async def test_hitl_tool_approval():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6211,6 +6507,7 @@ async def test_hitl_tool_approval():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -6228,6 +6525,7 @@ async def test_hitl_tool_approval():
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6258,6 +6556,7 @@ async def test_hitl_tool_approval():
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6406,6 +6705,7 @@ async def test_user_prompt_with_deferred_tool_results():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Update .env file', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6443,6 +6743,7 @@ async def test_user_prompt_with_deferred_tool_results():
                     ),
                     UserPromptPart(content='continue with the operation', timestamp=IsDatetime()),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6512,6 +6813,7 @@ async def test_consecutive_model_responses_in_history():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6533,6 +6835,7 @@ async def test_consecutive_model_responses_in_history():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6566,6 +6869,7 @@ async def test_consecutive_model_responses_in_history():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -6836,6 +7140,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6854,6 +7159,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6878,6 +7184,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -6894,6 +7201,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6912,6 +7220,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6936,6 +7245,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -7041,6 +7351,7 @@ async def test_message_history():
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
