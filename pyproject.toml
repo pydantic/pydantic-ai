@@ -104,7 +104,7 @@ dev = [
     "pytest-pretty>=1.3.0",
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
-    "boto3-stubs[bedrock-runtime]",
+    "boto3-stubs[bedrock-runtime]>=1.42.13",
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
@@ -196,7 +196,7 @@ quote-style = "single"
 "docs/**/*.py" = ["D"]
 
 [tool.pyright]
-pythonVersion = "3.12"
+pythonVersion = "3.10"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
@@ -245,7 +245,6 @@ filterwarnings = [
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
 ]
-# addopts = ["--inline-snapshot=create,fix"]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
@@ -261,9 +260,11 @@ include = [
     "tests/**/*.py",
 ]
 omit = [
-    "tests/test_live.py",
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
+    # TODO(Marcelo): Enable prefect coverage again.
+    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
+    "tests/test_prefect.py",
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

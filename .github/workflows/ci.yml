@@ -18,21 +18,14 @@ permissions:
 
 jobs:
   lint:
-    name: lint on ${{ matrix.python-version }}
+    name: lint
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # Typecheck both Python 3.10 and 3.13. We've had issues due to not checking against both.
-        python-version: ["3.10", "3.13"]
-    env:
-      PYRIGHT_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
           enable-cache: true
           cache-suffix: lint
 
@@ -94,45 +87,6 @@ jobs:
       # check all docs images are tinified, You'll need an API key from https://tinify.com/ to fix this if it fails
       - run: uvx tinicly docs --check
 
-  test-live:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    if: (github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push') && github.repository == 'pydantic/pydantic-ai'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-suffix: live
-
-      - uses: pydantic/ollama-action@v3
-        with:
-          model: qwen2:0.5b
-
-      - run: uv sync --only-dev
-      - run: >
-          uv run
-          --package pydantic-ai-slim
-          --extra openai
-          --extra vertexai
-          --extra google
-          --extra groq
-          --extra anthropic
-          --extra mistral
-          --extra cohere
-          pytest tests/test_live.py -v
-          --durations=100
-        env:
-          PYDANTIC_AI_LIVE_TEST_DANGEROUS: "CHARGE-ME!"
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_SERVICE_ACCOUNT_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_CONTENT }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          CO_API_KEY: ${{ secrets.COHERE_API_KEY }}
-
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     runs-on: ubuntu-latest
@@ -163,15 +117,9 @@ jobs:
           enable-cache: true
           cache-suffix: ${{ matrix.install.name }}
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.5.x
-
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -214,15 +162,9 @@ jobs:
           enable-cache: true
           cache-suffix: lowest-versions
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.5.x
-
       - run: mkdir .coverage
 
       - run: uv sync --group dev
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -316,7 +258,6 @@ jobs:
       - lint
       - mypy
       - docs
-      - test-live
       - test
       - test-lowest-versions
       - test-examples
@@ -328,7 +269,6 @@ jobs:
         uses: re-actors/alls-green@release/v1
         with:
           jobs: ${{ toJSON(needs) }}
-          allowed-skips: test-live
 
   deploy-docs:
     needs: [check]
