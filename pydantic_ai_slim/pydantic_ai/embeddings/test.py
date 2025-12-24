@@ -20,7 +20,7 @@ def _estimate_tokens(text: str) -> int:
     matching the approach used by FunctionModel.
     """
     if not text:
-        return 0
+        return 0  # pragma: no cover
     return len(_TOKEN_SPLIT_RE.split(text.strip()))
 
 
