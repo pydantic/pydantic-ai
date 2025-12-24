@@ -264,23 +264,54 @@ class MultiModelWorkflow:
         return result.output
 ```
 
-### Toolset Registration at Runtime
+### Runtime Toolset Selection
 
-[`Agent.run(toolsets=...)`][pydantic_ai.agent.Agent.run] normally supports passing toolsets directly. However, `TemporalAgent` requires toolsets to be wrapped in a [`TemporalWrapperToolset`][pydantic_ai.durable_exec.temporal.TemporalWrapperToolset] (such as `TemporalFunctionToolset`, `TemporalMCPServer`, etc.) because Temporal activities must be registered with the worker before the workflow starts.
+[`Agent.run(toolsets=...)`][pydantic_ai.agent.Agent.run] normally supports passing toolsets directly. However, `TemporalAgent` requires toolsets to be wrapped in a [`TemporalWrapperToolset`][pydantic_ai.durable_exec.temporal.TemporalWrapperToolset] and pre-registered because Temporal activities must be registered with the worker before the workflow starts.
 
-To use toolsets at runtime with `TemporalAgent`, you need to:
+The preferred way is to pass toolsets to the `TemporalAgent` constructor and reference them by name at runtime using `run(toolsets=[...])`.
 
-1. Wrap the toolset using the appropriate `TemporalWrapperToolset` class
-2. Register its activities with the Temporal Worker
-3. Pass the wrapped toolset at runtime via `run(toolsets=[...])`
+Alternatively, for sharing toolsets across multiple agents, you can manually wrap them using [`temporalize_toolset`][pydantic_ai.durable_exec.temporal.temporalize_toolset].
 
-This pattern allows multiple agents to share the same set of tools without duplicating activity registrations, enabling dynamic agent creation while maintaining proper tool registration.
+Here's an example with named toolsets:
 
-Alternatively, you can pre-register toolsets with the `TemporalAgent` constructor and reference them by name at runtime. This is similar to how models are handled.
+```python {title="named_toolset_temporal.py" test="skip"}
+from temporalio import workflow
 
-### Using Toolset Instances
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.durable_exec.temporal import TemporalAgent
 
-Here's an example showing how to register and use shared toolsets across multiple agents using toolset instances:
+
+# Define tools and toolset
+def magic_trick(input: str) -> str:
+    return f'Magic: {input}'
+
+magic_toolset = FunctionToolset(tools=[magic_trick], id='magic')
+
+# Create agent with pre-registered toolset
+agent = Agent('openai:gpt-5', name='magic_agent')
+temporal_agent = TemporalAgent(
+    agent,
+    toolsets={'magic_tools': magic_toolset},  # (1)!
+)
+
+@workflow.defn
+class MagicWorkflow:
+    __pydantic_ai_agents__ = [temporal_agent]
+
+    @workflow.run
+    async def run(self, input: str) -> str:
+        # Reference toolset by name
+        result = await temporal_agent.run(
+            input,
+            toolsets=['magic_tools'],  # (2)!
+        )
+        return result.output
+```
+
+1. Pre-register toolsets by passing a dict to `TemporalAgent`. The keys become the toolset names. The toolsets are automatically wrapped for Temporal.
+2. Reference toolsets by name in `run(toolsets=[...])`.
+
+For sharing toolsets across multiple agents, manually wrap them first using [`temporalize_toolset`][pydantic_ai.durable_exec.temporal.temporalize_toolset]:
 
 ```python {title="shared_toolset_temporal.py" test="skip"}
 from datetime import timedelta
@@ -291,7 +322,7 @@ from temporalio.worker import Worker
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import Agent, FunctionToolset
-from pydantic_ai.durable_exec.temporal import TemporalAgent, TemporalFunctionToolset
+from pydantic_ai.durable_exec.temporal import TemporalAgent, temporalize_toolset
 
 
 # Define shared tools
@@ -314,11 +345,10 @@ shared_toolset = FunctionToolset(
 )
 
 # Wrap the toolset for Temporal
-wrapped_shared_toolset = TemporalFunctionToolset(
+wrapped_shared_toolset = temporalize_toolset(
     shared_toolset,
     activity_name_prefix='shared',  # (2)!
     activity_config=ActivityConfig(start_to_close_timeout=timedelta(minutes=2)),
-    deps_type=type(None),  # (3)!
 )
 
 # Create multiple agents that can use the shared toolset
@@ -331,9 +361,15 @@ math_agent = Agent(
     name='math_agent',
 )
 
-# Wrap agents for Temporal (without pre-registering toolsets)
-temporal_research_agent = TemporalAgent(research_agent)
-temporal_math_agent = TemporalAgent(math_agent)
+# Wrap agents for Temporal, pre-registering the shared toolset
+temporal_research_agent = TemporalAgent(
+    research_agent,
+    toolsets={'shared': wrapped_shared_toolset},  # (3)!
+)
+temporal_math_agent = TemporalAgent(
+    math_agent,
+    toolsets={'shared': wrapped_shared_toolset},
+)
 
 
 @workflow.defn
@@ -343,16 +379,16 @@ class SharedToolsetWorkflow:
     @workflow.run
     async def run(self, task: str, use_research: bool) -> str:
         if use_research:
-            # Research agent uses shared toolset at runtime
+            # Research agent uses shared toolset by name
             result = await temporal_research_agent.run(
                 task,
-                toolsets=[wrapped_shared_toolset],  # (5)!
+                toolsets=['shared'],  # (5)!
             )
         else:
             # Math agent also uses the same shared toolset
             result = await temporal_math_agent.run(
                 task,
-                toolsets=[wrapped_shared_toolset],
+                toolsets=['shared'],
             )
         return result.output
 
@@ -364,10 +400,8 @@ async def main():
         client,
         task_queue='shared-toolset-queue',
         workflows=[SharedToolsetWorkflow],
-        activities=[
-            # Register shared toolset activities once
-            *wrapped_shared_toolset.temporal_activities,  # (6)!
-        ],
+        # Toolset activities are automatically registered because they were passed
+        # to TemporalAgent(...toolsets=...)
     ):
         result = await client.execute_workflow(
             SharedToolsetWorkflow.run,
@@ -380,60 +414,9 @@ async def main():
 
 1. The toolset must have a unique `id` to be used with Temporal.
 2. The `activity_name_prefix` ensures activity names don't conflict across different toolset registrations.
-3. `deps_type` must be specified if your tools use dependencies. Use `type(None)` if no dependencies are needed.
-4. The `__pydantic_ai_agents__` pattern automatically registers agent activities with the workflow.
-5. Pass the wrapped toolset at runtime to any agent that needs it.
-6. Register the shared toolset's activities once with the worker. Agent activities are automatically registered via `__pydantic_ai_agents__`.
-
-### Using Named Toolsets
-
-You can also pre-register toolsets with names and reference them by name at runtime:
-
-```python {title="named_toolset_temporal.py" test="skip"}
-from temporalio import workflow
-
-from pydantic_ai import Agent, FunctionToolset
-from pydantic_ai.durable_exec.temporal import TemporalAgent, TemporalFunctionToolset
-
-
-# Define tools and toolset
-def magic_trick(input: str) -> str:
-    return f'Magic: {input}'
-
-magic_toolset = FunctionToolset(tools=[magic_trick], id='magic')
-
-# Wrap toolset
-wrapped_magic_toolset = TemporalFunctionToolset(
-    magic_toolset,
-    activity_name_prefix='magic',
-    deps_type=type(None),
-)
-
-# Create agent with pre-registered toolset
-agent = Agent('openai:gpt-5', name='magic_agent')
-temporal_agent = TemporalAgent(
-    agent,
-    toolsets={'magic_tools': wrapped_magic_toolset},  # (1)!
-)
-
-@workflow.defn
-class MagicWorkflow:
-    __pydantic_ai_agents__ = [temporal_agent]
-
-    @workflow.run
-    async def run(self, input: str) -> str:
-        # Reference toolset by name
-        result = await temporal_agent.run(
-            input,
-            toolsets=['magic_tools'],  # (2)!
-        )
-        return result.output
-```
-
-1. Pass a dictionary of toolsets to `TemporalAgent` to pre-register them. The keys are the names used to reference the toolsets at runtime.
-2. Pass the listing of toolset names to `run(toolsets=[...])` to use the pre-registered toolsets.
-
-You can also wrap toolsets at agent creation time by passing them to the wrapped agent's constructor, which will automatically temporalize them. The runtime pattern shown above is useful when you want to share toolsets across multiple agents or select toolsets dynamically based on workflow parameters.
+3. Pass the wrapped toolset to `TemporalAgent` to pre-register it. This enables referencing it by name and ensures its activities are automatically registered with the worker.
+4. The `__pydantic_ai_agents__` pattern automatically registers all agent activities (including the pre-registered toolset activities) with the workflow.
+5. Reference the toolset by its registered name.
 
 ## Activity Configuration
 
