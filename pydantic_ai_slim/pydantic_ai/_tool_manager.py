@@ -361,15 +361,22 @@ class ToolManager(Generic[AgentDepsT]):
         # I would have preferred to merge this with the ToolsUsagePolicy limits in resolution scoping.
         current_uses = self.get_current_uses_of_tool(tool_name)
         max_uses = self.get_max_uses_of_tool(tool_name)
+        max_uses_per_step = self.get_max_uses_per_step_of_tool(tool_name)
         min_uses = self.get_min_uses_of_tool(tool_name)
+        min_uses_per_step = self.get_min_uses_per_step_of_tool(tool_name)
 
-        if (
-            min_uses is not None and current_uses + pending_uses < min_uses
-        ):  # Ensuring we do not fall below the min_uses limit for the tool
+        if min_uses_per_step is not None and pending_uses < min_uses_per_step:
             return False
+
+        if max_uses_per_step is not None and pending_uses > max_uses_per_step:
+            return False
+
+        if min_uses is not None and current_uses + pending_uses < min_uses:
+            return False
+
         if max_uses is not None and current_uses + pending_uses > max_uses:
-            # Ensuring we do not exceed the max_uses limit for the tool
             return False
+
         return True
 
     def _assert_ctx(self) -> RunContext[AgentDepsT]:
