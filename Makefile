@@ -51,9 +51,9 @@ typecheck: typecheck-pyright ## Run static type checking
 typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
-test: ## Run tests and collect coverage data (excludes durable execution tests)
+test: ## Run tests and collect coverage data (excludes durable execution and outlines tests)
 	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
-	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -m "not durable" -n auto --dist=loadgroup --durations=20
+	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -m "not durable and not outlines" -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -62,6 +62,12 @@ test-durable: ## Run durable execution tests (temporal, dbos, prefect)
 	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run --rcfile=.coveragerc-durable -m pytest -m durable -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine --rcfile=.coveragerc-durable
 	@uv run coverage report --rcfile=.coveragerc-durable
+
+.PHONY: test-outlines
+test-outlines: ## Run outlines tests
+	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run --rcfile=.coveragerc-outlines -m pytest tests/models/test_outlines.py -n auto --dist=loadgroup --durations=20
+	@uv run coverage combine --rcfile=.coveragerc-outlines
+	@uv run coverage report --rcfile=.coveragerc-outlines
 
 .PHONY: test-all
 test-all: ## Run all tests including durable execution tests

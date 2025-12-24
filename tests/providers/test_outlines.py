@@ -3,6 +3,8 @@ import pytest
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.outlines import OutlinesProvider
 
+pytestmark = pytest.mark.outlines
+
 
 def test_outlines_provider() -> None:
     provider = OutlinesProvider()

@@ -101,7 +101,7 @@ class OutlinesModel(Model):
         self._model_name: str = 'outlines-model'
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider(provider)  # pragma: lax no cover
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 

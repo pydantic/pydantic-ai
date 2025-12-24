@@ -6,19 +6,8 @@ concurrency =
     thread
 ; We use a subdirectory for coverage data to avoid noisy coverage data files.
 data_file = .coverage/.coverage
-; required to avoid warnings about files created by create_module fixture
+; Only track outlines-related files
 include =
-    pydantic_ai_slim/**/*.py
-    pydantic_evals/**/*.py
-    pydantic_graph/**/*.py
-    tests/**/*.py
-omit =
-    tests/example_modules/*.py
-    pydantic_ai_slim/pydantic_ai/ext/aci.py  # aci-sdk is too niche to be added as an (optional) dependency
-    ; We run durable execution tests in `.coveragerc-durable`.
-    pydantic_ai_slim/pydantic_ai/durable_exec/**/*.py
-    tests/durable_exec/**/*.py
-    ; We run outlines tests in `.coveragerc-outlines`.
     pydantic_ai_slim/pydantic_ai/models/outlines.py
     pydantic_ai_slim/pydantic_ai/providers/outlines.py
     tests/models/test_outlines.py

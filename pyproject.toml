@@ -232,6 +232,7 @@ testpaths = ["tests", "docs/.hooks"]
 xfail_strict = true
 markers = [
     "durable: marks tests as durable execution tests (temporal, dbos, prefect)",
+    "outlines: marks tests as outlines model tests",
 ]
 filterwarnings = [
     "error",
