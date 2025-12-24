@@ -363,9 +363,6 @@ class ToolManager(Generic[AgentDepsT]):
             tool_name: The name of the tool to check.
             pending_uses: Number of additional uses being requested (in current batch).
         """
-        # If I can use this tool or not will depend on the tool usage limits
-        # First we need to resolve the correct limits or maybe overwrite it at the correct place
-        # I would have preferred to merge this with the ToolsUsagePolicy limits in resolution scoping.
         current_uses = self.get_current_uses_of_tool(tool_name)
         max_uses = self.get_max_uses_of_tool(tool_name)
         max_uses_per_step = self.get_max_uses_per_step_of_tool(tool_name)
