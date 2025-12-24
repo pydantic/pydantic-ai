@@ -1042,7 +1042,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
-            event_stream_handler: Optional event stream handler to use for this run.
 
         Returns:
             The result of the run.
