@@ -70,12 +70,6 @@ class ToolUsageLimits:
     Set to `None` for no minimum (default).
     """
 
-    # allow_partial_calls: bool = False
-    # """ If this tool is being called as a part of partial calls, allow the call to be made. This is useful when you want to allow the model to call some tools within the limits, even if it cannot call all tools.
-
-    # Set to `False` by default.
-    # """
-
 
 @dataclass
 class ToolsUsagePolicy:
@@ -160,10 +154,3 @@ class ToolsUsagePolicy:
 
     Set to `None` for no minimum (default).
     """
-
-    # allow_partial_calls: bool = False
-    # """ If all calls cannot be made due to the usage limit policy, allow the calls within the limits to be made.
-
-    # This is useful when you want to allow the model to call some tools within the limits, even if it cannot call all tools.
-    # Set to `False` by default.
-    # """
