@@ -164,7 +164,7 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --group dev
+      - run: uv sync --only-dev
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -280,8 +280,8 @@ jobs:
           cache-suffix: dev
 
       - run: uv sync --group dev
-      - run: uv run coverage combine
-      - run: uv run coverage report
+      - run: uv run coverage combine --rcfile=.coveragerc-all
+      - run: uv run coverage report --rcfile=.coveragerc-all
 
       - run: uv run strict-no-cover
         env:

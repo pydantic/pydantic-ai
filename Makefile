@@ -66,9 +66,9 @@ test-durable: ## Run durable execution tests (temporal, dbos, prefect)
 .PHONY: test-all
 test-all: ## Run all tests including durable execution tests
 	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
-	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -n auto --dist=loadgroup --durations=20
-	@uv run coverage combine
-	@uv run coverage report
+	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run --rcfile=.coveragerc-all -m pytest -n auto --dist=loadgroup --durations=20
+	@uv run coverage combine --rcfile=.coveragerc-all
+	@uv run coverage report --rcfile=.coveragerc-all
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.10 to 3.13
