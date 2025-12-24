@@ -11,8 +11,6 @@ from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
-from pydantic_ai._tool_usage_policy import ToolsUsagePolicy
-
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
@@ -37,8 +35,6 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
-    tools_usage_policy: ToolsUsagePolicy | None = None
-    """The tools usage policy for this run step."""
 
     @classmethod
     @contextmanager

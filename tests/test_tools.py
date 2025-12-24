@@ -28,10 +28,11 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    ToolsUsagePolicy,
+    ToolUsageLimits,
     UserError,
     UserPromptPart,
 )
-from pydantic_ai._tool_usage_policy import ToolUsageLimits
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1328,7 +1329,15 @@ def test_tool_retries():
 
 
 def test_tool_max_uses():
-    """Test that a tool with max_uses=2 can only be called twice, and the third call is rejected."""
+    """Test ToolUsageLimits.max_uses on an individual tool.
+
+    ToolUsageLimits is set on individual tools via @agent.tool(usage_limits=...).
+    It limits how many times that specific tool can be called during an agent run.
+
+    Here we set max_uses=1, so the tool can only be called once. When the model
+    tries to call it twice in the same step, the second call returns an error
+    message instead of executing the tool.
+    """
     call_count = 0
 
     def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1407,9 +1416,17 @@ def test_tool_max_uses():
     )
 
 
-def test_max_tools_uses():
-    from pydantic_ai import ToolsUsagePolicy
+def test_tools_usage_policy_max_uses():
+    """Test ToolsUsagePolicy.max_uses on an agent.
 
+    ToolsUsagePolicy is set on the Agent via tools_usage_policy parameter.
+    It applies collectively to ALL tools during an agent run (unlike ToolUsageLimits
+    which applies to a specific tool).
+
+    Here we set max_uses=0 on the agent level, meaning no tool calls are allowed
+    at all. When the model tries to call any tool, it receives an error message
+    prompting it to produce output without using tools.
+    """
     agent = Agent(TestModel(), tools_usage_policy=ToolsUsagePolicy(max_uses=0))
 
     @agent.tool_plain

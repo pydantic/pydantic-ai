@@ -4,10 +4,12 @@ import asyncio
 from asyncio import Lock
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from typing_extensions import Self
+
+from pydantic_ai import ToolUsageLimits
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
@@ -73,11 +75,24 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                         f'{capitalized_toolset_label} defines a tool whose name conflicts with existing tool from {existing_tool.toolset.label}: {name!r}. {toolset.tool_name_conflict_hint}'
                     )
 
+                # Merge policy per-tool limits with the tool's own limits
+                usage_limits: ToolUsageLimits | None = tool.usage_limits
+                if (tool_usage_policy := ctx.tools_usage_policy) is not None and (
+                    policy_limits := tool_usage_policy.tool_usage_limits.get(name)
+                ) is not None:
+                    if usage_limits is None:
+                        # Tool has no limits, use policy limits directly
+                        usage_limits = policy_limits
+                    else:
+                        # Merge: non-None policy values override tool limits
+                        overrides = {k: v for k, v in asdict(policy_limits).items() if v is not None}
+                        usage_limits = replace(usage_limits, **overrides)
+
                 all_tools[name] = _CombinedToolsetTool(
                     toolset=tool_toolset,
                     tool_def=tool.tool_def,
                     max_retries=tool.max_retries,
-                    usage_limits=tool.usage_limits,
+                    usage_limits=usage_limits,
                     args_validator=tool.args_validator,
                     source_toolset=toolset,
                     source_tool=tool,

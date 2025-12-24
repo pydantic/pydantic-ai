@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from pydantic import dataclasses
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -10,24 +8,16 @@ class ToolUsageLimits:
     """Usage limits for an individual tool.
 
     This class defines constraints on how many times a specific tool can be called
-    during an agent run. It is set on the `Tool` itself via the `usage_limits` parameter.
+    during an agent run. Set on individual tools via the `usage_limits` parameter
+    when registering tools with `@agent.tool(usage_limits=...)`.
 
-    Attributes:
-        max_uses: Maximum number of successful calls allowed for this tool across
-            the entire agent run. Once reached, the tool will be excluded from
-            the available tools list. Set to `None` for unlimited (default).
-        max_uses_per_step: Maximum number of successful calls allowed for this tool
-            within a single run step (one model request → tool calls → response cycle).
-            Resets at the start of each new step. Set to `None` for unlimited (default).
-        min_uses: Minimum number of calls required for this tool before the agent
-            run can complete successfully. Set to `None` for no minimum (default).
-        min_uses_per_step: Minimum number of calls required for this tool within
-            each run step. Set to `None` for no minimum (default).
+    These limits apply to the specific tool only and take precedence over any
+    agent-level [`ToolsUsagePolicy`][pydantic_ai.ToolsUsagePolicy] settings.
 
     Example:
         ```python
         from pydantic_ai import Agent
-        from pydantic_ai._tool_usage_policy import ToolUsageLimits
+        from pydantic_ai import ToolUsageLimits
 
         agent = Agent('openai:gpt-4o')
 
@@ -48,16 +38,37 @@ class ToolUsageLimits:
     """
 
     max_uses: int | None = None
+    """Maximum number of successful calls allowed for this tool across the entire agent run.
+
+    Once reached, the tool will be excluded from the available tools list and any
+    further calls will return an error message to the model.
+
+    Set to `None` for unlimited (default).
+    """
+
     max_uses_per_step: int | None = None
+    """Maximum number of successful calls allowed for this tool within a single run step.
+
+    A "step" is one iteration of: model request → tool calls → response. This counter
+    resets at the start of each new step.
+
+    Set to `None` for unlimited (default).
+    """
+
     min_uses: int | None = None
+    """Minimum number of calls required for this tool before the agent run can complete.
+
+    If the agent tries to produce a final output before meeting this minimum, additional
+    tool calls will be required.
+
+    Set to `None` for no minimum (default).
+    """
+
     min_uses_per_step: int | None = None
+    """Minimum number of calls required for this tool within each run step.
 
-
-# Let us think of this scenario, we added some config for the tool before
-# These are the default limits
-# But allowing them to be overridden per run or for a particular Agent is also powerful
-# Let us allow that via ToolsUsagePolicy
-# I want to add behavioural quirks on this class as well although we do not have any at the moment.
+    Set to `None` for no minimum (default).
+    """
 
 
 @dataclass
@@ -65,50 +76,81 @@ class ToolsUsagePolicy:
     """Agent-level usage policy applied to all tools in a run.
 
     This class defines constraints that apply collectively to all tools during
-    an agent run. It is set on the `Agent` and affects every tool unless
-    individual tools have their own `ToolUsageLimits` that override these defaults.
+    an agent run. Set on the [`Agent`][pydantic_ai.Agent] via the `tools_usage_policy`
+    parameter or passed to `agent.run()` / `agent.run_sync()` / `agent.run_stream()`.
 
-    Attributes:
-        max_uses: Maximum total number of successful tool calls allowed across
-            all tools for the entire agent run. Set to `None` for unlimited (default).
-        max_uses_per_step: Maximum total number of successful tool calls allowed
-            across all tools within a single run step. Resets at each new step.
-            Set to `None` for unlimited (default).
-        min_uses: Minimum total number of tool calls required across all tools
-            before the agent run can complete. Set to `None` for no minimum (default).
-        min_uses_per_step: Minimum total number of tool calls required within
-            each run step. Set to `None` for no minimum (default).
+    Individual tool limits set via [`ToolUsageLimits`][pydantic_ai.ToolUsageLimits] take
+    precedence over these agent-level defaults for that specific tool.
+
+    The `tool_usage_limits` dict allows overriding limits for specific tools by name
+    without modifying the tool definitions themselves.
 
     Example:
         ```python
         from pydantic_ai import Agent
-        from pydantic_ai._tool_usage_policy import AgentToolsPolicy
+        from pydantic_ai import ToolsUsagePolicy, ToolUsageLimits
 
         # Agent can make at most 5 tool calls per step, 20 total
         agent = Agent(
             'openai:gpt-4o',
-            tools_policy=AgentToolsPolicy(max_uses=20, max_uses_per_step=5)
+            tools_usage_policy=ToolsUsagePolicy(max_uses=20, max_uses_per_step=5)
+        )
+
+        # Override limits for specific tools at the agent level
+        policy = ToolsUsagePolicy(
+            max_uses=50,
+            tool_usage_limits={
+                'expensive_api_call': ToolUsageLimits(max_uses=3),
+                'cheap_lookup': ToolUsageLimits(max_uses=100),
+            }
         )
         ```
 
     Note:
-        - Individual tool limits (`ToolUsageLimits`) take precedence over agent-level
-          policies for that specific tool.
         - "Per step" refers to one iteration of: model request → tool calls → response.
           A typical agent run may have multiple steps if the model needs to call tools
           and then reason about the results before producing a final output.
+        - The `tool_usage_limits` dict takes precedence over both the agent-level limits
+          (defined in this class) and any limits defined on the tool itself.
     """
 
-    tool_usage_limits: dict[str, ToolUsageLimits] = dataclasses.field(default_factory=dict)
-    # tool_name -> ToolUsageLimits
+    tool_usage_limits: dict[str, ToolUsageLimits] = field(default_factory=dict)
+    """Per-tool usage limits that override both agent-level and tool-level defaults.
 
-    # With this we will allow overriding the default limits for a particular tool or a group of tools
-    # So this should take precedence over the default limits / toolset limits in resolution scoping.
-    # It should be pretty useful
+    A mapping from tool name to [`ToolUsageLimits`][pydantic_ai.ToolUsageLimits].
+    These limits take the highest precedence in the resolution order:
 
-    # These are for the entire run / all the tools together with the Agent
+    1. `ToolsUsagePolicy.tool_usage_limits[tool_name]` (highest priority)
+    2. Tool's own `usage_limits` parameter
+    3. Agent-level `ToolsUsagePolicy` limits (lowest priority)
+    """
 
     max_uses: int | None = None
+    """Maximum total number of successful tool calls allowed across all tools for the entire run.
+
+    This is an aggregate limit—once the total number of tool calls across all tools
+    reaches this limit, no more tools can be called and the model will be prompted
+    to produce a final output.
+
+    Set to `None` for unlimited (default).
+    """
+
     max_uses_per_step: int | None = None
+    """Maximum total number of successful tool calls allowed across all tools within a single step.
+
+    This counter resets at the start of each new step.
+
+    Set to `None` for unlimited (default).
+    """
+
     min_uses: int | None = None
+    """Minimum total number of tool calls required across all tools before the run can complete.
+
+    Set to `None` for no minimum (default).
+    """
+
     min_uses_per_step: int | None = None
+    """Minimum total number of tool calls required within each run step.
+
+    Set to `None` for no minimum (default).
+    """
