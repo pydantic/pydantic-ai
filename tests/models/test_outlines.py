@@ -41,8 +41,6 @@ from pydantic_ai.settings import ModelSettings
 
 from ..conftest import IsBytes, IsDatetime, IsStr, try_import
 
-pytestmark = pytest.mark.outlines
-
 with try_import() as imports_successful:
     import outlines
 
@@ -77,6 +75,7 @@ with try_import() as mlxlm_imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='outlines not installed'),
     pytest.mark.anyio,
+    pytest.mark.outlines,
 ]
 
 skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
