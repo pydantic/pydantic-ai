@@ -304,15 +304,14 @@ class ToolManager(Generic[AgentDepsT]):
     def get_current_uses_of_tool(self, tool_name: str) -> int:
         """Get the current number of uses of a given tool."""
         ctx = self._assert_ctx()
-
         return ctx.tools_use_counts.get(tool_name, 0)
 
     def can_make_tool_calls(self, projected_usage: RunUsage) -> bool:
         """Check if tool calls can proceed within the tools usage policy limit."""
         ctx = self._assert_ctx()
-        policy = ctx.tools_usage_policy
-        max_uses = policy.max_uses if policy else None
-        return max_uses is None or projected_usage.tool_calls <= max_uses
+        if (policy := ctx.tools_usage_policy) is not None and policy.max_uses is not None:
+            return projected_usage.tool_calls <= policy.max_uses
+        return True
 
     def can_use_tool(self, tool_name: str, pending_uses: int) -> bool:
         """Check if a tool can be used within its max_uses limit.
