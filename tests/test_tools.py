@@ -1358,7 +1358,7 @@ def test_tool_max_uses():
 
     agent = Agent(FunctionModel(my_model), output_type=str)
 
-    @agent.tool(usage_limits=ToolUsageLimits(max_uses=1))
+    @agent.tool(usage_limits=ToolUsageLimits(max_uses=2, max_uses_per_step=1))
     def tool_with_max_use(ctx: RunContext[None]) -> str:  # pragma: no cover
         return 'Used'
 

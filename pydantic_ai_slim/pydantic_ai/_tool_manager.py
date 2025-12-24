@@ -363,6 +363,11 @@ class ToolManager(Generic[AgentDepsT]):
             tool_name: The name of the tool to check.
             pending_uses: Number of additional uses being requested (in current batch).
         """
+        # TODO: Extend to allow for more granular error messages.
+        # We do not give better error messages here at the moment but we really should allow for more granular error messages.
+        # So there should be a control on what message we get when we exceed max_uses, max_uses_per_step, min_uses, min_uses_per_step.
+        # Better control over the error messages will be helpful for the users
+
         current_uses = self.get_current_uses_of_tool(tool_name)
         max_uses = self.get_max_uses_of_tool(tool_name)
         max_uses_per_step = self.get_max_uses_per_step_of_tool(tool_name)
