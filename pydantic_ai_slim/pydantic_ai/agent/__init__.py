@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
+from pydantic_ai._tool_usage_policy import ToolUsageLimits
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
@@ -1055,7 +1056,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
-        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1065,6 +1065,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        usage_limits: ToolUsageLimits | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1075,7 +1076,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
-        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1085,6 +1085,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        usage_limits: ToolUsageLimits | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1121,7 +1122,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
-            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -1149,7 +1149,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 name=name,
                 description=description,
                 retries=retries,
-                max_uses=max_uses,
                 prepare=prepare,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
@@ -1159,6 +1158,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                usage_limits=usage_limits,
             )
             return func_
 
@@ -1175,7 +1175,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
-        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1185,6 +1184,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        usage_limits: ToolUsageLimits | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1195,7 +1195,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
-        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1205,6 +1204,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        usage_limits: ToolUsageLimits | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1241,7 +1241,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
-            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -1267,7 +1266,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 name=name,
                 description=description,
                 retries=retries,
-                max_uses=max_uses,
                 prepare=prepare,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
@@ -1277,6 +1275,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                usage_limits=usage_limits,
             )
             return func_
 

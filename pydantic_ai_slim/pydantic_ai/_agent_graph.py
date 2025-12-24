@@ -1030,7 +1030,7 @@ def _handle_tool_calls_parts(
     can_make_tool_calls: bool,
     output_parts: list[_messages.ModelRequestPart],
     tool_manager: ToolManager[DepsT],
-    tool_call_counts: Counter[str],
+    pending_tool_uses: Counter[str],
     calls_to_run: list[_messages.ToolCallPart],
 ):
     # Separating the two scenarios to allow for granular overriding via prompt_templates
@@ -1045,7 +1045,7 @@ def _handle_tool_calls_parts(
             output_parts.append(return_part)
             yield _messages.FunctionToolResultEvent(return_part)
         elif not tool_manager.can_use_tool(
-            call.tool_name, tool_call_counts[call.tool_name]
+            call.tool_name, pending_tool_uses[call.tool_name]
         ):  # We cannot use this tool because of the max_uses limit
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
@@ -1087,11 +1087,11 @@ async def _call_tools(
 
     calls_to_run: list[_messages.ToolCallPart] = []
 
-    # For each tool, check how many calls are going to be made
-    tool_call_counts = Counter(call.tool_name for call in tool_calls)
+    # For each tool, count how many uses are pending in this batch
+    pending_tool_uses = Counter(call.tool_name for call in tool_calls)
 
     for event in _handle_tool_calls_parts(
-        tool_calls, can_make_tool_calls, output_parts, tool_manager, tool_call_counts, calls_to_run
+        tool_calls, can_make_tool_calls, output_parts, tool_manager, pending_tool_uses, calls_to_run
     ):
         yield event
 

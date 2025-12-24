@@ -6,6 +6,7 @@ from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cas
 
 from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic_ai._tool_usage_policy import ToolUsageLimits
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
 
@@ -264,7 +265,6 @@ class Tool(Generic[ToolAgentDepsT]):
     function: ToolFuncEither[ToolAgentDepsT]
     takes_ctx: bool
     max_retries: int | None
-    max_uses: int | None
     name: str
     description: str | None
     prepare: ToolPrepareFunc[ToolAgentDepsT] | None
@@ -276,6 +276,9 @@ class Tool(Generic[ToolAgentDepsT]):
     metadata: dict[str, Any] | None
     timeout: float | None
     function_schema: _function_schema.FunctionSchema
+    usage_limits: ToolUsageLimits | None
+    """Usage limits for this tool (max calls, per-step limits, etc.)."""
+
     """
     The base JSON schema for the tool's parameters.
 
@@ -288,7 +291,6 @@ class Tool(Generic[ToolAgentDepsT]):
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
-        max_uses: int | None = None,
         name: str | None = None,
         description: str | None = None,
         prepare: ToolPrepareFunc[ToolAgentDepsT] | None = None,
@@ -301,6 +303,7 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
+        usage_limits: ToolUsageLimits | None = None,
     ):
         """Create a new tool instance.
 
@@ -341,7 +344,6 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument,
                 this is inferred if unset.
             max_retries: Maximum number of retries allowed for this tool, set to the agent default if `None`.
-            max_uses: The maximum number of successful calls allowed for this tool during a run. Defaults to None (unlimited).
             name: Name of the tool, inferred from the function if `None`.
             description: Description of the tool, inferred from the function if `None`.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -371,7 +373,6 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.max_uses = max_uses
         self.name = name or function.__name__
         self.description = description or self.function_schema.description
         self.prepare = prepare
@@ -382,6 +383,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
+        self.usage_limits = usage_limits
 
     @classmethod
     def from_schema(

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
 
+from pydantic_ai._tool_usage_policy import ToolUsageLimits
 import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
@@ -1348,7 +1349,7 @@ def test_tool_max_uses():
 
     agent = Agent(FunctionModel(my_model), output_type=str)
 
-    @agent.tool(max_uses=1)
+    @agent.tool(usage_limits=ToolUsageLimits(max_uses=1))
     def tool_with_max_use(ctx: RunContext[None]) -> str:  # pragma: no cover
         return 'Used'
 

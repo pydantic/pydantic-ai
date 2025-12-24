@@ -114,6 +114,8 @@ from .toolsets import (
 )
 from .usage import RequestUsage, RunUsage, UsageLimits
 
+from ._tool_usage_policy import AgentToolsPolicy, ToolUsageLimits
+
 __all__ = (
     '__version__',
     # agent
@@ -243,5 +245,9 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+
+    # tool usage limits
+    'AgentToolsPolicy',
+    'ToolUsageLimits',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

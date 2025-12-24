@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import ConfigDict, with_config
+from pydantic_ai._tool_usage_policy import ToolUsageLimits
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
@@ -34,7 +35,7 @@ class _ToolInfo:
 
     tool_def: ToolDefinition
     max_retries: int
-    max_uses: int | None
+    usage_limits: ToolUsageLimits | None
 
 
 class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
@@ -69,7 +70,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                     name: _ToolInfo(
                         tool_def=tool.tool_def,
                         max_retries=tool.max_retries,
-                        max_uses=tool.max_uses,
+                        usage_limits=tool.usage_limits,
                     )
                     for name, tool in tools.items()
                 }
@@ -162,6 +163,6 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             toolset=self,
             tool_def=tool_info.tool_def,
             max_retries=tool_info.max_retries,
-            max_uses=tool_info.max_uses,
+            usage_limits=tool_info.usage_limits,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
+from pydantic_ai._tool_usage_policy import ToolUsageLimits
+
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
@@ -52,8 +54,8 @@ class ToolsetTool(Generic[AgentDepsT]):
     """The tool definition for this tool, including the name, description, and parameters."""
     max_retries: int
     """The maximum number of retries to attempt if the tool call fails."""
-    max_uses: int | None
-    """The maximum number of successful calls allowed for this tool."""
+    usage_limits: ToolUsageLimits | None
+    """Usage limits for this tool (max calls, per-step limits, etc.)."""
     args_validator: SchemaValidator | SchemaValidatorProt
     """The Pydantic Core validator for the tool's arguments.
 

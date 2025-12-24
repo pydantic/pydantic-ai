@@ -77,7 +77,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     toolset=tool_toolset,
                     tool_def=tool.tool_def,
                     max_retries=tool.max_retries,
-                    max_uses=tool.max_uses,
+                    usage_limits=tool.usage_limits,
                     args_validator=tool.args_validator,
                     source_toolset=toolset,
                     source_tool=tool,

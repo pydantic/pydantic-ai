@@ -11,6 +11,7 @@ from pydantic import AnyUrl
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import messages
+from pydantic_ai._tool_usage_policy import ToolUsageLimits
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
@@ -74,6 +75,9 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     max_retries: int
     """The maximum number of retries to attempt if a tool call fails."""
 
+    usage_limits: ToolUsageLimits | None
+    """Usage limits for all tools in this toolset."""
+
     _id: str | None
 
     def __init__(
@@ -91,6 +95,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         max_retries: int = 1,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
         id: str | None = None,
+        usage_limits: ToolUsageLimits | None = None,
     ) -> None:
         if isinstance(client, Client):
             self.client = client
@@ -100,6 +105,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self._id = id
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
+        self.usage_limits = usage_limits
 
         self._enter_lock: Lock = Lock()
         self._running_count: int = 0
@@ -170,7 +176,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             tool_def=tool_def,
             toolset=self,
             max_retries=self.max_retries,
-            max_uses=None,
+            usage_limits=self.usage_limits,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 

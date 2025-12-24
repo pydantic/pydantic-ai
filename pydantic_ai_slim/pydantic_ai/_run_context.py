@@ -50,8 +50,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict)
     """Number of retries for each tool so far."""
-    tool_usage: dict[str, int] = field(default_factory=dict)
-    """Number of successful calls for each tool so far."""
+    tools_use_counts: dict[str, int] = field(default_factory=dict)
+    """Successful use counts per tool. Only tools that have been used appear here."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
@@ -80,13 +80,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     @property
     def tool_use(self) -> int:
-        """Number of successful calls for this tool so far.
-
-        This is a convenience property that returns `tool_usage.get(tool_name, 0)`.
-        Only valid when `tool_name` is set (i.e., during tool preparation or execution).
-        """
+        """Successful use count for the current tool (0 if never used)."""
         if self.tool_name:
-            return self.tool_usage.get(self.tool_name, 0)
+            return self.tools_use_counts.get(self.tool_name, 0)
         return 0
 
     __repr__ = _utils.dataclasses_no_defaults_repr

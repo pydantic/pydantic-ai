@@ -16,6 +16,10 @@ TOOL_SCHEMA_VALIDATOR = SchemaValidator(schema=core_schema.any_schema())
 class ExternalToolset(AbstractToolset[AgentDepsT]):
     """A toolset that holds tools whose results will be produced outside of the Pydantic AI agent run in which they were called.
 
+    External tools are deferred - they are not executed by the agent, but recorded for
+    external execution. As such, `max_retries` is hardcoded to 0 and `usage_limits` is
+    not supported (the tools aren't actually "used" within the agent run).
+
     See [toolset docs](../toolsets.md#external-toolset) for more information.
     """
 
@@ -35,8 +39,8 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
             tool_def.name: ToolsetTool(
                 toolset=self,
                 tool_def=replace(tool_def, kind='external'),
-                max_retries=0,
-                max_uses=None,
+                max_retries=0,  # External tools can't be retried - they're executed outside the agent
+                usage_limits=None,  # External tools don't support usage limits - they're deferred
                 args_validator=TOOL_SCHEMA_VALIDATOR,
             )
             for tool_def in self.tool_defs

@@ -56,8 +56,8 @@ class ToolManager(Generic[AgentDepsT]):
                 failed_tool_name: self.ctx.retries.get(failed_tool_name, 0) + 1
                 for failed_tool_name in self.failed_tools
             }
-            tool_usage = self.ctx.tool_usage.copy()
-            ctx = replace(ctx, retries=retries, tool_usage=tool_usage)
+            tools_use_counts = self.ctx.tools_use_counts.copy()
+            ctx = replace(ctx, retries=retries, tools_use_counts=tools_use_counts)
 
         return self.__class__(
             toolset=self.toolset,
@@ -77,7 +77,9 @@ class ToolManager(Generic[AgentDepsT]):
         return [
             tool.tool_def
             for tool in self.tools.values()
-            if tool.max_uses is None or self.get_current_uses_of_tool(tool.tool_def.name) < tool.max_uses
+            if (limits := tool.usage_limits) is None
+            or (max_uses := limits.max_uses) is None
+            or (self.get_current_uses_of_tool(tool.tool_def.name) < max_uses)
         ]
 
     def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
@@ -167,7 +169,7 @@ class ToolManager(Generic[AgentDepsT]):
                 max_retries=tool.max_retries,
                 tool_call_approved=approved,
                 partial_output=allow_partial,
-                max_uses=tool.max_uses,
+                max_uses=tool.usage_limits.max_uses if (limits := tool.usage_limits) and limits.max_uses else None,
             )
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
@@ -182,7 +184,7 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
             result = await self.toolset.call_tool(name, args_dict, ctx, tool)
-            self.ctx.tool_usage[name] = self.ctx.tool_usage.get(name, 0) + 1
+            self.ctx.tools_use_counts[name] = self.ctx.tools_use_counts.get(name, 0) + 1
             return result
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else 1
@@ -290,16 +292,16 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         tool = self.tools.get(tool_name, None)
-        if tool is None:
+        if tool is None or tool.usage_limits is None:
             return None
 
-        return tool.max_uses
+        return tool.usage_limits.max_uses
 
     def get_current_uses_of_tool(self, tool_name: str) -> int:
         """Get the current number of uses of a given tool."""
         ctx = self._assert_ctx()
 
-        return ctx.tool_usage.get(tool_name, 0)
+        return ctx.tools_use_counts.get(tool_name, 0)
 
     def can_make_tool_calls(self, projected_usage: RunUsage) -> bool:
         """Check if tool calls can proceed within the max_tools_uses limit."""
@@ -308,11 +310,16 @@ class ToolManager(Generic[AgentDepsT]):
         max_tools_uses = ctx.max_tools_uses
         return max_tools_uses is None or projected_usage.tool_calls <= max_tools_uses
 
-    def can_use_tool(self, tool_name: str, tool_use_count: int) -> bool:
-        """Check if a tool can be used within the max_uses limit."""
-        current_tool_uses = self.get_current_uses_of_tool(tool_name)
+    def can_use_tool(self, tool_name: str, pending_uses: int) -> bool:
+        """Check if a tool can be used within its max_uses limit.
+
+        Args:
+            tool_name: The name of the tool to check.
+            pending_uses: Number of additional uses being requested (e.g., in current batch).
+        """
+        current_uses = self.get_current_uses_of_tool(tool_name)
         max_uses = self.get_max_uses_of_tool(tool_name)
-        if max_uses is not None and current_tool_uses + tool_use_count > max_uses:
+        if max_uses is not None and current_uses + pending_uses > max_uses:
             return False
         return True
 
