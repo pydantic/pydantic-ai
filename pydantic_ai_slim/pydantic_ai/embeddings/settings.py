@@ -2,14 +2,20 @@ from typing_extensions import TypedDict
 
 
 class EmbeddingSettings(TypedDict, total=False):
-    """Settings to configure an embedding model.
+    """Common settings for configuring embedding models.
 
-    Here we include only settings which apply to multiple models / model providers,
-    though not all of these settings are supported by all models.
+    These settings apply across multiple embedding model providers.
+    Not all settings are supported by all models - check the specific
+    model's documentation for details.
+
+    Provider-specific settings classes (e.g.,
+    [`OpenAIEmbeddingSettings`][pydantic_ai.embeddings.openai.OpenAIEmbeddingSettings],
+    [`CohereEmbeddingSettings`][pydantic_ai.embeddings.cohere.CohereEmbeddingSettings])
+    extend this with additional provider-prefixed options.
     """
 
     dimensions: int
-    """The number of dimensions the resulting output embeddings should have.
+    """The number of dimensions for the output embeddings.
 
     Supported by:
 
@@ -40,9 +46,14 @@ class EmbeddingSettings(TypedDict, total=False):
 def merge_embedding_settings(
     base: EmbeddingSettings | None, overrides: EmbeddingSettings | None
 ) -> EmbeddingSettings | None:
-    """Merge two sets of embedding settings, preferring the overrides.
+    """Merge two sets of embedding settings, with overrides taking precedence.
 
-    A common use case is: merge_embedding_settings(<embedder settings>, <run settings>)
+    Args:
+        base: Base settings (typically from the embedder or model).
+        overrides: Settings that should override the base (typically per-call settings).
+
+    Returns:
+        Merged settings, or `None` if both inputs are `None`.
     """
     # Note: we may want merge recursively if/when we add non-primitive values
     if base and overrides:

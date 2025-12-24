@@ -55,8 +55,9 @@ nav:
           - mcp/fastmcp-client.md
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
-      - Testing: testing.md
       - Web Chat UI: web.md
+      - Embeddings: embeddings.md
+      - Testing: testing.md
 
   - Pydantic Evals:
       - Overview: evals.md
@@ -360,6 +361,7 @@ plugins:
           - dependencies.md
           - deferred-tools.md
           - direct.md
+          - embeddings.md
           - input.md
           - tools.md
           - common-tools.md

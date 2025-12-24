@@ -27,24 +27,56 @@ except ImportError as _import_error:
 class SentenceTransformersEmbeddingSettings(EmbeddingSettings, total=False):
     """Settings used for a Sentence-Transformers embedding model request.
 
-    All fields are `sentence_transformers_`-prefixed so settings can be merged across providers safely.
+    All fields from [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] are supported,
+    plus Sentence-Transformers-specific settings prefixed with `sentence_transformers_`.
     """
 
     sentence_transformers_device: str
-    """Device to run inference on, e.g. "cpu", "cuda", "cuda:0", "mps"."""
+    """Device to run inference on.
+
+    Examples: `'cpu'`, `'cuda'`, `'cuda:0'`, `'mps'` (Apple Silicon).
+    """
 
     sentence_transformers_normalize_embeddings: bool
-    """Whether to L2-normalize embeddings. Mirrors `normalize_embeddings` in SentenceTransformer.encode."""
+    """Whether to L2-normalize embeddings.
+
+    When `True`, all embeddings will have unit length, which is useful for
+    cosine similarity calculations.
+    """
 
     sentence_transformers_batch_size: int
-    """Batch size to use during encoding."""
+    """Batch size to use during encoding.
+
+    Larger batches may be faster but require more memory.
+    """
 
 
 @dataclass(init=False)
 class SentenceTransformerEmbeddingModel(EmbeddingModel):
-    """Local embeddings using `sentence-transformers` models.
+    """Local embedding model using the `sentence-transformers` library.
 
-    Example models include "all-MiniLM-L6-v2" and many others hosted on Hugging Face.
+    This model runs embeddings locally on your machine, which is useful for:
+
+    - Privacy-sensitive applications where data shouldn't leave your infrastructure
+    - Reducing API costs for high-volume embedding workloads
+    - Offline or air-gapped environments
+
+    Models are downloaded from Hugging Face on first use.
+    See the [Sentence-Transformers documentation](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html)
+    for available models.
+
+    Example:
+    ```python
+    from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+
+    # Using a model name (downloads from Hugging Face)
+    model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
+
+    # Using an existing SentenceTransformer instance
+    from sentence_transformers import SentenceTransformer
+    st_model = SentenceTransformer('all-MiniLM-L6-v2')
+    model = SentenceTransformerEmbeddingModel(st_model)
+    ```
     """
 
     _model_name: str = field(repr=False)
@@ -54,8 +86,14 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
         """Initialize a Sentence-Transformers embedding model.
 
         Args:
-            model: The model name or local path to load with `SentenceTransformer`, or a `SentenceTransformer` instance.
-            settings: Model-specific settings that will be used as defaults for this model.
+            model: The model to use. Can be:
+
+                - A model name from Hugging Face (e.g., `'all-MiniLM-L6-v2'`)
+                - A local path to a saved model
+                - An existing `SentenceTransformer` instance
+            settings: Model-specific
+                [`SentenceTransformersEmbeddingSettings`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformersEmbeddingSettings]
+                to use as defaults for this model.
         """
         if isinstance(model, str):
             self._model_name = model

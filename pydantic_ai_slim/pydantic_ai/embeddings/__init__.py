@@ -102,7 +102,21 @@ def infer_embedding_model(
 
 @dataclass(init=False)
 class Embedder:
-    """TODO (DouweM): Docstring."""
+    """High-level interface for generating text embeddings.
+
+    The `Embedder` class provides a convenient way to generate vector embeddings from text
+    using various embedding model providers. It handles model inference, settings management,
+    and optional OpenTelemetry instrumentation.
+
+    Example:
+    ```python
+    from pydantic_ai import Embedder
+
+    embedder = Embedder('openai:text-embedding-3-small')
+    result = await embedder.embed_query('What is machine learning?')
+    print(result.embeddings[0][:5])  # First 5 dimensions
+    ```
+    """
 
     instrument: InstrumentationSettings | bool | None
     """Options to automatically instrument with OpenTelemetry.
@@ -128,12 +142,19 @@ class Embedder:
         """Initialize an Embedder.
 
         Args:
-            model: The embedding model to use - can be a model instance, model name, or string.
-            settings: Optional embedding settings to use as defaults.
+            model: The embedding model to use. Can be specified as:
+
+                - A model name string in the format `'provider:model-name'`
+                  (e.g., `'openai:text-embedding-3-small'`)
+                - An [`EmbeddingModel`][pydantic_ai.embeddings.EmbeddingModel] instance
+            settings: Optional [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings]
+                to use as defaults for all embed calls.
             defer_model_check: Whether to defer model validation until first use.
+                Set to `False` to validate the model immediately on construction.
             instrument: OpenTelemetry instrumentation settings. Set to `True` to enable with defaults,
-                or pass an `InstrumentationSettings` instance to customize. If `None`, uses the value
-                from `Embedder.instrument_all()`.
+                or pass an [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
+                instance to customize. If `None`, uses the value from
+                [`Embedder.instrument_all()`][pydantic_ai.embeddings.Embedder.instrument_all].
         """
         self._model = model if defer_model_check else infer_embedding_model(model)
         self._settings = settings
@@ -143,16 +164,21 @@ class Embedder:
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
-        """Set the instrumentation options for all embedders where `instrument` is not set.
+        """Set the default instrumentation options for all embedders where `instrument` is not explicitly set.
+
+        This is useful for enabling instrumentation globally without modifying each embedder individually.
 
         Args:
             instrument: Instrumentation settings to use as the default. Set to `True` for default settings,
-                `False` to disable, or pass an `InstrumentationSettings` instance to customize.
+                `False` to disable, or pass an
+                [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
+                instance to customize.
         """
         Embedder._instrument_default = instrument
 
     @property
     def model(self) -> EmbeddingModel | KnownEmbeddingModelName | str:
+        """The embedding model used by this embedder."""
         return self._model
 
     @contextmanager
@@ -161,6 +187,22 @@ class Embedder:
         *,
         model: EmbeddingModel | KnownEmbeddingModelName | str | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
+        """Context manager to temporarily override the embedding model.
+
+        Useful for testing or dynamically switching models.
+
+        Args:
+            model: The embedding model to use within this context.
+
+        Example:
+        ```python
+        embedder = Embedder('openai:text-embedding-3-small')
+
+        with embedder.override(model='openai:text-embedding-3-large'):
+            result = await embedder.embed_query('test')
+            # Uses text-embedding-3-large
+        ```
+        """
         if _utils.is_set(model):
             model_token = self._override_model.set(infer_embedding_model(model))
         else:
@@ -175,47 +217,110 @@ class Embedder:
     async def embed_query(
         self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        """Embed one or more query texts.
+
+        Use this method when embedding search queries that will be compared against document embeddings.
+        Some models optimize embeddings differently based on whether the input is a query or document.
+
+        Args:
+            query: A single query string or sequence of query strings to embed.
+            settings: Optional settings to override the embedder's default settings for this call.
+
+        Returns:
+            An [`EmbeddingResult`][pydantic_ai.embeddings.EmbeddingResult] containing the embeddings
+            and metadata about the operation.
+        """
         return await self.embed(query, input_type='query', settings=settings)
 
     async def embed_documents(
         self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        """Embed one or more document texts.
+
+        Use this method when embedding documents that will be stored and later searched against.
+        Some models optimize embeddings differently based on whether the input is a query or document.
+
+        Args:
+            documents: A single document string or sequence of document strings to embed.
+            settings: Optional settings to override the embedder's default settings for this call.
+
+        Returns:
+            An [`EmbeddingResult`][pydantic_ai.embeddings.EmbeddingResult] containing the embeddings
+            and metadata about the operation.
+        """
         return await self.embed(documents, input_type='document', settings=settings)
 
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        """Embed text inputs with explicit input type specification.
+
+        This is the low-level embedding method. For most use cases, prefer
+        [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] or
+        [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents].
+
+        Args:
+            inputs: A single string or sequence of strings to embed.
+            input_type: The type of input, either `'query'` or `'document'`.
+            settings: Optional settings to override the embedder's default settings for this call.
+
+        Returns:
+            An [`EmbeddingResult`][pydantic_ai.embeddings.EmbeddingResult] containing the embeddings
+            and metadata about the operation.
+        """
         model = self._get_model()
         settings = merge_embedding_settings(self._settings, settings)
         return await model.embed(inputs, input_type=input_type, settings=settings)
 
     async def max_input_tokens(self) -> int | None:
+        """Get the maximum number of tokens the model can accept as input.
+
+        Returns:
+            The maximum token count, or `None` if the limit is unknown for this model.
+        """
         model = self._get_model()
         return await model.max_input_tokens()
 
     async def count_tokens(self, text: str) -> int:
+        """Count the number of tokens in the given text.
+
+        Args:
+            text: The text to tokenize and count.
+
+        Returns:
+            The number of tokens in the text.
+
+        Raises:
+            NotImplementedError: If the model doesn't support token counting.
+            UserError: If the model or tokenizer is not supported.
+        """
         model = self._get_model()
         return await model.count_tokens(text)
 
     def embed_query_sync(
         self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        """Synchronous version of [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query]."""
         return _utils.get_event_loop().run_until_complete(self.embed_query(query, settings=settings))
 
     def embed_documents_sync(
         self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        """Synchronous version of [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents]."""
         return _utils.get_event_loop().run_until_complete(self.embed_documents(documents, settings=settings))
 
     def embed_sync(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        """Synchronous version of [`embed()`][pydantic_ai.embeddings.Embedder.embed]."""
         return _utils.get_event_loop().run_until_complete(self.embed(inputs, input_type=input_type, settings=settings))
 
     def max_input_tokens_sync(self) -> int | None:
+        """Synchronous version of [`max_input_tokens()`][pydantic_ai.embeddings.Embedder.max_input_tokens]."""
         return _utils.get_event_loop().run_until_complete(self.max_input_tokens())
 
     def count_tokens_sync(self, text: str) -> int:
+        """Synchronous version of [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens]."""
         return _utils.get_event_loop().run_until_complete(self.count_tokens(text))
 
     def _get_model(self) -> EmbeddingModel:

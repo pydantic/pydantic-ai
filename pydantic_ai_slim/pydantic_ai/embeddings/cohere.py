@@ -32,7 +32,11 @@ LatestCohereEmbeddingModelNames = Literal[
     'embed-multilingual-v3.0',
     'embed-multilingual-light-v3.0',
 ]
-"""Latest Cohere embeddings models."""
+"""Latest Cohere embeddings models.
+
+See the [Cohere Embed documentation](https://docs.cohere.com/docs/cohere-embed)
+for available models and their capabilities.
+"""
 
 CohereEmbeddingModelName = str | LatestCohereEmbeddingModelNames
 """Possible Cohere embeddings model names."""
@@ -48,28 +52,47 @@ _MAX_INPUT_TOKENS: dict[CohereEmbeddingModelName, int] = {
 
 
 class CohereEmbeddingSettings(EmbeddingSettings, total=False):
-    """Settings used for a Cohere embedding model request."""
+    """Settings used for a Cohere embedding model request.
+
+    All fields from [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] are supported,
+    plus Cohere-specific settings prefixed with `cohere_`.
+    """
 
     # ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     cohere_max_tokens: int
-    """The maximum number of tokens to generate before stopping."""
+    """The maximum number of tokens to embed."""
 
     cohere_input_type: CohereEmbedInputType
-    """The input type to use for the embedding model. Overrides the `input_type` argument which only takes `query` and `document`."""
+    """The Cohere-specific input type for the embedding.
+
+    Overrides the standard `input_type` argument. Options include:
+    `'search_query'`, `'search_document'`, `'classification'`, `'clustering'`, and `'image'`.
+    """
 
     cohere_truncate: V2EmbedRequestTruncate
-    """The truncation strategy to use for the embedding model:
+    """The truncation strategy to use:
 
-    - `NONE` (default): Do not truncate the input text and raise an error if the input text is too long.
-    - `END`: Truncate the input text to the maximum number of tokens.
-    - `START`: Truncate the start of the input text.
+    - `'NONE'` (default): Raise an error if input exceeds max tokens.
+    - `'END'`: Truncate the end of the input text.
+    - `'START'`: Truncate the start of the input text.
     """
 
 
 @dataclass(init=False)
 class CohereEmbeddingModel(EmbeddingModel):
-    """Cohere embedding model."""
+    """Cohere embedding model implementation.
+
+    This model works with Cohere's embeddings API, which offers
+    multilingual support and various model sizes.
+
+    Example:
+    ```python
+    from pydantic_ai.embeddings.cohere import CohereEmbeddingModel
+
+    model = CohereEmbeddingModel('embed-v4.0')
+    ```
+    """
 
     _model_name: CohereEmbeddingModelName = field(repr=False)
     _provider: Provider[AsyncClientV2] = field(repr=False)
@@ -81,15 +104,19 @@ class CohereEmbeddingModel(EmbeddingModel):
         provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
         settings: EmbeddingSettings | None = None,
     ):
-        """Initialize an Cohere model.
+        """Initialize a Cohere embedding model.
 
         Args:
-            model_name: The name of the Cohere model to use. List of model names
-                available [here](https://docs.cohere.com/docs/cohere-embed).
-            provider: The provider to use for authentication and API access. Can be either the string
-                'cohere' or an instance of `CohereProvider`. If not provided, a new provider will be
-                created using the other parameters.
-            settings: Model-specific settings that will be used as defaults for this model.
+            model_name: The name of the Cohere model to use.
+                See [Cohere Embed documentation](https://docs.cohere.com/docs/cohere-embed)
+                for available models.
+            provider: The provider to use for authentication and API access. Can be:
+
+                - `'cohere'` (default): Uses the standard Cohere API
+                - A [`CohereProvider`][pydantic_ai.providers.cohere.CohereProvider] instance
+                  for custom configuration
+            settings: Model-specific [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings]
+                to use as defaults for this model.
         """
         self._model_name = model_name
 

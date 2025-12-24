@@ -11,14 +11,36 @@ from .settings import EmbeddingSettings
 
 @dataclass(init=False)
 class TestEmbeddingModel(EmbeddingModel):
-    """Test embedding model."""
+    """A mock embedding model for testing.
+
+    This model returns deterministic embeddings (all 1.0 values) and tracks
+    the settings used in the last call via the `last_settings` attribute.
+
+    Example:
+    ```python
+    from pydantic_ai import Embedder
+    from pydantic_ai.embeddings import TestEmbeddingModel
+
+    test_model = TestEmbeddingModel()
+
+    with Embedder('openai:text-embedding-3-small').override(model=test_model):
+        result = await embedder.embed_query('test')
+        assert test_model.last_settings is not None
+    ```
+    """
 
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
 
     last_settings: EmbeddingSettings | None = None
+    """The settings used in the most recent embed call."""
 
     def __init__(self, *, settings: EmbeddingSettings | None = None):
+        """Initialize the test embedding model.
+
+        Args:
+            settings: Optional default settings for the model.
+        """
         self.last_settings = None
         super().__init__(settings=settings)
 

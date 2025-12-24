@@ -14,15 +14,27 @@ if TYPE_CHECKING:
 
 @dataclass(init=False)
 class WrapperEmbeddingModel(EmbeddingModel):
-    """Embedding model which wraps another embedding model.
+    """Base class for embedding models that wrap another model.
 
-    Does nothing on its own, used as a base class.
+    Use this as a base class to create custom embedding model wrappers
+    that modify behavior (e.g., caching, logging, rate limiting) while
+    delegating to an underlying model.
+
+    By default, all methods are passed through to the wrapped model.
+    Override specific methods to customize behavior.
     """
 
     wrapped: EmbeddingModel
     """The underlying embedding model being wrapped."""
 
     def __init__(self, wrapped: EmbeddingModel | str):
+        """Initialize the wrapper with an embedding model.
+
+        Args:
+            wrapped: The model to wrap. Can be an
+                [`EmbeddingModel`][pydantic_ai.embeddings.EmbeddingModel] instance
+                or a model name string (e.g., `'openai:text-embedding-3-small'`).
+        """
         from . import infer_embedding_model
 
         super().__init__()

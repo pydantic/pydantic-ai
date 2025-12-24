@@ -26,18 +26,44 @@ except ImportError as _import_error:
     ) from _import_error
 
 OpenAIEmbeddingModelName = str | LatestOpenAIEmbeddingModelNames
-"""Possible OpenAI embeddings model names."""
+"""Possible OpenAI embeddings model names.
+
+See the [OpenAI embeddings documentation](https://platform.openai.com/docs/guides/embeddings)
+for available models.
+"""
 
 
 class OpenAIEmbeddingSettings(EmbeddingSettings, total=False):
-    """Settings used for an OpenAI embedding model request."""
+    """Settings used for an OpenAI embedding model request.
+
+    All fields from [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] are supported.
+    """
 
     # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
 
 @dataclass(init=False)
 class OpenAIEmbeddingModel(EmbeddingModel):
-    """OpenAI embedding model."""
+    """OpenAI embedding model implementation.
+
+    This model works with OpenAI's embeddings API and any
+    [OpenAI-compatible providers](../models/openai.md#openai-compatible-models).
+
+    Example:
+    ```python
+    from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    # Using OpenAI directly
+    model = OpenAIEmbeddingModel('text-embedding-3-small')
+
+    # Using an OpenAI-compatible provider
+    model = OpenAIEmbeddingModel(
+        'text-embedding-3-small',
+        provider=OpenAIProvider(base_url='https://my-provider.com/v1'),
+    )
+    ```
+    """
 
     _model_name: OpenAIEmbeddingModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
@@ -52,12 +78,19 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         """Initialize an OpenAI embedding model.
 
         Args:
-            model_name: The name of the OpenAI model to use. List of model names
-                available [here](https://platform.openai.com/docs/guides/embeddings#embedding-models).
-            provider: The provider to use for authentication and API access. Can be either the string
-                'openai' or an instance of `Provider[AsyncOpenAI]`. If not provided, a new provider will be
-                created using the other parameters.
-            settings: Model-specific settings that will be used as defaults for this model.
+            model_name: The name of the OpenAI model to use.
+                See [OpenAI's embedding models](https://platform.openai.com/docs/guides/embeddings)
+                for available options.
+            provider: The provider to use for authentication and API access. Can be:
+
+                - `'openai'` (default): Uses the standard OpenAI API
+                - A provider name string (e.g., `'azure'`, `'deepseek'`)
+                - A [`Provider`][pydantic_ai.providers.Provider] instance for custom configuration
+
+                See [OpenAI-compatible providers](../models/openai.md#openai-compatible-models)
+                for a list of supported providers.
+            settings: Model-specific [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings]
+                to use as defaults for this model.
         """
         self._model_name = model_name
 
