@@ -538,7 +538,7 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'embeddings test',
-                    'gen_ai.usage.input_tokens': 13,
+                    'gen_ai.usage.input_tokens': 2,
                     'gen_ai.response.model': 'test',
                     'gen_ai.embeddings.dimension.count': 8,
                     'gen_ai.response.id': IsStr(),

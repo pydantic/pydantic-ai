@@ -28,17 +28,25 @@ class EmbeddingResult:
 
     Example:
     ```python
-    result = await embedder.embed_query('What is AI?')
+    from pydantic_ai import Embedder
 
-    # Access embeddings by index
-    first_embedding = result.embeddings[0]
+    embedder = Embedder('openai:text-embedding-3-small')
 
-    # Access embeddings by original input text
-    embedding = result['What is AI?']
 
-    # Check usage and cost
-    print(f'Tokens used: {result.usage.input_tokens}')
-    print(f'Cost: ${result.cost().total_price:.6f}')
+    async def main():
+        result = await embedder.embed_query('What is AI?')
+
+        # Access embeddings by index
+        print(len(result.embeddings[0]))
+        #> 1536
+
+        # Access embeddings by original input text
+        print(result['What is AI?'] == result.embeddings[0])
+        #> True
+
+        # Check usage
+        print(f'Tokens used: {result.usage.input_tokens}')
+        #> Tokens used: 3
     ```
     """
 

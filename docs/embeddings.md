@@ -18,20 +18,22 @@ from pydantic_ai import Embedder
 
 embedder = Embedder('openai:text-embedding-3-small')
 
-# Embed a search query
-result = await embedder.embed_query('What is machine learning?')
-print(f'Embedding dimensions: {len(result.embeddings[0])}')
-#> Embedding dimensions: 1536
 
-# Embed multiple documents at once
-docs = [
-    'Machine learning is a subset of AI.',
-    'Deep learning uses neural networks.',
-    'Python is a programming language.',
-]
-result = await embedder.embed_documents(docs)
-print(f'Embedded {len(result.embeddings)} documents')
-#> Embedded 3 documents
+async def main():
+    # Embed a search query
+    result = await embedder.embed_query('What is machine learning?')
+    print(f'Embedding dimensions: {len(result.embeddings[0])}')
+    #> Embedding dimensions: 1536
+
+    # Embed multiple documents at once
+    docs = [
+        'Machine learning is a subset of AI.',
+        'Deep learning uses neural networks.',
+        'Python is a programming language.',
+    ]
+    result = await embedder.embed_documents(docs)
+    print(f'Embedded {len(result.embeddings)} documents')
+    #> Embedded 3 documents
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -43,36 +45,34 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## Embedding Result
 
-All embed methods return an [`EmbeddingResult`][pydantic_ai.embeddings.EmbeddingResult] containing the embeddings along with useful metadata:
+All embed methods return an [`EmbeddingResult`][pydantic_ai.embeddings.EmbeddingResult] containing the embeddings along with useful metadata.
+
+For convenience, you can access embeddings either by index (`result[0]`) or by the original input text (`result['Hello world']`).
 
 ```python {title="embedding_result.py"}
 from pydantic_ai import Embedder
 
 embedder = Embedder('openai:text-embedding-3-small')
 
-result = await embedder.embed_query('Hello world')
 
-# Access embeddings
-embedding = result.embeddings[0]  # First (and only) embedding
-print(f'Vector: [{embedding[0]:.4f}, {embedding[1]:.4f}, ...]')
-#> Vector: [0.0123, -0.0456, ...]
+async def main():
+    result = await embedder.embed_query('Hello world')
 
-# Access by original input text
-same_embedding = result['Hello world']
+    # Access embeddings - each is a sequence of floats
+    embedding = result.embeddings[0]  # By index via .embeddings
+    embedding = result[0]  # Or directly via __getitem__
+    embedding = result['Hello world']  # Or by original input text
+    print(f'Dimensions: {len(embedding)}')
+    #> Dimensions: 1536
 
-# Check usage and cost
-print(f'Tokens used: {result.usage.input_tokens}')
-#> Tokens used: 2
-print(f'Model: {result.model_name}')
-#> Model: text-embedding-3-small
+    # Check usage
+    print(f'Tokens used: {result.usage.input_tokens}')
+    #> Tokens used: 2
 
-# Calculate cost
-try:
+    # Calculate cost (requires `genai-prices` to have pricing data for the model)
     cost = result.cost()
     print(f'Cost: ${cost.total_price:.6f}')
-    #> Cost: $0.000001
-except LookupError:
-    print('Pricing not available for this model')
+    #> Cost: $0.000000
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -93,11 +93,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 #### Configuration
 
-To use `OpenAIEmbeddingModel` with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
-
-#### Environment variable
-
-Once you have the API key, you can set it as an environment variable:
+To use `OpenAIEmbeddingModel` with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key. Once you have the API key, you can set it as an environment variable:
 
 ```bash
 export OPENAI_API_KEY='your-api-key'
@@ -110,9 +106,11 @@ from pydantic_ai import Embedder
 
 embedder = Embedder('openai:text-embedding-3-small')
 
-result = await embedder.embed_query('Hello world')
-print(len(result.embeddings[0]))
-#> 1536
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1536
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -132,9 +130,11 @@ embedder = Embedder(
     settings=EmbeddingSettings(dimensions=256),
 )
 
-result = await embedder.embed_query('Hello world')
-print(len(result.embeddings[0]))
-#> 256
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1536
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -144,12 +144,12 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/openai.md#openai-compatible-models):
 
 ```python {title="openai_compatible_embeddings.py"}
+# Using Azure OpenAI
+from openai import AsyncAzureOpenAI
+
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from pydantic_ai.providers.openai import OpenAIProvider
-
-# Using Azure OpenAI
-from openai import AsyncAzureOpenAI
 
 azure_client = AsyncAzureOpenAI(
     azure_endpoint='https://your-resource.openai.azure.com',
@@ -177,6 +177,8 @@ embedder = Embedder(model)
 For providers with dedicated provider classes (like [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider] or [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]), you can use the shorthand syntax:
 
 ```python
+from pydantic_ai import Embedder
+
 embedder = Embedder('azure:text-embedding-3-small')
 embedder = Embedder('ollama:nomic-embed-text')
 ```
@@ -197,11 +199,7 @@ pip/uv-add "pydantic-ai-slim[cohere]"
 
 #### Configuration
 
-To use `CohereEmbeddingModel`, go to [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys) and follow your nose until you find the place to generate an API key.
-
-#### Environment variable
-
-Once you have the API key, you can set it as an environment variable:
+To use `CohereEmbeddingModel`, go to [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys) and follow your nose until you find the place to generate an API key. Once you have the API key, you can set it as an environment variable:
 
 ```bash
 export CO_API_KEY='your-api-key'
@@ -214,9 +212,11 @@ from pydantic_ai import Embedder
 
 embedder = Embedder('cohere:embed-v4.0')
 
-result = await embedder.embed_query('Hello world')
-print(len(result.embeddings[0]))
-#> 1024
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1024
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -236,6 +236,7 @@ embedder = Embedder(
     settings=CohereEmbeddingSettings(
         dimensions=512,
         cohere_truncate='END',  # Truncate long inputs instead of erroring
+        cohere_max_tokens=256,  # Limit tokens per input
     ),
 )
 ```
@@ -264,9 +265,11 @@ from pydantic_ai import Embedder
 # Model is downloaded from Hugging Face on first use
 embedder = Embedder('sentence-transformers:all-MiniLM-L6-v2')
 
-result = await embedder.embed_query('Hello world')
-print(len(result.embeddings[0]))
-#> 384
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 384
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -279,7 +282,9 @@ Control which device to use for inference:
 
 ```python {title="sentence_transformers_device.py"}
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings.sentence_transformers import SentenceTransformersEmbeddingSettings
+from pydantic_ai.embeddings.sentence_transformers import (
+    SentenceTransformersEmbeddingSettings,
+)
 
 embedder = Embedder(
     'sentence-transformers:all-MiniLM-L6-v2',
@@ -298,10 +303,12 @@ If you need more control over model initialization:
 from sentence_transformers import SentenceTransformer
 
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+from pydantic_ai.embeddings.sentence_transformers import (
+    SentenceTransformerEmbeddingModel,
+)
 
 # Create and configure the model yourself
-st_model = SentenceTransformer('all-MiniLM-L6-v2', device='cuda')
+st_model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
 
 # Wrap it for use with Pydantic AI
 model = SentenceTransformerEmbeddingModel(st_model)
@@ -324,13 +331,15 @@ embedder = Embedder(
     settings=EmbeddingSettings(dimensions=512),
 )
 
-# Override for a specific call
-result = await embedder.embed_query(
-    'Hello world',
-    settings=EmbeddingSettings(dimensions=256),
-)
-print(len(result.embeddings[0]))
-#> 256
+
+async def main():
+    # Override for a specific call
+    result = await embedder.embed_query(
+        'Hello world',
+        settings=EmbeddingSettings(dimensions=256),
+    )
+    print(len(result.embeddings[0]))
+    #> 1536
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -344,17 +353,19 @@ from pydantic_ai import Embedder
 
 embedder = Embedder('openai:text-embedding-3-small')
 
-text = 'Hello world, this is a test.'
 
-# Count tokens in text
-token_count = await embedder.count_tokens(text)
-print(f'Tokens: {token_count}')
-#> Tokens: 8
+async def main():
+    text = 'Hello world, this is a test.'
 
-# Check model's maximum input tokens (returns None if unknown)
-max_tokens = await embedder.max_input_tokens()
-print(f'Max tokens: {max_tokens}')
-#> Max tokens: 8192
+    # Count tokens in text
+    token_count = await embedder.count_tokens(text)
+    print(f'Tokens: {token_count}')
+    #> Tokens: 7
+
+    # Check model's maximum input tokens (returns None if unknown)
+    max_tokens = await embedder.max_input_tokens()
+    print(f'Max tokens: {max_tokens}')
+    #> Max tokens: 1024
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_

@@ -67,13 +67,16 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
 
     Example:
     ```python
-    from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+    from sentence_transformers import SentenceTransformer
+
+    from pydantic_ai.embeddings.sentence_transformers import (
+        SentenceTransformerEmbeddingModel,
+    )
 
     # Using a model name (downloads from Hugging Face)
     model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
 
     # Using an existing SentenceTransformer instance
-    from sentence_transformers import SentenceTransformer
     st_model = SentenceTransformer('all-MiniLM-L6-v2')
     model = SentenceTransformerEmbeddingModel(st_model)
     ```

@@ -113,8 +113,12 @@ class Embedder:
     from pydantic_ai import Embedder
 
     embedder = Embedder('openai:text-embedding-3-small')
-    result = await embedder.embed_query('What is machine learning?')
-    print(result.embeddings[0][:5])  # First 5 dimensions
+
+
+    async def main():
+        result = await embedder.embed_query('What is machine learning?')
+        print(result.embeddings[0][:5])  # First 5 dimensions
+        #> [1.0, 1.0, 1.0, 1.0, 1.0]
     ```
     """
 
@@ -196,11 +200,17 @@ class Embedder:
 
         Example:
         ```python
+        from pydantic_ai import Embedder
+
         embedder = Embedder('openai:text-embedding-3-small')
 
-        with embedder.override(model='openai:text-embedding-3-large'):
-            result = await embedder.embed_query('test')
-            # Uses text-embedding-3-large
+
+        async def main():
+            # Temporarily use a different model
+            with embedder.override(model='openai:text-embedding-3-large'):
+                result = await embedder.embed_query('test')
+                print(len(result.embeddings[0]))  # 3072 dimensions for large model
+                #> 3072
         ```
         """
         if _utils.is_set(model):
