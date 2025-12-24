@@ -505,7 +505,17 @@ def test_tool_call_part_has_content():
     # Args with falsy values should still return True (this is the bug fix)
     assert ToolCallPart(tool_name='test', args={'flag': False}).has_content()
     assert ToolCallPart(tool_name='test', args={'count': 0}).has_content()
-    assert ToolCallPart(tool_name='test', args={'text': ''}).has_content()
+
+    # Empty string and empty list values are treated as placeholders (for streaming compatibility)
+    assert not ToolCallPart(tool_name='test', args={'text': ''}).has_content()
+    assert not ToolCallPart(tool_name='test', args={'first': '', 'second': ''}).has_content()
+    assert not ToolCallPart(tool_name='test', args={'items': []}).has_content()
+    assert not ToolCallPart(tool_name='test', args={'response': []}).has_content()
+
+    # Mixed values: at least one non-placeholder value means has_content
+    assert ToolCallPart(tool_name='test', args={'text': '', 'flag': False}).has_content()
+    assert ToolCallPart(tool_name='test', args={'text': '', 'count': 0}).has_content()
+    assert ToolCallPart(tool_name='test', args={'items': [], 'valid': True}).has_content()
 
 
 def test_file_part_serialization_roundtrip():
