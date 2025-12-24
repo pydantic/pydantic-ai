@@ -19,6 +19,7 @@ from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
+    from google.protobuf.json_format import MessageToDict
     from xai_sdk import AsyncClient
     from xai_sdk.proto.v6 import chat_pb2, sample_pb2
 
@@ -163,9 +164,20 @@ class MockChatInstance:
 
 
 def get_mock_chat_create_kwargs(async_client: AsyncClient) -> list[dict[str, Any]]:
-    """Extract the kwargs passed to chat.create from a mock client."""
+    """Extract the kwargs passed to chat.create from a mock client.
+
+    Messages are automatically converted from protobuf to dicts for easier testing.
+    """
     if isinstance(async_client, MockXai):
-        return async_client.chat_create_kwargs
+        result: list[dict[str, Any]] = []
+        for kwargs in async_client.chat_create_kwargs:
+            kwargs_copy: dict[str, Any] = dict(kwargs)
+            if 'messages' in kwargs_copy:
+                kwargs_copy['messages'] = [
+                    MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs_copy['messages']
+                ]
+            result.append(kwargs_copy)
+        return result
     else:  # pragma: no cover
         raise RuntimeError('Not a MockXai instance')
 

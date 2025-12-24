@@ -84,7 +84,6 @@ from .mock_xai import (
 
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
-    from google.protobuf.json_format import MessageToDict
     from xai_sdk.proto.v6 import chat_pb2, usage_pb2
 
     from pydantic_ai.models.xai import XaiModel
@@ -219,17 +218,25 @@ async def test_xai_image_input(allow_model_requests: None):
     assert result.output == 'done'
 
     # Verify the generated API payload contains the image parts
-    kwargs = get_mock_chat_create_kwargs(mock_client)
-    messages = [MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs[0]['messages']]
-    assert messages == snapshot(
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
-                'content': [
-                    {'text': 'Describe these inputs.'},
-                    {'image_url': {'image_url': 'https://example.com/image.png', 'detail': 'DETAIL_AUTO'}},
-                    {'image_url': {'image_url': 'data:image/png;base64,iVBORw==', 'detail': 'DETAIL_AUTO'}},
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {
+                        'content': [
+                            {'text': 'Describe these inputs.'},
+                            {'image_url': {'image_url': 'https://example.com/image.png', 'detail': 'DETAIL_AUTO'}},
+                            {'image_url': {'image_url': 'data:image/png;base64,iVBORw==', 'detail': 'DETAIL_AUTO'}},
+                        ],
+                        'role': 'ROLE_USER',
+                    }
                 ],
-                'role': 'ROLE_USER',
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
             }
         ]
     )
@@ -895,21 +902,67 @@ async def test_xai_image_url_input(allow_model_requests: None):
     assert result.output == 'world'
 
     # Verify the generated API payload contains the image URL
-    kwargs = get_mock_chat_create_kwargs(mock_client)
-    messages = [MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs[0]['messages']]
-    assert messages == snapshot(
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
-                'content': [
-                    {'text': 'hello'},
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
                     {
-                        'image_url': {
-                            'image_url': 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
-                            'detail': 'DETAIL_AUTO',
-                        }
-                    },
+                        'content': [
+                            {'text': 'hello'},
+                            {
+                                'image_url': {
+                                    'image_url': 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                                    'detail': 'DETAIL_AUTO',
+                                }
+                            },
+                        ],
+                        'role': 'ROLE_USER',
+                    }
                 ],
-                'role': 'ROLE_USER',
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
+        ]
+    )
+
+
+async def test_xai_image_detail_vendor_metadata(allow_model_requests: None):
+    """Test that xAI model handles image detail setting from vendor_metadata for ImageUrl."""
+    response = create_response(content='done')
+    mock_client = MockXai.create_mock(response)
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(model)
+
+    # Test both 'high' and 'low' detail settings
+    image_high = ImageUrl('https://example.com/high.png', vendor_metadata={'detail': 'high'})
+    image_low = ImageUrl('https://example.com/low.png', vendor_metadata={'detail': 'low'})
+
+    await agent.run(['Describe these images.', image_high, image_low])
+
+    # Verify the generated API payload contains the correct detail settings
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {
+                        'content': [
+                            {'text': 'Describe these images.'},
+                            {'image_url': {'image_url': 'https://example.com/high.png', 'detail': 'DETAIL_HIGH'}},
+                            {'image_url': {'image_url': 'https://example.com/low.png', 'detail': 'DETAIL_LOW'}},
+                        ],
+                        'role': 'ROLE_USER',
+                    }
+                ],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
             }
         ]
     )
@@ -1078,7 +1131,7 @@ async def test_xai_image_as_binary_content_input(allow_model_requests: None, ima
 
     # Verify the generated API payload contains the image as a data URI
     kwargs = get_mock_chat_create_kwargs(mock_client)
-    messages = [MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs[0]['messages']]
+    messages = kwargs[0]['messages']
     assert len(messages) == 1
     content = messages[0]['content']
     assert content[0] == {'text': 'What fruit is in the image?'}
@@ -1121,16 +1174,24 @@ async def test_xai_binary_content_document_input(allow_model_requests: None):
     assert result.output == 'The document discusses testing.'
 
     # Verify the generated API payload contains the file reference
-    kwargs = get_mock_chat_create_kwargs(mock_client)
-    messages = [MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs[0]['messages']]
-    assert messages == snapshot(
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
-                'content': [
-                    {'text': 'What is in this document?'},
-                    {'file': {'file_id': 'file-86a6ad'}},
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {
+                        'content': [
+                            {'text': 'What is in this document?'},
+                            {'file': {'file_id': 'file-86a6ad'}},
+                        ],
+                        'role': 'ROLE_USER',
+                    }
                 ],
-                'role': 'ROLE_USER',
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
             }
         ]
     )
@@ -1796,8 +1857,10 @@ async def test_xai_model_settings(allow_model_requests: None):
     assert result.output == 'response with settings'
 
     # Verify settings were passed to the mock
-    kwargs = get_mock_chat_create_kwargs(mock_client)
-    assert len(kwargs) > 0
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert kwargs['temperature'] == 0.5
+    assert kwargs['max_tokens'] == 100
+    assert kwargs['top_p'] == 0.9
 
 
 async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
