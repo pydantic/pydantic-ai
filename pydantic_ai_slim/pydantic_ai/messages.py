@@ -1153,7 +1153,7 @@ class BaseToolCallPart:
 
     provider_name: str | None = None
     """The name of the provider that generated the response.
-    
+
     Tool calls are only sent back to the same provider.
     """
 
