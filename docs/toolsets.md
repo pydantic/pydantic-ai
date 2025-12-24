@@ -667,13 +667,24 @@ Pydantic AI provides two toolsets that allow an agent to connect to and call too
 1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
 2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
 
-### Task Management {#task-management}
+### Task Management
 
-Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress.
+Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
 
-**Community implementations:**
+- [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
 
-- [**pydantic-ai-todo**](https://pypi.org/project/pydantic-ai-todo/) — Standalone todo/task planning toolset with `read_todos` and `write_todos` tools. Works with any Pydantic AI agent. Also used by the third-party [Pydantic-Deep](#deep-agent-frameworks) framework.
+### File Operations
+
+Toolsets for file operations help agents read, write, and edit files:
+
+- [`pydantic-ai-filesystem-sandbox`](https://github.com/zby/pydantic-ai-filesystem-sandbox) - `FileSystemToolset` with a sandbox and LLM-friendly errors
+- [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) — Deep agent framework that includes a `FilesystemToolset` with multiple backends (in-memory, real filesystem, Docker sandbox).
+
+### Code Execution
+
+Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
+
+- [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
 
 ### LangChain Tools {#langchain-tools}
 
@@ -716,24 +727,3 @@ toolset = ACIToolset(
 
 agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```
-
-### Deep Agent Frameworks {#deep-agent-frameworks}
-
-Comprehensive frameworks that combine multiple toolsets into cohesive systems for building autonomous agents.
-
-**[Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents)**, built by [Vstorm](https://vstorm.co/), is a community framework that implements deep agent patterns for Pydantic AI.
-
-**Included toolsets:**
-
-- `TodoToolset` — Re-exports [pydantic-ai-todo](#task-management) for task planning and progress tracking
-- `FilesystemToolset` — File operations with multiple backends (in-memory, real filesystem, Docker sandbox)
-- `SubAgentToolset` — Spawn and delegate to specialized subagents
-- `SkillsToolset` — Load [agent skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) from markdown files
-
-**Additional features:**
-
-- Multiple storage backends (in-memory, filesystem, Docker sandbox)
-- Automatic conversation summarization for long sessions
-- Human-in-the-loop approval workflows
-
-See the [Pydantic-Deep documentation](https://vstorm-co.github.io/pydantic-deepagents/) for installation and usage.

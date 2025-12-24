@@ -6,7 +6,7 @@ There are roughly five levels of complexity when building applications with Pyda
 2. [Agent delegation](#agent-delegation) — agents using another agent via tools
 3. [Programmatic agent hand-off](#programmatic-agent-hand-off) — one agent runs, then application code calls another agent
 4. [Graph based control flow](graph.md) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
-5. [Deep Agents](#deep-agents) — production-grade agents with planning, file operations, task delegation, and sandboxed code execution
+5. [Deep Agents](#deep-agents) — autonomous agents with planning, file operations, task delegation, and sandboxed code execution
 
 Of course, you can combine multiple strategies in a single application.
 
@@ -325,18 +325,19 @@ See the [graph](graph.md) documentation on when and how to use graphs.
 
 ## Deep Agents
 
-Deep agents are production-grade autonomous agents that go beyond simple tool use. They combine multiple architectural patterns to handle complex, multi-step tasks reliably:
+Deep agents are autonomous agents that combine multiple architectural patterns and capabilities to handle complex, multi-step tasks reliably. These patterns can be implemented using Pydantic AI's built-in features and (third-party) toolsets:
 
 - **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [Task Management toolsets](toolsets.md#task-management).
-- **File system operations** — reading, writing, and editing files with proper abstraction layers that work across in-memory storage, real file systems, and sandboxed containers.
+- **File system operations** — reading, writing, and editing files with proper abstraction layers that work across in-memory storage, real file systems, and sandboxed containers. See [File Operations toolsets](toolsets.md#file-operations).
 - **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [Agent Delegation](#agent-delegation) above.
-- **Sandboxed code execution** — running AI-generated code in isolated environments (typically Docker containers) to prevent accidents.
-- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits. See [Summarize Old Messages](message-history.md#summarize-old-messages).
+- **Sandboxed code execution** — running AI-generated code in isolated environments (typically Docker containers) to prevent accidents. See [Code Execution toolsets](toolsets.md#code-execution).
+- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits. See [Processing Message History](message-history.md#processing-message-history).
 - **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion. See [Requiring Tool Approval](toolsets.md#requiring-tool-approval).
+- **Durable execution** — preserving agent state across transient API failures and application errors or restarts. See [Durable Execution](durable_execution/overview.md).
 
-These patterns can be implemented individually using Pydantic AI's built-in features and the third-party toolsets listed above.
+In addition, the community maintains packages that bring these concepts together in a more opinionated way:
 
-For a complete, opinionated implementation of these patterns, [Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) is a community framework that combines these capabilities into a cohesive deep agent system. See the [toolsets documentation](toolsets.md#deep-agent-frameworks) for details.
+- [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) by [Vstorm](https://vstorm.co/)
 
 ## Examples
 
