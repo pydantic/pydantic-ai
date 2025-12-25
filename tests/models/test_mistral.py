@@ -2351,6 +2351,7 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
 
 
 @pytest.mark.vcr()
+@pytest.mark.filterwarnings('ignore::pytest.PytestUnraisableExceptionWarning')
 async def test_mistral_model_thinking_part(allow_model_requests: None, openai_api_key: str, mistral_api_key: str):
     openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
