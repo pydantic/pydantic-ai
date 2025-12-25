@@ -332,4 +332,4 @@ fallback_model = FallbackModel(
 ```
 
 !!! note
-    Response-based fallback only works with non-streaming requests (`run` and `run_sync`). For streaming requests, use exception-based fallback. Streaming support for response-based fallback is planned for a future release.
+    Response-based fallback only works with non-streaming requests (`run` and `run_sync`). For streaming requests, use exception-based fallback.
