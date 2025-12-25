@@ -71,9 +71,31 @@ class ToolUsageLimits:
     """
 
     partial_acceptance: bool = True
-    """Whether the tool can be called in a step even if some of it's other calls might be blocked due to the policy limits.
+    """Whether this tool allows partial acceptance when its usage limits would be exceeded.
 
-    Set to `True` by default.
+    When a model requests multiple calls to this tool in a single step, and those calls
+    would exceed the tool's `max_uses` or `max_uses_per_step` limit:
+
+    - `True` (default): Accept as many calls as allowed, reject the rest individually.
+    - `False`: Reject ALL calls to this tool if not all of them can be accepted.
+      Use this for tools that have transactional semantics or require all calls to
+      succeed together for correct behavior.
+
+    Note:
+        This setting only takes effect if [`ToolsUsagePolicy.partial_acceptance`][pydantic_ai.ToolsUsagePolicy.partial_acceptance]
+        is also `True`. The policy-level setting acts as a master switch—if the policy
+        disables partial acceptance, no tool can be partially accepted regardless of
+        this setting.
+
+    Example:
+        ```python
+        # A tool that must process all items together or none at all
+        @agent.tool(usage_limits=ToolUsageLimits(max_uses=5, partial_acceptance=False))
+        def batch_process(items: list[str]) -> str:
+            # If the model tries to call this 7 times but only 5 are allowed,
+            # all 7 calls will be rejected (not 5 accepted + 2 rejected)
+            return process_batch(items)
+        ```
     """
 
 
@@ -168,11 +190,26 @@ class ToolsUsagePolicy:
     """
 
     partial_acceptance: bool = True
-    """Whether the agent can call tools even if all the tools will not be allowed by the policy.
+    """Master switch controlling whether partial acceptance of tool calls is allowed.
 
-    Set to `True` by default. If set to `False`, it will block all tool calls even if some of them are allowed by the policy.
+    When a model requests more tool calls than the policy limits allow:
 
-    max_uses: 4
-    tool_calls_made: 5
-    All 5 calls will be blocked, even though max_uses allowed 4 calls.
+    - `True` (default): Accept as many calls as allowed by `max_uses` and `max_uses_per_step`,
+      reject the rest individually. This is the "accept what we can" behavior.
+    - `False`: Reject the ENTIRE batch of tool calls if not all of them can be accepted.
+      This is the "all-or-nothing" behavior.
+
+    This setting acts as a global master switch. When set to `False`, no partial acceptance
+    occurs anywhere—neither at the aggregate level nor at the per-tool level (regardless of
+    individual [`ToolUsageLimits.partial_acceptance`][pydantic_ai.ToolUsageLimits.partial_acceptance] settings).
+
+    Example:
+        ```python
+        # With partial_acceptance=True (default):
+        # If max_uses=4 and model requests 5 calls → 4 accepted, 1 rejected
+
+        # With partial_acceptance=False:
+        # If max_uses=4 and model requests 5 calls → all 5 rejected
+        policy = ToolsUsagePolicy(max_uses=4, partial_acceptance=False)
+        ```
     """
