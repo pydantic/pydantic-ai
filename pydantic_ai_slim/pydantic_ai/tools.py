@@ -278,7 +278,6 @@ class Tool(Generic[ToolAgentDepsT]):
     timeout: float | None
     function_schema: _function_schema.FunctionSchema
     usage_limits: ToolUsageLimits | None
-    """Usage limits for this tool (max calls, per-step limits, etc.)."""
 
     """
     The base JSON schema for the tool's parameters.

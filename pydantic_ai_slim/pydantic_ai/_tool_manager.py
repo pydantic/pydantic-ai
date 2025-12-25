@@ -79,7 +79,7 @@ class ToolManager(Generic[AgentDepsT]):
             for tool in self.tools.values()
             if (limits := tool.usage_limits) is None
             or (max_uses := limits.max_uses) is None
-            or (self.get_current_uses_of_tool(tool.tool_def.name) < max_uses)
+            or (self._get_current_uses_of_tool(tool.tool_def.name) < max_uses)
         ]
 
     def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
@@ -384,7 +384,7 @@ class ToolManager(Generic[AgentDepsT]):
             # If either of this happens and partial calling is not allowed then we need to return
             # Policy should allow partial calling and the tool should allow to be called partially
             if not (
-                policy
+                policy is not None
                 and policy.partial_acceptance
                 and (tool := self.tools.get(tool_name)) is not None
                 and (usage_limits := tool.usage_limits) is not None

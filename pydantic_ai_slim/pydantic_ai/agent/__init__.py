@@ -648,7 +648,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             usage_limits=usage_limits,
             max_result_retries=self._max_result_retries,
-            tools_usage_policy=self._tools_usage_policy,
+            tools_usage_policy=tools_usage_policy or self._tools_usage_policy,
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,

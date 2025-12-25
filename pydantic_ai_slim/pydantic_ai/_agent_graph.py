@@ -1034,7 +1034,7 @@ def _handle_tool_calls_parts(
     calls_to_run: list[_messages.ToolCallPart],
     projected_tool_uses: Counter[str],
     projected_usage: _usage.RunUsage,
-):
+) -> Iterator[_messages.HandleResponseEvent]:
     accepted_per_tool: Counter[str] = Counter()
     total_accepted = 0
 
