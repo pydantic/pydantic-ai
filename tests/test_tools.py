@@ -1329,14 +1329,15 @@ def test_tool_retries():
 
 
 def test_tool_max_uses():
-    """Test ToolLimits.max_uses on an individual tool.
+    """Test ToolLimits.max_uses_per_step on an individual tool.
 
     ToolLimits is set on individual tools via @agent.tool(usage_limits=...).
     It limits how many times that specific tool can be called during an agent run.
 
-    Here we set max_uses=1, so the tool can only be called once. When the model
-    tries to call it twice in the same step, the second call returns an error
-    message instead of executing the tool.
+    Here we set max_uses_per_step=1, so the tool can only be called once per step.
+    When the model tries to call it twice in the same step, both calls are rejected
+    because partial_acceptance defaults to True but max_uses_per_step=1 means only
+    one call is allowed per step, and the batch check happens before any are accepted.
     """
     call_count = 0
 
@@ -1345,7 +1346,8 @@ def test_tool_max_uses():
         call_count += 1
 
         if call_count == 1:
-            # First round: call the tool twice(should fail we only have 1 use left)
+            # First round: call the tool twice (both should fail since max_uses_per_step=1
+            # and the batch contains 2 calls to the same tool)
             return ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_1'),

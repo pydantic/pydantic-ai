@@ -78,11 +78,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return self.retry == self.max_retries
 
     @property
-    def tool_use(self) -> int:
-        """Successful use count for the current tool (0 if never used)."""
+    def tool_use(self) -> int | None:
+        """Successful use count for the current tool.
+
+        Returns:
+            The number of times the current tool has been successfully called,
+            or `None` if not currently in a tool context (i.e., `tool_name` is not set).
+        """
         if self.tool_name:
             return self.tools_use_counts.get(self.tool_name, 0)
-        return 0
+        return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
