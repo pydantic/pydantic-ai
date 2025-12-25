@@ -368,7 +368,7 @@ def test_output_validator():
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
-    # NOTE: When changing these tests:
+    # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_streaming.py::TestPartialOutput` as well
 
@@ -451,11 +451,7 @@ class TestPartialOutput:
         assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
 
     def test_output_function_structured_get_output(self):
-        """Test that output functions receive correct value for `partial_output` with sync run.
-
-        When using `run_sync()`, the output processor is called only once
-        with `partial_output=False` (final validation), since this is non-streaming.
-        """
+        """Test that output functions receive correct value for `partial_output` with sync run."""
         call_log: list[tuple[Foo, bool]] = []
 
         def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
@@ -475,11 +471,7 @@ class TestPartialOutput:
         assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
 
     def test_output_function_structured_stream_output_only(self):
-        """Test that output functions receive correct value for `partial_output` with sync run.
-
-        For non-streaming `run_sync()`, this is equivalent to the basic test since there is no streaming.
-        The output processor is called only once with `partial_output=False`.
-        """
+        """Test that output functions receive correct value for `partial_output` with sync run."""
         call_log: list[tuple[Foo, bool]] = []
 
         def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
@@ -497,6 +489,10 @@ class TestPartialOutput:
 
         assert result.output == Foo(a=42, b='FOO')
         assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
+    
+    # NOTE: When changing tests in this class:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_streaming.py::TestPartialOutput` as well
 
 
 def test_plain_response_then_tuple():
@@ -4300,6 +4296,10 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    # NOTE: When changing these tests:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_streaming.py::TestMultipleToolCallsStreaming` as well
 
 
 async def test_model_settings_override() -> None:

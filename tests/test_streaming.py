@@ -779,7 +779,7 @@ async def test_call_tool_wrong_name():
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
-    # NOTE: When changing these tests:
+    # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_agent.py::TestPartialOutput` as well
 
@@ -950,6 +950,10 @@ class TestPartialOutput:
             ],
         )
 
+    # NOTE: When changing tests in this class:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_agent.py::TestPartialOutput` as well
+
 
 class TestStreamingCachedOutput:
     async def test_output_function_structured_double_stream_output(self):
@@ -1054,7 +1058,7 @@ class OutputType(BaseModel):
 class TestMultipleToolCalls:
     """Tests for scenarios where multiple tool calls are made in a single response."""
 
-    # NOTE: When changing these tests:
+    # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
 
@@ -2187,6 +2191,10 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    # NOTE: When changing tests in this class:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
 
 
 async def test_custom_output_type_default_str() -> None:
