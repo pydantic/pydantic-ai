@@ -358,10 +358,10 @@ class ToolManager(Generic[AgentDepsT]):
 
         # Check aggregate limits (policy-level) incrementally
         if policy is not None:
-            if policy.max_uses is not None and current_tool_calls + total_accepted_in_step == policy.max_uses:
+            if (policy.max_uses is not None) and (current_tool_calls + total_accepted_in_step == policy.max_uses):
                 # If already equal, going through with this call will put us over the limit
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
-            if policy.max_uses_per_step is not None and total_accepted_in_step == policy.max_uses_per_step:
+            if (policy.max_uses_per_step is not None) and (total_accepted_in_step == policy.max_uses_per_step):
                 # If already equal, going through with this call will put us over the limit
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
 
@@ -395,11 +395,11 @@ class ToolManager(Generic[AgentDepsT]):
 
         # Check incremental call for tool
 
-        if max_uses_per_step is not None and tool_accepted_in_step == max_uses_per_step:
+        if (max_uses_per_step is not None) and (tool_accepted_in_step == max_uses_per_step):
             # If already equal, going through with this call will put us over the limit
             return f'Tool use limit reached for tool "{tool_name}".'
 
-        if max_uses is not None and current_tool_uses + tool_accepted_in_step == max_uses:
+        if (max_uses is not None) and (current_tool_uses + tool_accepted_in_step == max_uses):
             # If already equal, going through with this call will put us over the limit
             return f'Tool use limit reached for tool "{tool_name}".'
 
