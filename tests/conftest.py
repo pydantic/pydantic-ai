@@ -15,7 +15,6 @@ from functools import cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
-from unittest.mock import patch
 
 import httpx
 import pytest
@@ -25,7 +24,7 @@ from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model
 
 __all__ = (
     'IsDatetime',
@@ -309,18 +308,9 @@ def vcr_config():
 
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
-    clients: list[httpx.AsyncClient] = []
+    from pydantic_ai.models import _cached_async_http_client
 
-    def store_http_client(*args: Any, **kwargs: Any):
-        client = cached_async_http_client(*args, **kwargs)
-        clients.append(client)
-        return client
-
-    with patch('pydantic_ai.models.cached_async_http_client', side_effect=store_http_client):
-        yield
-
-    for client in clients:
-        await client.aclose()
+    _cached_async_http_client.cache_clear()
 
 
 @pytest.fixture(scope='session')
