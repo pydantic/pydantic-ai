@@ -489,7 +489,7 @@ class TestPartialOutput:
 
         assert result.output == Foo(a=42, b='FOO')
         assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
-    
+
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_streaming.py::TestPartialOutput` as well
