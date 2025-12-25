@@ -286,7 +286,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         return tool_result
 
-    def get_max_uses_of_tool(self, tool_name: str) -> int | None:
+    def _get_max_uses_of_tool(self, tool_name: str) -> int | None:
         """Get the maximum number of uses allowed for a given tool, or `None` if unlimited."""
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -297,12 +297,12 @@ class ToolManager(Generic[AgentDepsT]):
 
         return tool.usage_limits.max_uses
 
-    def get_current_uses_of_tool(self, tool_name: str) -> int:
+    def _get_current_uses_of_tool(self, tool_name: str) -> int:
         """Get the current number of uses of a given tool."""
         ctx = self._assert_ctx()
         return ctx.tools_use_counts.get(tool_name, 0)
 
-    def get_max_uses_per_step_of_tool(self, tool_name: str) -> int | None:
+    def _get_max_uses_per_step_of_tool(self, tool_name: str) -> int | None:
         """Get the maximum number of uses allowed for a given tool within a step, or `None` if unlimited."""
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -312,30 +312,6 @@ class ToolManager(Generic[AgentDepsT]):
             and (max_uses_per_step := usage_limits.max_uses_per_step) is not None
         ):
             return max_uses_per_step
-        return None
-
-    def get_min_uses_of_tool(self, tool_name: str) -> int | None:
-        """Get the minimum number of uses allowed for a given tool, or `None` if unlimited."""
-        if self.tools is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-        if (
-            (tool := self.tools.get(tool_name)) is not None
-            and (usage_limits := tool.usage_limits) is not None
-            and (min_uses := usage_limits.min_uses) is not None
-        ):
-            return min_uses
-        return None
-
-    def get_min_uses_per_step_of_tool(self, tool_name: str) -> int | None:
-        """Get the minimum number of uses allowed for a given tool within a step, or `None` if unlimited."""
-        if self.tools is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-        if (
-            (tool := self.tools.get(tool_name)) is not None
-            and (usage_limits := tool.usage_limits) is not None
-            and (min_uses_per_step := usage_limits.min_uses_per_step) is not None
-        ):
-            return min_uses_per_step
         return None
 
     def check_tool_call_allowed(
@@ -397,9 +373,9 @@ class ToolManager(Generic[AgentDepsT]):
             return None
 
         # Per-tool limits
-        current_tool_uses = self.get_current_uses_of_tool(tool_name)
-        max_uses = self.get_max_uses_of_tool(tool_name)
-        max_uses_per_step = self.get_max_uses_per_step_of_tool(tool_name)
+        current_tool_uses = self._get_current_uses_of_tool(tool_name)
+        max_uses = self._get_max_uses_of_tool(tool_name)
+        max_uses_per_step = self._get_max_uses_per_step_of_tool(tool_name)
 
         # Check entire step for tool first
 
