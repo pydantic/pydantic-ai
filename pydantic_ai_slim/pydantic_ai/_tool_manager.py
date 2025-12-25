@@ -375,16 +375,18 @@ class ToolManager(Generic[AgentDepsT]):
         max_uses = self._get_max_uses_of_tool(tool_name)
         max_uses_per_step = self._get_max_uses_per_step_of_tool(tool_name)
 
-        # Check entire step for tool first
+        # Check entire step for tool first - if the batch will exceed per-tool limits
 
         if (max_uses_per_step is not None and projected_tool_uses > max_uses_per_step) or (
             max_uses is not None and projected_tool_uses + current_tool_uses > max_uses
         ):
-            # If either of this happens and partial calling is not allowed then we need to return
-            # Policy should allow partial calling and the tool should allow to be called partially
+            # If limits would be exceeded and partial acceptance is not allowed, reject all calls.
+            # For partial acceptance to work:
+            # 1. Policy must allow it (defaults to True; if no policy is set, we use the default True)
+            # 2. The tool's ToolLimits must have partial_acceptance=True (also defaults to True)
+            policy_allows_partial = policy is None or policy.partial_acceptance
             if not (
-                policy is not None
-                and policy.partial_acceptance
+                policy_allows_partial
                 and (tool := self.tools.get(tool_name)) is not None
                 and (usage_limits := tool.usage_limits) is not None
                 and usage_limits.partial_acceptance

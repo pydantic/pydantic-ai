@@ -67,13 +67,18 @@ class ToolLimits:
       succeed together for correct behavior.
 
     Note:
-        This setting only takes effect if [`AgentToolPolicy.partial_acceptance`][pydantic_ai.AgentToolPolicy.partial_acceptance]
-        is also `True`. The policy-level setting acts as a master switch—if the policy
-        disables partial acceptance, no tool can be partially accepted regardless of
-        this setting.
+        Both this setting and [`AgentToolPolicy.partial_acceptance`][pydantic_ai.AgentToolPolicy.partial_acceptance]
+        default to `True`. The policy-level setting acts as a master switch—if the policy
+        has `partial_acceptance=False`, this per-tool setting has no effect and all calls
+        will be rejected when limits are exceeded. If no policy is set, the default `True`
+        behavior applies.
 
     Example:
         ```python
+        from pydantic_ai import Agent, ToolLimits
+
+        agent = Agent('openai:gpt-4o')
+
         # A tool that must process all items together or none at all
         @agent.tool(usage_limits=ToolLimits(max_uses=5, partial_acceptance=False))
         def batch_process(items: list[str]) -> str:

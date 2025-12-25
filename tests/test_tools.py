@@ -1329,15 +1329,16 @@ def test_tool_retries():
 
 
 def test_tool_max_uses():
-    """Test ToolLimits.max_uses_per_step on an individual tool.
+    """Test ToolLimits.max_uses_per_step with partial acceptance on an individual tool.
 
     ToolLimits is set on individual tools via @agent.tool(usage_limits=...).
     It limits how many times that specific tool can be called during an agent run.
 
-    Here we set max_uses_per_step=1, so the tool can only be called once per step.
-    When the model tries to call it twice in the same step, both calls are rejected
-    because partial_acceptance defaults to True but max_uses_per_step=1 means only
-    one call is allowed per step, and the batch check happens before any are accepted.
+    Here we set max_uses=2 and max_uses_per_step=1. When the model tries to call
+    the tool twice in the same step (exceeding max_uses_per_step), partial acceptance
+    kicks in: the first call is accepted and executed, the second call is rejected
+    with a message. Both ToolLimits.partial_acceptance and AgentToolPolicy.partial_acceptance
+    default to True, so partial acceptance works by default.
     """
     call_count = 0
 
@@ -1346,8 +1347,10 @@ def test_tool_max_uses():
         call_count += 1
 
         if call_count == 1:
-            # First round: call the tool twice (both should fail since max_uses_per_step=1
-            # and the batch contains 2 calls to the same tool)
+            # First round: call the tool twice.
+            # With max_uses_per_step=1 and partial_acceptance=True (default):
+            # - First call is accepted and executed
+            # - Second call is rejected with a limit message
             return ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_1'),
@@ -1361,7 +1364,7 @@ def test_tool_max_uses():
     agent = Agent(FunctionModel(my_model), output_type=str)
 
     @agent.tool(usage_limits=ToolLimits(max_uses=2, max_uses_per_step=1))
-    def tool_with_max_use(ctx: RunContext[None]) -> str:  # pragma: no cover
+    def tool_with_max_use(ctx: RunContext[None]) -> str:
         return 'Used'
 
     result = agent.run_sync('Hello')
@@ -1394,13 +1397,13 @@ def test_tool_max_uses():
                     ToolReturnPart(
                         tool_name='tool_with_max_use',
                         content='Tool use limit reached for tool "tool_with_max_use".',
-                        tool_call_id='call_1',
+                        tool_call_id='call_2',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
                         tool_name='tool_with_max_use',
-                        content='Tool use limit reached for tool "tool_with_max_use".',
-                        tool_call_id='call_2',
+                        content='Used',
+                        tool_call_id='call_1',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -1409,7 +1412,7 @@ def test_tool_max_uses():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=RequestUsage(input_tokens=67, output_tokens=5),
+                usage=RequestUsage(input_tokens=60, output_tokens=5),
                 model_name='function:my_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
