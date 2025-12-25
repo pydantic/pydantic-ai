@@ -16,8 +16,7 @@ class ToolLimits:
 
     Example:
         ```python
-        from pydantic_ai import Agent
-        from pydantic_ai import ToolLimits
+        from pydantic_ai import Agent, ToolLimits
 
         agent = Agent('test')
 
@@ -112,8 +111,7 @@ class AgentToolPolicy:
 
     Example:
         ```python
-        from pydantic_ai import Agent
-        from pydantic_ai import AgentToolPolicy, ToolLimits
+        from pydantic_ai import Agent, AgentToolPolicy, ToolLimits
 
         # Agent can make at most 5 tool calls per step, 20 total (across ALL tools)
         agent = Agent(
@@ -184,6 +182,8 @@ class AgentToolPolicy:
 
     Example:
         ```python
+        from pydantic_ai import AgentToolPolicy
+
         # With partial_acceptance=True (default):
         # If max_uses=4 and model requests 5 calls → 4 accepted, 1 rejected
 
