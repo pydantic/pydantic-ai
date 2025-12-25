@@ -306,19 +306,19 @@ def vcr_config():
     }
 
 
-@pytest.fixture(autouse=True, scope='session')
-async def close_cached_httpx_client() -> AsyncIterator[None]:
-    """Close all cached httpx clients at the end of test session.
+@pytest.fixture(autouse=True)
+async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
+    """Close all cached httpx clients after each test.
 
-    We close clients at session scope instead of function scope to avoid race conditions
-    in parallel test execution (pytest-xdist). When closing after each test, parallel tests
-    may still be using the shared cached_async_http_client(), causing ResourceWarning.
+    This fixture closes cached httpx clients for all providers to prevent ResourceWarning.
+    Even though it runs after each test, parallel tests (pytest-xdist) may still cause
+    occasional warnings due to race conditions in garbage collection.
 
     See: https://github.com/pydantic/pydantic-ai/issues/3847
     """
     yield
 
-    # Close all cached httpx clients to prevent ResourceWarning in CI
+    # Close all cached httpx clients to prevent ResourceWarning
     for provider in [
         'alibaba',
         'anthropic',
