@@ -19,15 +19,15 @@ class ToolLimits:
         from pydantic_ai import Agent
         from pydantic_ai import ToolLimits
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('test')
 
         # Tool can only be called once per run
-        @agent.tool(usage_limits=ToolLimits(max_uses=1))
+        @agent.tool_plain(usage_limits=ToolLimits(max_uses=1))
         def get_secret_key() -> str:
             return 'secret-key-123'
 
         # Tool can be called up to 3 times per step, 10 times total
-        @agent.tool(usage_limits=ToolLimits(max_uses=10, max_uses_per_step=3))
+        @agent.tool_plain(usage_limits=ToolLimits(max_uses=10, max_uses_per_step=3))
         def search_database(query: str) -> str:
             return f'Results for {query}'
         ```
@@ -78,14 +78,14 @@ class ToolLimits:
         ```python
         from pydantic_ai import Agent, ToolLimits
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('test')
 
         # A tool that must process all items together or none at all
-        @agent.tool(usage_limits=ToolLimits(max_uses=5, partial_acceptance=False))
+        @agent.tool_plain(usage_limits=ToolLimits(max_uses=5, partial_acceptance=False))
         def batch_process(items: list[str]) -> str:
             # If the model tries to call this 7 times but only 5 are allowed,
             # all 7 calls will be rejected (not 5 accepted + 2 rejected)
-            return process_batch(items)
+            return f'Processed {len(items)} items'
         ```
     """
 
