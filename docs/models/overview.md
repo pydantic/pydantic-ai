@@ -237,11 +237,20 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agents.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
 
 !!! note "Streaming limitation"
-    For streaming requests, exception-based fallback only catches errors during stream **initialization** (e.g., connection errors, authentication failures). If an exception occurs mid-stream after events have started flowing, it will propagate to the caller without triggering fallback. To handle mid-stream failures, use [`fallback_on_part`](#part-based-fallback-streaming) which buffers the stream and can cleanly switch to a fallback model.
+    For streaming requests, only exception-based fallback is currently supported, and only for errors during stream **initialization** (e.g., connection errors, authentication failures). If an exception occurs mid-stream after events have started flowing, it will propagate to the caller without triggering fallback. Response-based fallback for streaming is planned for a future release.
 
 ### Response-Based Fallback
 
-In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response using the `fallback_on_response` parameter. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure.
+In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure.
+
+The `fallback_on` parameter accepts:
+
+- A tuple of exception types: `(ModelAPIError, RateLimitError)`
+- An exception handler: `lambda exc: isinstance(exc, MyError)`
+- A response handler: `lambda response, messages: 'error' in str(response)`
+- A list mixing all of the above: `[ModelAPIError, my_handler, response_check]`
+
+Handler type is auto-detected by parameter count: 1 param = exception handler, 2 params = response handler.
 
 A common use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
 
@@ -277,7 +286,7 @@ anthropic_model = AnthropicModel('claude-sonnet-4-5')
 fallback_model = FallbackModel(
     google_model,
     anthropic_model,
-    fallback_on_response=web_fetch_failed,
+    fallback_on=web_fetch_failed,  # Auto-detected as response handler (2 params)
 )
 
 agent = Agent(fallback_model)
@@ -287,74 +296,29 @@ result = agent.run_sync('Summarize https://example.com')
 print(result.output)
 ```
 
-The `fallback_on_response` callback receives two arguments:
+Response handlers receive two arguments:
 
 - `response`: The [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model
 - `messages`: The list of [`ModelMessage`][pydantic_ai.messages.ModelMessage] that were sent to the model
 
 The callback should return `True` to trigger fallback to the next model, or `False` to accept the response.
 
-!!! note
-    When using `fallback_on_response` with streaming (`run_stream`), the entire response is buffered before being returned. This means the caller won't receive partial results until the full response is ready and the fallback condition has been evaluated. This is necessary because the response content must be fully available to evaluate the fallback condition.
+You can combine exception types, exception handlers, and response handlers in a single list:
 
-### Part-Based Fallback (Streaming)
-
-For streaming requests, you can use `fallback_on_part` to check each response part as it arrives from the model. This enables **early abort** when failure conditions are detectable before the full response completes—saving tokens and reducing latency by starting the fallback sooner.
-
-This is particularly useful when built-in tool results (like `web_fetch`) arrive early in the stream:
-
-```python {title="fallback_on_part.py" test="skip" lint="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.messages import BuiltinToolReturnPart, ModelMessage, ModelResponsePart
-from pydantic_ai.models.anthropic import AnthropicModel
+```python {title="fallback_on_mixed.py" test="skip" lint="skip"}
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.google import GoogleModel
-
-
-def web_fetch_failed_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
-    """Check if a web_fetch built-in tool part indicates failure."""
-    if not isinstance(part, BuiltinToolReturnPart) or part.tool_name != 'web_fetch':
-        return False
-    if not isinstance(part.content, dict):
-        return False
-    status = part.content.get('url_retrieval_status', '')
-    return bool(status) and status != 'URL_RETRIEVAL_STATUS_SUCCESS'
-
-
-google_model = GoogleModel('gemini-2.5-flash')
-anthropic_model = AnthropicModel('claude-sonnet-4-5')
 
 fallback_model = FallbackModel(
     google_model,
     anthropic_model,
-    fallback_on_part=web_fetch_failed_part,
+    fallback_on=[
+        ModelAPIError,  # Exception type
+        lambda exc: 'rate limit' in str(exc).lower(),  # Exception handler
+        web_fetch_failed,  # Response handler (from previous example)
+    ],
 )
-
-agent = Agent(fallback_model)
-
-# With streaming, fallback can occur as soon as the failed tool result arrives
-async with agent.run_stream('Summarize https://example.com') as result:
-    output = await result.get_output()
-print(output)
 ```
 
-The `fallback_on_part` callback receives:
-
-- `part`: A [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart] that has completed streaming
-- `messages`: The list of [`ModelMessage`][pydantic_ai.messages.ModelMessage] that were sent to the model
-
-You can use both `fallback_on_part` and `fallback_on_response` together. Parts are checked during streaming, and if the stream completes without part rejection, the full response is checked with `fallback_on_response`.
-
-!!! warning "Buffering trade-off"
-    Like `fallback_on_response`, using `fallback_on_part` buffers the response before returning it to the caller. This means the caller won't receive events progressively—they'll receive the complete response after all parts have been validated.
-
-    The benefit of `fallback_on_part` over `fallback_on_response` is **not** live streaming to the caller, but rather:
-
-    - **Token savings**: Stop consuming a response as soon as a failure is detected, rather than waiting for it to complete
-    - **Faster fallback**: Start the next model immediately instead of waiting for a doomed response to finish
-    - **Cost reduction**: Pay only for the tokens consumed before the failure was detected
-
-    If you need progressive streaming to the caller and only want fallback for connection/initialization errors, you can omit `fallback_on_part` and `fallback_on_response`. However, be aware that exception-based fallback (`fallback_on`) only catches errors during stream **initialization**—if an exception occurs mid-stream after events have started flowing, it will propagate to the caller without triggering fallback.
-
 !!! note
-    `fallback_on_part` only applies to streaming requests (`run_stream`). For non-streaming requests, use `fallback_on_response` instead.
+    Response-based fallback only works with non-streaming requests (`run` and `run_sync`). For streaming requests, use exception-based fallback. Streaming support for response-based fallback is planned for a future release.

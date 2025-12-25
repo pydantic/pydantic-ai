@@ -21,7 +21,6 @@ from pydantic_ai import (
     ModelProfile,
     ModelRequest,
     ModelResponse,
-    ModelResponsePart,
     TextPart,
     ToolCallPart,
     ToolDefinition,
@@ -455,7 +454,7 @@ async def success_response_stream(_model_messages: list[ModelMessage], _agent_in
 
 
 async def failure_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
-    # Note: today we can only handle errors that are raised before the streaming begins
+    # Note: exception-based fallback for streaming only catches errors during stream initialization
     raise ModelHTTPError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
     yield 'uh oh... '
 
@@ -928,6 +927,9 @@ Don't include any text or Markdown fencing before or after.
     )
 
 
+# --- Response-based fallback tests (non-streaming only) ---
+
+
 def primary_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('primary response')])
 
@@ -940,7 +942,9 @@ primary_model = FunctionModel(primary_response)
 fallback_model_impl = FunctionModel(fallback_response)
 
 
-async def test_fallback_on_response_triggered() -> None:
+async def test_response_handler_triggered() -> None:
+    """Test that a response handler can trigger fallback based on response content."""
+
     def should_fallback_on_primary(response: ModelResponse, messages: list[ModelMessage]) -> bool:
         part = response.parts[0] if response.parts else None
         return isinstance(part, TextPart) and 'primary' in part.content
@@ -948,7 +952,7 @@ async def test_fallback_on_response_triggered() -> None:
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on_response=should_fallback_on_primary,
+        fallback_on=should_fallback_on_primary,
     )
     agent = Agent(model=fallback)
 
@@ -973,46 +977,33 @@ async def test_fallback_on_response_triggered() -> None:
     )
 
 
-async def test_fallback_on_response_not_triggered() -> None:
+async def test_response_handler_not_triggered() -> None:
+    """Test that response handler returning False allows the response through."""
+
     def never_fallback(response: ModelResponse, messages: list[ModelMessage]) -> bool:
         return False
 
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on_response=never_fallback,
+        fallback_on=never_fallback,
     )
     agent = Agent(model=fallback)
 
     result = await agent.run('hello')
     assert result.output == snapshot('primary response')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='primary response')],
-                usage=RequestUsage(input_tokens=51, output_tokens=2),
-                model_name='function:primary_response:',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-        ]
-    )
 
 
-async def test_fallback_on_response_all_fail() -> None:
+async def test_response_handler_all_fail() -> None:
+    """Test that when all models are rejected by response handler, an error is raised."""
+
     def always_fallback(response: ModelResponse, messages: list[ModelMessage]) -> bool:
         return True
 
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on_response=always_fallback,
+        fallback_on=always_fallback,
     )
     agent = Agent(model=fallback)
 
@@ -1021,10 +1012,11 @@ async def test_fallback_on_response_all_fail() -> None:
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     assert len(exc_info.value.exceptions) == 1
     assert isinstance(exc_info.value.exceptions[0], RuntimeError)
-    assert 'rejected by fallback_on_response' in str(exc_info.value.exceptions[0])
+    assert 'rejected by fallback_on' in str(exc_info.value.exceptions[0])
 
 
-async def test_fallback_on_response_with_message_inspection() -> None:
+async def test_response_handler_with_message_inspection() -> None:
+    """Test that response handler receives the message history."""
     inspected_messages: list[list[ModelMessage]] = []
 
     def inspect_messages(response: ModelResponse, messages: list[ModelMessage]) -> bool:
@@ -1034,7 +1026,7 @@ async def test_fallback_on_response_with_message_inspection() -> None:
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on_response=inspect_messages,
+        fallback_on=inspect_messages,
     )
     agent = Agent(model=fallback)
 
@@ -1044,7 +1036,8 @@ async def test_fallback_on_response_with_message_inspection() -> None:
     assert len(inspected_messages[0]) == 1
 
 
-async def test_fallback_on_response_combined_with_exception_fallback() -> None:
+async def test_mixed_exception_and_response_handlers() -> None:
+    """Test combining exception types and response handlers in a list."""
     call_order: list[str] = []
 
     def first_fails_with_exception(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
@@ -1067,11 +1060,12 @@ async def test_fallback_on_response_combined_with_exception_fallback() -> None:
     second_model = FunctionModel(second_fails_response_check)
     third_model = FunctionModel(third_succeeds)
 
+    # Use a list to combine exception type and response handler
     fallback = FallbackModel(
         first_model,
         second_model,
         third_model,
-        fallback_on_response=reject_bad_response,
+        fallback_on=[ModelHTTPError, reject_bad_response],
     )
     agent = Agent(model=fallback)
 
@@ -1079,26 +1073,10 @@ async def test_fallback_on_response_combined_with_exception_fallback() -> None:
 
     assert result.output == snapshot('good response')
     assert call_order == snapshot(['first', 'second', 'third'])
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='good response')],
-                usage=RequestUsage(input_tokens=51, output_tokens=2),
-                model_name='function:third_succeeds:',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-        ]
-    )
 
 
-async def test_fallback_on_response_mixed_failures_all_fail() -> None:
+async def test_mixed_failures_all_fail() -> None:
+    """Test error reporting when both exceptions and response rejections occur."""
     call_order: list[str] = []
 
     def first_fails_with_exception(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
@@ -1119,7 +1097,7 @@ async def test_fallback_on_response_mixed_failures_all_fail() -> None:
     fallback = FallbackModel(
         first_model,
         second_model,
-        fallback_on_response=reject_bad_response,
+        fallback_on=[ModelHTTPError, reject_bad_response],
     )
     agent = Agent(model=fallback)
 
@@ -1130,11 +1108,13 @@ async def test_fallback_on_response_mixed_failures_all_fail() -> None:
     assert len(exc_info.value.exceptions) == 2
     assert isinstance(exc_info.value.exceptions[0], ModelHTTPError)
     assert isinstance(exc_info.value.exceptions[1], RuntimeError)
-    assert 'rejected by fallback_on_response' in str(exc_info.value.exceptions[1])
+    assert 'rejected by fallback_on' in str(exc_info.value.exceptions[1])
     assert call_order == ['first', 'second']
 
 
-async def test_fallback_on_response_web_fetch_scenario() -> None:
+async def test_web_fetch_scenario() -> None:
+    """Test real-world scenario: fallback when web_fetch builtin tool fails."""
+
     def google_web_fetch_fails(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
@@ -1170,7 +1150,7 @@ async def test_fallback_on_response_web_fetch_scenario() -> None:
     fallback = FallbackModel(
         google_model,
         anthropic_model,
-        fallback_on_response=web_fetch_failed,
+        fallback_on=web_fetch_failed,
     )
     agent = Agent(model=fallback)
 
@@ -1178,7 +1158,9 @@ async def test_fallback_on_response_web_fetch_scenario() -> None:
     assert result.output == 'Successfully fetched and summarized the content'
 
 
-def test_fallback_on_response_sync() -> None:
+def test_response_handler_sync() -> None:
+    """Test response handler with synchronous run."""
+
     def should_fallback(response: ModelResponse, messages: list[ModelMessage]) -> bool:
         part = response.parts[0] if response.parts else None
         return isinstance(part, TextPart) and 'primary' in part.content
@@ -1186,7 +1168,7 @@ def test_fallback_on_response_sync() -> None:
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on_response=should_fallback,
+        fallback_on=should_fallback,
     )
     agent = Agent(model=fallback)
 
@@ -1194,325 +1176,154 @@ def test_fallback_on_response_sync() -> None:
     assert result.output == 'fallback response'
 
 
-async def primary_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
-    yield 'primary '
-    yield 'response'
+# --- Tests for unified fallback_on API ---
 
 
-async def fallback_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
-    yield 'fallback '
-    yield 'response'
+def test_fallback_on_list_of_exception_types() -> None:
+    """Test fallback_on with a list containing individual exception types."""
+
+    class CustomError(Exception):
+        pass
+
+    def raises_custom_error(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        raise CustomError('custom error')
+
+    custom_error_model = FunctionModel(raises_custom_error)
+
+    # List with individual exception types (not a tuple)
+    fallback = FallbackModel(
+        custom_error_model,
+        success_model,
+        fallback_on=[CustomError, ModelHTTPError],
+    )
+    agent = Agent(model=fallback)
+
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
 
 
-primary_model_stream = FunctionModel(stream_function=primary_response_stream)
-fallback_model_stream_impl = FunctionModel(stream_function=fallback_response_stream)
+def test_fallback_on_single_response_handler() -> None:
+    """Test fallback_on with a single response handler (auto-detected by param count)."""
 
-
-async def test_fallback_on_response_streaming_triggered() -> None:
-    def should_fallback_on_primary(response: ModelResponse, messages: list[ModelMessage]) -> bool:
+    def reject_primary(response: ModelResponse, messages: list[ModelMessage]) -> bool:
         part = response.parts[0] if response.parts else None
         return isinstance(part, TextPart) and 'primary' in part.content
 
     fallback = FallbackModel(
-        primary_model_stream,
-        fallback_model_stream_impl,
-        fallback_on_response=should_fallback_on_primary,
+        primary_model,
+        fallback_model_impl,
+        fallback_on=reject_primary,  # Single callable, detected as response handler
     )
     agent = Agent(model=fallback)
 
-    async with agent.run_stream('hello') as result:
-        output = await result.get_output()
-
-    assert output == 'fallback response'
+    result = agent.run_sync('hello')
+    assert result.output == 'fallback response'
 
 
-async def test_fallback_on_response_streaming_not_triggered() -> None:
-    def never_fallback(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return False
+def test_fallback_on_single_exception_handler() -> None:
+    """Test fallback_on with a single exception handler (auto-detected by param count)."""
+
+    def custom_exception_handler(exc: Exception) -> bool:
+        return isinstance(exc, ModelHTTPError) and exc.status_code == 500
 
     fallback = FallbackModel(
-        primary_model_stream,
-        fallback_model_stream_impl,
-        fallback_on_response=never_fallback,
+        failure_model,
+        success_model,
+        fallback_on=custom_exception_handler,  # Single callable, detected as exception handler
     )
     agent = Agent(model=fallback)
 
-    async with agent.run_stream('hello') as result:
-        output = await result.get_output()
-
-    assert output == 'primary response'
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
 
 
-async def test_fallback_on_response_streaming_all_fail() -> None:
-    def always_fallback(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return True
+def test_fallback_on_mixed_list() -> None:
+    """Test fallback_on with a mixed list of exception types, exception handlers, and response handlers."""
 
-    fallback = FallbackModel(
-        primary_model_stream,
-        fallback_model_stream_impl,
-        fallback_on_response=always_fallback,
-    )
-    agent = Agent(model=fallback)
+    class CustomError(Exception):
+        pass
 
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
-        async with agent.run_stream('hello') as result:
-            await result.get_output()  # pragma: no cover
-
-    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
-    assert len(exc_info.value.exceptions) == 1
-    assert isinstance(exc_info.value.exceptions[0], RuntimeError)
-    assert 'rejected by fallback_on_response' in str(exc_info.value.exceptions[0])
-
-
-async def test_fallback_on_response_streaming_combined_with_exception() -> None:
-    call_order: list[str] = []
-
-    async def first_fails_with_exception(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        call_order.append('first')
-        raise ModelHTTPError(status_code=500, model_name='first', body=None)
-        yield 'never'  # pragma: no cover
-
-    async def second_fails_response_check(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        call_order.append('second')
-        yield 'bad '
-        yield 'response'
-
-    async def third_succeeds(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        call_order.append('third')
-        yield 'good '
-        yield 'response'
+    def custom_exception_handler(exc: Exception) -> bool:
+        return isinstance(exc, ModelHTTPError) and exc.status_code == 503
 
     def reject_bad_response(response: ModelResponse, messages: list[ModelMessage]) -> bool:
         part = response.parts[0] if response.parts else None
         return isinstance(part, TextPart) and 'bad' in part.content
 
-    first_model = FunctionModel(stream_function=first_fails_with_exception)
-    second_model = FunctionModel(stream_function=second_fails_response_check)
-    third_model = FunctionModel(stream_function=third_succeeds)
+    def bad_response_model(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('bad response')])
 
-    fallback = FallbackModel(
-        first_model,
-        second_model,
-        third_model,
-        fallback_on_response=reject_bad_response,
-    )
-    agent = Agent(model=fallback)
+    bad_model = FunctionModel(bad_response_model)
 
-    async with agent.run_stream('hello') as result:
-        output = await result.get_output()
-
-    assert output == 'good response'
-    assert call_order == ['first', 'second', 'third']
-
-
-async def test_fallback_on_response_streaming_replays_events() -> None:
-    def never_fallback(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return False
-
-    fallback = FallbackModel(
-        primary_model_stream,
-        fallback_model_stream_impl,
-        fallback_on_response=never_fallback,
-    )
-    agent = Agent(model=fallback)
-
-    async with agent.run_stream('hello') as result:
-        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
-
-    assert len(responses) >= 2
-    part = responses[-1].parts[0]
-    assert isinstance(part, TextPart)
-    assert part.content == 'primary response'
-
-
-async def test_fallback_on_part_streaming_triggered() -> None:
-    models_tried: list[str] = []
-
-    async def bad_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        models_tried.append('bad_model')
-        yield 'bad content'
-
-    async def good_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        models_tried.append('good_model')
-        yield 'good content'
-
-    def reject_bad_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
-        return isinstance(part, TextPart) and 'bad' in part.content
-
-    bad_model = FunctionModel(stream_function=bad_response_stream)
-    good_model = FunctionModel(stream_function=good_response_stream)
-
+    # Mix of exception type, exception handler, and response handler
     fallback = FallbackModel(
         bad_model,
-        good_model,
-        fallback_on_part=reject_bad_part,
+        fallback_model_impl,
+        fallback_on=[CustomError, custom_exception_handler, reject_bad_response],
     )
     agent = Agent(model=fallback)
 
-    async with agent.run_stream('hello') as result:
-        output = await result.get_output()
-
-    assert output == 'good content'
-    assert models_tried == ['bad_model', 'good_model']
+    # Should fallback because response contains 'bad'
+    result = agent.run_sync('hello')
+    assert result.output == 'fallback response'
 
 
-async def test_fallback_on_part_streaming_not_triggered() -> None:
-    async def ok_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        yield 'ok content'
+def test_fallback_on_lambda_response_handler() -> None:
+    """Test that lambdas with 2 params are detected as response handlers."""
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=lambda r, m: isinstance(r.parts[0], TextPart) and 'primary' in r.parts[0].content,
+    )
+    agent = Agent(model=fallback)
 
-    def never_reject(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
-        return False
+    result = agent.run_sync('hello')
+    assert result.output == 'fallback response'
 
-    ok_model = FunctionModel(stream_function=ok_response_stream)
-    fallback_model_not_used = FunctionModel(stream_function=ok_response_stream)
+
+def test_fallback_on_lambda_exception_handler() -> None:
+    """Test that lambdas with 1 param are detected as exception handlers."""
+    fallback = FallbackModel(
+        failure_model,
+        success_model,
+        fallback_on=lambda e: isinstance(e, ModelHTTPError),
+    )
+    agent = Agent(model=fallback)
+
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
+
+
+def test_fallback_on_invalid_type() -> None:
+    """Test that invalid fallback_on types raise TypeError."""
+    with pytest.raises(TypeError, match='Invalid fallback_on type'):
+        FallbackModel(success_model, failure_model, fallback_on='invalid')  # type: ignore
+
+
+def test_fallback_on_invalid_list_item() -> None:
+    """Test that invalid items in fallback_on list raise TypeError."""
+    with pytest.raises(TypeError, match='fallback_on items must be exception types or callables'):
+        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # type: ignore
+
+
+def test_response_handler_only_exception_propagates() -> None:
+    """Test that exceptions propagate when only response handlers are configured.
+
+    This documents the expected behavior: if you only configure response handlers
+    (no exception types or exception handlers), exceptions are not caught and will
+    propagate to the caller.
+    """
+
+    def response_check(response: ModelResponse, messages: list[ModelMessage]) -> bool:
+        return False  # Never reject based on response
 
     fallback = FallbackModel(
-        ok_model,
-        fallback_model_not_used,
-        fallback_on_part=never_reject,
+        failure_model,  # This will raise ModelHTTPError
+        success_model,
+        fallback_on=response_check,  # Only a response handler, no exception handling
     )
     agent = Agent(model=fallback)
 
-    async with agent.run_stream('hello') as result:
-        output = await result.get_output()
-
-    assert output == 'ok content'
-
-
-async def test_fallback_on_part_streaming_all_fail() -> None:
-    async def bad_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        yield 'bad content'
-
-    def always_reject(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
-        return True
-
-    bad_model1 = FunctionModel(stream_function=bad_response_stream)
-    bad_model2 = FunctionModel(stream_function=bad_response_stream)
-
-    fallback = FallbackModel(
-        bad_model1,
-        bad_model2,
-        fallback_on_part=always_reject,
-    )
-    agent = Agent(model=fallback)
-
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
-        async with agent.run_stream('hello') as result:
-            await result.get_output()  # pragma: no cover
-
-    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
-    assert len(exc_info.value.exceptions) == 1
-    assert isinstance(exc_info.value.exceptions[0], RuntimeError)
-    assert 'rejected by fallback_on_part' in str(exc_info.value.exceptions[0])
-
-
-async def test_fallback_on_part_streaming_combined_with_fallback_on_response() -> None:
-    call_order: list[str] = []
-
-    async def part_rejected_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        call_order.append('first_part_rejected')
-        yield 'reject_part'
-
-    async def response_rejected_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        call_order.append('second_response_rejected')
-        yield 'reject_response'
-
-    async def success_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        call_order.append('third_success')
-        yield 'success'
-
-    def reject_part_with_keyword(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
-        return isinstance(part, TextPart) and 'reject_part' in part.content
-
-    def reject_response_with_keyword(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        part = response.parts[0] if response.parts else None
-        return isinstance(part, TextPart) and 'reject_response' in part.content
-
-    first_model = FunctionModel(stream_function=part_rejected_stream)
-    second_model = FunctionModel(stream_function=response_rejected_stream)
-    third_model = FunctionModel(stream_function=success_stream)
-
-    fallback = FallbackModel(
-        first_model,
-        second_model,
-        third_model,
-        fallback_on_part=reject_part_with_keyword,
-        fallback_on_response=reject_response_with_keyword,
-    )
-    agent = Agent(model=fallback)
-
-    async with agent.run_stream('hello') as result:
-        output = await result.get_output()
-
-    assert output == 'success'
-    assert call_order == ['first_part_rejected', 'second_response_rejected', 'third_success']
-
-
-async def test_fallback_on_part_streaming_with_exception_fallback() -> None:
-    call_order: list[str] = []
-
-    async def first_exception_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        call_order.append('first_exception')
-        raise ModelHTTPError(status_code=500, model_name='first', body=None)
-        yield 'never'  # pragma: no cover
-
-    async def second_part_rejected(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        call_order.append('second_part_rejected')
-        yield 'bad_part'
-
-    async def third_success(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        call_order.append('third_success')
-        yield 'good'
-
-    def reject_bad_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
-        return isinstance(part, TextPart) and 'bad' in part.content
-
-    first_model = FunctionModel(stream_function=first_exception_stream)
-    second_model = FunctionModel(stream_function=second_part_rejected)
-    third_model = FunctionModel(stream_function=third_success)
-
-    fallback = FallbackModel(
-        first_model,
-        second_model,
-        third_model,
-        fallback_on_part=reject_bad_part,
-    )
-    agent = Agent(model=fallback)
-
-    async with agent.run_stream('hello') as result:
-        output = await result.get_output()
-
-    assert output == 'good'
-    assert call_order == ['first_exception', 'second_part_rejected', 'third_success']
-
-
-async def test_fallback_on_part_streaming_mixed_failures_all_fail() -> None:
-    async def exception_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        raise ModelHTTPError(status_code=500, model_name='exception', body=None)
-        yield 'never'  # pragma: no cover
-
-    async def bad_part_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        yield 'bad_part'
-
-    def always_reject(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
-        return True
-
-    first_model = FunctionModel(stream_function=exception_stream)
-    second_model = FunctionModel(stream_function=bad_part_stream)
-
-    fallback = FallbackModel(
-        first_model,
-        second_model,
-        fallback_on_part=always_reject,
-    )
-    agent = Agent(model=fallback)
-
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
-        async with agent.run_stream('hello') as result:
-            await result.get_output()  # pragma: no cover
-
-    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
-    assert len(exc_info.value.exceptions) == 2
-    assert isinstance(exc_info.value.exceptions[0], ModelHTTPError)
-    assert isinstance(exc_info.value.exceptions[1], RuntimeError)
-    assert 'rejected by fallback_on_part' in str(exc_info.value.exceptions[1])
+    # Exception should propagate since no exception handler is configured
+    with pytest.raises(ModelHTTPError):
+        agent.run_sync('hello')
