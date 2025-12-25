@@ -482,19 +482,19 @@ In this example, the model receives feedback after each tool call showing how ma
 
 ### Soft Tool Usage Limits
 
-Pydantic AI provides two soft limit mechanisms that let the model decide how to proceed instead of raising an error.
+Pydantic AI provides soft limit mechanisms that let the model decide how to proceed instead of raising an error. These are configured using [`ToolUsageLimits`][pydantic_ai.ToolUsageLimits] for individual tools and [`ToolsUsagePolicy`][pydantic_ai.ToolsUsagePolicy] for agent-wide limits.
 
-#### Per-Tool Limits with `max_uses`
+#### Per-Tool Limits with `ToolUsageLimits`
 
-Limit how many times a *specific* tool can be called by setting `max_uses` when registering the tool. Once reached, the tool is automatically removed from available tools for subsequent steps:
+Use [`ToolUsageLimits`][pydantic_ai.ToolUsageLimits] to control how many times a specific tool can be called. Set it via the `usage_limits` parameter when registering a tool:
 
 ```python
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolUsageLimits
 
 agent = Agent('test')
 
 
-@agent.tool_plain(max_uses=3)
+@agent.tool_plain(usage_limits=ToolUsageLimits(max_uses=3))
 def fetch_record(record_id: int) -> str:
     """Fetch a record by ID. Limited to 3 calls per run."""
     return f'Record {record_id}: data...'
@@ -506,11 +506,21 @@ print(result.output)
 #> {"fetch_record":"Record 0: data..."}
 ```
 
+`ToolUsageLimits` provides the following options:
+
+| Option | Description |
+| ------ | ----------- |
+| `max_uses` | Maximum calls allowed across the entire run. Once reached, the tool is removed from available tools. |
+| `max_uses_per_step` | Maximum calls allowed within a single step (model request → tool calls → response). Resets each step. |
+| `min_uses` | Minimum calls required before the run can complete. |
+| `min_uses_per_step` | Minimum calls required within each step. |
+| `partial_acceptance` | When `False`, reject all calls to this tool if the batch would exceed limits (default: `True`). |
+
 This is useful when you want to limit specific expensive or rate-limited tools while leaving others unrestricted.
 
-#### Limiting All Tools
+#### Agent-Wide Limits with `ToolsUsagePolicy`
 
-Limit the total number of tool calls across all tools within a run using the [`ToolsUsagePolicy`][pydantic_ai.ToolsUsagePolicy] on the agent or run method. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
+Use [`ToolsUsagePolicy`][pydantic_ai.ToolsUsagePolicy] to limit the total number of tool calls across all tools within a run. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
 
 ```python
 from pydantic_ai import Agent, ToolsUsagePolicy
@@ -534,7 +544,7 @@ print(result.output)
 #> I found the Python documentation and fetched the top 3 results...
 ```
 
-You can override the limit per-run:
+You can override the policy per-run:
 
 ```python
 from pydantic_ai import Agent, ToolsUsagePolicy
@@ -545,17 +555,65 @@ agent = Agent('test', tools_usage_policy=ToolsUsagePolicy(max_uses=5))
 result = agent.run_sync('Quick search only', tools_usage_policy=ToolsUsagePolicy(max_uses=2))
 ```
 
-For more details on `ToolsUsagePolicy`, see [Usage Limits](agents.md#soft-tool-use-limits-with-toolsusagepolicy).
+`ToolsUsagePolicy` provides the following options:
+
+| Option | Description |
+| ------ | ----------- |
+| `max_uses` | Maximum total calls allowed across all tools for the entire run. |
+| `max_uses_per_step` | Maximum total calls allowed across all tools within a single step. |
+| `min_uses` | Minimum total calls required before the run can complete. |
+| `min_uses_per_step` | Minimum total calls required within each step. |
+| `tool_usage_limits` | A dict mapping tool names to `ToolUsageLimits` for per-tool overrides. |
+| `partial_acceptance` | Master switch for partial acceptance behavior (default: `True`). |
+
+#### Partial Acceptance vs All-or-Nothing
+
+By default, when a model requests more tool calls than allowed, Pydantic AI uses **partial acceptance**: it accepts as many calls as the limits allow and rejects the rest individually. This lets the model make progress with the calls that succeeded.
+
+You can switch to **all-or-nothing** behavior by setting `partial_acceptance=False`. This rejects the entire batch if not all calls can be accepted:
+
+```python
+from pydantic_ai import Agent, ToolsUsagePolicy
+
+# All-or-nothing: if the model requests 5 calls but only 4 are allowed, reject all 5
+agent = Agent(
+    'openai:gpt-4o',
+    tools_usage_policy=ToolsUsagePolicy(max_uses=4, partial_acceptance=False)
+)
+```
+
+For per-tool all-or-nothing behavior, set `partial_acceptance=False` on the tool's `ToolUsageLimits`. This is useful for tools that have transactional semantics or require all their calls to succeed together:
+
+```python
+from pydantic_ai import Agent, ToolUsageLimits
+
+agent = Agent('openai:gpt-4o')
+
+
+@agent.tool_plain(usage_limits=ToolUsageLimits(max_uses=3, partial_acceptance=False))
+def batch_operation(item: str) -> str:
+    """Process items in a batch. All calls must succeed together."""
+    return f'Processed {item}'
+
+
+# If the model tries to call this 5 times but only 3 are allowed,
+# all 5 calls are rejected (not 3 accepted + 2 rejected)
+```
+
+The two levels work hierarchically:
+
+- **`ToolsUsagePolicy.partial_acceptance`** is the master switch. When `False`, no partial acceptance occurs anywhere—all tool calls in the batch are rejected if limits would be exceeded.
+- **`ToolUsageLimits.partial_acceptance`** controls individual tools, but only takes effect if the policy-level setting is `True`.
 
 #### Choosing the Right Limit
 
-All three options count only **successful** tool invocations:
+All options count only **successful** tool invocations:
 
 | Parameter | Scope | Behavior | Use Case |
 | --------- | ----- | -------- | -------- |
-| `max_uses` | Per-tool | Tool removed from available tools | Limit specific expensive/rate-limited tools |
-| `tools_usage_policy.max_uses` | All tools | Returns message to model | Soft limit; model adapts gracefully |
-| `tool_calls_limit` | All tools | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop to prevent runaway costs |
+| `ToolUsageLimits.max_uses` | Per-tool | Tool removed from available tools | Limit specific expensive/rate-limited tools |
+| `ToolsUsagePolicy.max_uses` | All tools | Returns message to model | Soft limit; model adapts gracefully |
+| `UsageLimits.tool_calls_limit` | All tools | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop to prevent runaway costs |
 
 #### Output Tool Calls
 
