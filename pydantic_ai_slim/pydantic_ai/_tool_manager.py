@@ -339,57 +339,61 @@ class ToolManager(Generic[AgentDepsT]):
         return None
 
     def can_make_tool_calls(self, projected_usage: RunUsage, tool_calls_in_this_step: int) -> bool:
-        """Check if tool calls can proceed within the tools usage policy limit."""
+        """Check if tool calls can proceed within the tools usage policy limit.
+
+        This only checks maximum limits. Minimum limits are enforced separately
+        when checking if the agent can produce final output (to prevent early termination).
+        """
         ctx = self._assert_ctx()
         if (policy := ctx.tools_usage_policy) is not None:
             max_uses = policy.max_uses
-            min_uses = policy.min_uses
             max_uses_per_step = policy.max_uses_per_step
-            min_uses_per_step = policy.min_uses_per_step
             if max_uses is not None and projected_usage.tool_calls > max_uses:
-                return False
-            if min_uses is not None and projected_usage.tool_calls < min_uses:
                 return False
             if max_uses_per_step is not None and tool_calls_in_this_step > max_uses_per_step:
                 return False
-            if min_uses_per_step is not None and tool_calls_in_this_step < min_uses_per_step:
-                return False
         return True
 
-    def can_use_tool(self, tool_name: str, pending_uses: int) -> bool:
-        """Check if a tool can be used within its max_uses limit.
+    def can_use_tool(self, tool_name: str, uses_in_step: int) -> bool:
+        """Check if making another call to this tool would exceed its limits.
+
+        This only checks maximum limits. Minimum limits are enforced separately
+        when checking if the agent can produce final output (to prevent early termination).
+
+        This method supports partial acceptance: when processing a batch of tool calls,
+        we check each call incrementally. If the model requests 3 calls but max_uses=2,
+        we accept the first 2 and reject only the 3rd.
 
         Args:
             tool_name: The name of the tool to check.
-            pending_uses: Number of additional uses being requested (in current batch).
+            uses_in_step: Number of times this tool would be used in this step if we accept
+                this call (i.e., already accepted in batch + 1 for the current call).
+
+        Returns:
+            True if the tool can be used, False if it would exceed its max_uses limit.
+            Returns True for unknown tools (the error will be caught later during execution).
         """
         # TODO: Extend to allow for more granular error messages.
         # We do not give better error messages here at the moment but we really should allow for more granular error messages.
-        # So there should be a control on what message we get when we exceed max_uses, max_uses_per_step, min_uses, min_uses_per_step.
+        # So there should be a control on what message we get when we exceed max_uses, max_uses_per_step.
         # Better control over the error messages will be helpful for the users
 
-        # If I want partial calling support, when can I use this tool?
-        # 1. Partial Calling should be set to True in the ToolsUsagePolicy.
-        # 2. This tool should also allow partial calling.
-        # 3. I can scrap off can_make_tool_calls completely and we can do this evaluation incrementally here.
-        # 4.
+        if self.tools is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        # For unknown tools, return True and let the error be caught during execution
+        # This provides a better error message than a generic "tool limit reached"
+        if tool_name not in self.tools:
+            return True
 
         current_uses = self.get_current_uses_of_tool(tool_name)
         max_uses = self.get_max_uses_of_tool(tool_name)
         max_uses_per_step = self.get_max_uses_per_step_of_tool(tool_name)
-        min_uses = self.get_min_uses_of_tool(tool_name)
-        min_uses_per_step = self.get_min_uses_per_step_of_tool(tool_name)
 
-        if min_uses_per_step is not None and pending_uses < min_uses_per_step:
+        if max_uses_per_step is not None and uses_in_step > max_uses_per_step:
             return False
 
-        if max_uses_per_step is not None and pending_uses > max_uses_per_step:
-            return False
-
-        if min_uses is not None and current_uses + pending_uses < min_uses:
-            return False
-
-        if max_uses is not None and current_uses + pending_uses > max_uses:
+        if max_uses is not None and current_uses + uses_in_step > max_uses:
             return False
 
         return True

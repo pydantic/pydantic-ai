@@ -1031,10 +1031,12 @@ def _handle_tool_calls_parts(
     can_make_tool_calls: bool,
     output_parts: list[_messages.ModelRequestPart],
     tool_manager: ToolManager[DepsT],
-    pending_tool_uses: Counter[str],
+    accepted_uses_in_batch: Counter[str],
     calls_to_run: list[_messages.ToolCallPart],
 ):
     # Separating the two scenarios to allow for granular overriding via prompt_templates
+    # We process calls in order, accepting as many as allowed by the limits.
+    # This enables partial acceptance: if model requests 3 calls but max_uses=2, we accept the first 2.
     for call in tool_calls:
         if not can_make_tool_calls:  # We cannot use any tools because of the tools usage policy limit
             return_part = _messages.ToolReturnPart(
@@ -1046,7 +1048,7 @@ def _handle_tool_calls_parts(
             output_parts.append(return_part)
             yield _messages.FunctionToolResultEvent(return_part)
         elif not tool_manager.can_use_tool(
-            call.tool_name, pending_tool_uses[call.tool_name]
+            call.tool_name, accepted_uses_in_batch[call.tool_name] + 1
         ):  # We cannot use this tool because of the max_uses limit
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
@@ -1057,6 +1059,7 @@ def _handle_tool_calls_parts(
             output_parts.append(return_part)
             yield _messages.FunctionToolResultEvent(return_part)
         else:
+            accepted_uses_in_batch[call.tool_name] += 1
             yield _messages.FunctionToolCallEvent(call)
             calls_to_run.append(call)
 
@@ -1088,11 +1091,11 @@ async def _call_tools(
 
     calls_to_run: list[_messages.ToolCallPart] = []
 
-    # For each tool, count how many uses are pending in this batch
-    pending_tool_uses = Counter(call.tool_name for call in tool_calls)
+    # Track how many calls we've accepted in this batch (for partial acceptance)
+    accepted_uses_in_batch: Counter[str] = Counter()
 
     for event in _handle_tool_calls_parts(
-        tool_calls, can_make_tool_calls, output_parts, tool_manager, pending_tool_uses, calls_to_run
+        tool_calls, can_make_tool_calls, output_parts, tool_manager, accepted_uses_in_batch, calls_to_run
     ):
         yield event
 

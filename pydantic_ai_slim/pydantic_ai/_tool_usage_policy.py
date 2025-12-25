@@ -73,56 +73,62 @@ class ToolUsageLimits:
 
 @dataclass
 class ToolsUsagePolicy:
-    """Agent-level usage policy applied to all tools in a run.
+    """Agent-level usage policy for tool calls in a run.
 
-    This class defines constraints that apply collectively to all tools during
-    an agent run. Set on the [`Agent`][pydantic_ai.Agent] via the `tools_usage_policy`
-    parameter or passed to `agent.run()` / `agent.run_sync()` / `agent.run_stream()`.
+    This class defines two types of constraints:
 
-    Individual tool limits set via [`ToolUsageLimits`][pydantic_ai.ToolUsageLimits] take
-    precedence over these agent-level defaults for that specific tool.
+    1. **Aggregate limits** (`max_uses`, `max_uses_per_step`, `min_uses`, `min_uses_per_step`):
+       These apply to the **total** number of tool calls across all tools combined.
 
-    The `tool_usage_limits` dict allows overriding limits for specific tools by name
-    without modifying the tool definitions themselves.
+    2. **Per-tool overrides** (`tool_usage_limits`): A dict mapping tool names to
+       [`ToolUsageLimits`][pydantic_ai.ToolUsageLimits], allowing you to set specific
+       limits for individual tools without modifying the tool definitions.
+
+    Set on the [`Agent`][pydantic_ai.Agent] via the `tools_usage_policy` parameter
+    or passed to `agent.run()` / `agent.run_sync()` / `agent.run_stream()`.
+
+    The per-tool limits in `tool_usage_limits` are merged with limits defined directly
+    on tools via `@agent.tool(usage_limits=...)`. See [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset]
+    for details on how limits are merged.
 
     Example:
         ```python
         from pydantic_ai import Agent
         from pydantic_ai import ToolsUsagePolicy, ToolUsageLimits
 
-        # Agent can make at most 5 tool calls per step, 20 total
+        # Agent can make at most 5 tool calls per step, 20 total (across ALL tools)
         agent = Agent(
             'openai:gpt-4o',
             tools_usage_policy=ToolsUsagePolicy(max_uses=20, max_uses_per_step=5)
         )
 
-        # Override limits for specific tools at the agent level
+        # Set per-tool limits for specific tools
         policy = ToolsUsagePolicy(
-            max_uses=50,
+            max_uses=50,  # Aggregate: max 50 tool calls total across all tools
             tool_usage_limits={
-                'expensive_api_call': ToolUsageLimits(max_uses=3),
-                'cheap_lookup': ToolUsageLimits(max_uses=100),
+                'expensive_api_call': ToolUsageLimits(max_uses=3),  # Per-tool: max 3 calls
+                'cheap_lookup': ToolUsageLimits(max_uses=100),  # Per-tool: max 100 calls
             }
         )
         ```
 
     Note:
-        - "Per step" refers to one iteration of: model request → tool calls → response.
-          A typical agent run may have multiple steps if the model needs to call tools
-          and then reason about the results before producing a final output.
-        - The `tool_usage_limits` dict takes precedence over both the agent-level limits
-          (defined in this class) and any limits defined on the tool itself.
+        "Per step" refers to one iteration of: model request → tool calls → response.
+        A typical agent run may have multiple steps if the model needs to call tools
+        and then reason about the results before producing a final output.
     """
 
     tool_usage_limits: dict[str, ToolUsageLimits] = field(default_factory=dict)
-    """Per-tool usage limits that override both agent-level and tool-level defaults.
+    """Per-tool usage limits, merged with any limits defined on the tools themselves.
 
     A mapping from tool name to [`ToolUsageLimits`][pydantic_ai.ToolUsageLimits].
-    These limits take the highest precedence in the resolution order:
+    These limits are merged with any `usage_limits` defined directly on tools via
+    `@agent.tool(usage_limits=...)`. See [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset]
+    for the merging behavior.
 
-    1. `ToolsUsagePolicy.tool_usage_limits[tool_name]` (highest priority)
-    2. Tool's own `usage_limits` parameter
-    3. Agent-level `ToolsUsagePolicy` limits (lowest priority)
+    Note: These are **per-tool** limits (e.g., "tool X can be called at most 3 times"),
+    not to be confused with the **aggregate** limits on this class (`max_uses`, etc.)
+    which apply to the total number of calls across all tools.
     """
 
     max_uses: int | None = None
