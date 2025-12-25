@@ -203,6 +203,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
         ]
     )
+    
     assert get_mock_chat_completion_kwargs(mock_client) == [
         {
             'messages': [{'content': 'hello', 'role': 'user'}],
