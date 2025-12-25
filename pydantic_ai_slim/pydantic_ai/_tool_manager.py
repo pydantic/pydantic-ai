@@ -389,7 +389,19 @@ class ToolManager(Generic[AgentDepsT]):
 
         ctx = self._assert_ctx()
 
-        # Check aggregate limits (policy-level)
+        policy = ctx.tools_usage_policy
+
+        # All or nothing batches for all tool_calls
+        # If partial_acceptance is not allowed and the batch will exceed limits then we need to return here
+        if (policy := ctx.tools_usage_policy) is not None:
+            if (
+                policy.max_uses is not None
+                and projected_usage.tool_calls > policy.max_uses
+                and not policy.partial_acceptance
+            ):
+                return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
+
+        # Check aggregate limits (policy-level) incrementally
         if (policy := ctx.tools_usage_policy) is not None:
             total_if_accepted = current_tool_calls + total_accepted_in_step + 1
             calls_in_step_if_accepted = total_accepted_in_step + 1
@@ -409,6 +421,24 @@ class ToolManager(Generic[AgentDepsT]):
         tool_uses_in_step = tool_accepted_in_step + 1
         max_uses = self.get_max_uses_of_tool(tool_name)
         max_uses_per_step = self.get_max_uses_per_step_of_tool(tool_name)
+
+        # Check entire step for tool
+
+        if (max_uses_per_step is not None and projected_tool_uses > max_uses_per_step) or (
+            max_uses is not None and projected_tool_uses + current_tool_uses > max_uses
+        ):
+            # If either of this happens and partial calling is not allowed then we need to return
+            # Policy should allow partial calling and the tool should allow to be called partially
+            if not (
+                policy
+                and policy.partial_acceptance
+                and (tool := self.tools.get(tool_name)) is not None
+                and tool.usage_limits
+                and tool.usage_limits.partial_acceptance
+            ):
+                return f'Tool use limit reached for tool "{tool_name}".'
+
+        # Check incremental call for tool
 
         if max_uses_per_step is not None and tool_uses_in_step > max_uses_per_step:
             return f'Tool use limit reached for tool "{tool_name}".'

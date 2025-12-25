@@ -1040,7 +1040,12 @@ def _handle_tool_calls_parts(
 
     for call in tool_calls:
         rejection_reason = tool_manager.check_tool_call_allowed(
-            call.tool_name, current_tool_calls, total_accepted, accepted_per_tool[call.tool_name], projected_tool_uses[call.tool_name], projected_usage
+            call.tool_name,
+            current_tool_calls,
+            total_accepted,
+            accepted_per_tool[call.tool_name],
+            projected_tool_uses[call.tool_name],
+            projected_usage,
         )
         if rejection_reason is not None:
             return_part = _messages.ToolReturnPart(
@@ -1087,7 +1092,9 @@ async def _call_tools(
     calls_to_run: list[_messages.ToolCallPart] = []
 
     # Process tool calls with partial acceptance - accept as many as allowed by limits
-    for event in _handle_tool_calls_parts(tool_calls, usage.tool_calls, output_parts, tool_manager, calls_to_run, projected_tool_uses, projected_usage):
+    for event in _handle_tool_calls_parts(
+        tool_calls, usage.tool_calls, output_parts, tool_manager, calls_to_run, projected_tool_uses, projected_usage
+    ):
         yield event
 
     with tracer.start_as_current_span(
