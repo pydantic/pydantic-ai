@@ -1316,3 +1316,82 @@ def test_response_handler_only_exception_propagates() -> None:
     # Exception should propagate since no exception handler is configured
     with pytest.raises(ModelHTTPError):
         agent.run_sync('hello')
+
+
+def test_on_response_callable() -> None:
+    """Test that OnResponse instances can be called directly (coverage for __call__)."""
+    from pydantic_ai.models.fallback import OnResponse
+
+    handler = OnResponse(lambda r: 'test' in str(r))
+    response = ModelResponse(parts=[TextPart('test response')])
+
+    # Direct call to OnResponse.__call__
+    result = handler(response)
+    assert result is True
+
+    response2 = ModelResponse(parts=[TextPart('other response')])
+    result2 = handler(response2)
+    assert result2 is False
+
+
+def test_is_response_handler_no_params() -> None:
+    """Test that handlers with no parameters are treated as exception handlers."""
+    from pydantic_ai.models.fallback import _is_response_handler
+
+    # A callable with no parameters
+    def no_params() -> bool:
+        return True
+
+    assert _is_response_handler(no_params) is False
+
+
+def test_is_response_handler_builtin() -> None:
+    """Test that builtins that can't be inspected are treated as exception handlers."""
+    from pydantic_ai.models.fallback import _is_response_handler
+
+    # Built-in type - can't get type hints, should return False
+    assert _is_response_handler(int) is False
+
+
+def test_is_exception_types_tuple_with_non_exception() -> None:
+    """Test that tuples with non-exception types return False."""
+    from pydantic_ai.models.fallback import _is_exception_types_tuple
+
+    # Tuple with non-exception type
+    assert _is_exception_types_tuple((ValueError, str)) is False
+    assert _is_exception_types_tuple((int, float)) is False
+    # Valid exception tuple
+    assert _is_exception_types_tuple((ValueError, TypeError)) is True
+
+
+def test_fallback_on_single_exception_type_direct() -> None:
+    """Test fallback_on with a single exception type (not in tuple/list)."""
+    # This tests line 182-183 - single exception type
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=ModelAPIError,  # Single type, not tuple
+    )
+
+    assert len(fallback._exception_handlers) == 1
+    assert len(fallback._response_handlers) == 0
+
+
+def test_fallback_on_on_response_in_list() -> None:
+    """Test OnResponse in a list (coverage for line 194)."""
+    from pydantic_ai.models.fallback import OnResponse
+
+    def check_response(response: ModelResponse) -> bool:
+        return False
+
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=[
+            OnResponse(lambda r: 'x' in str(r)),  # OnResponse in list
+            check_response,  # Auto-detected response handler
+        ],
+    )
+
+    assert len(fallback._exception_handlers) == 0
+    assert len(fallback._response_handlers) == 2
