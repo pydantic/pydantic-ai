@@ -9,7 +9,7 @@ from typing import Any
 
 from typing_extensions import Self
 
-from pydantic_ai import ToolUsageLimits
+from pydantic_ai import ToolLimits
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
@@ -76,7 +76,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     )
 
                 # Merge policy per-tool limits with the tool's own limits
-                usage_limits: ToolUsageLimits | None = tool.usage_limits
+                usage_limits: ToolLimits | None = tool.usage_limits
                 if (tool_usage_policy := ctx.tools_usage_policy) is not None and (
                     policy_limits := tool_usage_policy.tool_usage_limits.get(name)
                 ) is not None:

@@ -11,7 +11,7 @@ from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_usage_policy import ToolsUsagePolicy
+from pydantic_ai._tool_usage_policy import AgentToolPolicy
 
 from . import _utils, messages as _messages
 
@@ -61,8 +61,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Number of retries of this tool so far."""
     max_retries: int = 0
     """The maximum number of retries of this tool."""
-    max_uses: int | None = None
-    """The maximum number of successful calls allowed for this tool in the run, or None if unlimited."""
     run_step: int = 0
     """The current step in the run."""
     tool_call_approved: bool = False
@@ -71,7 +69,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
-    tools_usage_policy: ToolsUsagePolicy | None = None
+    tools_usage_policy: AgentToolPolicy | None = None
     """The tools usage policy for this run, if not provided, the default policy will be used."""
 
     @property

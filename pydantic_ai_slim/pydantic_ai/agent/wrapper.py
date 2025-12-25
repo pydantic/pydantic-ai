@@ -11,7 +11,7 @@ from .. import (
     usage as _usage,
 )
 from .._json_schema import JsonSchema
-from .._tool_usage_policy import ToolsUsagePolicy
+from .._tool_usage_policy import AgentToolPolicy
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
@@ -86,7 +86,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: ToolsUsagePolicy | None = None,
+        tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -106,7 +106,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: ToolsUsagePolicy | None = None,
+        tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -126,7 +126,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: ToolsUsagePolicy | None = None,
+        tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,

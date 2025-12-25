@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class ToolUsageLimits:
+class ToolLimits:
     """Usage limits for an individual tool.
 
     This class defines constraints on how many times a specific tool can be called
@@ -12,22 +12,22 @@ class ToolUsageLimits:
     when registering tools with `@agent.tool(usage_limits=...)`.
 
     These limits apply to the specific tool only and take precedence over any
-    agent-level [`ToolsUsagePolicy`][pydantic_ai.ToolsUsagePolicy] settings.
+    agent-level [`AgentToolPolicy`][pydantic_ai.AgentToolPolicy] settings.
 
     Example:
         ```python
         from pydantic_ai import Agent
-        from pydantic_ai import ToolUsageLimits
+        from pydantic_ai import ToolLimits
 
         agent = Agent('openai:gpt-4o')
 
         # Tool can only be called once per run
-        @agent.tool(usage_limits=ToolUsageLimits(max_uses=1))
+        @agent.tool(usage_limits=ToolLimits(max_uses=1))
         def get_secret_key() -> str:
             return 'secret-key-123'
 
         # Tool can be called up to 3 times per step, 10 times total
-        @agent.tool(usage_limits=ToolUsageLimits(max_uses=10, max_uses_per_step=3))
+        @agent.tool(usage_limits=ToolLimits(max_uses=10, max_uses_per_step=3))
         def search_database(query: str) -> str:
             return f'Results for {query}'
         ```
@@ -82,7 +82,7 @@ class ToolUsageLimits:
       succeed together for correct behavior.
 
     Note:
-        This setting only takes effect if [`ToolsUsagePolicy.partial_acceptance`][pydantic_ai.ToolsUsagePolicy.partial_acceptance]
+        This setting only takes effect if [`AgentToolPolicy.partial_acceptance`][pydantic_ai.AgentToolPolicy.partial_acceptance]
         is also `True`. The policy-level setting acts as a master switch—if the policy
         disables partial acceptance, no tool can be partially accepted regardless of
         this setting.
@@ -90,7 +90,7 @@ class ToolUsageLimits:
     Example:
         ```python
         # A tool that must process all items together or none at all
-        @agent.tool(usage_limits=ToolUsageLimits(max_uses=5, partial_acceptance=False))
+        @agent.tool(usage_limits=ToolLimits(max_uses=5, partial_acceptance=False))
         def batch_process(items: list[str]) -> str:
             # If the model tries to call this 7 times but only 5 are allowed,
             # all 7 calls will be rejected (not 5 accepted + 2 rejected)
@@ -100,7 +100,7 @@ class ToolUsageLimits:
 
 
 @dataclass
-class ToolsUsagePolicy:
+class AgentToolPolicy:
     """Agent-level usage policy for tool calls in a run.
 
     This class defines two types of constraints:
@@ -109,7 +109,7 @@ class ToolsUsagePolicy:
        These apply to the **total** number of tool calls across all tools combined.
 
     2. **Per-tool overrides** (`tool_usage_limits`): A dict mapping tool names to
-       [`ToolUsageLimits`][pydantic_ai.ToolUsageLimits], allowing you to set specific
+       [`ToolLimits`][pydantic_ai.ToolLimits], allowing you to set specific
        limits for individual tools without modifying the tool definitions.
 
     Set on the [`Agent`][pydantic_ai.Agent] via the `tools_usage_policy` parameter
@@ -122,20 +122,20 @@ class ToolsUsagePolicy:
     Example:
         ```python
         from pydantic_ai import Agent
-        from pydantic_ai import ToolsUsagePolicy, ToolUsageLimits
+        from pydantic_ai import AgentToolPolicy, ToolLimits
 
         # Agent can make at most 5 tool calls per step, 20 total (across ALL tools)
         agent = Agent(
             'openai:gpt-4o',
-            tools_usage_policy=ToolsUsagePolicy(max_uses=20, max_uses_per_step=5)
+            tools_usage_policy=AgentToolPolicy(max_uses=20, max_uses_per_step=5)
         )
 
         # Set per-tool limits for specific tools
-        policy = ToolsUsagePolicy(
+        policy = AgentToolPolicy(
             max_uses=50,  # Aggregate: max 50 tool calls total across all tools
             tool_usage_limits={
-                'expensive_api_call': ToolUsageLimits(max_uses=3),  # Per-tool: max 3 calls
-                'cheap_lookup': ToolUsageLimits(max_uses=100),  # Per-tool: max 100 calls
+                'expensive_api_call': ToolLimits(max_uses=3),  # Per-tool: max 3 calls
+                'cheap_lookup': ToolLimits(max_uses=100),  # Per-tool: max 100 calls
             }
         )
         ```
@@ -146,10 +146,10 @@ class ToolsUsagePolicy:
         and then reason about the results before producing a final output.
     """
 
-    tool_usage_limits: dict[str, ToolUsageLimits] = field(default_factory=dict)
+    tool_usage_limits: dict[str, ToolLimits] = field(default_factory=dict)
     """Per-tool usage limits, merged with any limits defined on the tools themselves.
 
-    A mapping from tool name to [`ToolUsageLimits`][pydantic_ai.ToolUsageLimits].
+    A mapping from tool name to [`ToolLimits`][pydantic_ai.ToolLimits].
     These limits are merged with any `usage_limits` defined directly on tools via
     `@agent.tool(usage_limits=...)`. See [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset]
     for the merging behavior.
@@ -201,7 +201,7 @@ class ToolsUsagePolicy:
 
     This setting acts as a global master switch. When set to `False`, no partial acceptance
     occurs anywhere—neither at the aggregate level nor at the per-tool level (regardless of
-    individual [`ToolUsageLimits.partial_acceptance`][pydantic_ai.ToolUsageLimits.partial_acceptance] settings).
+    individual [`ToolLimits.partial_acceptance`][pydantic_ai.ToolLimits.partial_acceptance] settings).
 
     Example:
         ```python
@@ -210,6 +210,6 @@ class ToolsUsagePolicy:
 
         # With partial_acceptance=False:
         # If max_uses=4 and model requests 5 calls → all 5 rejected
-        policy = ToolsUsagePolicy(max_uses=4, partial_acceptance=False)
+        policy = AgentToolPolicy(max_uses=4, partial_acceptance=False)
         ```
     """

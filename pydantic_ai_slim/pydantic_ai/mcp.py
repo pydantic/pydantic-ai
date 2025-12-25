@@ -22,7 +22,7 @@ from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
-from pydantic_ai._tool_usage_policy import ToolUsageLimits
+from pydantic_ai._tool_usage_policy import ToolLimits
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 from .direct import model_request
@@ -333,7 +333,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     max_retries: int
     """The maximum number of times to retry a tool call."""
 
-    usage_limits: ToolUsageLimits | None
+    usage_limits: ToolLimits | None
     """Usage limits for all tools in this toolset."""
 
     elicitation_callback: ElicitationFnT | None = None
@@ -392,7 +392,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         *,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
-        usage_limits: ToolUsageLimits | None = None,
+        usage_limits: ToolLimits | None = None,
     ):
         self.tool_prefix = tool_prefix
         self.log_level = log_level

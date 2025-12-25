@@ -28,8 +28,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
-    ToolsUsagePolicy,
-    ToolUsageLimits,
+    AgentToolPolicy,
+    ToolLimits,
     UserError,
     UserPromptPart,
 )
@@ -1329,9 +1329,9 @@ def test_tool_retries():
 
 
 def test_tool_max_uses():
-    """Test ToolUsageLimits.max_uses on an individual tool.
+    """Test ToolLimits.max_uses on an individual tool.
 
-    ToolUsageLimits is set on individual tools via @agent.tool(usage_limits=...).
+    ToolLimits is set on individual tools via @agent.tool(usage_limits=...).
     It limits how many times that specific tool can be called during an agent run.
 
     Here we set max_uses=1, so the tool can only be called once. When the model
@@ -1358,7 +1358,7 @@ def test_tool_max_uses():
 
     agent = Agent(FunctionModel(my_model), output_type=str)
 
-    @agent.tool(usage_limits=ToolUsageLimits(max_uses=2, max_uses_per_step=1))
+    @agent.tool(usage_limits=ToolLimits(max_uses=2, max_uses_per_step=1))
     def tool_with_max_use(ctx: RunContext[None]) -> str:  # pragma: no cover
         return 'Used'
 
@@ -1417,17 +1417,17 @@ def test_tool_max_uses():
 
 
 def test_tools_usage_policy_max_uses():
-    """Test ToolsUsagePolicy.max_uses on an agent.
+    """Test AgentToolPolicy.max_uses on an agent.
 
-    ToolsUsagePolicy is set on the Agent via tools_usage_policy parameter.
-    It applies collectively to ALL tools during an agent run (unlike ToolUsageLimits
+    AgentToolPolicy is set on the Agent via tools_usage_policy parameter.
+    It applies collectively to ALL tools during an agent run (unlike ToolLimits
     which applies to a specific tool).
 
     Here we set max_uses=0 on the agent level, meaning no tool calls are allowed
     at all. When the model tries to call any tool, it receives an error message
     prompting it to produce output without using tools.
     """
-    agent = Agent(TestModel(), tools_usage_policy=ToolsUsagePolicy(max_uses=0))
+    agent = Agent(TestModel(), tools_usage_policy=AgentToolPolicy(max_uses=0))
 
     @agent.tool_plain
     def my_tool(x: int) -> int:  # pragma: no cover

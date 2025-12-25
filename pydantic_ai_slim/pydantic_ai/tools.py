@@ -9,7 +9,7 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
 
-from pydantic_ai._tool_usage_policy import ToolUsageLimits
+from pydantic_ai._tool_usage_policy import ToolLimits
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
@@ -277,7 +277,7 @@ class Tool(Generic[ToolAgentDepsT]):
     metadata: dict[str, Any] | None
     timeout: float | None
     function_schema: _function_schema.FunctionSchema
-    usage_limits: ToolUsageLimits | None
+    usage_limits: ToolLimits | None
 
     """
     The base JSON schema for the tool's parameters.
@@ -303,7 +303,7 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
-        usage_limits: ToolUsageLimits | None = None,
+        usage_limits: ToolLimits | None = None,
     ):
         """Create a new tool instance.
 

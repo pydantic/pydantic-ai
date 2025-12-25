@@ -7,7 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
-from pydantic_ai._tool_usage_policy import ToolUsageLimits
+from pydantic_ai._tool_usage_policy import ToolLimits
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
@@ -49,7 +49,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     schema_generator: type[GenerateJsonSchema]
-    usage_limits: ToolUsageLimits | None
+    usage_limits: ToolLimits | None
 
     def __init__(
         self,
@@ -65,7 +65,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         id: str | None = None,
-        usage_limits: ToolUsageLimits | None = None,
+        usage_limits: ToolLimits | None = None,
     ):
         """Build a new function toolset.
 
@@ -140,7 +140,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolUsageLimits | None = None,
+        usage_limits: ToolLimits | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -160,7 +160,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolUsageLimits | None = None,
+        usage_limits: ToolLimits | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -264,7 +264,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolUsageLimits | None = None,
+        usage_limits: ToolLimits | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 

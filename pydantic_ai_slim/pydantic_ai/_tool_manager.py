@@ -169,7 +169,6 @@ class ToolManager(Generic[AgentDepsT]):
                 max_retries=tool.max_retries,
                 tool_call_approved=approved,
                 partial_output=allow_partial,
-                max_uses=tool.usage_limits.max_uses if (limits := tool.usage_limits) and limits.max_uses else None,
             )
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'

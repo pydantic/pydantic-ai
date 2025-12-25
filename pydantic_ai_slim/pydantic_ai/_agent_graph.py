@@ -19,7 +19,7 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai._tool_usage_policy import ToolsUsagePolicy
+from pydantic_ai._tool_usage_policy import AgentToolPolicy
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
@@ -137,7 +137,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     model_settings: ModelSettings | None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
-    tools_usage_policy: ToolsUsagePolicy | None
+    tools_usage_policy: AgentToolPolicy | None
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 

@@ -673,12 +673,12 @@ except UsageLimitExceeded as e:
 
 ##### Soft Tool Use Limits
 
-If you want to limit successful tool uses but let the model decide how to proceed instead of raising an error, use the [`ToolsUsagePolicy`][pydantic_ai.ToolsUsagePolicy]. When exceeded, instead of executing the tool, the agent returns a message to the model (`'Tool call limit reached for tool "{tool_name}".'`), allowing it to adapt gracefully rather than raising a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception.
+If you want to limit successful tool uses but let the model decide how to proceed instead of raising an error, use the [`AgentToolPolicy`][pydantic_ai.AgentToolPolicy]. When exceeded, instead of executing the tool, the agent returns a message to the model (`'Tool call limit reached for tool "{tool_name}".'`), allowing it to adapt gracefully rather than raising a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception.
 
 ```py
-from pydantic_ai import Agent, ToolsUsagePolicy
+from pydantic_ai import Agent, AgentToolPolicy
 
-agent = Agent('anthropic:claude-sonnet-4-5', tools_usage_policy=ToolsUsagePolicy(max_uses=2))
+agent = Agent('anthropic:claude-sonnet-4-5', tools_usage_policy=AgentToolPolicy(max_uses=2))
 
 
 @agent.tool_plain
@@ -695,9 +695,9 @@ print(result.output)
 You can also override `tools_usage_policy` per-run:
 
 ```py
-from pydantic_ai import Agent, ToolsUsagePolicy
+from pydantic_ai import Agent, AgentToolPolicy
 
-agent = Agent('anthropic:claude-sonnet-4-5', tools_usage_policy=ToolsUsagePolicy(max_uses=5))
+agent = Agent('anthropic:claude-sonnet-4-5', tools_usage_policy=AgentToolPolicy(max_uses=5))
 
 
 @agent.tool_plain
@@ -706,7 +706,7 @@ def calculate(x: int) -> int:
 
 
 # Override the limit for this specific run
-result = agent.run_sync('Calculate something', tools_usage_policy=ToolsUsagePolicy(max_uses=1))
+result = agent.run_sync('Calculate something', tools_usage_policy=AgentToolPolicy(max_uses=1))
 ```
 
 Both `tools_usage_policy.max_uses` and `tool_calls_limit` count only **successful** tool invocations:
