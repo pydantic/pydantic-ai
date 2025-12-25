@@ -978,8 +978,7 @@ class TestStreamingCachedOutput:
             outputs1 = [output async for output in result.stream_output()]
             outputs2 = [output async for output in result.stream_output()]
 
-        assert outputs1[-1] == Foo(a=42, b='FOO')
-        assert outputs2[-1] == Foo(a=42, b='FOO')
+        assert outputs1[-1] == outputs2[-1] == Foo(a=42, b='FOO')
         assert call_log == snapshot(
             [
                 (Foo(a=21, b='foo'), True),
@@ -1010,8 +1009,7 @@ class TestStreamingCachedOutput:
             text_parts1 = [text async for text in result.stream_text(debounce_by=None)]
             text_parts2 = [text async for text in result.stream_text(debounce_by=None)]
 
-        assert text_parts1[-1] == 'Hello world!'
-        assert text_parts2[-1] == 'Hello world!'
+        assert text_parts1[-1] == text_parts2[-1] == 'Hello world!'
         assert call_log == snapshot(
             [
                 ('Hello', True),
@@ -1044,9 +1042,38 @@ class TestStreamingCachedOutput:
             output1 = await result.get_output()
             output2 = await result.get_output()
 
-        assert output1 == Foo(a=42, b='FOO')
-        assert output2 == Foo(a=42, b='FOO')
+        assert output1 == output2 == Foo(a=42, b='FOO')
         assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
+
+    async def test_cached_output_mutation_does_not_affect_cache(self):
+        """Test that mutating a returned cached output does not affect the cached value.
+
+        When the same output is retrieved multiple times from cache, each call should return
+        a deep copy, so mutations to one don't affect subsequent retrievals.
+        """
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 21, "b": "foo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=ToolOutput(process_foo, name='my_output'))
+
+        async with agent.run_stream('test') as result:
+            # Get the first output and mutate it
+            output1 = await result.get_output()
+            output1.a = 999
+            output1.b = 'MUTATED'
+
+            # Get the second output - should not be affected by mutation
+            output2 = await result.get_output()
+
+        # First output should have been mutated
+        assert output1 == Foo(a=999, b='MUTATED')
+        # Second output should be the original cached value (not mutated)
+        assert output2 == Foo(a=42, b='FOO')
 
 
 class OutputType(BaseModel):

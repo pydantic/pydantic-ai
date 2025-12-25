@@ -64,7 +64,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
         if self._cached_output is not None:
-            yield self._cached_output
+            yield deepcopy(self._cached_output)
             return
 
         last_response: _messages.ModelResponse | None = None
@@ -86,9 +86,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             not last_response or response.parts != last_response.parts
         ):
             # Final validation (allow_partial=False)
-            final_output = await self.validate_response_output(response, allow_partial=False)
-            self._cached_output = final_output
-            yield final_output
+            self._cached_output = await self.validate_response_output(response, allow_partial=False)
+            yield deepcopy(self._cached_output)
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Asynchronously stream the (unvalidated) model responses for the agent."""
@@ -172,16 +171,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
         if self._cached_output is not None:
-            return self._cached_output
+            return deepcopy(self._cached_output)
 
         # Iterate through any stream events
         async for _ in self:
             pass
 
         # Final validation with `allow_partial=False` (default)
-        validated_output = await self.validate_response_output(self.response)
-        self._cached_output = validated_output
-        return validated_output
+        self._cached_output = await self.validate_response_output(self.response)
+        return deepcopy(self._cached_output)
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
