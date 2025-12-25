@@ -382,7 +382,7 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         # For unknown tools, return True and let the error be caught during execution
-        # This provides a better error message than a generic "tool limit reached"
+        # This provides a better error message than a generic "tool limit reached" which would be incorrect.
         if tool_name not in self.tools:
             return True
 

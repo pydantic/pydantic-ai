@@ -1031,9 +1031,9 @@ def _handle_tool_calls_parts(
     can_make_tool_calls: bool,
     output_parts: list[_messages.ModelRequestPart],
     tool_manager: ToolManager[DepsT],
-    accepted_uses_in_batch: Counter[str],
     calls_to_run: list[_messages.ToolCallPart],
 ):
+    accepted_uses_in_batch: Counter[str] = Counter()
     # Separating the two scenarios to allow for granular overriding via prompt_templates
     # We process calls in order, accepting as many as allowed by the limits.
     # This enables partial acceptance: if model requests 3 calls but max_uses=2, we accept the first 2.
@@ -1092,11 +1092,8 @@ async def _call_tools(
     calls_to_run: list[_messages.ToolCallPart] = []
 
     # Track how many calls we've accepted in this batch (for partial acceptance)
-    accepted_uses_in_batch: Counter[str] = Counter()
 
-    for event in _handle_tool_calls_parts(
-        tool_calls, can_make_tool_calls, output_parts, tool_manager, accepted_uses_in_batch, calls_to_run
-    ):
+    for event in _handle_tool_calls_parts(tool_calls, can_make_tool_calls, output_parts, tool_manager, calls_to_run):
         yield event
 
     with tracer.start_as_current_span(
