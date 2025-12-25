@@ -15,6 +15,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    AgentToolPolicy,
     ExternalToolset,
     FunctionToolset,
     ModelMessage,
@@ -26,10 +27,9 @@ from pydantic_ai import (
     TextPart,
     Tool,
     ToolCallPart,
+    ToolLimits,
     ToolReturn,
     ToolReturnPart,
-    AgentToolPolicy,
-    ToolLimits,
     UserError,
     UserPromptPart,
 )
