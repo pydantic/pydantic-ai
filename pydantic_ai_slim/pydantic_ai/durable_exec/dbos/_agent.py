@@ -17,7 +17,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._tool_usage_policy import AgentToolPolicy
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
-from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
+from pydantic_ai.agent.abstract import AgentMetadata, Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
@@ -138,6 +138,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             model_settings: ModelSettings | None = None,
             usage_limits: _usage.UsageLimits | None = None,
             usage: _usage.RunUsage | None = None,
+            metadata: AgentMetadata[AgentDepsT] | None = None,
             infer_name: bool = True,
             toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
             builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -156,6 +157,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     model_settings=model_settings,
                     usage_limits=usage_limits,
                     usage=usage,
+                    metadata=metadata,
                     infer_name=infer_name,
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
@@ -179,6 +181,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             instructions: Instructions[AgentDepsT] = None,
             usage_limits: _usage.UsageLimits | None = None,
             usage: _usage.RunUsage | None = None,
+            metadata: AgentMetadata[AgentDepsT] | None = None,
             infer_name: bool = True,
             toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
             builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -197,6 +200,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     model_settings=model_settings,
                     usage_limits=usage_limits,
                     usage=usage,
+                    metadata=metadata,
                     infer_name=infer_name,
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
@@ -271,6 +275,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -292,6 +297,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -312,6 +318,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -348,6 +355,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage_limits: Optional limits on model request count or token usage.
             tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -372,6 +381,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage_limits=usage_limits,
             tools_usage_policy=tools_usage_policy,
             usage=usage,
+            metadata=metadata,
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
@@ -394,6 +404,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -414,6 +425,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -434,6 +446,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -469,6 +482,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage_limits: Optional limits on model request count or token usage.
             tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -493,6 +508,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage_limits=usage_limits,
             tools_usage_policy=tools_usage_policy,
             usage=usage,
+            metadata=metadata,
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
@@ -515,6 +531,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -536,6 +553,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -557,6 +575,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -590,6 +609,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage_limits: Optional limits on model request count or token usage.
             tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -616,6 +637,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage_limits=usage_limits,
             tools_usage_policy=tools_usage_policy,
             usage=usage,
+            metadata=metadata,
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
@@ -639,6 +661,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -659,6 +682,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -678,6 +702,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -729,6 +754,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage_limits: Optional limits on model request count or token usage.
             tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -757,6 +784,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -778,6 +806,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -799,6 +828,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage_limits: _usage.UsageLimits | None = None,
         tools_usage_policy: AgentToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -878,6 +908,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage_limits: Optional limits on model request count or token usage.
             tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -903,6 +935,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 usage_limits=usage_limits,
                 tools_usage_policy=tools_usage_policy,
                 usage=usage,
+                metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,

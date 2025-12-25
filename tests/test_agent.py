@@ -3,12 +3,11 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, Generic, Literal, TypeVar, Union
 
-import httpx
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
@@ -65,7 +64,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
@@ -366,83 +365,90 @@ def test_output_validator():
     )
 
 
-def test_output_validator_partial_sync():
-    """Test that output validators receive correct value for `partial_output` in sync mode."""
-    call_log: list[tuple[str, bool]] = []
+class TestPartialOutput:
+    """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
-    agent = Agent[None, str](TestModel(custom_output_text='test output'))
+    # NOTE: When changing these tests:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_streaming.py::TestPartialOutput` as well
 
-    @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: str) -> str:
-        call_log.append((output, ctx.partial_output))
-        return output
+    def test_output_validator_text(self):
+        """Test that output validators receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
 
-    result = agent.run_sync('Hello')
-    assert result.output == 'test output'
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Hello world!')])
 
-    assert call_log == snapshot([('test output', False)])
+        agent = Agent(FunctionModel(return_model))
 
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: str) -> str:
+            call_log.append((output, ctx.partial_output))
+            return output
 
-async def test_output_validator_partial_stream_text():
-    """Test that output validators receive correct value for `partial_output` when using stream_text()."""
-    call_log: list[tuple[str, bool]] = []
+        result = agent.run_sync('test')
 
-    async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        for chunk in ['Hello', ' ', 'world', '!']:
-            yield chunk
+        assert result.output == 'Hello world!'
+        assert call_log == snapshot([('Hello world!', False)])
 
-    agent = Agent(FunctionModel(stream_function=stream_text))
+    def test_output_validator_structured(self):
+        """Test that output validators receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
 
-    @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: str) -> str:
-        call_log.append((output, ctx.partial_output))
-        return output
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 42, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
 
-    async with agent.run_stream('Hello') as result:
-        text_parts = []
-        async for chunk in result.stream_text(debounce_by=None):
-            text_parts.append(chunk)
+        agent = Agent(FunctionModel(return_model), output_type=Foo)
 
-    assert text_parts[-1] == 'Hello world!'
-    assert call_log == snapshot(
-        [
-            ('Hello', True),
-            ('Hello ', True),
-            ('Hello world', True),
-            ('Hello world!', True),
-            ('Hello world!', False),
-        ]
-    )
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+            call_log.append((output, ctx.partial_output))
+            return output
 
+        result = agent.run_sync('test')
 
-async def test_output_validator_partial_stream_output():
-    """Test that output validators receive correct value for `partial_output` when using stream_output()."""
-    call_log: list[tuple[Foo, bool]] = []
+        assert result.output == Foo(a=42, b='foo')
+        assert call_log == snapshot([(Foo(a=42, b='foo'), False)])
 
-    async def stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        assert info.output_tools is not None
-        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42')}
-        yield {0: DeltaToolCall(json_args=', "b": "f')}
-        yield {0: DeltaToolCall(json_args='oo"}')}
+    def test_output_function_text(self):
+        """Test that output functions receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
 
-    agent = Agent(FunctionModel(stream_function=stream_model), output_type=Foo)
+        def process_output(ctx: RunContext[None], text: str) -> str:
+            call_log.append((text, ctx.partial_output))
+            return text.upper()
 
-    @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
-        call_log.append((output, ctx.partial_output))
-        return output
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Hello world!')])
 
-    async with agent.run_stream('Hello') as result:
-        outputs = [output async for output in result.stream_output(debounce_by=None)]
+        agent = Agent(FunctionModel(return_model), output_type=TextOutput(process_output))
+        result = agent.run_sync('test')
 
-    assert outputs[-1] == Foo(a=42, b='foo')
-    assert call_log == snapshot(
-        [
-            (Foo(a=42, b='f'), True),
-            (Foo(a=42, b='foo'), True),
-            (Foo(a=42, b='foo'), False),
-        ]
-    )
+        assert result.output == 'HELLO WORLD!'
+        assert call_log == snapshot([('Hello world!', False)])
+
+    def test_output_function_structured(self):
+        """Test that output functions receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 21, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
+
+        agent = Agent(FunctionModel(return_model), output_type=process_foo)
+        result = agent.run_sync('test')
+
+        assert result.output == Foo(a=42, b='FOO')
+        assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
 
 
 def test_plain_response_then_tuple():
@@ -2726,6 +2732,124 @@ def test_agent_message_history_includes_run_id() -> None:
     assert len({*run_ids}) == snapshot(1)
 
 
+async def test_agent_run_result_metadata_available() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='metadata output'),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    result = await agent.run('metadata prompt')
+    assert result.output == 'metadata output'
+    assert result.metadata == {'prompt': 'metadata prompt'}
+
+
+async def test_agent_iter_metadata_surfaces_on_result() -> None:
+    agent = Agent(TestModel(custom_output_text='iter metadata output'), metadata={'env': 'tests'})
+
+    async with agent.iter('iter metadata prompt') as agent_run:
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.metadata == {'env': 'tests'}
+    assert agent_run.result is not None
+    assert agent_run.result.metadata == {'env': 'tests'}
+
+
+async def test_agent_metadata_persisted_when_run_fails() -> None:
+    agent = Agent(
+        TestModel(),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    @agent.tool
+    def explode(_: RunContext) -> str:
+        raise RuntimeError('explode')
+
+    failing_prompt = 'metadata failure prompt'
+    captured_run = None
+
+    with pytest.raises(RuntimeError, match='explode'):
+        async with agent.iter(failing_prompt) as agent_run:
+            captured_run = agent_run
+            async for _ in agent_run:
+                pass
+
+    assert captured_run is not None
+    assert captured_run.metadata == {'prompt': failing_prompt}
+    assert captured_run.result is None
+
+
+async def test_agent_metadata_recomputed_on_successful_run() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='recomputed metadata'),
+        metadata=lambda ctx: {'requests': ctx.usage.requests},
+    )
+
+    async with agent.iter('recompute metadata prompt') as agent_run:
+        initial_metadata = agent_run.metadata
+        async for _ in agent_run:
+            pass
+
+    assert initial_metadata == {'requests': 0}
+    assert agent_run.metadata == {'requests': 1}
+    assert agent_run.result is not None
+    assert agent_run.result.metadata == {'requests': 1}
+
+
+async def test_agent_metadata_override_with_dict() -> None:
+    agent = Agent(TestModel(custom_output_text='override dict base'), metadata={'env': 'base'})
+
+    with agent.override(metadata={'env': 'override'}):
+        result = await agent.run('override dict prompt')
+
+    assert result.metadata == {'env': 'override'}
+
+
+async def test_agent_metadata_override_with_callable() -> None:
+    agent = Agent(TestModel(custom_output_text='override callable base'), metadata={'env': 'base'})
+
+    with agent.override(metadata=lambda ctx: {'computed': ctx.prompt}):
+        result = await agent.run('callable override prompt')
+
+    assert result.metadata == {'computed': 'callable override prompt'}
+
+
+async def test_agent_run_metadata_kwarg_dict() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg dict output'))
+
+    result = await agent.run('kwarg dict prompt', metadata={'env': 'run'})
+
+    assert result.metadata == {'env': 'run'}
+
+
+async def test_agent_run_metadata_kwarg_callable() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg callable output'))
+
+    def run_meta(ctx: RunContext[None]) -> dict[str, Any]:
+        return {'prompt': ctx.prompt}
+
+    result = await agent.run('kwarg callable prompt', metadata=run_meta)
+
+    assert result.metadata == {'prompt': 'kwarg callable prompt'}
+
+
+async def test_agent_run_metadata_kwarg_merges_agent_metadata() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg merge output'), metadata={'env': 'base', 'shared': 'agent'})
+
+    result = await agent.run('kwarg merge prompt', metadata={'run': 'value', 'shared': 'run'})
+
+    assert result.metadata == {'env': 'base', 'run': 'value', 'shared': 'run'}
+
+
+async def test_agent_run_metadata_kwarg_ignored_with_override() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg override output'), metadata={'env': 'base'})
+
+    with agent.override(metadata={'env': 'override', 'override_only': True}):
+        result = await agent.run('kwarg override prompt', metadata={'run_only': True})
+
+    assert result.metadata == {'env': 'override', 'override_only': True}
+
+
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
@@ -2916,25 +3040,6 @@ def test_override_model_no_model():
     with pytest.raises(UserError, match=r'`model` must either be set.+Even when `override\(model=...\)` is customiz'):
         with agent.override(model='test'):
             agent.run_sync('Hello')
-
-
-def test_run_sync_multiple():
-    agent = Agent('test')
-
-    @agent.tool_plain
-    async def make_request() -> str:
-        async with httpx.AsyncClient() as client:
-            # use this as I suspect it's about the fastest globally available endpoint
-            try:
-                response = await client.get('https://cloudflare.com/cdn-cgi/trace')
-            except httpx.ConnectError:  # pragma: no cover
-                pytest.skip('offline')
-            else:
-                return str(response.status_code)
-
-    for _ in range(2):
-        result = agent.run_sync('Hello')
-        assert result.output == '{"make_request":"200"}'
 
 
 async def test_agent_name():
@@ -3354,7 +3459,14 @@ class TestMultipleToolCalls:
         )
 
     def test_early_strategy_with_external_tool_call(self):
-        """Test that early strategy handles external tool calls correctly."""
+        """Test that early strategy handles external tool calls correctly.
+
+        Streaming and non-streaming modes differ in how they choose the final result:
+        - Streaming: First tool call (in response order) that can produce a final result (output or deferred)
+        - Non-streaming: First output tool (if none called, all deferred tools become final result)
+
+        See https://github.com/pydantic/pydantic-ai/issues/3636#issuecomment-3618800480 for details.
+        """
         tool_called: list[str] = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4500,6 +4612,57 @@ def test_dynamic_system_prompt_no_changes():
     result2 = agent.run_sync('Second call', message_history=result1.all_messages() + [manual_request])
 
     assert result2.output == 'success (no tool calls)'
+
+
+def test_dynamic_system_prompt_none_return():
+    """Test dynamic system prompts with None return values."""
+    agent = Agent('test')
+
+    dynamic_values = [None, 'DYNAMIC']
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_sys() -> str | None:
+        return dynamic_values.pop(0)
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
+    # The None value should have a '' placeholder due to keeping a reference to the dynamic prompt
+    assert '' in sys_texts
+    assert 'DYNAMIC' not in sys_texts
+
+    # Run a second time to capture the updated system prompt
+    with capture_run_messages() as messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
+    # The None value should have a '' placeholder due to keep a reference to the dynamic prompt
+    assert '' not in sys_texts
+    assert 'DYNAMIC' in sys_texts
+
+
+def test_system_prompt_none_return_are_omitted():
+    """Test dynamic system prompts with None return values."""
+    agent = Agent('test', system_prompt='STATIC')
+
+    @agent.system_prompt
+    def dynamic_sys() -> str | None:
+        return None
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
+    # The None value should be omitted
+    assert 'STATIC' in sys_texts
+    assert '' not in sys_texts
 
 
 def test_capture_run_messages_tool_agent() -> None:

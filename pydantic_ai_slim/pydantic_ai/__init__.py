@@ -21,6 +21,12 @@ from .builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from .embeddings import (
+    Embedder,
+    EmbeddingModel,
+    EmbeddingResult,
+    EmbeddingSettings,
+)
 from .exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -125,6 +131,11 @@ __all__ = (
     'UserPromptNode',
     'capture_run_messages',
     'InstrumentationSettings',
+    # embeddings
+    'Embedder',
+    'EmbeddingModel',
+    'EmbeddingSettings',
+    'EmbeddingResult',
     # exceptions
     'AgentRunError',
     'CallDeferred',

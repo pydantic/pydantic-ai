@@ -71,6 +71,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """"Unique identifier for the agent run."""
     tools_usage_policy: AgentToolPolicy | None = None
     """The tools usage policy for this run, if not provided, the default policy will be used."""
+    metadata: dict[str, Any] | None = None
+    """Metadata associated with this agent run, if configured."""
 
     @property
     def last_attempt(self) -> bool:
