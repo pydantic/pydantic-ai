@@ -898,6 +898,152 @@ class TestPartialOutput:
             ]
         )
 
+    async def test_output_function_structured_get_output(self):
+        """Test that output functions receive correct value for `partial_output` with `get_output()`.
+
+        When using only `get_output()` without streaming, the output processor is called only once
+        with `partial_output=False` (final validation), since the user doesn't see partial results.
+        """
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 21, "b": "foo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=ToolOutput(process_foo, name='my_output'))
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+
+        assert output == Foo(a=42, b='FOO')
+        assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
+
+    async def test_output_function_structured_stream_output_only(self):
+        """Test that output functions receive correct value for `partial_output` with `stream_output()`.
+
+        When using only `stream_output()`, the LAST yielded output should have `partial_output=False` (final validation).
+        """
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 21, "b": "foo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=ToolOutput(process_foo, name='my_output'))
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output()]
+
+        assert outputs[-1] == Foo(a=42, b='FOO')
+        assert call_log == snapshot(
+            [
+                (Foo(a=21, b='foo'), True),
+                (Foo(a=21, b='foo'), False),
+            ],
+        )
+
+
+class TestStreamingCachedOutput:
+    async def test_output_function_structured_double_stream_output(self):
+        """Test that calling `stream_output()` twice works correctly.
+
+        The first `stream_output()` should do validations and cache the result.
+        The second `stream_output()` should return cached results without re-validation.
+        """
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 21, "b": "foo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=ToolOutput(process_foo, name='my_output'))
+
+        async with agent.run_stream('test') as result:
+            outputs1 = [output async for output in result.stream_output()]
+            outputs2 = [output async for output in result.stream_output()]
+
+        assert outputs1[-1] == Foo(a=42, b='FOO')
+        assert outputs2[-1] == Foo(a=42, b='FOO')
+        assert call_log == snapshot(
+            [
+                (Foo(a=21, b='foo'), True),
+                (Foo(a=21, b='foo'), False),
+            ],
+        )
+
+    async def test_output_validator_text_double_stream_text(self):
+        """Test that calling `stream_text()` twice works correctly with output validator.
+
+        The first `stream_text()` should do validations and cache the result.
+        The second `stream_text()` should return cached results without re-validation.
+        """
+        call_log: list[tuple[str, bool]] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for chunk in ['Hello', ' ', 'world', '!']:
+                yield chunk
+
+        agent = Agent(FunctionModel(stream_function=sf))
+
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: str) -> str:
+            call_log.append((output, ctx.partial_output))
+            return output
+
+        async with agent.run_stream('test') as result:
+            text_parts1 = [text async for text in result.stream_text(debounce_by=None)]
+            text_parts2 = [text async for text in result.stream_text(debounce_by=None)]
+
+        assert text_parts1[-1] == 'Hello world!'
+        assert text_parts2[-1] == 'Hello world!'
+        assert call_log == snapshot(
+            [
+                ('Hello', True),
+                ('Hello ', True),
+                ('Hello world', True),
+                ('Hello world!', True),
+                ('Hello world!', False),
+            ],
+        )
+
+    async def test_output_function_structured_double_get_output(self):
+        """Test that calling `get_output()` twice works correctly.
+
+        The first `get_output()` should do validation and cache the result.
+        The second `get_output()` should return cached results without re-validation.
+        """
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 21, "b": "foo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=ToolOutput(process_foo, name='my_output'))
+
+        async with agent.run_stream('test') as result:
+            output1 = await result.get_output()
+            output2 = await result.get_output()
+
+        assert output1 == Foo(a=42, b='FOO')
+        assert output2 == Foo(a=42, b='FOO')
+        assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
+
 
 class OutputType(BaseModel):
     """Result type used by multiple tests."""
@@ -1041,12 +1187,7 @@ class TestMultipleToolCalls:
         assert response.value == 'first'
 
         # Verify only the first output tool was called
-        # NOTE: Due to current streaming behavior, the first output tool (which becomes final_result)
-        # is called twice
-        # Expected behavior after fix: ['first']
-        # Current behavior: ['first', 'first']
-        # See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
-        assert output_tools_called == ['first', 'first']
+        assert output_tools_called == ['first']
 
         # Verify we got tool returns in the correct order
         assert result.all_messages() == snapshot(
@@ -1684,12 +1825,7 @@ class TestMultipleToolCalls:
         assert response.value == 'first'
 
         # Verify both output tools were called
-        # NOTE: Due to current streaming behavior, the first output tool (which becomes final_result)
-        # is called twice, but subsequent tools are called only once
-        # Expected behavior after fix: ['first', 'second']
-        # Current behavior: ['first', 'first', 'second']
-        # See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
-        assert output_tools_called == ['first', 'first', 'second']
+        assert output_tools_called == ['first', 'second']
 
         # Verify we got tool returns in the correct order
         assert result.all_messages() == snapshot(
@@ -1767,12 +1903,7 @@ class TestMultipleToolCalls:
         assert response.value == snapshot('valid')
 
         # Verify both output tools were called
-        # NOTE: Due to current streaming behavior, the second output tool (which becomes final_result)
-        # is called twice, first tool called once and fails
-        # Expected behavior after fix: ['first', 'second']
-        # Current behavior: ['first', 'second', 'second']
-        # See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
-        assert output_tools_called == snapshot(['first', 'second', 'second'])
+        assert output_tools_called == snapshot(['first', 'second'])
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -1847,12 +1978,7 @@ class TestMultipleToolCalls:
         assert response.value == snapshot('valid')
 
         # Verify both output tools were called
-        # NOTE: Due to current streaming behavior, the second output tool (which becomes final_result)
-        # is called twice, first tool called once and fails
-        # Expected behavior after fix: ['first', 'second']
-        # Current behavior: ['first', 'second', 'second']
-        # See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
-        assert output_tools_called == snapshot(['first', 'first', 'second'])
+        assert output_tools_called == snapshot(['first', 'second'])
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -1930,11 +2056,7 @@ class TestMultipleToolCalls:
         assert response.value == 'valid'
 
         # Verify both output tools were called
-        # NOTE: Due to current streaming behavior, the first output tool is called twice
-        # Expected behavior after fix: ['first', 'second']
-        # Current behavior: ['first', 'first', 'second']
-        # See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
-        assert output_tools_called == ['first', 'first', 'second']
+        assert output_tools_called == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(

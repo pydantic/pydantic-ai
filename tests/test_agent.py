@@ -450,6 +450,54 @@ class TestPartialOutput:
         assert result.output == Foo(a=42, b='FOO')
         assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
 
+    def test_output_function_structured_get_output(self):
+        """Test that output functions receive correct value for `partial_output` with sync run.
+
+        When using `run_sync()`, the output processor is called only once
+        with `partial_output=False` (final validation), since this is non-streaming.
+        """
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 21, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
+
+        agent = Agent(FunctionModel(return_model), output_type=ToolOutput(process_foo, name='my_output'))
+        result = agent.run_sync('test')
+
+        assert result.output == Foo(a=42, b='FOO')
+        assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
+
+    def test_output_function_structured_stream_output_only(self):
+        """Test that output functions receive correct value for `partial_output` with sync run.
+
+        For non-streaming `run_sync()`, this is equivalent to the basic test since there is no streaming.
+        The output processor is called only once with `partial_output=False`.
+        """
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 21, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
+
+        agent = Agent(FunctionModel(return_model), output_type=ToolOutput(process_foo, name='my_output'))
+        result = agent.run_sync('test')
+
+        assert result.output == Foo(a=42, b='FOO')
+        assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
+
 
 def test_plain_response_then_tuple():
     call_index = 0

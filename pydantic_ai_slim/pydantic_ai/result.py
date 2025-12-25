@@ -56,12 +56,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
+    _cached_output: OutputDataT | None = field(default=None, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
+        if self._cached_output is not None:
+            yield self._cached_output
+            return
+
         last_response: _messages.ModelResponse | None = None
         async for response in self.stream_responses(debounce_by=debounce_by):
             if self._raw_stream_response.final_result_event is None or (
@@ -75,13 +80,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             except ValidationError:
                 pass
 
+        # Yield final validation and cache the result
         response = self.response
-        if self._raw_stream_response.final_result_event is None or (
-            last_response and response.parts == last_response.parts
+        if self._raw_stream_response.final_result_event is not None and (
+            not last_response or response.parts != last_response.parts
         ):
-            return
-
-        yield await self.validate_response_output(response)
+            # Final validation (allow_partial=False)
+            final_output = await self.validate_response_output(response, allow_partial=False)
+            self._cached_output = final_output
+            yield final_output
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Asynchronously stream the (unvalidated) model responses for the agent."""
@@ -111,6 +118,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """
         if not isinstance(self._output_schema, TextOutputSchema):
             raise exceptions.UserError('stream_text() can only be used with text responses')
+
+        if isinstance(self._cached_output, str):
+            yield self._cached_output
+            return
 
         if delta:
             async for text in self._stream_response_text(delta=True, debounce_by=debounce_by):
@@ -160,10 +171,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
+        if self._cached_output is not None:
+            return self._cached_output
+
+        # Iterate through any stream events
         async for _ in self:
             pass
 
-        return await self.validate_response_output(self.response)
+        # Final validation with `allow_partial=False` (default)
+        validated_output = await self.validate_response_output(self.response)
+        self._cached_output = validated_output
+        return validated_output
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
