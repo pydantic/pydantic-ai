@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from decimal import Decimal
 from typing import Any, get_args
 from unittest.mock import patch
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 
@@ -32,6 +33,8 @@ with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
 with try_import() as openai_imports_successful:
+    from openai import AsyncOpenAI
+
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
     from pydantic_ai.providers.gateway import GATEWAY_BASE_URL
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -50,8 +53,38 @@ with try_import() as sentence_transformers_imports_successful:
 @pytest.mark.vcr
 class TestOpenAI:
     @pytest.fixture
-    def embedder(self, openai_api_key: str) -> Embedder:
-        return Embedder(OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key)))
+    async def openai_httpx_client(self) -> AsyncIterator[httpx.AsyncClient]:
+        """Create isolated httpx client for OpenAI tests.
+
+        We create a dedicated httpx client per test class instead of using the shared
+        cached_async_http_client() to avoid ResourceWarning issues. The shared client
+        is closed by the global close_cached_httpx_client fixture, but provider clients
+        (AsyncOpenAI) may still hold references to it, causing resource leak warnings.
+
+        See: https://github.com/pydantic/pydantic-ai/issues/3847
+        """
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout=600, connect=5),
+        )
+        try:
+            yield client
+        finally:
+            await client.aclose()
+
+    @pytest.fixture
+    def openai_embeddings_client(self, openai_api_key: str, openai_httpx_client: httpx.AsyncClient) -> AsyncOpenAI:
+        """Create OpenAI client with isolated httpx client."""
+        return AsyncOpenAI(api_key=openai_api_key, http_client=openai_httpx_client)
+
+    @pytest.fixture
+    def provider(self, openai_embeddings_client: AsyncOpenAI) -> OpenAIProvider:
+        """Create OpenAI provider with isolated client."""
+        return OpenAIProvider(openai_client=openai_embeddings_client)
+
+    @pytest.fixture
+    def embedder(self, provider: OpenAIProvider) -> Embedder:
+        """Create embedder with isolated provider."""
+        return Embedder(OpenAIEmbeddingModel('text-embedding-3-small', provider=provider))
 
     async def test_infer_model(self, openai_api_key: str):
         with patch.dict(os.environ, {'OPENAI_API_KEY': openai_api_key}):
@@ -129,15 +162,15 @@ class TestOpenAI:
         count = await embedder.count_tokens('Hello, world!')
         assert count == snapshot(4)
 
-    async def test_embed_error(self, openai_api_key: str):
-        model = OpenAIEmbeddingModel('nonexistent', provider=OpenAIProvider(api_key=openai_api_key))
+    async def test_embed_error(self, provider: OpenAIProvider):
+        model = OpenAIEmbeddingModel('nonexistent', provider=provider)
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='model_not_found'):
             await embedder.embed_query('Hello, world!')
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-    async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
-        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
+    async def test_instrumentation(self, provider: OpenAIProvider, capfire: CaptureLogfire):
+        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=provider)
         embedder = Embedder(model, instrument=True)
         await embedder.embed_query('Hello, world!', settings={'dimensions': 128})
 
@@ -251,6 +284,31 @@ class TestOpenAI:
 @pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
 @pytest.mark.vcr
 class TestCohere:
+    @pytest.fixture
+    async def cohere_httpx_client(self) -> AsyncIterator[httpx.AsyncClient]:
+        """Create isolated httpx client for Cohere tests.
+
+        We create a dedicated httpx client per test class instead of using the shared
+        cached_async_http_client() to avoid ResourceWarning issues. The shared client
+        is closed by the global close_cached_httpx_client fixture, but provider clients
+        (AsyncClientV2/AsyncClient) may still hold references to it, causing resource
+        leak warnings during garbage collection.
+
+        See: https://github.com/pydantic/pydantic-ai/issues/3847
+        """
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout=600, connect=5),
+        )
+        try:
+            yield client
+        finally:
+            await client.aclose()
+
+    @pytest.fixture
+    def provider(self, co_api_key: str, cohere_httpx_client: httpx.AsyncClient) -> CohereProvider:
+        """Create Cohere provider with isolated httpx client."""
+        return CohereProvider(api_key=co_api_key, http_client=cohere_httpx_client)
+
     async def test_infer_model(self, co_api_key: str):
         with patch.dict(os.environ, {'CO_API_KEY': co_api_key}):
             model = infer_embedding_model('cohere:embed-v4.0')
@@ -260,8 +318,8 @@ class TestCohere:
         assert model.base_url == 'https://api.cohere.com'
         assert isinstance(model._provider, CohereProvider)  # type: ignore[reportAttributeAccess]
 
-    async def test_query(self, co_api_key: str):
-        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+    async def test_query(self, provider: CohereProvider):
+        model = CohereEmbeddingModel('embed-v4.0', provider=provider)
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
@@ -281,8 +339,8 @@ class TestCohere:
         )
         assert result.cost().total_price == snapshot(Decimal('4.8E-7'))
 
-    async def test_documents(self, co_api_key: str):
-        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+    async def test_documents(self, provider: CohereProvider):
+        model = CohereEmbeddingModel('embed-v4.0', provider=provider)
         embedder = Embedder(model)
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
@@ -299,20 +357,20 @@ class TestCohere:
         )
         assert result.cost().total_price == snapshot(Decimal('2.4E-7'))
 
-    async def test_max_input_tokens(self, co_api_key: str):
-        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+    async def test_max_input_tokens(self, provider: CohereProvider):
+        model = CohereEmbeddingModel('embed-v4.0', provider=provider)
         embedder = Embedder(model)
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(128000)
 
-    async def test_count_tokens(self, co_api_key: str):
-        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+    async def test_count_tokens(self, provider: CohereProvider):
+        model = CohereEmbeddingModel('embed-v4.0', provider=provider)
         embedder = Embedder(model)
         count = await embedder.count_tokens('Hello, world!')
         assert count == snapshot(4)
 
-    async def test_embed_error(self, co_api_key: str):
-        model = CohereEmbeddingModel('nonexistent', provider=CohereProvider(api_key=co_api_key))
+    async def test_embed_error(self, provider: CohereProvider):
+        model = CohereEmbeddingModel('nonexistent', provider=provider)
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='not found,'):
             await embedder.embed_query('Hello, world!')
