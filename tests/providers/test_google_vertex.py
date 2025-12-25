@@ -78,10 +78,15 @@ async def test_google_vertex_provider_service_account_file(
     save_service_account(service_account_path, 'my-project-id')
 
     provider = GoogleVertexProvider(service_account_file=service_account_path)
-    monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
-    await provider.client.post('/gemini-1.0-pro:generateContent')
-    assert provider.region == 'us-central1'
-    assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
+    try:
+        monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
+        await provider.client.post('/gemini-1.0-pro:generateContent')
+        assert provider.region == 'us-central1'
+        assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
+    finally:
+        # Close the provider's http client to prevent event loop errors
+        # when cached clients are not closed between tests (issue #3847)
+        await provider.client.aclose()
 
 
 async def test_google_vertex_provider_service_account_file_info(
@@ -90,10 +95,15 @@ async def test_google_vertex_provider_service_account_file_info(
     account_info = prepare_service_account_contents('my-project-id')
 
     provider = GoogleVertexProvider(service_account_info=account_info)
-    monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
-    await provider.client.post('/gemini-1.0-pro:generateContent')
-    assert provider.region == 'us-central1'
-    assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
+    try:
+        monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
+        await provider.client.post('/gemini-1.0-pro:generateContent')
+        assert provider.region == 'us-central1'
+        assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
+    finally:
+        # Close the provider's http client to prevent event loop errors
+        # when cached clients are not closed between tests (issue #3847)
+        await provider.client.aclose()
 
 
 async def test_google_vertex_provider_service_account_xor(allow_model_requests: None):
