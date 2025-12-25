@@ -247,10 +247,8 @@ The `fallback_on` parameter accepts:
 
 - A tuple of exception types: `(ModelAPIError, RateLimitError)`
 - An exception handler: `lambda exc: isinstance(exc, MyError)`
-- A response handler: `lambda response, messages: 'error' in str(response)`
-- A list mixing all of the above: `[ModelAPIError, my_handler, response_check]`
-
-Handler type is auto-detected by parameter count: 1 param = exception handler, 2 params = response handler.
+- A response handler wrapped in [`OnResponse`][pydantic_ai.models.fallback.OnResponse]: `OnResponse(lambda r: 'error' in str(r))`
+- A list mixing all of the above: `[ModelAPIError, my_handler, OnResponse(check)]`
 
 A common use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
 
@@ -258,13 +256,13 @@ A common use case is when using built-in tools like web search or URL fetching. 
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, ModelMessage, ModelResponse
+from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, ModelResponse
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.fallback import FallbackModel, OnResponse
 from pydantic_ai.models.google import GoogleModel
 
 
-def web_fetch_failed(response: ModelResponse, messages: list[ModelMessage]) -> bool:
+def web_fetch_failed(response: ModelResponse) -> bool:
     """Check if a web_fetch built-in tool failed to retrieve content."""
     call: BuiltinToolCallPart
     result: BuiltinToolReturnPart
@@ -286,7 +284,7 @@ anthropic_model = AnthropicModel('claude-sonnet-4-5')
 fallback_model = FallbackModel(
     google_model,
     anthropic_model,
-    fallback_on=web_fetch_failed,  # Auto-detected as response handler (2 params)
+    fallback_on=OnResponse(web_fetch_failed),  # Response handler wrapped in OnResponse
 )
 
 agent = Agent(fallback_model)
@@ -296,18 +294,13 @@ result = agent.run_sync('Summarize https://example.com')
 print(result.output)
 ```
 
-Response handlers receive two arguments:
-
-- `response`: The [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model
-- `messages`: The list of [`ModelMessage`][pydantic_ai.messages.ModelMessage] that were sent to the model
-
-The callback should return `True` to trigger fallback to the next model, or `False` to accept the response.
+Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
 
 You can combine exception types, exception handlers, and response handlers in a single list:
 
 ```python {title="fallback_on_mixed.py" test="skip" lint="skip"}
 from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.fallback import FallbackModel, OnResponse
 
 fallback_model = FallbackModel(
     google_model,
@@ -315,7 +308,7 @@ fallback_model = FallbackModel(
     fallback_on=[
         ModelAPIError,  # Exception type
         lambda exc: 'rate limit' in str(exc).lower(),  # Exception handler
-        web_fetch_failed,  # Response handler (from previous example)
+        OnResponse(web_fetch_failed),  # Response handler wrapped in OnResponse
     ],
 )
 ```
