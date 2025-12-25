@@ -363,6 +363,8 @@ class ToolManager(Generic[AgentDepsT]):
         current_tool_calls: int,
         total_accepted_in_step: int,
         tool_accepted_in_step: int,
+        projected_tool_uses: int,
+        projected_usage: RunUsage,
     ) -> str | None:
         """Check if a tool call is allowed, considering both aggregate and per-tool limits.
 
@@ -375,6 +377,8 @@ class ToolManager(Generic[AgentDepsT]):
             current_tool_calls: Number of tool calls already made in this run (from usage).
             total_accepted_in_step: Number of tool calls already accepted in the current batch.
             tool_accepted_in_step: Number of times this specific tool was accepted in the batch.
+            projected_tool_uses: The projected number of uses of the tool in this step.
+            projected_usage: The projected usage of the tool calls.
 
         Returns:
             None if the call is allowed.
