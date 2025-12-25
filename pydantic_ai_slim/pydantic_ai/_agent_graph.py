@@ -1028,38 +1028,31 @@ async def process_tool_calls(  # noqa: C901
 
 def _handle_tool_calls_parts(
     tool_calls: list[_messages.ToolCallPart],
-    can_make_tool_calls: bool,
+    current_tool_calls: int,
     output_parts: list[_messages.ModelRequestPart],
     tool_manager: ToolManager[DepsT],
     calls_to_run: list[_messages.ToolCallPart],
 ):
-    accepted_uses_in_batch: Counter[str] = Counter()
-    # Separating the two scenarios to allow for granular overriding via prompt_templates
-    # We process calls in order, accepting as many as allowed by the limits.
-    # This enables partial acceptance: if model requests 3 calls but max_uses=2, we accept the first 2.
+    # Track accepted calls for partial acceptance
+    accepted_per_tool: Counter[str] = Counter()
+    total_accepted = 0
+
     for call in tool_calls:
-        if not can_make_tool_calls:  # We cannot use any tools because of the tools usage policy limit
+        rejection_reason = tool_manager.check_tool_call_allowed(
+            call.tool_name, current_tool_calls, total_accepted, accepted_per_tool[call.tool_name]
+        )
+        if rejection_reason is not None:
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content='Tool use limit reached for all tools. Please produce an output without calling any tools.',
-                tool_call_id=call.tool_call_id,
-                # TODO: Add return kind and prompt_config here once supported by #3656
-            )
-            output_parts.append(return_part)
-            yield _messages.FunctionToolResultEvent(return_part)
-        elif not tool_manager.can_use_tool(
-            call.tool_name, accepted_uses_in_batch[call.tool_name] + 1
-        ):  # We cannot use this tool because of the max_uses limit
-            return_part = _messages.ToolReturnPart(
-                tool_name=call.tool_name,
-                content=f'Tool use limit reached for tool "{call.tool_name}".',
+                content=rejection_reason,
                 tool_call_id=call.tool_call_id,
                 # TODO: Add return kind and prompt_config here once supported by #3656
             )
             output_parts.append(return_part)
             yield _messages.FunctionToolResultEvent(return_part)
         else:
-            accepted_uses_in_batch[call.tool_name] += 1
+            accepted_per_tool[call.tool_name] += 1
+            total_accepted += 1
             yield _messages.FunctionToolCallEvent(call)
             calls_to_run.append(call)
 
@@ -1086,14 +1079,10 @@ async def _call_tools(
     if usage_limits.tool_calls_limit is not None:
         usage_limits.check_before_tool_call(projected_usage)
 
-    # Checks for total tool calls limit
-    can_make_tool_calls = tool_manager.can_make_tool_calls(projected_usage, len(tool_calls))
-
     calls_to_run: list[_messages.ToolCallPart] = []
 
-    # Track how many calls we've accepted in this batch (for partial acceptance)
-
-    for event in _handle_tool_calls_parts(tool_calls, can_make_tool_calls, output_parts, tool_manager, calls_to_run):
+    # Process tool calls with partial acceptance - accept as many as allowed by limits
+    for event in _handle_tool_calls_parts(tool_calls, usage.tool_calls, output_parts, tool_manager, calls_to_run):
         yield event
 
     with tracer.start_as_current_span(

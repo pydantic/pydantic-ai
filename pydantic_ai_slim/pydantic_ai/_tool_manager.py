@@ -343,6 +343,9 @@ class ToolManager(Generic[AgentDepsT]):
 
         This only checks maximum limits. Minimum limits are enforced separately
         when checking if the agent can produce final output (to prevent early termination).
+
+        Note: This is used for upfront validation. For incremental/partial acceptance,
+        use `can_accept_one_more_tool_call` instead.
         """
         ctx = self._assert_ctx()
         if (policy := ctx.tools_usage_policy) is not None:
@@ -354,49 +357,62 @@ class ToolManager(Generic[AgentDepsT]):
                 return False
         return True
 
-    def can_use_tool(self, tool_name: str, uses_in_step: int) -> bool:
-        """Check if making another call to this tool would exceed its limits.
+    def check_tool_call_allowed(
+        self,
+        tool_name: str,
+        current_tool_calls: int,
+        total_accepted_in_batch: int,
+        tool_accepted_in_batch: int,
+    ) -> str | None:
+        """Check if a tool call is allowed, considering both aggregate and per-tool limits.
 
-        This only checks maximum limits. Minimum limits are enforced separately
-        when checking if the agent can produce final output (to prevent early termination).
-
-        This method supports partial acceptance: when processing a batch of tool calls,
-        we check each call incrementally. If the model requests 3 calls but max_uses=2,
-        we accept the first 2 and reject only the 3rd.
+        This is the unified check for partial acceptance. It checks:
+        1. Aggregate limits (policy-level max_uses across all tools)
+        2. Per-tool limits (max_uses for this specific tool)
 
         Args:
             tool_name: The name of the tool to check.
-            uses_in_step: Number of times this tool would be used in this step if we accept
-                this call (i.e., already accepted in batch + 1 for the current call).
+            current_tool_calls: Number of tool calls already made in this run (from usage).
+            total_accepted_in_batch: Number of tool calls already accepted in the current batch.
+            tool_accepted_in_batch: Number of times this specific tool was accepted in the batch.
 
         Returns:
-            True if the tool can be used, False if it would exceed its max_uses limit.
-            Returns True for unknown tools (the error will be caught later during execution).
+            None if the call is allowed.
+            A string error message if the call should be rejected.
         """
-        # TODO: Extend to allow for more granular error messages.
-        # We do not give better error messages here at the moment but we really should allow for more granular error messages.
-        # So there should be a control on what message we get when we exceed max_uses, max_uses_per_step.
-        # Better control over the error messages will be helpful for the users
-
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        # For unknown tools, return True and let the error be caught during execution
-        # This provides a better error message than a generic "tool limit reached" which would be incorrect.
-        if tool_name not in self.tools:
-            return True
+        ctx = self._assert_ctx()
 
-        current_uses = self.get_current_uses_of_tool(tool_name)
+        # Check aggregate limits (policy-level)
+        if (policy := ctx.tools_usage_policy) is not None:
+            total_if_accepted = current_tool_calls + total_accepted_in_batch + 1
+            calls_in_step_if_accepted = total_accepted_in_batch + 1
+
+            if policy.max_uses is not None and total_if_accepted > policy.max_uses:
+                return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
+            if policy.max_uses_per_step is not None and calls_in_step_if_accepted > policy.max_uses_per_step:
+                return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
+
+        # For unknown tools, allow the call - error will be caught during execution
+        # This provides a better error message than "tool limit reached" which would technically be incorrect.
+        if tool_name not in self.tools:
+            return None
+
+        # Check per-tool limits
+        current_tool_uses = self.get_current_uses_of_tool(tool_name)
+        tool_uses_in_step = tool_accepted_in_batch + 1
         max_uses = self.get_max_uses_of_tool(tool_name)
         max_uses_per_step = self.get_max_uses_per_step_of_tool(tool_name)
 
-        if max_uses_per_step is not None and uses_in_step > max_uses_per_step:
-            return False
+        if max_uses_per_step is not None and tool_uses_in_step > max_uses_per_step:
+            return f'Tool use limit reached for tool "{tool_name}".'
 
-        if max_uses is not None and current_uses + uses_in_step > max_uses:
-            return False
+        if max_uses is not None and current_tool_uses + tool_uses_in_step > max_uses:
+            return f'Tool use limit reached for tool "{tool_name}".'
 
-        return True
+        return None
 
     def _assert_ctx(self) -> RunContext[AgentDepsT]:
         if self.ctx is None:
