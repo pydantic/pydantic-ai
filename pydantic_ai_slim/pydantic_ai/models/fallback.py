@@ -111,20 +111,16 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
         return False
 
 
+def _is_exception_type(value: Any) -> bool:
+    """Check if value is a single exception type."""
+    return isinstance(value, type) and issubclass(value, BaseException)
+
+
 def _is_exception_types_tuple(value: Any) -> bool:
     """Check if value is a tuple of exception types (the old API format)."""
     if not isinstance(value, tuple):
         return False
-    items: tuple[Any, ...] = value
-    for item in items:
-        if not isinstance(item, type) or not issubclass(item, BaseException):
-            return False
-    return True
-
-
-def _is_exception_type(value: Any) -> bool:
-    """Check if value is a single exception type."""
-    return isinstance(value, type) and issubclass(value, BaseException)
+    return all(_is_exception_type(item) for item in value)
 
 
 @dataclass(init=False)
