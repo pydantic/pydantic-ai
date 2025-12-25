@@ -1336,7 +1336,7 @@ def test_on_response_callable() -> None:
 
 def test_is_response_handler_no_params() -> None:
     """Test that handlers with no parameters are treated as exception handlers."""
-    from pydantic_ai.models.fallback import _is_response_handler
+    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
 
     # A callable with no parameters
     def no_params() -> bool:
@@ -1347,7 +1347,7 @@ def test_is_response_handler_no_params() -> None:
 
 def test_is_response_handler_builtin() -> None:
     """Test that builtins that can't be inspected are treated as exception handlers."""
-    from pydantic_ai.models.fallback import _is_response_handler
+    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
 
     # Built-in type - can't get type hints, should return False
     assert _is_response_handler(int) is False
@@ -1355,7 +1355,7 @@ def test_is_response_handler_builtin() -> None:
 
 def test_is_exception_types_tuple_with_non_exception() -> None:
     """Test that tuples with non-exception types return False."""
-    from pydantic_ai.models.fallback import _is_exception_types_tuple
+    from pydantic_ai.models.fallback import _is_exception_types_tuple  # pyright: ignore[reportPrivateUsage]
 
     # Tuple with non-exception type
     assert _is_exception_types_tuple((ValueError, str)) is False
@@ -1373,8 +1373,8 @@ def test_fallback_on_single_exception_type_direct() -> None:
         fallback_on=ModelAPIError,  # Single type, not tuple
     )
 
-    assert len(fallback._exception_handlers) == 1
-    assert len(fallback._response_handlers) == 0
+    assert len(fallback._exception_handlers) == 1  # pyright: ignore[reportPrivateUsage]
+    assert len(fallback._response_handlers) == 0  # pyright: ignore[reportPrivateUsage]
 
 
 def test_fallback_on_on_response_in_list() -> None:
@@ -1393,5 +1393,5 @@ def test_fallback_on_on_response_in_list() -> None:
         ],
     )
 
-    assert len(fallback._exception_handlers) == 0
-    assert len(fallback._response_handlers) == 2
+    assert len(fallback._exception_handlers) == 0  # pyright: ignore[reportPrivateUsage]
+    assert len(fallback._response_handlers) == 2  # pyright: ignore[reportPrivateUsage]
