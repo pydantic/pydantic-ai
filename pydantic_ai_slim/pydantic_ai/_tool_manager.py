@@ -302,24 +302,6 @@ class ToolManager(Generic[AgentDepsT]):
         ctx = self._assert_ctx()
         return ctx.tools_use_counts.get(tool_name, 0)
 
-    def can_make_tool_calls(self, projected_usage: RunUsage, tool_calls_in_this_step: int) -> bool:
-        """Check if tool calls can proceed within the tools usage policy limit."""
-        ctx = self._assert_ctx()
-        if (policy := ctx.tools_usage_policy) is not None:
-            max_uses = policy.max_uses
-            min_uses = policy.min_uses
-            max_uses_per_step = policy.max_uses_per_step
-            min_uses_per_step = policy.min_uses_per_step
-            if max_uses is not None and projected_usage.tool_calls > max_uses:
-                return False
-            if min_uses is not None and projected_usage.tool_calls < min_uses:
-                return False
-            if max_uses_per_step is not None and tool_calls_in_this_step > max_uses_per_step:
-                return False
-            if min_uses_per_step is not None and tool_calls_in_this_step < min_uses_per_step:
-                return False
-        return True
-
     def get_max_uses_per_step_of_tool(self, tool_name: str) -> int | None:
         """Get the maximum number of uses allowed for a given tool within a step, or `None` if unlimited."""
         if self.tools is None:
@@ -356,6 +338,24 @@ class ToolManager(Generic[AgentDepsT]):
             return min_uses_per_step
         return None
 
+    def can_make_tool_calls(self, projected_usage: RunUsage, tool_calls_in_this_step: int) -> bool:
+        """Check if tool calls can proceed within the tools usage policy limit."""
+        ctx = self._assert_ctx()
+        if (policy := ctx.tools_usage_policy) is not None:
+            max_uses = policy.max_uses
+            min_uses = policy.min_uses
+            max_uses_per_step = policy.max_uses_per_step
+            min_uses_per_step = policy.min_uses_per_step
+            if max_uses is not None and projected_usage.tool_calls > max_uses:
+                return False
+            if min_uses is not None and projected_usage.tool_calls < min_uses:
+                return False
+            if max_uses_per_step is not None and tool_calls_in_this_step > max_uses_per_step:
+                return False
+            if min_uses_per_step is not None and tool_calls_in_this_step < min_uses_per_step:
+                return False
+        return True
+
     def can_use_tool(self, tool_name: str, pending_uses: int) -> bool:
         """Check if a tool can be used within its max_uses limit.
 
@@ -367,6 +367,12 @@ class ToolManager(Generic[AgentDepsT]):
         # We do not give better error messages here at the moment but we really should allow for more granular error messages.
         # So there should be a control on what message we get when we exceed max_uses, max_uses_per_step, min_uses, min_uses_per_step.
         # Better control over the error messages will be helpful for the users
+
+        # If I want partial calling support, when can I use this tool?
+        # 1. Partial Calling should be set to True in the ToolsUsagePolicy.
+        # 2. This tool should also allow partial calling.
+        # 3. I can scrap off can_make_tool_calls completely and we can do this evaluation incrementally here.
+        # 4.
 
         current_uses = self.get_current_uses_of_tool(tool_name)
         max_uses = self.get_max_uses_of_tool(tool_name)
