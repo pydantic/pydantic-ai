@@ -350,11 +350,10 @@ class ToolManager(Generic[AgentDepsT]):
 
         # All or nothing batches for all tool_calls
         # If partial_acceptance is not allowed and the batch will exceed limits then we need to return here
-        if policy is not None:
-            if (
-                policy.max_uses is not None
-                and projected_usage.tool_calls > policy.max_uses
-                and not policy.partial_acceptance
+        if policy is not None and not policy.partial_acceptance:
+            batch_size = projected_usage.tool_calls - current_tool_calls
+            if (policy.max_uses is not None and projected_usage.tool_calls > policy.max_uses) or (
+                policy.max_uses_per_step is not None and batch_size > policy.max_uses_per_step
             ):
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
 
