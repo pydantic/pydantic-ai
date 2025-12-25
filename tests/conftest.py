@@ -317,7 +317,7 @@ async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     4. Test B (running in parallel) tries to get 'openai' client - cache is empty
     5. Cohere `AsyncClientV2`/`AsyncClient` still hold references to closed `httpx` -> ResourceWarning
 
-    SOLUTION: Don't close clients during tests. 
+    SOLUTION: Don't close clients during tests.
     They will be cleaned up at process exit.
     pytest won't complain because these are intentionally long-lived cached objects.
 
@@ -327,6 +327,7 @@ async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
 
     # Do NOT close clients - commenting out to fix race condition
     # The httpx clients will be cleaned up when the Python process exits
+
 
 @pytest.fixture(scope='session')
 def assets_path() -> Path:
