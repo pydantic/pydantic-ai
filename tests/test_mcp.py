@@ -318,7 +318,6 @@ async def test_agent_with_conflict_tool_name(agent: Agent):
 
 async def test_agent_with_prefix_tool_name(openai_api_key: str):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
-
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
         model,
