@@ -393,7 +393,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         # All or nothing batches for all tool_calls
         # If partial_acceptance is not allowed and the batch will exceed limits then we need to return here
-        if (policy := ctx.tools_usage_policy) is not None:
+        if policy is not None:
             if (
                 policy.max_uses is not None
                 and projected_usage.tool_calls > policy.max_uses
@@ -402,13 +402,12 @@ class ToolManager(Generic[AgentDepsT]):
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
 
         # Check aggregate limits (policy-level) incrementally
-        if (policy := ctx.tools_usage_policy) is not None:
-            total_if_accepted = current_tool_calls + total_accepted_in_step + 1
-            calls_in_step_if_accepted = total_accepted_in_step + 1
-
-            if policy.max_uses is not None and total_if_accepted > policy.max_uses:
+        if policy is not None:
+            if policy.max_uses is not None and current_tool_calls + total_accepted_in_step == policy.max_uses:
+                # If already equal, going through with this call will put us over the limit
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
-            if policy.max_uses_per_step is not None and calls_in_step_if_accepted > policy.max_uses_per_step:
+            if policy.max_uses_per_step is not None and total_accepted_in_step == policy.max_uses_per_step:
+                # If already equal, going through with this call will put us over the limit
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
 
         # For unknown tools, allow the call - error will be caught during execution
@@ -416,13 +415,12 @@ class ToolManager(Generic[AgentDepsT]):
         if tool_name not in self.tools:
             return None
 
-        # Check per-tool limits
+        # Per-tool limits
         current_tool_uses = self.get_current_uses_of_tool(tool_name)
-        tool_uses_in_step = tool_accepted_in_step + 1
         max_uses = self.get_max_uses_of_tool(tool_name)
         max_uses_per_step = self.get_max_uses_per_step_of_tool(tool_name)
 
-        # Check entire step for tool
+        # Check entire step for tool first
 
         if (max_uses_per_step is not None and projected_tool_uses > max_uses_per_step) or (
             max_uses is not None and projected_tool_uses + current_tool_uses > max_uses
@@ -433,17 +431,19 @@ class ToolManager(Generic[AgentDepsT]):
                 policy
                 and policy.partial_acceptance
                 and (tool := self.tools.get(tool_name)) is not None
-                and tool.usage_limits
-                and tool.usage_limits.partial_acceptance
+                and (usage_limits := tool.usage_limits) is not None
+                and usage_limits.partial_acceptance
             ):
                 return f'Tool use limit reached for tool "{tool_name}".'
 
         # Check incremental call for tool
 
-        if max_uses_per_step is not None and tool_uses_in_step > max_uses_per_step:
+        if max_uses_per_step is not None and tool_accepted_in_step == max_uses_per_step:
+            # If already equal, going through with this call will put us over the limit
             return f'Tool use limit reached for tool "{tool_name}".'
 
-        if max_uses is not None and current_tool_uses + tool_uses_in_step > max_uses:
+        if max_uses is not None and current_tool_uses + tool_accepted_in_step == max_uses:
+            # If already equal, going through with this call will put us over the limit
             return f'Tool use limit reached for tool "{tool_name}".'
 
         return None
