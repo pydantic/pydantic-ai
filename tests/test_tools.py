@@ -2336,6 +2336,7 @@ def test_deferred_tool_results_serializable():
                 'tool-approved': {'override_args': {'foo': 'bar'}, 'kind': 'tool-approved'},
                 'tool-denied': {'message': 'The tool call was denied.', 'kind': 'tool-denied'},
             },
+            'metadata': {},
         }
     )
     deserialized = results_ta.validate_python(serialized)
@@ -2776,3 +2777,174 @@ def test_agent_tool_timeout_passed_to_toolset():
 
     # The agent's tool_timeout should be passed to the toolset as timeout
     assert agent._function_toolset.timeout == 30.0
+
+
+def test_tool_approved_with_metadata():
+    """Test that DeferredToolResults.metadata is passed to RunContext.tool_call_metadata."""
+    received_metadata: list[Any] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(
+                metadata={
+                    'reason': 'High compute cost',
+                    'estimated_time': '5 minutes',
+                }
+            )
+        # Capture the tool_call_metadata from context
+        received_metadata.append(ctx.tool_call_metadata)
+        return x * 42
+
+    # First run: get approval request
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+    # Second run: provide approval with metadata
+    approval_metadata = {'user_id': 'user-123', 'approved_at': '2025-01-01T00:00:00Z'}
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={'my_tool': ToolApproved()},
+            metadata={'my_tool': approval_metadata},
+        ),
+    )
+
+    assert result.output == 'Done!'
+    # Verify the metadata was passed to the tool
+    assert len(received_metadata) == 1
+    assert received_metadata[0] == approval_metadata
+
+
+def test_tool_approved_with_metadata_and_override_args():
+    """Test that DeferredToolResults.metadata works together with ToolApproved.override_args."""
+    received_data: list[tuple[Any, int]] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        # Capture both the metadata and the argument
+        received_data.append((ctx.tool_call_metadata, x))
+        return x * 42
+
+    # First run: get approval request
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+    assert isinstance(result.output, DeferredToolRequests)
+
+    # Second run: provide approval with both metadata and override_args
+    approval_metadata = {'approver': 'admin', 'notes': 'LGTM'}
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={
+                'my_tool': ToolApproved(
+                    override_args={'x': 100},
+                )
+            },
+            metadata={'my_tool': approval_metadata},
+        ),
+    )
+
+    assert result.output == 'Done!'
+    # Verify both metadata and overridden args were received
+    assert len(received_data) == 1
+    assert received_data[0] == (approval_metadata, 100)
+
+
+def test_tool_approved_without_metadata():
+    """Test that tool_call_metadata is None when DeferredToolResults has no metadata for the tool."""
+    received_metadata: list[Any] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        # Capture the tool_call_metadata from context
+        received_metadata.append(ctx.tool_call_metadata)
+        return x * 42
+
+    # First run: get approval request
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+
+    # Second run: provide approval without metadata (using ToolApproved() or True)
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
+    )
+
+    assert result.output == 'Done!'
+    # Verify the metadata is None
+    assert len(received_metadata) == 1
+    assert received_metadata[0] is None
+
+
+def test_tool_call_metadata_not_available_for_unapproved_calls():
+    """Test that tool_call_metadata is None for non-approved tool calls."""
+    received_metadata: list[Any] = []
+
+    agent = Agent(TestModel())
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        # Capture the tool_call_metadata from context
+        received_metadata.append(ctx.tool_call_metadata)
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('{"my_tool":0}')
+    # For regular tool calls (not via ToolApproved), metadata should be None
+    assert len(received_metadata) == 1
+    assert received_metadata[0] is None
