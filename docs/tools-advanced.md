@@ -438,7 +438,7 @@ def fetch_record(record_id: int) -> str:
 # The tool will be available for the first 3 calls, then removed
 result = agent.run_sync('Fetch records 1, 2, 3, and 4')
 print(result.output)
-#> {"fetch_record":"Record 1: data..."}
+#> {"fetch_record":"Record 0: data..."}
 ```
 
 `ToolLimits` provides the following options:
