@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
+import inspect
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, get_type_hints
 
 from opentelemetry.trace import get_current_span
 
@@ -12,36 +13,39 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
+from ..messages import ModelResponse
 from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
-    from ..messages import ModelMessage, ModelResponse
+    from ..messages import ModelMessage
     from ..settings import ModelSettings
 
 # Type aliases for handlers
 ExceptionHandler = Callable[[Exception], bool]
-ResponseHandler = Callable[['ModelResponse'], bool]
+ResponseHandler = Callable[[ModelResponse], bool]
 
 
 @dataclass
 class OnResponse:
-    """Wrapper to mark a callable as a response handler for fallback_on.
+    """Wrapper to explicitly mark a callable as a response handler for fallback_on.
 
-    Use this to wrap a function that should check the model's response content
-    to decide whether to trigger fallback. The handler receives the ModelResponse
-    and should return True to trigger fallback, False to accept the response.
+    Most response handlers are auto-detected via type hints. Use this wrapper when:
+    - Your handler is a lambda (can't have type hints)
+    - Your handler is untyped and you want it treated as a response handler
 
     Example:
         ```python
         from pydantic_ai.models.fallback import FallbackModel, OnResponse
 
+        # Auto-detected via type hint (no wrapper needed)
         def check_response(response: ModelResponse) -> bool:
             return 'error' in str(response)
 
+        # Lambda needs explicit wrapper
         fallback_model = FallbackModel(
             model1, model2,
-            fallback_on=[ModelAPIError, OnResponse(check_response)],
+            fallback_on=[ModelAPIError, OnResponse(lambda r: 'error' in str(r))],
         )
         ```
     """
@@ -58,9 +62,40 @@ FallbackOn = (
     type[Exception]
     | tuple[type[Exception], ...]
     | ExceptionHandler
+    | ResponseHandler
     | OnResponse
-    | Sequence[type[Exception] | ExceptionHandler | OnResponse]
+    | Sequence[type[Exception] | ExceptionHandler | ResponseHandler | OnResponse]
 )
+
+
+def _is_response_handler(handler: Callable[..., Any]) -> bool:
+    """Check if a callable is a response handler based on type hints.
+
+    Returns True if the first parameter is type-hinted as ModelResponse.
+    Returns False otherwise (including if there are no type hints).
+    """
+    try:
+        # Get the signature to find the first parameter name
+        sig = inspect.signature(handler)
+        params = list(sig.parameters.values())
+        if not params:
+            return False
+
+        first_param = params[0]
+
+        # Try to get type hints
+        hints = get_type_hints(handler)
+        param_type = hints.get(first_param.name)
+
+        if param_type is None:
+            return False
+
+        # Check if the type is ModelResponse (compare by name to handle forward refs)
+        type_name = getattr(param_type, '__name__', str(param_type))
+        return type_name == 'ModelResponse'
+    except Exception:
+        # If we can't inspect (e.g., built-in, complex type hints), assume exception handler
+        return False
 
 
 def _is_exception_types_tuple(value: Any) -> bool:
@@ -90,7 +125,7 @@ class FallbackModel(Model):
 
     _model_name: str = field(repr=False)
     _exception_handlers: list[ExceptionHandler] = field(repr=False)
-    _response_handlers: list[OnResponse] = field(repr=False)
+    _response_handlers: list[ResponseHandler] = field(repr=False)
 
     def __init__(
         self,
@@ -107,14 +142,16 @@ class FallbackModel(Model):
 
                 - A tuple of exception types: `(ModelAPIError, RateLimitError)`
                 - An exception handler: `lambda exc: isinstance(exc, MyError)`
-                - A response handler wrapped in OnResponse: `OnResponse(lambda r: 'error' in str(r))`
-                - A sequence mixing all of the above: `[ModelAPIError, my_handler, OnResponse(check)]`
+                - A response handler (auto-detected by type hint): `def check(r: ModelResponse) -> bool`
+                - A response handler (explicit): `OnResponse(lambda r: 'error' in str(r))`
+                - A sequence mixing all of the above: `[ModelAPIError, handler, OnResponse(check)]`
 
-                Exception handlers (bare callables) take one parameter (the exception) and return
-                `True` to trigger fallback.
+                Handler type is auto-detected by inspecting type hints on the first parameter.
+                If the first parameter is hinted as `ModelResponse`, it's a response handler.
+                Otherwise (including untyped handlers), it's an exception handler.
 
-                Response handlers must be wrapped in `OnResponse`. They take one parameter
-                (ModelResponse) and return `True` to trigger fallback based on response content.
+                Use `OnResponse` wrapper for lambdas or untyped functions that should be
+                response handlers.
 
                 Note: For streaming requests, only exception-based fallback is supported, and only for
                 errors during stream initialization. Response handlers are ignored for streaming.
@@ -135,9 +172,9 @@ class FallbackModel(Model):
             self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
             return
 
-        # Case 2: Single OnResponse wrapper
+        # Case 2: Single OnResponse wrapper (explicit response handler)
         if isinstance(fallback_on, OnResponse):
-            self._response_handlers.append(fallback_on)
+            self._response_handlers.append(fallback_on.handler)
             return
 
         # Case 3: Single exception type
@@ -145,20 +182,20 @@ class FallbackModel(Model):
             self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))  # type: ignore[arg-type]
             return
 
-        # Case 4: Single callable (must be exception handler)
+        # Case 4: Single callable - auto-detect by type hints
         if callable(fallback_on):
-            self._exception_handlers.append(fallback_on)  # type: ignore[arg-type]
+            self._add_handler(fallback_on)
             return
 
         # Case 5: Sequence of mixed handlers/types
         if isinstance(fallback_on, Sequence) and not isinstance(fallback_on, (str, bytes)):
             for item in fallback_on:
                 if isinstance(item, OnResponse):
-                    self._response_handlers.append(item)
+                    self._response_handlers.append(item.handler)
                 elif _is_exception_type(item):
                     self._exception_handlers.append(_exception_types_to_handler((item,)))  # type: ignore[arg-type]
                 elif callable(item):
-                    self._exception_handlers.append(item)  # type: ignore[arg-type]
+                    self._add_handler(item)
                 else:
                     raise TypeError(
                         f'fallback_on items must be exception types, callables, or OnResponse, '
@@ -167,6 +204,13 @@ class FallbackModel(Model):
             return
 
         raise TypeError(f'Invalid fallback_on type: {type(fallback_on).__name__}')
+
+    def _add_handler(self, handler: Callable[..., Any]) -> None:
+        """Add a handler, auto-detecting its type by inspecting type hints."""
+        if _is_response_handler(handler):
+            self._response_handlers.append(handler)
+        else:
+            self._exception_handlers.append(handler)
 
     def _should_fallback_on_exception(self, exc: Exception) -> bool:
         """Check if any exception handler wants to trigger fallback."""

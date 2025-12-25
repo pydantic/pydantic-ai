@@ -247,8 +247,11 @@ The `fallback_on` parameter accepts:
 
 - A tuple of exception types: `(ModelAPIError, RateLimitError)`
 - An exception handler: `lambda exc: isinstance(exc, MyError)`
-- A response handler wrapped in [`OnResponse`][pydantic_ai.models.fallback.OnResponse]: `OnResponse(lambda r: 'error' in str(r))`
-- A list mixing all of the above: `[ModelAPIError, my_handler, OnResponse(check)]`
+- A response handler (auto-detected via type hint): `def check(r: ModelResponse) -> bool`
+- A response handler (explicit): [`OnResponse`][pydantic_ai.models.fallback.OnResponse]`(lambda r: 'error' in str(r))`
+- A list mixing all of the above: `[ModelAPIError, handler, response_check]`
+
+Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as `ModelResponse`, it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler. Use the `OnResponse` wrapper for lambdas that should be response handlers.
 
 A common use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
 
@@ -258,7 +261,7 @@ from typing import Any
 from pydantic_ai import Agent
 from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, ModelResponse
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.fallback import FallbackModel, OnResponse
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.google import GoogleModel
 
 
@@ -281,10 +284,11 @@ def web_fetch_failed(response: ModelResponse) -> bool:
 google_model = GoogleModel('gemini-2.5-flash')
 anthropic_model = AnthropicModel('claude-sonnet-4-5')
 
+# Auto-detected as response handler via type hint (no wrapper needed)
 fallback_model = FallbackModel(
     google_model,
     anthropic_model,
-    fallback_on=OnResponse(web_fetch_failed),  # Response handler wrapped in OnResponse
+    fallback_on=web_fetch_failed,
 )
 
 agent = Agent(fallback_model)
@@ -307,8 +311,9 @@ fallback_model = FallbackModel(
     anthropic_model,
     fallback_on=[
         ModelAPIError,  # Exception type
-        lambda exc: 'rate limit' in str(exc).lower(),  # Exception handler
-        OnResponse(web_fetch_failed),  # Response handler wrapped in OnResponse
+        lambda exc: 'rate limit' in str(exc).lower(),  # Exception handler (untyped lambda)
+        web_fetch_failed,  # Response handler (auto-detected via type hint)
+        OnResponse(lambda r: 'error' in str(r)),  # Response handler (lambda needs OnResponse)
     ],
 )
 ```

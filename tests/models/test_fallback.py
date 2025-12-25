@@ -949,10 +949,11 @@ async def test_response_handler_triggered() -> None:
         part = response.parts[0] if response.parts else None
         return isinstance(part, TextPart) and 'primary' in part.content
 
+    # Auto-detected as response handler via type hint (no OnResponse needed)
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on=OnResponse(should_fallback_on_primary),
+        fallback_on=should_fallback_on_primary,
     )
     agent = Agent(model=fallback)
 
@@ -983,10 +984,11 @@ async def test_response_handler_not_triggered() -> None:
     def never_fallback(response: ModelResponse) -> bool:
         return False
 
+    # Auto-detected as response handler via type hint
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on=OnResponse(never_fallback),
+        fallback_on=never_fallback,
     )
     agent = Agent(model=fallback)
 
@@ -1000,10 +1002,11 @@ async def test_response_handler_all_fail() -> None:
     def always_fallback(response: ModelResponse) -> bool:
         return True
 
+    # Auto-detected as response handler via type hint
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on=OnResponse(always_fallback),
+        fallback_on=always_fallback,
     )
     agent = Agent(model=fallback)
 
@@ -1039,12 +1042,12 @@ async def test_mixed_exception_and_response_handlers() -> None:
     second_model = FunctionModel(second_fails_response_check)
     third_model = FunctionModel(third_succeeds)
 
-    # Use a list to combine exception type and response handler
+    # Use a list to combine exception type and response handler (auto-detected via type hint)
     fallback = FallbackModel(
         first_model,
         second_model,
         third_model,
-        fallback_on=[ModelHTTPError, OnResponse(reject_bad_response)],
+        fallback_on=[ModelHTTPError, reject_bad_response],
     )
     agent = Agent(model=fallback)
 
@@ -1073,10 +1076,11 @@ async def test_mixed_failures_all_fail() -> None:
     first_model = FunctionModel(first_fails_with_exception)
     second_model = FunctionModel(second_fails_response_check)
 
+    # Auto-detected via type hint (no OnResponse needed)
     fallback = FallbackModel(
         first_model,
         second_model,
-        fallback_on=[ModelHTTPError, OnResponse(reject_bad_response)],
+        fallback_on=[ModelHTTPError, reject_bad_response],
     )
     agent = Agent(model=fallback)
 
@@ -1126,10 +1130,11 @@ async def test_web_fetch_scenario() -> None:
     google_model = FunctionModel(google_web_fetch_fails)
     anthropic_model = FunctionModel(anthropic_succeeds)
 
+    # Auto-detected via type hint (no OnResponse needed)
     fallback = FallbackModel(
         google_model,
         anthropic_model,
-        fallback_on=OnResponse(web_fetch_failed),
+        fallback_on=web_fetch_failed,
     )
     agent = Agent(model=fallback)
 
@@ -1144,10 +1149,11 @@ def test_response_handler_sync() -> None:
         part = response.parts[0] if response.parts else None
         return isinstance(part, TextPart) and 'primary' in part.content
 
+    # Auto-detected via type hint
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on=OnResponse(should_fallback),
+        fallback_on=should_fallback,
     )
     agent = Agent(model=fallback)
 
@@ -1182,16 +1188,17 @@ def test_fallback_on_list_of_exception_types() -> None:
 
 
 def test_fallback_on_single_response_handler() -> None:
-    """Test fallback_on with a single response handler wrapped in OnResponse."""
+    """Test fallback_on with a single response handler (auto-detected via type hint)."""
 
     def reject_primary(response: ModelResponse) -> bool:
         part = response.parts[0] if response.parts else None
         return isinstance(part, TextPart) and 'primary' in part.content
 
+    # Auto-detected as response handler via type hint
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
-        fallback_on=OnResponse(reject_primary),  # Wrapped in OnResponse
+        fallback_on=reject_primary,
     )
     agent = Agent(model=fallback)
 
@@ -1200,15 +1207,16 @@ def test_fallback_on_single_response_handler() -> None:
 
 
 def test_fallback_on_single_exception_handler() -> None:
-    """Test fallback_on with a single exception handler (auto-detected by param count)."""
+    """Test fallback_on with a single exception handler (auto-detected by type hint)."""
 
     def custom_exception_handler(exc: Exception) -> bool:
         return isinstance(exc, ModelHTTPError) and exc.status_code == 500
 
+    # Auto-detected as exception handler via type hint (first param is Exception, not ModelResponse)
     fallback = FallbackModel(
         failure_model,
         success_model,
-        fallback_on=custom_exception_handler,  # Single callable, detected as exception handler
+        fallback_on=custom_exception_handler,
     )
     agent = Agent(model=fallback)
 
@@ -1234,11 +1242,11 @@ def test_fallback_on_mixed_list() -> None:
 
     bad_model = FunctionModel(bad_response_model)
 
-    # Mix of exception type, exception handler, and response handler (wrapped in OnResponse)
+    # Mix of exception type, exception handler, and response handler (auto-detected via type hints)
     fallback = FallbackModel(
         bad_model,
         fallback_model_impl,
-        fallback_on=[CustomError, custom_exception_handler, OnResponse(reject_bad_response)],
+        fallback_on=[CustomError, custom_exception_handler, reject_bad_response],
     )
     agent = Agent(model=fallback)
 
@@ -1296,10 +1304,11 @@ def test_response_handler_only_exception_propagates() -> None:
     def response_check(response: ModelResponse) -> bool:
         return False  # Never reject based on response
 
+    # Auto-detected as response handler via type hint - only a response handler, no exception handling
     fallback = FallbackModel(
         failure_model,  # This will raise ModelHTTPError
         success_model,
-        fallback_on=OnResponse(response_check),  # Only a response handler, no exception handling
+        fallback_on=response_check,
     )
     agent = Agent(model=fallback)
 
