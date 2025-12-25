@@ -81,6 +81,8 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
+    )
+    from pydantic_ai.models.openai._shared import (
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
@@ -1017,7 +1019,7 @@ async def test_image_url_force_download_chat() -> None:
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai.completions.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {
             'data': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
             'content_type': 'image/png',
@@ -1052,7 +1054,7 @@ async def test_image_url_no_force_download_chat() -> None:
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai.completions.download_item', new_callable=AsyncMock) as mock_download:
         messages = [
             ModelRequest(
                 parts=[
@@ -1081,7 +1083,7 @@ async def test_document_url_force_download_responses() -> None:
 
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai.responses.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {
             'data': 'data:application/pdf;base64,JVBERi0xLjQK',
             'data_type': 'pdf',
@@ -1116,7 +1118,7 @@ async def test_document_url_no_force_download_responses() -> None:
 
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai.responses.download_item', new_callable=AsyncMock) as mock_download:
         messages = [
             ModelRequest(
                 parts=[
@@ -1145,7 +1147,7 @@ async def test_audio_url_force_download_responses() -> None:
 
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai.responses.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {
             'data': 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2',
             'data_type': 'mp3',
@@ -3798,7 +3800,7 @@ async def test_openai_chat_audio_url_default_base64(allow_model_requests: None):
     # Mock download_item to return base64 data
     fake_base64_data = base64.b64encode(b'fake_downloaded_audio').decode('utf-8')
 
-    with patch('pydantic_ai.models.openai.download_item') as mock_download:
+    with patch('pydantic_ai.models.openai.completions.download_item') as mock_download:
         mock_download.return_value = {'data': fake_base64_data, 'data_type': 'mp3'}
 
         await agent.run(['Process this audio url', audio_url])
@@ -3830,7 +3832,7 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     fake_base64_data = base64.b64encode(b'fake_downloaded_audio').decode('utf-8')
     data_uri = f'data:audio/mpeg;base64,{fake_base64_data}'
 
-    with patch('pydantic_ai.models.openai.download_item') as mock_download:
+    with patch('pydantic_ai.models.openai.completions.download_item') as mock_download:
         mock_download.return_value = {'data': data_uri, 'data_type': 'mp3'}
 
         await agent.run(['Process this audio url', audio_url])

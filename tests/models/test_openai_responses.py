@@ -68,6 +68,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
+    )
+    from pydantic_ai.models.openai._shared import (
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -8535,7 +8537,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
 def test_map_file_search_tool_call():
     from openai.types.responses.response_file_search_tool_call import ResponseFileSearchToolCall
 
-    from pydantic_ai.models.openai import _map_file_search_tool_call  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai.responses import _map_file_search_tool_call  # pyright: ignore[reportPrivateUsage]
 
     item = ResponseFileSearchToolCall.model_validate(
         {
