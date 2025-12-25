@@ -70,6 +70,12 @@ class ToolUsageLimits:
     Set to `None` for no minimum (default).
     """
 
+    partial_acceptance: bool = True
+    """Whether the tool can be called in a step even if some of it's other calls might be blocked due to the policy limits.
+
+    Set to `True` by default.
+    """
+
 
 @dataclass
 class ToolsUsagePolicy:
@@ -159,4 +165,14 @@ class ToolsUsagePolicy:
     """Minimum total number of tool calls required within each run step.
 
     Set to `None` for no minimum (default).
+    """
+
+    partial_acceptance: bool = True
+    """Whether the agent can call tools even if all the tools will not be allowed by the policy.
+
+    Set to `True` by default. If set to `False`, it will block all tool calls even if some of them are allowed by the policy.
+
+    max_uses: 4
+    tool_calls_made: 5
+    All 5 calls will be blocked, even though max_uses allowed 4 calls.
     """
