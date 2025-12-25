@@ -447,8 +447,6 @@ print(result.output)
 | ------ | ----------- |
 | `max_uses` | Maximum calls allowed across the entire run. Once reached, the tool is removed from available tools. |
 | `max_uses_per_step` | Maximum calls allowed within a single step (model request → tool calls → response). Resets each step. |
-| `min_uses` | Minimum calls required before the run can complete. |
-| `min_uses_per_step` | Minimum calls required within each step. |
 | `partial_acceptance` | When `False`, reject all calls to this tool if the batch would exceed limits (default: `True`). |
 
 This is useful when you want to limit specific expensive or rate-limited tools while leaving others unrestricted.
@@ -496,8 +494,6 @@ result = agent.run_sync('Quick search only', tools_usage_policy=AgentToolPolicy(
 | ------ | ----------- |
 | `max_uses` | Maximum total calls allowed across all tools for the entire run. |
 | `max_uses_per_step` | Maximum total calls allowed across all tools within a single step. |
-| `min_uses` | Minimum total calls required before the run can complete. |
-| `min_uses_per_step` | Minimum total calls required within each step. |
 | `tool_usage_limits` | A dict mapping tool names to `ToolLimits` for per-tool overrides. |
 | `partial_acceptance` | Master switch for partial acceptance behavior (default: `True`). |
 

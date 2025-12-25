@@ -55,21 +55,6 @@ class ToolLimits:
     Set to `None` for unlimited (default).
     """
 
-    min_uses: int | None = None
-    """Minimum number of calls required for this tool before the agent run can complete.
-
-    If the agent tries to produce a final output before meeting this minimum, additional
-    tool calls will be required.
-
-    Set to `None` for no minimum (default).
-    """
-
-    min_uses_per_step: int | None = None
-    """Minimum number of calls required for this tool within each run step.
-
-    Set to `None` for no minimum (default).
-    """
-
     partial_acceptance: bool = True
     """Whether this tool allows partial acceptance when its usage limits would be exceeded.
 
@@ -105,7 +90,7 @@ class AgentToolPolicy:
 
     This class defines two types of constraints:
 
-    1. **Aggregate limits** (`max_uses`, `max_uses_per_step`, `min_uses`, `min_uses_per_step`):
+    1. **Aggregate limits** (`max_uses`, `max_uses_per_step`):
        These apply to the **total** number of tool calls across all tools combined.
 
     2. **Per-tool overrides** (`tool_usage_limits`): A dict mapping tool names to
@@ -175,18 +160,6 @@ class AgentToolPolicy:
     This counter resets at the start of each new step.
 
     Set to `None` for unlimited (default).
-    """
-
-    min_uses: int | None = None
-    """Minimum total number of tool calls required across all tools before the run can complete.
-
-    Set to `None` for no minimum (default).
-    """
-
-    min_uses_per_step: int | None = None
-    """Minimum total number of tool calls required within each run step.
-
-    Set to `None` for no minimum (default).
     """
 
     partial_acceptance: bool = True
