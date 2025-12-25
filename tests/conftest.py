@@ -309,16 +309,33 @@ def vcr_config():
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     yield
+
+    # Close all cached httpx clients to prevent ResourceWarning in CI
+    # See: https://github.com/pydantic/pydantic-ai/issues/3847
     for provider in [
-        'openai',
+        'alibaba',
         'anthropic',
         'azure',
-        'google-gla',
-        'google-vertex',
-        'groq',
-        'mistral',
+        'cerebras',
         'cohere',
         'deepseek',
+        'fireworks',
+        'github',
+        'google-gla',
+        'google-vertex',
+        'grok',
+        'groq',
+        'heroku',
+        'litellm',
+        'mistral',
+        'moonshotai',
+        'nebius',
+        'ollama',
+        'openai',
+        'openrouter',
+        'ovhcloud',
+        'together',
+        'vercel',
         None,
     ]:
         await cached_async_http_client(provider=provider).aclose()
