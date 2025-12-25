@@ -338,25 +338,6 @@ class ToolManager(Generic[AgentDepsT]):
             return min_uses_per_step
         return None
 
-    def can_make_tool_calls(self, projected_usage: RunUsage, tool_calls_in_this_step: int) -> bool:
-        """Check if tool calls can proceed within the tools usage policy limit.
-
-        This only checks maximum limits. Minimum limits are enforced separately
-        when checking if the agent can produce final output (to prevent early termination).
-
-        Note: This is used for upfront validation. For incremental/partial acceptance,
-        use `can_accept_one_more_tool_call` instead.
-        """
-        ctx = self._assert_ctx()
-        if (policy := ctx.tools_usage_policy) is not None:
-            max_uses = policy.max_uses
-            max_uses_per_step = policy.max_uses_per_step
-            if max_uses is not None and projected_usage.tool_calls > max_uses:
-                return False
-            if max_uses_per_step is not None and tool_calls_in_this_step > max_uses_per_step:
-                return False
-        return True
-
     def check_tool_call_allowed(
         self,
         tool_name: str,
