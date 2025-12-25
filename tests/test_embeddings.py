@@ -57,9 +57,9 @@ class TestOpenAI:
         """Create isolated `httpx` client for OpenAI tests.
 
         We create a dedicated `httpx` client per test class instead of using the shared
-        `cached_async_http_client()` to avoid `ResourceWarning` issues. 
-        The shared client is closed by the global `close_cached_httpx_client` fixture, 
-        but provider clients (`AsyncClientV2`/`AsyncClient`) may still hold references to it, 
+        `cached_async_http_client()` to avoid `ResourceWarning` issues.
+        The shared client is closed by the global `close_cached_httpx_client` fixture,
+        but provider clients (`AsyncClientV2`/`AsyncClient`) may still hold references to it,
         causing resource leak warnings during garbage collection.
 
         See: https://github.com/pydantic/pydantic-ai/issues/3847
@@ -290,9 +290,9 @@ class TestCohere:
         """Create isolated `httpx` client for Cohere tests.
 
         We create a dedicated `httpx` client per test class instead of using the shared
-        `cached_async_http_client()` to avoid `ResourceWarning` issues. 
-        The shared client is closed by the global `close_cached_httpx_client` fixture, 
-        but provider clients (`AsyncClientV2`/`AsyncClient`) may still hold references to it, 
+        `cached_async_http_client()` to avoid `ResourceWarning` issues.
+        The shared client is closed by the global `close_cached_httpx_client` fixture,
+        but provider clients (`AsyncClientV2`/`AsyncClient`) may still hold references to it,
         causing resource leak warnings during garbage collection.
 
         See: https://github.com/pydantic/pydantic-ai/issues/3847
