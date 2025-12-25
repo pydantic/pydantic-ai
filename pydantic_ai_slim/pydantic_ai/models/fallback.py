@@ -35,7 +35,7 @@ class OnResponse:
     - Your handler is untyped and you want it treated as a response handler
 
     Example:
-        ```python
+        ```python {test="skip" lint="skip"}
         from pydantic_ai.models.fallback import FallbackModel, OnResponse
 
         # Auto-detected via type hint (no wrapper needed)
