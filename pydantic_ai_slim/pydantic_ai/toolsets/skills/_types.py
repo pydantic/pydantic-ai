@@ -2,13 +2,52 @@
 
 This module contains dataclass-based type definitions for skills,
 their metadata, resources, and scripts.
+
+Data classes:
+- [`Skill`][pydantic_ai.toolsets.skills.Skill]: A loaded skill instance with metadata, content, resources, and scripts
+- [`SkillMetadata`][pydantic_ai.toolsets.skills.SkillMetadata]: Skill metadata from SKILL.md frontmatter
+- [`SkillResource`][pydantic_ai.toolsets.skills.SkillResource]: A resource file within a skill
+- [`SkillScript`][pydantic_ai.toolsets.skills.SkillScript]: An executable script within a skill
 """
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+
+from ..._run_context import AgentDepsT, RunContext
+
+
+class SkillScriptExecutor(Protocol):
+    """Protocol for executing skill scripts.
+
+    Implementations provide different execution environments:
+    - Local execution with Python subprocess
+    - Remote execution via API
+    - Sandboxed execution (Docker, WASM, etc.)
+    """
+
+    async def run(
+        self,
+        skill: Skill,
+        script: SkillScript,
+        args: list[str] | None = None,
+    ) -> Any:
+        """Run a skill script and return its output.
+
+        Args:
+            skill: The skill containing the script.
+            script: The script to run.
+            args: Optional command-line arguments.
+
+        Returns:
+            Combined stdout and stderr output.
+
+        Raises:
+            SkillScriptExecutionError: If execution fails.
+        """
+        ...
 
 
 @dataclass
@@ -27,21 +66,24 @@ class SkillMetadata:
 
     name: str
     description: str
-    extra: dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] | None = None
 
 
 @dataclass
 class SkillResource:
-    """A resource file within a skill (e.g., FORMS.md, REFERENCE.md).
+    """A skill resource within a skill (e.g., FORMS.md, REFERENCE.md).
+
+    Resources can be either filesystem paths or URLs. The URI field stores
+    the resource location as a string.
 
     Attributes:
         name: Resource filename (e.g., "FORMS.md").
-        path: Absolute path to the resource file.
+        uri: URI string - either a filesystem path or URL (http://, https://).
         content: Loaded content (lazy-loaded, None until read).
     """
 
     name: str
-    path: Path
+    uri: str
     content: str | None = None
 
 
@@ -55,36 +97,84 @@ class SkillScript:
 
     Attributes:
         name: Script name without .py extension.
-        path: Absolute path to the script file.
+        uri: URI string - either a filesystem path or URL (http://, https://).
         skill_name: Parent skill name.
     """
 
     name: str
-    path: Path
+    uri: str
     skill_name: str
 
 
 @dataclass
-class Skill:
-    """A loaded skill instance.
+class Skill(ABC):
+    """Abstract base class for skill instances.
+
+    Skills can be discovered from filesystem directories or created programmatically.
+    The uri field stores the skill's base location (directory path or URL) as a string.
 
     Attributes:
         name: Skill name (from metadata).
-        path: Absolute path to skill directory.
+        uri: URI string for skill's base location. Can be a filesystem path or URL.
         metadata: Parsed metadata from SKILL.md.
         content: Main content from SKILL.md (without frontmatter).
-        resources: Optional resource files (FORMS.md, etc.).
+        resources: Resource files (FORMS.md, etc.). None if no resources.
         scripts: Available scripts in the skill directory or scripts/ subdirectory.
+            None if no scripts.
+        script_executor: Executor for running scripts. Defaults to LocalSkillScriptExecutor
+            if not provided. Can be None for skills without scripts.
     """
 
     name: str
-    path: Path
+    uri: str
     metadata: SkillMetadata
     content: str
-    resources: list[SkillResource] = field(default_factory=list)
-    scripts: list[SkillScript] = field(default_factory=list)
+    resources: list[SkillResource] | None = None
+    scripts: list[SkillScript] | None = None
+    script_executor: SkillScriptExecutor | None = field(default=None, repr=False)
 
     @property
     def description(self) -> str:
         """Get skill description from metadata."""
         return self.metadata.description
+
+    @abstractmethod
+    async def read_resource(self, ctx: RunContext[AgentDepsT], resource_uri: str) -> str:
+        """Read a resource file from this skill.
+
+        Args:
+            ctx: The run context for this agent run.
+            resource_uri: URI or name of the resource file.
+
+        Returns:
+            Resource file content.
+
+        Raises:
+            SkillResourceNotFoundError: If resource is not found.
+            NotImplementedError: For non-filesystem resources (URLs, etc.).
+        """
+        ...
+
+    @abstractmethod
+    async def run_script(
+        self,
+        ctx: RunContext[AgentDepsT],
+        script_uri: str,
+        args: list[str] | None = None,
+    ) -> str:
+        """Execute a script from this skill.
+
+        Args:
+            ctx: The run context for this agent run.
+            script_uri: URI or name of the script (without .py extension).
+            args: Optional command-line arguments (e.g., "-param value").
+
+        Returns:
+            Script output (stdout and stderr combined).
+
+        Raises:
+            SkillResourceNotFoundError: If script is not found.
+            SkillResourceLoadError: If script path is unsafe.
+            SkillScriptExecutionError: If script execution fails.
+        """
+        ...

@@ -19,8 +19,6 @@ from .skills import (
     SkillScriptExecutionError,
     SkillsToolset,
     SkillValidationError,
-    discover_skills,
-    parse_skill_md,
 )
 from .wrapper import WrapperToolset
 
@@ -44,8 +42,6 @@ __all__ = (
     'SkillMetadata',
     'SkillResource',
     'SkillScript',
-    'discover_skills',
-    'parse_skill_md',
     'SkillException',
     'SkillNotFoundError',
     'SkillResourceLoadError',

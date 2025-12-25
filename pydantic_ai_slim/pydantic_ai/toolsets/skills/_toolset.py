@@ -6,33 +6,28 @@ skill discovery and management with Pydantic AI agents.
 
 from __future__ import annotations
 
-import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
-import anyio
-
 from ..._run_context import RunContext
 from ..function import FunctionToolset
-from ._discovery import discover_skills
-from ._exceptions import (
-    SkillNotFoundError,
-    SkillScriptExecutionError,
-)
+from ._directory import SkillsDirectory
+from ._exceptions import SkillNotFoundError
 from ._types import Skill
 
 # Default instruction template for skills system prompt
-DEFAULT_INSTRUCTION_TEMPLATE = """# Skills
+DEFAULT_INSTRUCTION_TEMPLATE = """## Skills
 
 You have access to skills that extend your capabilities. Skills are modular packages containing instructions, resources, and scripts for specialized tasks.
 
-## Available Skills
+### Available Skills
 
 The following skills are available to you. Use them when relevant to the task:
 
 {skills_list}
 
-## How to Use Skills
+### How to Use Skills
 
 **Progressive disclosure**: Load skill information only when needed.
 
@@ -46,22 +41,19 @@ The following skills are available to you. Use them when relevant to the task:
 - Follow the skill's documented usage patterns and examples
 """
 
+# Template used by load_skill
+LOAD_SKILL_TEMPLATE = """# Skill: {skill_name}
+**Description:** {description}
+**Path:** {path}
+**Available Resources:**
+{resources_list}
+**Available Scripts:**
+{scripts_list}
 
-def _is_safe_path(base_path: Path, target_path: Path) -> bool:
-    """Check if target_path is safely within base_path (no path traversal).
+---
 
-    Args:
-        base_path: The base directory path.
-        target_path: The target path to validate.
-
-    Returns:
-        True if target_path is within base_path, False otherwise.
-    """
-    try:
-        target_path.resolve().relative_to(base_path.resolve())
-        return True
-    except ValueError:
-        return False
+{content}
+"""
 
 
 class SkillsToolset(FunctionToolset):
@@ -70,8 +62,7 @@ class SkillsToolset(FunctionToolset):
     See [skills docs](../skills.md) for more information.
 
     This is the primary interface for integrating skills with Pydantic AI agents.
-    It implements the toolset protocol and automatically discovers, loads, and
-    registers skills from specified directories.
+    It manages skills directly and provides tools for skill interaction.
 
     Provides the following tools to agents:
     - list_skills(): List all available skills
@@ -83,12 +74,49 @@ class SkillsToolset(FunctionToolset):
         ```python
         from pydantic_ai import Agent, SkillsToolset
 
-        skills_toolset = SkillsToolset(directories=["./skills"])
-
+        # Default: uses ./skills directory
         agent = Agent(
             model='openai:gpt-4o',
             instructions="You are a helpful assistant.",
-            toolsets=[skills_toolset]
+            toolsets=[SkillsToolset()]
+        )
+
+        # Multiple directories
+        agent = Agent(
+            model='openai:gpt-4o',
+            toolsets=[SkillsToolset(directories=["./skills", "./more-skills"])]
+        )
+
+        # Programmatic skills
+        from pydantic_ai.toolsets.skills import Skill, SkillMetadata
+
+        custom_skill = Skill(
+            name="my-skill",
+            uri="./custom",
+            metadata=SkillMetadata(name="my-skill", description="Custom skill"),
+            content="Instructions here",
+        )
+        agent = Agent(
+            model='openai:gpt-4o',
+            toolsets=[SkillsToolset(skills=[custom_skill])]
+        )
+
+        # Combined mode: both programmatic skills and directories
+        agent = Agent(
+            model='openai:gpt-4o',
+            toolsets=[SkillsToolset(
+                skills=[custom_skill],
+                directories=["./skills"]
+            )]
+        )
+
+        # Using SkillsDirectory instances directly
+        from pydantic_ai.toolsets.skills import SkillsDirectory
+
+        dir1 = SkillsDirectory(path="./skills")
+        agent = Agent(
+            model='openai:gpt-4o',
+            toolsets=[SkillsToolset(directories=[dir1, "./more-skills"])]
         )
         # Skills instructions are automatically injected via get_instructions()
         ```
@@ -96,57 +124,123 @@ class SkillsToolset(FunctionToolset):
 
     def __init__(
         self,
-        directories: list[str | Path],
         *,
-        auto_discover: bool = True,
+        skills: list[Skill] | None = None,
+        directories: list[str | Path | SkillsDirectory] | None = None,
         validate: bool = True,
-        id: str | None = None,
-        script_timeout: int = 30,
-        python_executable: str | Path | None = None,
         max_depth: int | None = 3,
+        id: str | None = None,
         instruction_template: str | None = None,
     ) -> None:
         """Initialize the skills toolset.
 
         Args:
-            directories: List of directory paths to search for skills.
-            auto_discover: Automatically discover and load skills on init.
-            validate: Validate skill structure and metadata on load.
+            skills: List of pre-loaded Skill objects. Can be combined with `directories`.
+            directories: List of directories or SkillsDirectory instances to discover skills from.
+                Can be combined with `skills`. If both are None, defaults to ["./skills"].
+                String/Path entries are converted to SkillsDirectory instances.
+            validate: Validate skill structure during discovery (used when creating SkillsDirectory from str/Path).
+            max_depth: Maximum depth for skill discovery (None for unlimited, used when creating SkillsDirectory from str/Path).
             id: Unique identifier for this toolset.
-            script_timeout: Timeout in seconds for script execution (default: 30).
-            python_executable: Path to Python executable for running scripts.
-                If None, uses sys.executable (default).
-            max_depth: Maximum depth to search for SKILL.md files. None for unlimited.
-                Default is 3 levels deep to prevent performance issues with large trees.
             instruction_template: Custom instruction template for skills system prompt.
                 Must include `{skills_list}` placeholder. If None, uses default template.
+
+        Example:
+            ```python
+            # Default: uses ./skills directory
+            toolset = SkillsToolset()
+
+            # Multiple directories
+            toolset = SkillsToolset(directories=["./skills", "./more-skills"])
+
+            # Programmatic skills
+            toolset = SkillsToolset(skills=[skill1, skill2])
+
+            # Combined mode
+            toolset = SkillsToolset(
+                skills=[skill1, skill2],
+                directories=["./skills", skills_dir_instance]
+            )
+
+            # Using SkillsDirectory instances directly
+            dir1 = SkillsDirectory(path="./skills")
+            toolset = SkillsToolset(directories=[dir1])
+            ```
         """
         super().__init__(id=id)
 
-        self._directories = [Path(d) for d in directories]
+        self._instruction_template = instruction_template
+
+        # Initialize the skills dict and directories list (for refresh)
+        self._skills: dict[str, Skill] = {}
+        self._skill_directories: list[SkillsDirectory] = []
         self._validate = validate
         self._max_depth = max_depth
-        self._script_timeout = script_timeout
-        self._python_executable = str(python_executable) if python_executable else sys.executable
-        self._instruction_template = instruction_template
-        self._skills: dict[str, Skill] = {}
 
-        if auto_discover:
-            self._discover_skills()
+        # Load programmatic skills first
+        if skills is not None:
+            for skill in skills:
+                if skill.name in self._skills:
+                    warnings.warn(
+                        f"Duplicate skill '{skill.name}' found. Overriding previous occurrence.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                self._skills[skill.name] = skill
+
+        # Load directory-based skills
+        if directories is not None:
+            self._load_directory_skills(directories)
+        elif skills is None:
+            # Default: ./skills directory (only if no skills provided)
+            default_dir = Path('./skills')
+            if not default_dir.exists():
+                warnings.warn(
+                    f"Default skills directory '{default_dir}' does not exist. No skills will be loaded.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                self._load_directory_skills([default_dir])
 
         # Register tools
         self._register_tools()
 
-    def _discover_skills(self) -> None:
-        """Discover and load skills from configured directories."""
-        skills = discover_skills(
-            directories=self._directories,
-            validate=self._validate,
-            max_depth=self._max_depth,
-        )
-        self._skills = {skill.name: skill for skill in skills}
+    def _load_directory_skills(self, directories: list[str | Path | SkillsDirectory]) -> None:
+        """Load skills from configured directories.
 
-    def _register_tools(self) -> None:  # noqa: C901
+        Converts directory specifications to SkillsDirectory instances and
+        discovers skills from each directory in a single pass.
+
+        Args:
+            directories: List of directory paths or SkillsDirectory instances.
+        """
+        for directory in directories:
+            # Normalize to SkillsDirectory instance
+            if isinstance(directory, SkillsDirectory):
+                skill_dir = directory
+            else:
+                skill_dir = SkillsDirectory(
+                    path=directory,
+                    validate=self._validate,
+                    max_depth=self._max_depth,
+                )
+
+            # Store for future reference
+            self._skill_directories.append(skill_dir)
+
+            # Discover skills from this directory (last one wins)
+            for _, skill in skill_dir.skills.items():
+                skill_name = skill.name
+                if skill_name in self._skills:
+                    warnings.warn(
+                        f"Duplicate skill '{skill_name}' found. Overriding previous occurrence.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                self._skills[skill_name] = skill
+
+    def _register_tools(self) -> None:
         """Register skill management tools with the toolset.
 
         This method registers all four skill management tools:
@@ -157,23 +251,16 @@ class SkillsToolset(FunctionToolset):
         """
 
         @self.tool
-        async def list_skills(_ctx: RunContext[Any]) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def list_skills(_ctx: RunContext[Any]) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
             """List all available skills with their descriptions.
 
             Only use this tool if the available skills are not in your system prompt.
 
             Returns:
-                Formatted list of available skills with names and descriptions.
+                Dictionary mapping skill names to their descriptions.
+                    An empty dictionary if no skills are available.
             """
-            if not self._skills:
-                return 'No skills available.'
-
-            lines = ['# Available Skills', '']
-
-            for name, skill in sorted(self._skills.items()):
-                lines.append(f'{name}: {skill.metadata.description}')
-
-            return '\n'.join(lines)
+            return {name: skill.metadata.description for name, skill in self._skills.items()}
 
         @self.tool
         async def load_skill(ctx: RunContext[Any], skill_name: str) -> str:  # pyright: ignore[reportUnusedFunction]
@@ -193,39 +280,34 @@ class SkillsToolset(FunctionToolset):
             _ = ctx  # Required by Pydantic AI toolset protocol
             if skill_name not in self._skills:
                 available = ', '.join(sorted(self._skills.keys())) or 'none'
-                return f"Error: Skill '{skill_name}' not found. Available skills: {available}"
+                raise SkillNotFoundError(f"Skill '{skill_name}' not found. Available: {available}")
 
             skill = self._skills[skill_name]
 
-            lines = [
-                f'# Skill: {skill.name}',
-                f'**Description:** {skill.metadata.description}',
-                f'**Path:** {skill.path}',
-                '',
-            ]
-
-            # Add resource list if available
+            # Build resources list
             if skill.resources:
-                lines.append('**Available Resources:**')
-                for resource in skill.resources:
-                    lines.append(f'- {resource.name}')
-                lines.append('')
+                resources_list = '\n'.join(f'- {res.name}' for res in skill.resources)
+            else:
+                resources_list = 'No resources available.'
 
-            # Add scripts list if available
+            # Build scripts list
             if skill.scripts:
-                lines.append('**Available Scripts:**')
-                for script in skill.scripts:
-                    lines.append(f'- {script.name}')
-                lines.append('')
+                scripts_list = '\n'.join(f'- {scr.name}' for scr in skill.scripts)
+            else:
+                scripts_list = 'No scripts available.'
 
-            lines.append('---')
-            lines.append('')
-            lines.append(skill.content)
-
-            return '\n'.join(lines)
+            # Format response
+            return LOAD_SKILL_TEMPLATE.format(
+                skill_name=skill.name,
+                description=skill.metadata.description,
+                path=skill.uri or 'N/A',
+                resources_list=resources_list,
+                scripts_list=scripts_list,
+                content=skill.content,
+            )
 
         @self.tool
-        async def read_skill_resource(  # noqa: D417  # pyright: ignore[reportUnusedFunction]
+        async def read_skill_resource(  # pyright: ignore[reportUnusedFunction]
             ctx: RunContext[Any],
             skill_name: str,
             resource_name: str,
@@ -235,44 +317,21 @@ class SkillsToolset(FunctionToolset):
             Call load_skill first to see which resources are available.
 
             Args:
+                ctx: Run context (required by toolset protocol).
                 skill_name: Name of the skill.
                 resource_name: The resource filename (e.g., "FORMS.md").
 
             Returns:
                 The resource file content.
             """
-            _ = ctx  # Required by Pydantic AI toolset protocol
             if skill_name not in self._skills:
-                return f"Error: Skill '{skill_name}' not found."
+                raise SkillNotFoundError(f"Skill '{skill_name}' not found.")
 
             skill = self._skills[skill_name]
-
-            # Find the resource
-            resource = None
-            for r in skill.resources:
-                if r.name == resource_name:
-                    resource = r
-                    break
-
-            if resource is None:
-                available = [r.name for r in skill.resources]
-                return (
-                    f"Error: Resource '{resource_name}' not found in skill '{skill_name}'. "
-                    f'Available resources: {available}'
-                )
-
-            # Security check
-            if not _is_safe_path(skill.path, resource.path):
-                return 'Error: Resource path escapes skill directory.'
-
-            try:
-                content = resource.path.read_text(encoding='utf-8')
-                return content
-            except OSError as e:
-                return f"Error: Failed to read resource '{resource_name}': {e}"
+            return await skill.read_resource(ctx, resource_name)
 
         @self.tool
-        async def run_skill_script(  # noqa: D417  # pyright: ignore[reportUnusedFunction]
+        async def run_skill_script(  # pyright: ignore[reportUnusedFunction]
             ctx: RunContext[Any],
             skill_name: str,
             script_name: str,
@@ -285,6 +344,7 @@ class SkillsToolset(FunctionToolset):
             loading instructions first will likely fail.
 
             Args:
+                ctx: Run context (required by toolset protocol).
                 skill_name: Name of the skill.
                 script_name: The script name (without .py extension).
                 args: Optional list of command-line arguments (positional args, flags, values).
@@ -292,69 +352,11 @@ class SkillsToolset(FunctionToolset):
             Returns:
                 The script's output (stdout and stderr combined).
             """
-            _ = ctx  # Required by Pydantic AI toolset protocol
             if skill_name not in self._skills:
-                return f"Error: Skill '{skill_name}' not found."
+                raise SkillNotFoundError(f"Skill '{skill_name}' not found.")
 
             skill = self._skills[skill_name]
-
-            # Find the script
-            script = None
-            for s in skill.scripts:
-                if s.name == script_name:
-                    script = s
-                    break
-
-            if script is None:
-                available = [s.name for s in skill.scripts]
-                return (
-                    f"Error: Script '{script_name}' not found in skill '{skill_name}'. Available scripts: {available}"
-                )
-
-            # Security check
-            if not _is_safe_path(skill.path, script.path):
-                return 'Error: Script path escapes skill directory.'
-
-            # Build command
-            cmd = [self._python_executable, str(script.path)]
-            if args:
-                cmd.extend(args)
-
-            try:
-                # Use anyio.run_process for async-compatible execution
-                result = None
-                with anyio.move_on_after(self._script_timeout) as scope:
-                    result = await anyio.run_process(
-                        cmd,
-                        check=False,  # We handle return codes manually
-                        cwd=str(skill.path),
-                    )
-
-                # Check if timeout was reached
-                if scope.cancelled_caught:
-                    raise SkillScriptExecutionError(
-                        f"Script '{script_name}' timed out after {self._script_timeout} seconds"
-                    )
-
-                # At this point, result should be set; if not, treat as an execution error
-                if result is None:
-                    raise SkillScriptExecutionError(
-                        f"Script '{script_name}' did not complete execution; no result was returned"
-                    )
-
-                # Decode output from bytes to string
-                output = result.stdout.decode('utf-8', errors='replace')
-                if result.stderr:
-                    stderr = result.stderr.decode('utf-8', errors='replace')
-                    output += f'\n\nStderr:\n{stderr}'
-
-                if result.returncode != 0:
-                    output += f'\n\nScript exited with code {result.returncode}'
-
-                return output.strip() or '(no output)'
-
-            except OSError as e:
-                raise SkillScriptExecutionError(f"Failed to execute script '{script_name}': {e}") from e
+            return await skill.run_script(ctx, script_name, args)
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         """Return instructions to inject into the agent's system prompt.
@@ -373,8 +375,8 @@ class SkillsToolset(FunctionToolset):
 
         # Build skills list
         skills_list_lines: list[str] = []
-        for name, skill in sorted(self._skills.items()):
-            skills_list_lines.append(f'- **{name}**: {skill.metadata.description}')
+        for skill in sorted(self._skills.values(), key=lambda s: s.name):
+            skills_list_lines.append(f'- **{skill.name}**: {skill.metadata.description}')
         skills_list = '\n'.join(skills_list_lines)
 
         # Use custom template or default
@@ -396,21 +398,15 @@ class SkillsToolset(FunctionToolset):
         """Get a specific skill by name.
 
         Args:
-            name: The skill name.
+            name: Name of the skill to get.
 
         Returns:
-            The Skill object.
+            The requested Skill object.
 
         Raises:
-            SkillNotFoundError: If the skill is not found.
+            SkillNotFoundError: If skill is not found.
         """
         if name not in self._skills:
-            raise SkillNotFoundError(f"Skill '{name}' not found")
+            available = ', '.join(sorted(self._skills.keys())) or 'none'
+            raise SkillNotFoundError(f"Skill '{name}' not found. Available: {available}")
         return self._skills[name]
-
-    def refresh(self) -> None:
-        """Re-discover skills from configured directories.
-
-        Call this method to reload skills after changes to the filesystem.
-        """
-        self._discover_skills()

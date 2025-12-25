@@ -19,12 +19,11 @@
 ::: pydantic_ai.toolsets.skills
     options:
         members:
+        - SkillsDirectory
         - Skill
         - SkillMetadata
         - SkillResource
         - SkillScript
-        - discover_skills
-        - parse_skill_md
         - SkillException
         - SkillNotFoundError
         - SkillResourceLoadError

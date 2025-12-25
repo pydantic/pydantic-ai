@@ -18,9 +18,11 @@ Key benefits:
 ## Quick Example
 
 ```python {title="agent_with_skills.py"}
-from pydantic_ai import Agent, SkillsToolset
+from pydantic_ai import Agent
+from pydantic_ai.toolsets import SkillsToolset
 
 # Initialize Skills Toolset with skill directories
+# Can use directories (str/Path), SkillsDirectory instances, or programmatic skills
 skills_toolset = SkillsToolset(directories=["./skills"])
 
 # Create agent with skills
@@ -46,14 +48,21 @@ print(result.output)
 
 ## How It Works
 
-1. **Discovery**: The toolset scans specified directories for skills (folders with `SKILL.md` files)
+1. **Discovery**: The toolset scans specified directories for skills (folders with `SKILL.md` files) or accepts pre-built `Skill` objects
 2. **Automatic Injection**: Skill names and descriptions are automatically injected into the agent's system prompt via the toolset's `get_instructions()` method
 3. **Registration**: Four skill management tools are registered with the agent
 4. **Progressive Loading**: Agents can:
    - List all available skills with `list_skills()` (optional, as skills are already in system prompt)
-   - Load detailed instructions with `load_skill(name)`
+   - Load detailed instructions with `load_skill(skill_name)`
    - Read additional resources with `read_skill_resource(skill_name, resource_name)`
    - Execute scripts with `run_skill_script(skill_name, script_name, args)`
+
+The toolset supports multiple initialization modes:
+
+- **Directory-based**: Automatically discover skills from filesystem directories (creates [`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill] instances)
+- **Programmatic**: Pass pre-built [`Skill`][pydantic_ai.toolsets.skills.Skill] objects directly (can be custom implementations)
+- **Combined**: Mix both directory-based and programmatic skills
+- **SkillsDirectory instances**: Use [`SkillsDirectory`][pydantic_ai.toolsets.skills.SkillsDirectory] objects for fine-grained control over discovery and script execution
 
 ## Progressive Disclosure
 
@@ -106,10 +115,45 @@ This approach:
 
 The toolset includes security measures:
 
-- **Path traversal prevention**: Resources and scripts are validated to stay within the skill directory using `_is_safe_path()` to prevent directory traversal attacks
+- **Path traversal prevention**: For filesystem-based skills ([`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill]), resources and scripts are validated to stay within the skill directory using path resolution to prevent directory traversal attacks
 - **Script timeout**: Scripts have a configurable timeout (default: 30 seconds) enforced via `anyio.move_on_after()` to prevent hung processes
-- **Subprocess execution**: Scripts run in a separate process via `anyio.run_process()`, but with the same OS-level permissions as your agent process
-- **Resource depth limit**: Resource reading is limited to a maximum depth of 3 levels within the skill directory (`max_depth=3`) to prevent excessive file system traversal
+- **Subprocess execution**: [`LocalSkillScriptExecutor`][pydantic_ai.toolsets.skills.LocalSkillScriptExecutor] runs scripts in a separate process via `anyio.run_process()`, but with the same OS-level permissions as your agent process
+- **Resource depth limit**: Resource discovery is limited to a maximum depth of 3 levels within the skill directory (`max_depth=3`) to prevent excessive file system traversal
+- **Flexible execution**: Custom script executors can implement additional security measures through the [`SkillScriptExecutor`][pydantic_ai.toolsets.skills.SkillScriptExecutor] protocol
+
+## Default Directory Behavior
+
+When initializing [`SkillsToolset`][pydantic_ai.toolsets.skills.SkillsToolset] without arguments, it defaults to discovering skills in the `./skills` directory:
+
+```python
+# These are equivalent
+toolset = SkillsToolset()
+toolset = SkillsToolset(directories=["./skills"])
+```
+
+**Important:** The default directory is NOT used if you provide programmatic skills:
+
+```python
+# No default directory - only programmatic skills
+toolset = SkillsToolset(skills=[custom_skill])
+
+# To use both, explicitly specify directories
+toolset = SkillsToolset(
+    skills=[custom_skill],
+    directories=["./skills"]  # Must be explicit
+)
+```
+
+If the default `./skills` directory doesn't exist, a warning is emitted and no skills are loaded.
+
+## Example Skills
+
+The PydanticAI repository includes example skills you can reference:
+
+- **[arxiv-search](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/skills/arxiv-search)**: Searches arXiv for research papers with Python script
+- **[pydanticai-docs](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/skills/pydanticai-docs)**: Documentation skill for PydanticAI
+
+See the [skills_agent.py example](https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/skills_agent.py) for how to use them.
 
 ## Next Steps
 

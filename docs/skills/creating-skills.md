@@ -66,6 +66,9 @@ The YAML frontmatter must include:
 
 All other fields are optional and stored in the `extra` dictionary of [`SkillMetadata`](../api/skills.md#pydantic_ai.toolsets.skills.SkillMetadata).
 
+!!! note "Validation Behavior"
+    When `validate=True` (default), skills missing the `name` field are skipped with a warning. When `validate=False`, the folder name is used as a fallback for missing `name` fields. See [Validation](#skill-validation) for details.
+
 ## Naming Conventions
 
 Following Anthropic's skill naming conventions:
@@ -76,6 +79,43 @@ Following Anthropic's skill naming conventions:
 | Hyphens for spaces | `web-research` ✅, `web_research` ❌ |
 | Max 64 characters | `data-analyzer` ✅ |
 | No reserved words | Avoid "anthropic" or "claude" in names |
+
+## Resource Discovery
+
+Resources are discovered automatically in two locations:
+
+1. **Root-level markdown files** (except SKILL.md):
+   - `FORMS.md`, `REFERENCE.md`, `GUIDE.md`, etc.
+   - Referenced as: `"FORMS.md"`
+
+2. **Files in `resources/` subdirectory** (recursive with depth limits):
+   - `resources/schema.json`
+   - `resources/data/sample.csv`
+   - `resources/nested/file.txt`
+   - Referenced with full relative path: `"resources/data/sample.csv"`
+
+**Example structure:**
+
+```markdown
+my-skill/
+├── SKILL.md
+├── FORMS.md              # Referenced as "FORMS.md"
+├── REFERENCE.md          # Referenced as "REFERENCE.md"
+└── resources/
+    ├── schema.json       # Referenced as "resources/schema.json"
+    └── data/
+        └── sample.csv    # Referenced as "resources/data/sample.csv"
+```
+
+**Usage in agent:**
+
+```python
+# Root-level resource
+read_skill_resource("my-skill", "FORMS.md")
+
+# Nested resource
+read_skill_resource("my-skill", "resources/data/sample.csv")
+```
 
 ## Adding Scripts to Skills
 
@@ -229,18 +269,22 @@ if __name__ == "__main__":
 
 ```python {title="agent_example.py"}
 import asyncio
-from pydantic_ai import Agent, SkillsToolset
+from pydantic_ai import Agent
+from pydantic_ai.toolsets import SkillsToolset
 
 async def main():
+    # Initialize Skills Toolset
     skills_toolset = SkillsToolset(directories=["./skills"])
 
+    # Create agent with skills
     agent = Agent(
         model='openai:gpt-4o',
         instructions="You are a research assistant.",
         toolsets=[skills_toolset]
     )
-    # Skills instructions are automatically injected
+    # Skills instructions are automatically injected via get_instructions()
 
+    # Run agent - skills tools are automatically available
     result = await agent.run(
         "Find the 3 most recent papers about large language models"
     )
@@ -249,6 +293,168 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+
+## Understanding Skill Types
+
+The skills framework uses an abstract base class pattern with two main classes:
+
+- **[`Skill`][pydantic_ai.toolsets.skills.Skill]** (abstract base class): Defines the interface all skills must implement
+  - Cannot be instantiated directly
+  - Used for type hints and custom implementations
+  - Subclasses must implement `read_resource()` and `run_script()` methods
+
+- **[`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill]** (concrete implementation): Filesystem-based skills
+  - Used by automatic directory-based discovery
+  - Used for programmatic skills with filesystem access
+  - Implements resource reading and script execution for local files
+
+**When creating skills programmatically, use `LocalSkill`** (or create your own `Skill` subclass for custom backends):
+
+```python
+from pydantic_ai.toolsets.skills import LocalSkill  # ✅ Use this
+
+# Correct:
+skill = LocalSkill(name="my-skill", ...)
+
+# Wrong (will fail):
+from pydantic_ai.toolsets.skills import Skill
+skill = Skill(name="my-skill", ...)  # ❌ Error: can't instantiate abstract class
+```
+
+## Programmatic Skills
+
+You can create skills programmatically using [`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill]:
+
+```python
+from pydantic_ai.toolsets.skills import LocalSkill, SkillMetadata, SkillResource, SkillScript
+from pydantic_ai.toolsets import SkillsToolset
+from pathlib import Path
+
+# Create skill with full control
+skill = LocalSkill(
+    name="custom-analyzer",
+    uri=str(Path("./custom-skills/analyzer").resolve()),
+    metadata=SkillMetadata(
+        name="custom-analyzer",
+        description="Custom data analysis skill",
+        extra={"version": "2.0.0", "author": "Your Name"}
+    ),
+    content="""# Custom Analyzer
+
+## When to Use
+Use this skill for advanced data analysis tasks.
+
+## Instructions
+1. Load data using the load_data script
+2. Process with analyze_data script
+3. Export results
+""",
+    resources=[
+        SkillResource(
+            name="REFERENCE.md",
+            uri=str(Path("./custom-skills/analyzer/REFERENCE.md").resolve())
+        )
+    ],
+    scripts=[
+        SkillScript(
+            name="load_data",
+            uri=str(Path("./custom-skills/analyzer/scripts/load_data.py").resolve()),
+            skill_name="custom-analyzer"
+        ),
+        SkillScript(
+            name="analyze_data",
+            uri=str(Path("./custom-skills/analyzer/scripts/analyze_data.py").resolve()),
+            skill_name="custom-analyzer"
+        )
+    ],
+    # Optional: provide custom script executor
+    script_executor=None  # Uses LocalSkillScriptExecutor by default
+)
+
+# Use with toolset
+toolset = SkillsToolset(skills=[skill])
+```
+
+### Custom Skill Implementations
+
+For advanced scenarios, you can create custom [`Skill`][pydantic_ai.toolsets.skills.Skill] subclasses:
+
+```python
+from pydantic_ai.toolsets.skills import Skill, SkillMetadata
+from pydantic_ai import RunContext
+import httpx
+
+class APISkill(Skill):
+    """Skill that fetches resources and executes scripts via API."""
+
+    def __init__(self, api_base_url: str, **kwargs):
+        super().__init__(**kwargs)
+        self.api_base_url = api_base_url
+        self.client = httpx.AsyncClient()
+
+    async def read_resource(self, ctx: RunContext, resource_uri: str) -> str:
+        """Fetch resource from API."""
+        response = await self.client.get(
+            f"{self.api_base_url}/resources/{resource_uri}"
+        )
+        response.raise_for_status()
+        return response.text
+
+    async def run_script(self, ctx: RunContext, script_uri: str, args: list[str] | None = None) -> str:
+        """Execute script via API."""
+        response = await self.client.post(
+            f"{self.api_base_url}/scripts/{script_uri}",
+            json={"args": args or []}
+        )
+        response.raise_for_status()
+        return response.text
+
+# Create API-based skill
+api_skill = APISkill(
+    name="remote-processor",
+    uri="https://api.example.com/skills/processor",
+    api_base_url="https://api.example.com/skills/processor",
+    metadata=SkillMetadata(
+        name="remote-processor",
+        description="Remote data processing via API"
+    ),
+    content="Instructions for using the remote processor..."
+)
+
+toolset = SkillsToolset(skills=[api_skill])
+```
+
+## Skill Validation
+
+The `validate` parameter controls skill structure validation during discovery:
+
+### Validation Enabled (Default)
+
+```python
+toolset = SkillsToolset(directories=["./skills"], validate=True)
+```
+
+**Behavior:**
+
+- **Missing `name` field**: Skill is skipped with warning
+- **Invalid name format**: Warning emitted, skill still loaded
+- **Description too long** (>1024 chars): Warning emitted, skill still loaded
+- **Instructions too long** (>500 lines): Warning emitted, skill still loaded
+- **YAML parse errors**: [`SkillValidationError`][pydantic_ai.toolsets.skills.SkillValidationError] raised
+
+### Validation Disabled
+
+```python
+toolset = SkillsToolset(directories=["./skills"], validate=False)
+```
+
+**Behavior:**
+
+- **Missing `name` field**: Uses folder name as fallback
+- **No format checks**: All validation warnings suppressed
+- **YAML parse errors**: Still raises [`SkillValidationError`][pydantic_ai.toolsets.skills.SkillValidationError]
+
+**Recommendation:** Keep validation enabled during development to catch issues early. Disable in production if you need more permissive loading (e.g., accepting skills without strict naming conventions).
 
 ## Best Practices
 
