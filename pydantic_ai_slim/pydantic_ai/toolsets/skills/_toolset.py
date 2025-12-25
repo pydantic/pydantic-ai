@@ -206,6 +206,32 @@ class SkillsToolset(FunctionToolset):
         # Register tools
         self._register_tools()
 
+    @property
+    def skills(self) -> dict[str, Skill]:
+        """Get the dictionary of loaded skills.
+
+        Returns:
+            Dictionary mapping skill names to Skill objects.
+        """
+        return self._skills
+
+    def get_skill(self, name: str) -> Skill:
+        """Get a specific skill by name.
+
+        Args:
+            name: Name of the skill to get.
+
+        Returns:
+            The requested Skill object.
+
+        Raises:
+            SkillNotFoundError: If skill is not found.
+        """
+        if name not in self._skills:
+            available = ', '.join(sorted(self._skills.keys())) or 'none'
+            raise SkillNotFoundError(f"Skill '{name}' not found. Available: {available}")
+        return self._skills[name]
+
     def _load_directory_skills(self, directories: list[str | Path | SkillsDirectory]) -> None:
         """Load skills from configured directories.
 
@@ -230,7 +256,7 @@ class SkillsToolset(FunctionToolset):
             self._skill_directories.append(skill_dir)
 
             # Discover skills from this directory (last one wins)
-            for _, skill in skill_dir.skills.items():
+            for _, skill in skill_dir.get_skills().items():
                 skill_name = skill.name
                 if skill_name in self._skills:
                     warnings.warn(
@@ -384,29 +410,3 @@ class SkillsToolset(FunctionToolset):
 
         # Format template with skills list
         return template.format(skills_list=skills_list)
-
-    @property
-    def skills(self) -> dict[str, Skill]:
-        """Get the dictionary of loaded skills.
-
-        Returns:
-            Dictionary mapping skill names to Skill objects.
-        """
-        return self._skills
-
-    def get_skill(self, name: str) -> Skill:
-        """Get a specific skill by name.
-
-        Args:
-            name: Name of the skill to get.
-
-        Returns:
-            The requested Skill object.
-
-        Raises:
-            SkillNotFoundError: If skill is not found.
-        """
-        if name not in self._skills:
-            available = ', '.join(sorted(self._skills.keys())) or 'none'
-            raise SkillNotFoundError(f"Skill '{name}' not found. Available: {available}")
-        return self._skills[name]
