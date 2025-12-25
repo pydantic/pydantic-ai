@@ -361,8 +361,8 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         tool_name: str,
         current_tool_calls: int,
-        total_accepted_in_batch: int,
-        tool_accepted_in_batch: int,
+        total_accepted_in_step: int,
+        tool_accepted_in_step: int,
     ) -> str | None:
         """Check if a tool call is allowed, considering both aggregate and per-tool limits.
 
@@ -373,8 +373,8 @@ class ToolManager(Generic[AgentDepsT]):
         Args:
             tool_name: The name of the tool to check.
             current_tool_calls: Number of tool calls already made in this run (from usage).
-            total_accepted_in_batch: Number of tool calls already accepted in the current batch.
-            tool_accepted_in_batch: Number of times this specific tool was accepted in the batch.
+            total_accepted_in_step: Number of tool calls already accepted in the current batch.
+            tool_accepted_in_step: Number of times this specific tool was accepted in the batch.
 
         Returns:
             None if the call is allowed.
@@ -387,8 +387,8 @@ class ToolManager(Generic[AgentDepsT]):
 
         # Check aggregate limits (policy-level)
         if (policy := ctx.tools_usage_policy) is not None:
-            total_if_accepted = current_tool_calls + total_accepted_in_batch + 1
-            calls_in_step_if_accepted = total_accepted_in_batch + 1
+            total_if_accepted = current_tool_calls + total_accepted_in_step + 1
+            calls_in_step_if_accepted = total_accepted_in_step + 1
 
             if policy.max_uses is not None and total_if_accepted > policy.max_uses:
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
@@ -402,7 +402,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         # Check per-tool limits
         current_tool_uses = self.get_current_uses_of_tool(tool_name)
-        tool_uses_in_step = tool_accepted_in_batch + 1
+        tool_uses_in_step = tool_accepted_in_step + 1
         max_uses = self.get_max_uses_of_tool(tool_name)
         max_uses_per_step = self.get_max_uses_per_step_of_tool(tool_name)
 

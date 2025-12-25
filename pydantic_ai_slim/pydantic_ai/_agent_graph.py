@@ -1033,7 +1033,6 @@ def _handle_tool_calls_parts(
     tool_manager: ToolManager[DepsT],
     calls_to_run: list[_messages.ToolCallPart],
 ):
-    # Track accepted calls for partial acceptance
     accepted_per_tool: Counter[str] = Counter()
     total_accepted = 0
 
