@@ -241,7 +241,7 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 ### Response-Based Fallback
 
-In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure.
+In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a built-in tool reporting failure.
 
 The `fallback_on` parameter accepts:
 
@@ -253,13 +253,28 @@ The `fallback_on` parameter accepts:
 
 Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as `ModelResponse`, it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler. Use the `OnResponse` wrapper for lambdas that should be response handlers.
 
-A common use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
+#### Finish Reason Example
+
+A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
+
+```python {title="fallback_on_finish_reason.py" test="skip" lint="skip"}
+from pydantic_ai.messages import ModelResponse
+
+def bad_finish_reason(response: ModelResponse) -> bool:
+    """Fallback if the model stopped due to length limit or content filter."""
+    # Common finish reasons: 'stop', 'end_turn', 'tool_use', 'length', 'content_filter'
+    return response.finish_reason not in ('stop', 'end_turn', 'tool_use', None)
+```
+
+#### Built-in Tool Failure Example
+
+A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
 
 ```python {title="fallback_on_response.py" test="skip" lint="skip"}
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, ModelResponse
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.google import GoogleModel
@@ -267,8 +282,6 @@ from pydantic_ai.models.google import GoogleModel
 
 def web_fetch_failed(response: ModelResponse) -> bool:
     """Check if a web_fetch built-in tool failed to retrieve content."""
-    call: BuiltinToolCallPart
-    result: BuiltinToolReturnPart
     for call, result in response.builtin_tool_calls:
         if call.tool_name != 'web_fetch':
             continue

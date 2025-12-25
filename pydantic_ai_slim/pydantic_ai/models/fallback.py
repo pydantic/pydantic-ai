@@ -1,11 +1,12 @@
 from __future__ import annotations as _annotations
 
 import inspect
+import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, NoReturn, get_type_hints
+from typing import TYPE_CHECKING, Any, NoReturn, get_origin, get_type_hints
 
 from opentelemetry.trace import get_current_span
 
@@ -73,6 +74,10 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 
     Returns True if the first parameter is type-hinted as ModelResponse.
     Returns False otherwise (including if there are no type hints).
+
+    Note: Async response handlers are not supported. If an async callable is detected
+    with a ModelResponse type hint, it will still be classified as a response handler,
+    but will fail at runtime when called synchronously.
     """
     try:
         # Get the signature to find the first parameter name
@@ -83,16 +88,24 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 
         first_param = params[0]
 
-        # Try to get type hints
+        # Try to get type hints - this resolves forward references automatically
         hints = get_type_hints(handler)
         param_type = hints.get(first_param.name)
 
         if param_type is None:
             return False
 
-        # Check if the type is ModelResponse (compare by name to handle forward refs)
-        type_name = getattr(param_type, '__name__', str(param_type))
-        return type_name == 'ModelResponse'
+        # Handle parameterized generic types (e.g., Optional[ModelResponse])
+        origin = get_origin(param_type)
+        check_type = origin if origin is not None else param_type
+
+        # Use identity check or issubclass for robust type comparison
+        # This handles forward refs, type aliases, and subclasses correctly
+        if check_type is ModelResponse:
+            return True
+        if isinstance(check_type, type) and issubclass(check_type, ModelResponse):
+            return True
+        return False
     except Exception:
         # If we can't inspect (e.g., built-in, complex type hints), assume exception handler
         return False
@@ -201,6 +214,15 @@ class FallbackModel(Model):
                         f'fallback_on items must be exception types, callables, or OnResponse, '
                         f'got {type(item).__name__}'
                     )
+            # Warn if empty sequence was provided
+            if not self._exception_handlers and not self._response_handlers:
+                warnings.warn(
+                    'FallbackModel created with empty fallback_on list. '
+                    'All exceptions will propagate and all responses will be accepted. '
+                    'Consider using fallback_on=(ModelAPIError,) for default behavior.',
+                    UserWarning,
+                    stacklevel=4,
+                )
             return
 
         raise TypeError(f'Invalid fallback_on type: {type(fallback_on).__name__}')
@@ -244,7 +266,7 @@ class FallbackModel(Model):
         In case of failure, raise a FallbackExceptionGroup with all exceptions.
         """
         exceptions: list[Exception] = []
-        response_rejections: int = 0
+        rejected_models: list[str] = []
 
         for model in self.models:
             try:
@@ -257,13 +279,13 @@ class FallbackModel(Model):
                 raise exc
 
             if self._should_fallback_on_response(response):
-                response_rejections += 1
+                rejected_models.append(model.model_name)
                 continue
 
             self._set_span_attributes(model, prepared_parameters)
             return response
 
-        _raise_fallback_exception_group(exceptions, response_rejections)
+        _raise_fallback_exception_group(exceptions, rejected_models)
 
     @asynccontextmanager
     async def request_stream(
@@ -300,7 +322,7 @@ class FallbackModel(Model):
                 yield response
                 return
 
-        _raise_fallback_exception_group(exceptions, 0)
+        _raise_fallback_exception_group(exceptions, [])
 
     @cached_property
     def profile(self) -> ModelProfile:
@@ -337,11 +359,19 @@ def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> Exce
     return handler
 
 
-def _raise_fallback_exception_group(exceptions: list[Exception], response_rejections: int) -> NoReturn:
-    """Raise a FallbackExceptionGroup combining exceptions and rejections."""
+def _raise_fallback_exception_group(exceptions: list[Exception], rejected_models: list[str]) -> NoReturn:
+    """Raise a FallbackExceptionGroup combining exceptions and response rejections.
+
+    Args:
+        exceptions: List of exceptions raised by models.
+        rejected_models: List of model names whose responses were rejected by fallback_on handlers.
+    """
     all_errors: list[Exception] = list(exceptions)
-    if response_rejections > 0:
-        all_errors.append(RuntimeError(f'{response_rejections} model response(s) rejected by fallback_on'))
+    if rejected_models:
+        models_str = ', '.join(f"'{m}'" for m in rejected_models)
+        all_errors.append(
+            RuntimeError(f'{len(rejected_models)} model response(s) rejected by fallback_on handler: {models_str}')
+        )
 
     if all_errors:
         raise FallbackExceptionGroup('All models from FallbackModel failed', all_errors)

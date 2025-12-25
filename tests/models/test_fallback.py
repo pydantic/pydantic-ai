@@ -927,9 +927,6 @@ Don't include any text or Markdown fencing before or after.
     )
 
 
-# --- Response-based fallback tests (non-streaming only) ---
-
-
 def primary_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('primary response')])
 
@@ -1162,9 +1159,6 @@ def test_response_handler_sync() -> None:
     assert result.output == 'fallback response'
 
 
-# --- Tests for unified fallback_on API ---
-
-
 def test_fallback_on_list_of_exception_types() -> None:
     """Test fallback_on with a list containing individual exception types."""
 
@@ -1395,3 +1389,84 @@ def test_fallback_on_on_response_in_list() -> None:
 
     assert len(fallback._exception_handlers) == 0  # pyright: ignore[reportPrivateUsage]
     assert len(fallback._response_handlers) == 2  # pyright: ignore[reportPrivateUsage]
+
+
+def test_forward_reference_type_hint() -> None:
+    """Test that forward reference type hints are resolved correctly.
+
+    Note: With `from __future__ import annotations`, all annotations are
+    implicitly forward references and get_type_hints() resolves them.
+    This test verifies that our type detection works with this mechanism.
+    """
+    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
+
+    # With `from __future__ import annotations`, this annotation is a forward ref
+    # that gets resolved by get_type_hints()
+    def handler_with_forward_ref(response: ModelResponse) -> bool:
+        return False
+
+    # Should be detected as response handler after get_type_hints() resolves the forward ref
+    assert _is_response_handler(handler_with_forward_ref) is True
+
+
+def test_on_response_is_actually_called_in_mixed_list() -> None:
+    """Verify OnResponse handlers are actually invoked in mixed handler lists."""
+    call_count = [0]
+
+    def counting_handler(response: ModelResponse) -> bool:
+        call_count[0] += 1
+        return False  # Don't trigger fallback
+
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=[ModelAPIError, OnResponse(counting_handler)],
+    )
+    agent = Agent(model=fallback)
+    agent.run_sync('hello')
+
+    # Verify the response handler was actually called
+    assert call_count[0] == 1
+
+
+def test_empty_fallback_on_list_warning() -> None:
+    """Test that empty fallback_on list produces a warning."""
+    import warnings
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        FallbackModel(
+            primary_model,
+            fallback_model_impl,
+            fallback_on=[],
+        )
+
+        assert len(w) == 1
+        assert issubclass(w[0].category, UserWarning)
+        assert 'empty fallback_on list' in str(w[0].message)
+
+
+async def test_response_rejection_error_includes_model_name() -> None:
+    """Test that error message includes rejected model names."""
+
+    def always_reject(response: ModelResponse) -> bool:
+        return True
+
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=always_reject,
+    )
+    agent = Agent(model=fallback)
+
+    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+        await agent.run('hello')
+
+    # Find the RuntimeError in the exception group
+    runtime_errors = [e for e in exc_info.value.exceptions if isinstance(e, RuntimeError)]
+    assert len(runtime_errors) == 1
+
+    error_msg = str(runtime_errors[0])
+    # Should include model names
+    assert 'function:primary_response:' in error_msg or 'function:fallback_response:' in error_msg
+    assert 'rejected by fallback_on handler' in error_msg
