@@ -15,6 +15,7 @@ from functools import cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -308,20 +309,18 @@ def vcr_config():
 
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
-    yield
-    for provider in [
-        'openai',
-        'anthropic',
-        'azure',
-        'google-gla',
-        'google-vertex',
-        'groq',
-        'mistral',
-        'cohere',
-        'deepseek',
-        None,
-    ]:
-        await cached_async_http_client(provider=provider).aclose()
+    clients: list[httpx.AsyncClient] = []
+
+    def store_http_client(*args: Any, **kwargs: Any):
+        client = cached_async_http_client(*args, **kwargs)
+        clients.append(client)
+        return client
+
+    with patch('pydantic_ai.models.cached_async_http_client', side_effect=store_http_client):
+        yield
+
+    for client in clients:
+        await client.aclose()
 
 
 @pytest.fixture(scope='session')
