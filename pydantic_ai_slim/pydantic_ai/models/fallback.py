@@ -120,7 +120,8 @@ def _is_exception_types_tuple(value: Any) -> bool:
     """Check if value is a tuple of exception types (the old API format)."""
     if not isinstance(value, tuple):
         return False
-    return all(_is_exception_type(item) for item in value)
+    items: tuple[Any, ...] = value
+    return all(_is_exception_type(item) for item in items)
 
 
 @dataclass(init=False)
