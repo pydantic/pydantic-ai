@@ -383,13 +383,13 @@ class ToolManager(Generic[AgentDepsT]):
             # If limits would be exceeded and partial acceptance is not allowed, reject all calls.
             # For partial acceptance to work:
             # 1. Policy must allow it (defaults to True; if no policy is set, we use the default True)
-            # 2. The tool's ToolLimits must have partial_acceptance=True (also defaults to True)
+            # 2. The tool's ToolLimits must have partial_acceptance != False (None means inherit default True)
             policy_allows_partial = policy is None or policy.partial_acceptance
             if not (
                 policy_allows_partial
                 and (tool := self.tools.get(tool_name)) is not None
                 and (usage_limits := tool.usage_limits) is not None
-                and usage_limits.partial_acceptance
+                and usage_limits.partial_acceptance is not False  # None means inherit default True
             ):
                 return f'Tool use limit reached for tool "{tool_name}".'
 

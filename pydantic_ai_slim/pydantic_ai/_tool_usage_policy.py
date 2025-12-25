@@ -55,23 +55,24 @@ class ToolLimits:
     Set to `None` for unlimited (default).
     """
 
-    partial_acceptance: bool = True
+    partial_acceptance: bool | None = None
     """Whether this tool allows partial acceptance when its usage limits would be exceeded.
 
     When a model requests multiple calls to this tool in a single step, and those calls
     would exceed the tool's `max_uses` or `max_uses_per_step` limit:
 
-    - `True` (default): Accept as many calls as allowed, reject the rest individually.
+    - `True`: Accept as many calls as allowed, reject the rest individually.
     - `False`: Reject ALL calls to this tool if not all of them can be accepted.
       Use this for tools that have transactional semantics or require all calls to
       succeed together for correct behavior.
+    - `None` (default): Inherit the default behavior (equivalent to `True`).
 
     Note:
-        Both this setting and [`AgentToolPolicy.partial_acceptance`][pydantic_ai.AgentToolPolicy.partial_acceptance]
-        default to `True`. The policy-level setting acts as a master switch—if the policy
-        has `partial_acceptance=False`, this per-tool setting has no effect and all calls
-        will be rejected when limits are exceeded. If no policy is set, the default `True`
-        behavior applies.
+        When specifying per-tool limits in [`AgentToolPolicy.tool_usage_limits`][pydantic_ai.AgentToolPolicy.tool_usage_limits],
+        leaving this as `None` allows the tool's own `partial_acceptance` setting to take effect.
+        The policy-level [`AgentToolPolicy.partial_acceptance`][pydantic_ai.AgentToolPolicy.partial_acceptance]
+        acts as a master switch—if the policy has `partial_acceptance=False`, this per-tool
+        setting has no effect and all calls will be rejected when limits are exceeded.
 
     Example:
         ```python
