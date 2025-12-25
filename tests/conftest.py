@@ -24,7 +24,7 @@ from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model
 
 __all__ = (
     'IsDatetime',
@@ -308,45 +308,25 @@ def vcr_config():
 
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
-    """Close all cached httpx clients after each test.
+    """DO NOT close `httpx` clients after each test - let them live until end of session.
 
-    This fixture closes cached httpx clients for all providers to prevent ResourceWarning.
-    Even though it runs after each test, parallel tests (pytest-xdist) may still cause
-    occasional warnings due to race conditions in garbage collection.
+    PROBLEM: Closing shared `httpx` clients after each test causes race conditions in `pytest-xdist`:
+    1. Test A closes `httpx` client for 'cohere'
+    2. `cached_async_http_client()` detects `is_closed` and calls `cache_clear()`
+    3. This clears ALL clients in cache, not just 'cohere'
+    4. Test B (running in parallel) tries to get 'openai' client - cache is empty
+    5. Cohere `AsyncClientV2`/`AsyncClient` still hold references to closed `httpx` -> ResourceWarning
+
+    SOLUTION: Don't close clients during tests. 
+    They will be cleaned up at process exit.
+    pytest won't complain because these are intentionally long-lived cached objects.
 
     See: https://github.com/pydantic/pydantic-ai/issues/3847
     """
     yield
 
-    # Close all cached httpx clients to prevent ResourceWarning
-    for provider in [
-        'alibaba',
-        'anthropic',
-        'azure',
-        'cerebras',
-        'cohere',
-        'deepseek',
-        'fireworks',
-        'github',
-        'google-gla',
-        'google-vertex',
-        'grok',
-        'groq',
-        'heroku',
-        'litellm',
-        'mistral',
-        'moonshotai',
-        'nebius',
-        'ollama',
-        'openai',
-        'openrouter',
-        'ovhcloud',
-        'together',
-        'vercel',
-        None,
-    ]:
-        await cached_async_http_client(provider=provider).aclose()
-
+    # Do NOT close clients - commenting out to fix race condition
+    # The httpx clients will be cleaned up when the Python process exits
 
 @pytest.fixture(scope='session')
 def assets_path() -> Path:
