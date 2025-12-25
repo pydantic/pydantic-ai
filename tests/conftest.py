@@ -463,6 +463,11 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     return_value = (NoOpCredentials(), 'pydantic-ai')
     mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
 
+    # Mock google.auth.default() to prevent GCE metadata server requests (http://169.254.169.254)
+    # which appear after we stopped closing httpx clients between tests.
+    # See: https://github.com/pydantic/pydantic-ai/issues/3847
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
+
 
 @pytest.fixture()
 async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
