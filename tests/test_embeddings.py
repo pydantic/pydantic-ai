@@ -18,7 +18,7 @@ from pydantic_ai.embeddings import (
     TestEmbeddingModel,
     infer_embedding_model,
 )
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -39,6 +39,9 @@ with try_import() as openai_imports_successful:
 with try_import() as cohere_imports_successful:
     from pydantic_ai.embeddings.cohere import CohereEmbeddingModel, LatestCohereEmbeddingModelNames
     from pydantic_ai.providers.cohere import CohereProvider
+
+with try_import() as voyageai_imports_successful:
+    from pydantic_ai.embeddings.voyageai import LatestVoyageAIEmbeddingModelNames, VoyageAIEmbeddingModel
 
 with try_import() as sentence_transformers_imports_successful:
     from sentence_transformers import SentenceTransformer
@@ -318,6 +321,59 @@ class TestCohere:
             await embedder.embed_query('Hello, world!')
 
 
+@pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
+@pytest.mark.vcr
+class TestVoyageAI:
+    async def test_infer_model(self, voyage_api_key: str):
+        with patch.dict(os.environ, {'VOYAGE_API_KEY': voyage_api_key}):
+            model = infer_embedding_model('voyageai:voyage-3.5')
+        assert isinstance(model, VoyageAIEmbeddingModel)
+        assert model.model_name == 'voyage-3.5'
+        assert model.system == 'voyageai'
+
+    async def test_query(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-3.5', api_key=voyage_api_key)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                model_name='voyage-3.5',
+                timestamp=IsDatetime(),
+                provider_name='voyageai',
+            )
+        )
+
+    async def test_documents(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-3.5', api_key=voyage_api_key)
+        embedder = Embedder(model)
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
+                inputs=['hello', 'world'],
+                input_type='document',
+                model_name='voyage-3.5',
+                timestamp=IsDatetime(),
+                provider_name='voyageai',
+            )
+        )
+
+    async def test_max_input_tokens(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-3.5', api_key=voyage_api_key)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(32000)
+
+    async def test_embed_error(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('nonexistent', api_key=voyage_api_key)
+        embedder = Embedder(model)
+        with pytest.raises(ModelAPIError, match='not supported'):
+            await embedder.embed_query('Hello, world!')
+
+
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
     @pytest.fixture(scope='session')
@@ -373,7 +429,7 @@ class TestSentenceTransformers:
 
 
 @pytest.mark.skipif(
-    not openai_imports_successful() or not cohere_imports_successful(),
+    not openai_imports_successful() or not cohere_imports_successful() or not voyageai_imports_successful(),
     reason='some embedding package was not installed',
 )
 def test_known_embedding_model_names():  # pragma: lax no cover
@@ -387,8 +443,9 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 
     openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
+    voyageai_names = [f'voyageai:{n}' for n in get_model_names(LatestVoyageAIEmbeddingModelNames)]
 
-    generated_names = sorted(openai_names + cohere_names)
+    generated_names = sorted(openai_names + cohere_names + voyageai_names)
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
     if generated_names != known_model_names:
