@@ -352,8 +352,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                             if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
                                 part.dynamic_ref
                             ):
+                                # To enable dynamic system prompt refs in future runs, use a placeholder string
                                 updated_part_content = await runner.run(run_context)
-                                part = _messages.SystemPromptPart(updated_part_content, dynamic_ref=part.dynamic_ref)
+                                part = _messages.SystemPromptPart(
+                                    updated_part_content or '', dynamic_ref=part.dynamic_ref
+                                )
 
                         reevaluated_message_parts.append(part)
 
@@ -367,8 +370,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         for sys_prompt_runner in self.system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
             if sys_prompt_runner.dynamic:
-                messages.append(_messages.SystemPromptPart(prompt, dynamic_ref=sys_prompt_runner.function.__qualname__))
-            else:
+                # To enable dynamic system prompt refs in future runs, use a placeholder string
+                messages.append(
+                    _messages.SystemPromptPart(prompt or '', dynamic_ref=sys_prompt_runner.function.__qualname__)
+                )
+            elif prompt:
+                # omit empty system prompts
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
 

@@ -11,7 +11,7 @@ from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.providers import Provider
 
 try:
-    from cohere import AsyncClientV2
+    from cohere import AsyncClient, AsyncClientV2
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `cohere` package to use the Cohere provider, '
@@ -34,6 +34,10 @@ class CohereProvider(Provider[AsyncClientV2]):
     @property
     def client(self) -> AsyncClientV2:
         return self._client
+
+    @property
+    def v1_client(self) -> AsyncClient | None:
+        return self._v1_client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         return cohere_model_profile(model_name)
@@ -59,6 +63,7 @@ class CohereProvider(Provider[AsyncClientV2]):
             assert http_client is None, 'Cannot provide both `cohere_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
             self._client = cohere_client
+            self._v1_client = None
         else:
             api_key = api_key or os.getenv('CO_API_KEY')
             if not api_key:
@@ -70,6 +75,8 @@ class CohereProvider(Provider[AsyncClientV2]):
             base_url = os.getenv('CO_BASE_URL')
             if http_client is not None:
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
+                self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
             else:
                 http_client = cached_async_http_client(provider='cohere')
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
+                self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
