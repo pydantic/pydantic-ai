@@ -44,6 +44,13 @@ KnownEmbeddingModelName = TypeAliasType(
         'cohere:embed-english-light-v3.0',
         'cohere:embed-multilingual-v3.0',
         'cohere:embed-multilingual-light-v3.0',
+        'voyageai:voyage-3-large',
+        'voyageai:voyage-3.5',
+        'voyageai:voyage-3.5-lite',
+        'voyageai:voyage-code-3',
+        'voyageai:voyage-finance-2',
+        'voyageai:voyage-law-2',
+        'voyageai:voyage-code-2',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Embedder`][pydantic_ai.embeddings.Embedder].
@@ -70,13 +77,24 @@ def infer_embedding_model(
     except ValueError as e:
         raise ValueError('You must provide a provider prefix when specifying an embedding model name') from e
 
-    provider = provider_factory(provider_name)
-
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider
 
         model_kind = normalize_gateway_provider(model_kind)
+
+    # Handle models that don't need a provider first
+    if model_kind == 'sentence-transformers':
+        from .sentence_transformers import SentenceTransformerEmbeddingModel
+
+        return SentenceTransformerEmbeddingModel(model_name)
+    elif model_kind == 'voyageai':
+        from .voyageai import VoyageAIEmbeddingModel
+
+        return VoyageAIEmbeddingModel(model_name)
+
+    # For provider-based models, infer the provider
+    provider = provider_factory(provider_name)
 
     if model_kind in (
         'openai',
@@ -92,10 +110,6 @@ def infer_embedding_model(
         from .cohere import CohereEmbeddingModel
 
         return CohereEmbeddingModel(model_name, provider=provider)
-    elif model_kind == 'sentence-transformers':
-        from .sentence_transformers import SentenceTransformerEmbeddingModel
-
-        return SentenceTransformerEmbeddingModel(model_name)
     else:
         raise UserError(f'Unknown embeddings model: {model}')  # pragma: no cover
 
