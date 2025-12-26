@@ -99,7 +99,6 @@ with gr.Blocks() as demo:
     past_messages = gr.State([])
     chatbot = gr.Chatbot(
         label='Packing Assistant',
-        type='messages',
         avatar_images=(None, 'https://ai.pydantic.dev/img/logo-white.svg'),
         examples=[
             {'text': 'What is the weather like in Miami?'},
