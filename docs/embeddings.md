@@ -241,6 +241,62 @@ embedder = Embedder(
 )
 ```
 
+### VoyageAI
+
+[`VoyageAIEmbeddingModel`][pydantic_ai.embeddings.voyageai.VoyageAIEmbeddingModel] provides access to VoyageAI's embedding models, which are optimized for retrieval with specialized models for code, finance, and legal domains.
+
+#### Install
+
+To use VoyageAI embedding models, you need to install `pydantic-ai-slim` with the `voyageai` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[voyageai]"
+```
+
+#### Configuration
+
+To use `VoyageAIEmbeddingModel`, go to [dash.voyageai.com](https://dash.voyageai.com/) to generate an API key. Once you have the API key, you can set it as an environment variable:
+
+```bash
+export VOYAGE_API_KEY='your-api-key'
+```
+
+You can then use the model:
+
+```python {title="voyageai_embeddings.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('voyageai:voyage-3.5')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1024
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+See the [VoyageAI Embeddings documentation](https://docs.voyageai.com/docs/embeddings) for available models.
+
+#### VoyageAI-Specific Settings
+
+VoyageAI models support additional settings via [`VoyageAIEmbeddingSettings`][pydantic_ai.embeddings.voyageai.VoyageAIEmbeddingSettings]:
+
+```python {title="voyageai_settings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingSettings
+
+embedder = Embedder(
+    'voyageai:voyage-3.5',
+    settings=VoyageAIEmbeddingSettings(
+        dimensions=512,  # Reduce output dimensions
+        voyageai_truncation=False,  # Raise error if input exceeds context length
+        voyageai_output_dtype='int8',  # Use quantized embeddings for efficiency
+    ),
+)
+```
+
 ### Sentence Transformers (Local)
 
 [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [sentence-transformers](https://www.sbert.net/) library. This is ideal for:
