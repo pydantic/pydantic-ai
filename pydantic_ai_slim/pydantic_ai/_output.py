@@ -1018,16 +1018,13 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
     outputs_flat: list[T | type[str]] = []
     for output in outputs:
         if isinstance(output, NativeOutput):
-            native_outputs = cast(OutputSpec[T], output.outputs)  # pyright: ignore[reportUnknownMemberType]
-            outputs_flat.extend(types_from_output_spec(native_outputs))
+            outputs_flat.extend(types_from_output_spec(cast(NativeOutput[T], output).outputs))
         elif isinstance(output, PromptedOutput):
-            prompted_outputs = cast(OutputSpec[T], output.outputs)  # pyright: ignore[reportUnknownMemberType]
-            outputs_flat.extend(types_from_output_spec(prompted_outputs))
+            outputs_flat.extend(types_from_output_spec(cast(PromptedOutput[T], output).outputs))
         elif isinstance(output, TextOutput):
             outputs_flat.append(str)
         elif isinstance(output, ToolOutput):
-            tool_output = cast(OutputSpec[T], output.output)  # pyright: ignore[reportUnknownMemberType]
-            outputs_flat.extend(types_from_output_spec(tool_output))
+            outputs_flat.extend(types_from_output_spec(cast(ToolOutput[T], output).output))
         elif union_types := _utils.get_union_args(output):
             outputs_flat.extend(union_types)
         elif inspect.isfunction(output) or inspect.ismethod(output):
