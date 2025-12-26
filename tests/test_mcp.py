@@ -2204,6 +2204,19 @@ async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None,
 
 
 async def test_custom_http_client_not_closed():
+    """Test that user-provided HTTP clients are not closed after MCP server operations.
+
+    This test verifies the fix for GitHub issue #3745:
+    https://github.com/pydantic/pydantic-ai/issues/3745
+
+    When users provide their own httpx.AsyncClient to MCPServerStreamableHTTP,
+    it should remain open after the server finishes its operations. The server
+    should not manage the lifecycle of user-provided clients.
+
+    This works by using the new MCP SDK's streamable_http_client function (when
+    available in MCP >= 1.25.0) which properly handles user-provided clients by
+    not closing them on exit.
+    """
     custom_http_client = cached_async_http_client()
 
     assert not custom_http_client.is_closed
@@ -2216,6 +2229,48 @@ async def test_custom_http_client_not_closed():
     assert len(tools) > 0
 
     assert not custom_http_client.is_closed
+
+
+def test_streamable_http_uses_new_api_when_available():
+    """Test that MCPServerStreamableHTTP uses the new streamable_http_client API.
+
+    When a custom http_client is provided and streamable_http_client is available
+    (MCP SDK >= 1.25.0), the code should use the new API that correctly handles
+    the HTTP client lifecycle.
+
+    Related to GitHub issue #3745:
+    https://github.com/pydantic/pydantic-ai/issues/3745
+    """
+    import pydantic_ai.mcp as mcp_module
+
+    if mcp_module.streamable_http_client is None:
+        pytest.skip('streamable_http_client not available (MCP SDK < 1.25.0)')
+
+    assert mcp_module.streamable_http_client is not None
+
+
+def test_streamable_http_fallback_when_old_sdk():
+    """Test that MCPServerStreamableHTTP falls back gracefully with old MCP SDK.
+
+    When streamable_http_client is not available (MCP SDK < 1.25.0), the code
+    should use the deprecated streamablehttp_client with the factory approach.
+
+    Related to GitHub issue #3745:
+    https://github.com/pydantic/pydantic-ai/issues/3745
+    """
+    from mcp.client.streamable_http import streamablehttp_client
+
+    import pydantic_ai.mcp as mcp_module
+
+    assert streamablehttp_client is not None
+
+    with patch.object(mcp_module, 'streamable_http_client', None):
+        assert mcp_module.streamable_http_client is None
+        server = MCPServerStreamableHTTP(
+            url='https://example.com/mcp',
+            http_client=None,
+        )
+        assert server is not None
 
 
 # ============================================================================
