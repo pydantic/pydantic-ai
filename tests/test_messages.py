@@ -466,7 +466,7 @@ def test_pre_usage_refactor_messages_deserializable():
                         content='What is the capital of Mexico?',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City.')],
@@ -683,8 +683,7 @@ def test_binary_content_from_path(tmp_path: Path):
     test_xml_file = tmp_path / 'test.xml'
     test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_xml_file)
-    assert binary_content.data == b'<think>about trains</think>'
-    assert binary_content.media_type in ('application/xml', 'text/xml')  # Depends on the platform
+    assert binary_content == snapshot(BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
 
     # test non-existent file
     non_existent_file = tmp_path / 'non-existent.txt'
