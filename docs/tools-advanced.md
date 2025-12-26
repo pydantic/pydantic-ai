@@ -355,7 +355,7 @@ If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool
 
 The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSettings] controls which tools the model can use during a request. This is useful for disabling tools, forcing tool use, or restricting which tools are available.
 
-Pydantic AI distinguishes between **function tools** (tools you register via `@agent.tool`, toolsets, or MCP) and **output tools** (internal tools used for [structured output](output.md#tool-output)). The `tool_choice` setting controls function tools; output tools are handled separately.
+Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)) and **output tools** (internal tools used for [structured output](output.md#tool-output)). The `tool_choice` setting controls function tools; output tools are handled separately.
 
 ### Options
 
