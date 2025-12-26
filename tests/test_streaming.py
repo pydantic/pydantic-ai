@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from inline_snapshot import snapshot
@@ -40,13 +41,17 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     capture_run_messages,
+    models,
 )
+from pydantic_ai._agent_graph import GraphAgentState
+from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
+from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.result import AgentStream, FinalResult, RunUsage
+from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
@@ -54,6 +59,11 @@ from pydantic_graph import End
 from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
+
+
+class Foo(BaseModel):
+    a: int
+    b: str
 
 
 async def test_streamed_text_response():
@@ -766,6 +776,128 @@ async def test_call_tool_wrong_name():
     )
 
 
+class TestPartialOutput:
+    """Tests for `ctx.partial_output` flag in output validators and output functions."""
+
+    # NOTE: When changing these tests:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_agent.py::TestPartialOutput` as well
+
+    async def test_output_validator_text(self):
+        """Test that output validators receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for chunk in ['Hello', ' ', 'world', '!']:
+                yield chunk
+
+        agent = Agent(FunctionModel(stream_function=sf))
+
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: str) -> str:
+            call_log.append((output, ctx.partial_output))
+            return output
+
+        async with agent.run_stream('test') as result:
+            text_parts = [text_part async for text_part in result.stream_text(debounce_by=None)]
+
+        assert text_parts[-1] == 'Hello world!'
+        assert call_log == snapshot(
+            [
+                ('Hello', True),
+                ('Hello ', True),
+                ('Hello world', True),
+                ('Hello world!', True),
+                ('Hello world!', False),
+            ]
+        )
+
+    async def test_output_validator_structured(self):
+        """Test that output validators receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42')}
+            yield {0: DeltaToolCall(json_args=', "b": "f')}
+            yield {0: DeltaToolCall(json_args='oo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=Foo)
+
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+            call_log.append((output, ctx.partial_output))
+            return output
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+        assert outputs[-1] == Foo(a=42, b='foo')
+        assert call_log == snapshot(
+            [
+                (Foo(a=42, b='f'), True),
+                (Foo(a=42, b='foo'), True),
+                (Foo(a=42, b='foo'), False),
+            ]
+        )
+
+    async def test_output_function_text(self):
+        """Test that output functions receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
+
+        def process_output(ctx: RunContext[None], text: str) -> str:
+            call_log.append((text, ctx.partial_output))
+            return text.upper()
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for chunk in ['Hello', ' ', 'world', '!']:
+                yield chunk
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=TextOutput(process_output))
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+        assert outputs[-1] == 'HELLO WORLD!'
+        assert call_log == snapshot(
+            [
+                ('Hello', True),
+                ('Hello ', True),
+                ('Hello world', True),
+                ('Hello world!', True),
+                ('Hello world!', False),
+            ]
+        )
+
+    async def test_output_function_structured(self):
+        """Test that output functions receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 21')}
+            yield {0: DeltaToolCall(json_args=', "b": "f')}
+            yield {0: DeltaToolCall(json_args='oo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=process_foo)
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+        assert outputs[-1] == Foo(a=42, b='FOO')
+        assert call_log == snapshot(
+            [
+                (Foo(a=21, b='f'), True),
+                (Foo(a=21, b='foo'), True),
+                (Foo(a=21, b='foo'), False),
+            ]
+        )
+
+
 class OutputType(BaseModel):
     """Result type used by multiple tests."""
 
@@ -1137,9 +1269,11 @@ class TestMultipleToolCalls:
     async def test_early_strategy_with_external_tool_call(self):
         """Test that early strategy handles external tool calls correctly.
 
-        Streaming mode expects the first output tool call to be the final result,
-        and has different behavior from sync mode in this regard.
-        See https://github.com/pydantic/pydantic-ai/issues/3636 for details.
+        Streaming and non-streaming modes differ in how they choose the final result:
+        - Streaming: First tool call (in response order) that can produce a final result (output or deferred)
+        - Non-streaming: First output tool (if none called, all deferred tools become final result)
+
+        See https://github.com/pydantic/pydantic-ai/issues/3636#issuecomment-3618800480 for details.
         """
         tool_called: list[str] = []
 
@@ -2011,6 +2145,106 @@ async def test_iter_stream_output():
             'The bat sat on the mat.',
         ]
     )
+
+
+async def test_streamed_run_result_metadata_available() -> None:
+    agent = Agent(TestModel(custom_output_text='stream metadata'), metadata={'env': 'stream'})
+
+    async with agent.run_stream('stream metadata prompt') as result:
+        assert await result.get_output() == 'stream metadata'
+
+    assert result.metadata == {'env': 'stream'}
+
+
+async def test_agent_stream_metadata_available() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='agent stream metadata'),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    captured_stream: AgentStream | None = None
+    async with agent.iter('agent stream prompt') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    captured_stream = stream
+                    async for _ in stream.stream_text(debounce_by=None):
+                        pass
+
+    assert captured_stream is not None
+    assert captured_stream.metadata == {'prompt': 'agent stream prompt'}
+
+
+def test_agent_stream_metadata_falls_back_to_run_context() -> None:
+    response_message = ModelResponse(parts=[TextPart('fallback metadata')], model_name='test')
+    stream_response = ModelTestStreamedResponse(
+        model_request_parameters=models.ModelRequestParameters(),
+        _model_name='test',
+        _structured_response=response_message,
+        _messages=[],
+        _provider_name='test',
+    )
+    run_ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        metadata={'source': 'run-context'},
+    )
+    output_schema = TextOutputSchema[str](
+        text_processor=TextOutputProcessor(),
+        allows_deferred_tools=False,
+        allows_image=False,
+    )
+    stream = AgentStream(
+        _raw_stream_response=stream_response,
+        _output_schema=output_schema,
+        _model_request_parameters=models.ModelRequestParameters(),
+        _output_validators=[],
+        _run_ctx=run_ctx,
+        _usage_limits=None,
+        _tool_manager=ToolManager(toolset=MagicMock()),
+    )
+
+    assert stream.metadata == {'source': 'run-context'}
+
+
+def _make_run_result(*, metadata: dict[str, Any] | None) -> AgentRunResult[str]:
+    state = GraphAgentState(metadata=metadata)
+    response_message = ModelResponse(parts=[TextPart('final')], model_name='test')
+    state.message_history.append(response_message)
+    return AgentRunResult('final', _state=state)
+
+
+def test_streamed_run_result_metadata_prefers_run_result_state() -> None:
+    run_result = _make_run_result(metadata={'from': 'run-result'})
+    streamed = StreamedRunResult(
+        all_messages=run_result.all_messages(),
+        new_message_index=0,
+        run_result=run_result,
+    )
+    assert streamed.metadata == {'from': 'run-result'}
+
+
+def test_streamed_run_result_metadata_none_without_sources() -> None:
+    run_result = _make_run_result(metadata=None)
+    streamed = StreamedRunResult(all_messages=[], new_message_index=0, run_result=run_result)
+    assert streamed.metadata is None
+
+
+def test_streamed_run_result_metadata_none_without_run_or_stream() -> None:
+    streamed = StreamedRunResult(all_messages=[], new_message_index=0, stream_response=None, on_complete=None)
+    assert streamed.metadata is None
+
+
+def test_streamed_run_result_sync_exposes_metadata() -> None:
+    run_result = _make_run_result(metadata={'sync': 'metadata'})
+    streamed = StreamedRunResult(
+        all_messages=run_result.all_messages(),
+        new_message_index=0,
+        run_result=run_result,
+    )
+    sync_result = StreamedRunResultSync(streamed)
+    assert sync_result.metadata == {'sync': 'metadata'}
 
 
 async def test_iter_stream_responses():

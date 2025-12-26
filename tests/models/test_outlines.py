@@ -191,7 +191,7 @@ def vllm_model_offline() -> OutlinesModel:  # pragma: no cover
 
 @pytest.fixture
 def binary_image() -> BinaryImage:
-    image_path = Path(__file__).parent.parent / 'assets' / 'kiwi.png'
+    image_path = Path(__file__).parent.parent / 'assets' / 'kiwi.jpg'
     image_bytes = image_path.read_bytes()
     return BinaryImage(data=image_bytes, media_type='image/png')
 
