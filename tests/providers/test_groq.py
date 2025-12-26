@@ -10,11 +10,11 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
-from pydantic_ai.profiles.groq import GroqModelProfile, groq_model_profile
+from pydantic_ai.profiles.groq import GroqModelProfile, groq_gpt_oss_model_profile, groq_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -79,7 +79,8 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
     moonshotai_model_profile_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
     groq_model_profile_mock = mocker.patch(f'{ns}.groq_model_profile', wraps=groq_model_profile)
-    openai_model_profile_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
+    groq_gpt_oss_model_profile_mock = mocker.patch(f'{ns}.groq_gpt_oss_model_profile', wraps=groq_gpt_oss_model_profile)
+    mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
 
     meta_profile = provider.model_profile('meta-llama/Llama-Guard-4-12B')
     meta_model_profile_mock.assert_called_with('llama-guard-4-12b')
@@ -93,14 +94,16 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     assert meta_profile is not None
     assert meta_profile.supports_json_object_output is True
     assert meta_profile.supports_json_schema_output is True
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.default_structured_output_mode == 'native'
+    assert meta_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     meta_profile = provider.model_profile('meta-llama/llama-4-scout-17b-16e-instruct')
     meta_model_profile_mock.assert_called_with('llama-4-scout-17b-16e-instruct')
     assert meta_profile is not None
     assert meta_profile.supports_json_object_output is True
     assert meta_profile.supports_json_schema_output is True
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.default_structured_output_mode == 'native'
+    assert meta_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     meta_profile = provider.model_profile('llama-3.3-70b-versatile')
     meta_model_profile_mock.assert_called_with('llama-3.3-70b-versatile')
@@ -137,19 +140,22 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     assert moonshotai_profile is not None
     assert moonshotai_profile.supports_json_object_output is True
     assert moonshotai_profile.supports_json_schema_output is True
+    assert moonshotai_profile.default_structured_output_mode == 'native'
     assert moonshotai_profile.ignore_streamed_leading_whitespace is True
 
-    openai_profile = provider.model_profile('openai/gpt-oss-20b')
-    openai_model_profile_mock.assert_called_with('gpt-oss-20b')
-    assert openai_profile is not None
-    assert openai_profile.supports_json_object_output is True
-    assert openai_profile.supports_json_schema_output is True
+    gpt_oss_profile = provider.model_profile('openai/gpt-oss-20b')
+    groq_gpt_oss_model_profile_mock.assert_called_with('openai/gpt-oss-20b')
+    assert gpt_oss_profile is not None
+    assert gpt_oss_profile.supports_json_object_output is True
+    assert gpt_oss_profile.supports_json_schema_output is True
+    assert gpt_oss_profile.default_structured_output_mode == 'native'
 
-    openai_profile = provider.model_profile('openai/gpt-oss-120b')
-    openai_model_profile_mock.assert_called_with('gpt-oss-120b')
-    assert openai_profile is not None
-    assert openai_profile.supports_json_object_output is True
-    assert openai_profile.supports_json_schema_output is True
+    gpt_oss_profile = provider.model_profile('openai/gpt-oss-120b')
+    groq_gpt_oss_model_profile_mock.assert_called_with('openai/gpt-oss-120b')
+    assert gpt_oss_profile is not None
+    assert gpt_oss_profile.supports_json_object_output is True
+    assert gpt_oss_profile.supports_json_schema_output is True
+    assert gpt_oss_profile.default_structured_output_mode == 'native'
 
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is None

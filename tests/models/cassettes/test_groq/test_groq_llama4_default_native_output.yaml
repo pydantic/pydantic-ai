@@ -1,0 +1,92 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '392'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of Japan?
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      response_format:
+        json_schema:
+          name: CityLocation
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+        type: json_schema
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '643'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            {
+            "city": "Tokyo",
+              "country": "Japan"
+            }
+          role: assistant
+      created: 1766763136
+      id: chatcmpl-2a6eba42-ac93-4e8e-bb43-e80a950d79ed
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_5436ed2ebe
+      usage:
+        completion_time: 0.038621673
+        completion_tokens: 17
+        prompt_time: 0.002622107
+        prompt_tokens: 95
+        queue_time: 0.080722568
+        total_time: 0.04124378
+        total_tokens: 112
+      usage_breakdown: null
+      x_groq:
+        id: req_01kddmm1bhes4r1z01na5856q3
+        seed: 411541819
+    status:
+      code: 200
+      message: OK
+version: 1
