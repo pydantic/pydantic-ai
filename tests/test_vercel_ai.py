@@ -3597,6 +3597,106 @@ async def test_adapter_dump_messages_builtin_tool_with_full_metadata():
     )
 
 
+async def test_adapter_dump_messages_builtin_tool_error_with_metadata():
+    """Test dumping BuiltinToolReturnPart with error content creates ToolOutputErrorPart."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='bt_err_123',
+                    id='call_err_456',
+                    provider_name='openai',
+                    provider_details={'tool_type': 'web_search_preview'},
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'error_text': 'Search failed: rate limit exceeded', 'is_error': True},
+                    tool_call_id='bt_err_123',
+                    provider_name='openai',
+                    provider_details={'error_code': 'RATE_LIMIT'},
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Search', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'tool-web_search',
+                        'tool_call_id': 'bt_err_123',
+                        'state': 'output-error',
+                        'input': '{"query":"test"}',
+                        'raw_input': None,
+                        'error_text': 'Search failed: rate limit exceeded',
+                        'provider_executed': True,
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'call_meta': {
+                                    'id': 'call_err_456',
+                                    'provider_name': 'openai',
+                                    'provider_details': {'tool_type': 'web_search_preview'},
+                                },
+                                'return_meta': {
+                                    'provider_name': 'openai',
+                                    'provider_details': {'error_code': 'RATE_LIMIT'},
+                                },
+                            }
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+
+async def test_adapter_builtin_tool_error_roundtrip():
+    """Test that BuiltinToolReturnPart with error content survives dump/load roundtrip."""
+    original_messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='bt_err_roundtrip',
+                    id='call_err_rt',
+                    provider_name='openai',
+                    provider_details={'tool_type': 'web_search_preview'},
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'error_text': 'Search failed: rate limit exceeded', 'is_error': True},
+                    tool_call_id='bt_err_roundtrip',
+                    provider_name='openai',
+                    provider_details={'error_code': 'RATE_LIMIT'},
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
+
+    assert reloaded_messages == original_messages
+
+
 async def test_adapter_load_messages_builtin_tool_with_provider_details():
     """Test loading builtin tool with provider_details on return part."""
     ui_messages = [
@@ -3700,8 +3800,8 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
                         args={'query': 'test'},
                         tool_call_id='bt_error',
                         id='call_789',
-                        provider_details={'tool_type': 'web_search_preview'},
                         provider_name='openai',
+                        provider_details={'tool_type': 'web_search_preview'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
