@@ -1119,7 +1119,7 @@ I\
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' So')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' let')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s")),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' go')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ahead')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and')),
