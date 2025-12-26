@@ -1639,7 +1639,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
             {
                 'role': 'user',
                 'content': [
-                    {'toolResult': {'toolUseId': 'id1', 'content': [{'text': '{"foo":"bar"}'}], 'status': 'success'}},
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': {'foo': 'bar'}}], 'status': 'success'}},
                 ],
             },
         ]

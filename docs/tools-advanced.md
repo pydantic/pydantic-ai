@@ -64,12 +64,43 @@ _(This example is complete, it can be run "as is")_
 
 Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
+### Multimodal Tool Returns
+
+Tools can return multimodal content (images, documents, audio, video) directly:
+
+```python {title="multimodal_tool_return.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, BinaryContent
+
+agent = Agent('anthropic:claude-sonnet-4-5')
+
+@agent.tool_plain
+def capture_screenshot() -> BinaryContent:
+    """Capture and return a screenshot."""
+    screenshot_data = capture_screen()  # your screenshot logic
+    return BinaryContent(data=screenshot_data, media_type='image/png')
+```
+
+You can also return mixed content as a list:
+
+```python {title="mixed_tool_return.py" test="skip" lint="skip"}
+@agent.tool_plain
+def analyze_page() -> list:
+    """Analyze a page and return results with screenshot."""
+    screenshot = capture_screen()
+    return [
+        {'status': 'success', 'elements_found': 5},
+        BinaryContent(data=screenshot, media_type='image/png'),
+    ]
+```
+
+Most providers support multimodal content natively in tool results. For providers that don't, the content is automatically sent as a separate user message.
+
 ### Advanced Tool Returns
 
 For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
 
-- Provide rich multi-modal content (images, documents, etc.) to the model as context
-- Separate the programmatic return value from the model's context
+- Separate the programmatic return value from additional context sent to the model
+- Explicitly send content as a separate user message (rather than in the tool result)
 - Include additional metadata that shouldn't be sent to the LLM
 
 Here's an example of a computer automation tool that captures screenshots and provides visual feedback:
@@ -118,11 +149,12 @@ print(result.output)
 # The model can analyze the screenshots and provide detailed feedback
 ```
 
-- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result.
-- **`content`**: A sequence of content (text, images, documents, etc.) that provides additional context to the model. This appears as a separate user message.
+- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Multimodal Tool Returns](#multimodal-tool-returns) above).
+- **`content`**: Additional context sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich contextual content.
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature "artifacts".
 
-This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
+!!! tip
+    For most multimodal use cases, returning content directly from your tool (via `return_value`) is simpler. Use `ToolReturn` with `content` when you specifically need the separation between structured results and contextual content.
 
 ## Custom Tool Schema
 

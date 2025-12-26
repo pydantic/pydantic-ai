@@ -670,35 +670,74 @@ class GoogleModel(Model):
 
     async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
         """Map a ToolReturnPart to Google API format, handling multimodal content."""
-        response_parts = part.model_response_parts()
-        has_multimodal = any(isinstance(p, (FileUrl, BinaryContent)) for p in response_parts)
-        if has_multimodal:
-            text_parts = [p for p in response_parts if isinstance(p, str)]
-            response_text = ' '.join(text_parts) if text_parts else ''
-            result: list[PartDict] = [
-                {
-                    'function_response': {
-                        'name': part.tool_name,
-                        'response': {'result': response_text} if response_text else {},
-                        'id': part.tool_call_id,
-                    }
+        # TODO: Gemini 3+ supports multimodal parts inside FunctionResponseDict.parts field
+        # which could be more efficient than sending files as separate content parts.
+        # See: https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses
+        result: list[PartDict] = [
+            {
+                'function_response': {
+                    'name': part.tool_name,
+                    'response': part.model_response_object(),
+                    'id': part.tool_call_id,
                 }
-            ]
-            for item in response_parts:
-                if isinstance(item, (FileUrl, BinaryContent)):
-                    user_prompt = UserPromptPart(content=[item])  # pyright: ignore[reportArgumentType]
-                    result.extend(await self._map_user_prompt(user_prompt))
-            return result
-        else:
-            return [
-                {
-                    'function_response': {
-                        'name': part.tool_name,
-                        'response': part.model_response_object(),
-                        'id': part.tool_call_id,
-                    }
+            }
+        ]
+
+        # Add multimodal files as separate parts
+        for file in part.multimodal_content:
+            file_part = await self._map_file_to_part(file)
+            if file_part is not None:
+                result.append(file_part)
+
+        return result
+
+    async def _map_file_to_part(self, file: FileUrl | BinaryContent) -> PartDict | None:
+        """Map a multimodal file directly to a Google API part."""
+        if isinstance(file, BinaryContent):
+            inline_data_dict: BlobDict = {'data': file.data, 'mime_type': file.media_type}
+            part_dict: PartDict = {'inline_data': inline_data_dict}
+            if file.vendor_metadata:
+                part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+            return part_dict
+        elif isinstance(file, VideoUrl) and (
+            file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
+        ):
+            # YouTube URLs work on both google-gla and google-vertex
+            # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
+            # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
+            # Other URLs fall through to FileUrl handling (download for google-gla)
+            # Note: force_download is not checked here, mirroring the original YouTube behavior.
+            # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
+            file_data_dict: FileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
+            part_dict: PartDict = {'file_data': file_data_dict}
+            if file.vendor_metadata:
+                part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+            return part_dict
+        elif isinstance(file, FileUrl):
+            if file.force_download or (
+                # google-gla does not support passing file urls directly, except for youtube videos
+                # (see above) and files uploaded to the file API (which cannot be downloaded anyway)
+                self.system == 'google-gla'
+                and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
+            ):
+                downloaded_item = await download_item(file, data_format='bytes')
+                inline_data: BlobDict = {
+                    'data': downloaded_item['data'],
+                    'mime_type': downloaded_item['data_type'],
                 }
-            ]
+                part_dict: PartDict = {'inline_data': inline_data}
+                # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                if isinstance(file, VideoUrl) and file.vendor_metadata:
+                    part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+                return part_dict
+            else:
+                file_data_dict: FileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
+                part_dict: PartDict = {'file_data': file_data_dict}
+                # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                if isinstance(file, VideoUrl) and file.vendor_metadata:
+                    part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+                return part_dict  # pragma: lax no cover
+        return None
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
         if isinstance(part.content, str):
@@ -708,50 +747,10 @@ class GoogleModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
-                elif isinstance(item, BinaryContent):
-                    inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
-                    part_dict: PartDict = {'inline_data': inline_data_dict}
-                    if item.vendor_metadata:
-                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                    content.append(part_dict)
-                elif isinstance(item, VideoUrl) and (
-                    item.is_youtube or (item.url.startswith('gs://') and self.system == 'google-vertex')
-                ):
-                    # YouTube URLs work on both google-gla and google-vertex
-                    # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
-                    # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
-                    # Other URLs fall through to FileUrl handling (download for google-gla)
-                    # Note: force_download is not checked here, mirroring the original YouTube behavior.
-                    # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
-                    file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                    part_dict: PartDict = {'file_data': file_data_dict}
-                    if item.vendor_metadata:
-                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                    content.append(part_dict)
-                elif isinstance(item, FileUrl):
-                    if item.force_download or (
-                        # google-gla does not support passing file urls directly, except for youtube videos
-                        # (see above) and files uploaded to the file API (which cannot be downloaded anyway)
-                        self.system == 'google-gla'
-                        and not item.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
-                    ):
-                        downloaded_item = await download_item(item, data_format='bytes')
-                        inline_data: BlobDict = {
-                            'data': downloaded_item['data'],
-                            'mime_type': downloaded_item['data_type'],
-                        }
-                        part_dict: PartDict = {'inline_data': inline_data}
-                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
-                        if isinstance(item, VideoUrl) and item.vendor_metadata:
-                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                        content.append(part_dict)
-                    else:
-                        file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                        part_dict: PartDict = {'file_data': file_data_dict}
-                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
-                        if isinstance(item, VideoUrl) and item.vendor_metadata:
-                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                        content.append(part_dict)  # pragma: lax no cover
+                elif isinstance(item, (BinaryContent, FileUrl)):
+                    file_part = await self._map_file_to_part(item)
+                    if file_part is not None:
+                        content.append(file_part)
                 elif isinstance(item, CachePoint):
                     # Google Gemini doesn't support prompt caching via CachePoint
                     pass
