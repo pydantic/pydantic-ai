@@ -283,25 +283,27 @@ class SkillsToolset(FunctionToolset):
             Only use this tool if the available skills are not in your system prompt.
 
             Returns:
-                Dictionary mapping skill names to their descriptions.
-                    An empty dictionary if no skills are available.
+                Dictionary mapping skill names to brief descriptions.
+                Empty dictionary if no skills are available.
             """
             return {name: skill.metadata.description for name, skill in self._skills.items()}
 
         @self.tool
         async def load_skill(ctx: RunContext[Any], skill_name: str) -> str:  # pyright: ignore[reportUnusedFunction]
-            """Load full instructions for a skill.
+            """Load complete instructions and metadata for a specific skill.
 
-            Always load the skill before using read_skill_resource
-            or run_skill_script to understand the skill's capabilities, available
-            resources, scripts, and their usage patterns.
+            Do NOT infer or guess resource names or script names - they must come from
+            the output of this tool.
 
             Args:
-                ctx: Run context (required by toolset protocol).
-                skill_name: Name of the skill to load.
+                skill_name: Exact name of the skill.
 
             Returns:
-                Full skill instructions including available resources and scripts.
+                Complete skill documentation including:
+                - Skill description and purpose
+                - List of available resource files (e.g., FORMS.md, REFERENCE.md)
+                - List of available scripts with their names
+                - Detailed usage instructions and examples
             """
             _ = ctx  # Required by Pydantic AI toolset protocol
             if skill_name not in self._skills:
@@ -338,17 +340,21 @@ class SkillsToolset(FunctionToolset):
             skill_name: str,
             resource_name: str,
         ) -> str:
-            """Read a resource file from a skill (e.g., FORMS.md, REFERENCE.md).
+            """Read a resource file from a skill.
 
-            Call load_skill first to see which resources are available.
+            Do NOT guess or infer resource names, use load_skill first to get the resource names.
+
+            Resources contain supplementary documentation like form templates,
+            reference guides, or data schemas.
 
             Args:
                 ctx: Run context (required by toolset protocol).
-                skill_name: Name of the skill.
-                resource_name: The resource filename (e.g., "FORMS.md").
+                skill_name: Exact name of the skill (from list_skills or load_skill).
+                resource_name: Exact resource filename as listed in load_skill output
+                    (e.g., "FORMS.md", "REFERENCE.md").
 
             Returns:
-                The resource file content.
+                Complete content of the requested resource file.
             """
             if skill_name not in self._skills:
                 raise SkillNotFoundError(f"Skill '{skill_name}' not found.")
@@ -363,20 +369,20 @@ class SkillsToolset(FunctionToolset):
             script_name: str,
             args: list[str] | None = None,
         ) -> str:
-            """Execute a skill script with command-line arguments.
+            """Execute a script provided by a skill.
 
-            Call load_skill first to understand the script's expected arguments,
-            usage patterns, and example invocations. Running scripts without
-            loading instructions first will likely fail.
+            Do NOT guess or infer script names or arguments.
+            Use load_skill first to get the script names and usage instructions.
 
             Args:
                 ctx: Run context (required by toolset protocol).
-                skill_name: Name of the skill.
-                script_name: The script name (without .py extension).
-                args: Optional list of command-line arguments (positional args, flags, values).
+                skill_name: Exact name of the skill (from list_skills or load_skill).
+                script_name: Exact script name as listed in load_skill output (without .py extension).
+                args: Command-line arguments as specified in load_skill instructions.
+                    Include positional args, flags, and values in order (e.g., ["--format", "json", "input.txt"]).
 
             Returns:
-                The script's output (stdout and stderr combined).
+                Script output including both stdout and stderr.
             """
             if skill_name not in self._skills:
                 raise SkillNotFoundError(f"Skill '{skill_name}' not found.")
