@@ -8,7 +8,7 @@ Here's a minimal example:
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-my_agent = Agent('openai:gpt-5', system_prompt='...')
+my_agent = Agent('openai:gpt-5', instructions='...')
 
 
 async def test_my_agent():

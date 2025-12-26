@@ -123,7 +123,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
     assert model.base_url == 'https://generativelanguage.googleapis.com/'
     assert model.system == 'google-gla'
-    agent = Agent(model=model, system_prompt='You are a chatbot.')
+    agent = Agent(model=model, instructions='You are a chatbot.')
 
     result = await agent.run('Hello!')
     assert result.output == snapshot('Hello there! How can I help you today?\n')
@@ -139,15 +139,12 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='Hello!',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -171,7 +168,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
 async def test_google_model_structured_output(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries=5)
 
     class Response(TypedDict):
         temperature: str
@@ -206,15 +203,12 @@ async def test_google_model_structured_output(allow_model_requests: None, google
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What was the temperature in London 1st January 2022?',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -244,6 +238,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         tool_name='temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
                     )
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -287,7 +282,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
 
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash-exp', provider=google_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
         async for response, is_last in result.stream_responses(debounce_by=None):
@@ -320,7 +315,7 @@ async def test_google_model_builtin_code_execution_stream(
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(
         model=model,
-        system_prompt='Be concise and always use Python to do calculations no matter how small.',
+        instructions='Be concise and always use Python to do calculations no matter how small.',
         builtin_tools=[CodeExecutionTool()],
     )
 
@@ -337,15 +332,12 @@ async def test_google_model_builtin_code_execution_stream(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Be concise and always use Python to do calculations no matter how small.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='what is 65465-6544 * 65464-6+1.02255',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
+                instructions='Be concise and always use Python to do calculations no matter how small.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -682,14 +674,14 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
 
 async def test_google_model_max_tokens(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'max_tokens': 5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is')
 
 
 async def test_google_model_top_p(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'top_p': 0.5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
 
@@ -697,7 +689,7 @@ async def test_google_model_top_p(allow_model_requests: None, google_provider: G
 async def test_google_model_thinking_config(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': False})
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
 
@@ -705,7 +697,7 @@ async def test_google_model_thinking_config(allow_model_requests: None, google_p
 async def test_google_model_gla_labels_raises_value_error(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
 
     # Raises before any request is made.
     with pytest.raises(ValueError, match='labels parameter is not supported in Gemini API.'):
@@ -716,7 +708,7 @@ async def test_google_model_vertex_provider(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
     model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.')
+    agent = Agent(model=model, instructions='You are a helpful chatbot.')
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
 
@@ -726,14 +718,14 @@ async def test_google_model_vertex_labels(
 ):  # pragma: lax no cover
     model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
 
 
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.')
+    agent = Agent(model=model, instructions='You are a helpful chatbot.')
 
     @agent.tool_plain
     async def get_capital(country: str) -> str:
@@ -811,7 +803,7 @@ async def test_google_model_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, google_provider: GoogleProvider
 ):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['What fruit is in the image?', image_content])
     assert result.output == snapshot('The fruit in the image is a kiwi.')
@@ -821,7 +813,7 @@ async def test_google_model_video_as_binary_content_input(
     allow_model_requests: None, video_content: BinaryContent, google_provider: GoogleProvider
 ):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot("""\
@@ -841,7 +833,7 @@ async def test_google_model_video_as_binary_content_input_with_vendor_metadata(
     allow_model_requests: None, video_content: BinaryContent, google_provider: GoogleProvider
 ):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
     video_content.vendor_metadata = {'start_offset': '2s', 'end_offset': '10s'}
 
     result = await agent.run(['Explain me this video', video_content])
@@ -856,7 +848,7 @@ It looks like someone is either reviewing footage on the monitor, or using it as
 
 async def test_google_model_image_url_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(
         [
@@ -869,7 +861,7 @@ async def test_google_model_image_url_input(allow_model_requests: None, google_p
 
 async def test_google_model_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(
         [
@@ -894,7 +886,7 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(
         [
@@ -918,7 +910,7 @@ If you'd like a more detailed explanation, please provide additional information
 
 async def test_google_model_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
@@ -928,7 +920,7 @@ async def test_google_model_document_url_input(allow_model_requests: None, googl
 
 async def test_google_model_text_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
@@ -940,7 +932,7 @@ async def test_google_model_text_document_url_input(allow_model_requests: None, 
 
 async def test_google_model_text_as_binary_content_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     text_content = BinaryContent(data=b'This is a test document.', media_type='text/plain')
 
@@ -1025,22 +1017,19 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
 async def test_google_model_web_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
+    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1122,6 +1111,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1193,7 +1183,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
 
 async def test_google_model_web_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
+    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the weather in San Francisco today?') as agent_run:
@@ -1209,15 +1199,12 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1365,6 +1352,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1451,7 +1439,7 @@ async def test_google_model_web_fetch_tool(
     else:
         tool = WebFetchTool()
 
-    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[tool])
+    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[tool])
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
@@ -1466,12 +1454,12 @@ async def test_google_model_web_fetch_tool(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(
                         content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1527,7 +1515,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
     tool = WebFetchTool()
-    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[tool])
+    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[tool])
 
     event_parts: list[Any] = []
     async with agent.iter(
@@ -1547,12 +1535,12 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(
                         content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1670,16 +1658,14 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
 
 async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
 
     result = await agent.run('What day is today in Utrecht?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[
-                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
-                    UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
-                ],
+                parts=[UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime())],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1750,6 +1736,7 @@ print(f"Today in Utrecht is {formatted_date}.")
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1960,7 +1947,7 @@ Could you please tell me what you were expecting or if you'd like me to try agai
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
-    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+    agent = Agent(m, instructions='You are a helpful assistant.', model_settings=settings)
 
     # Google only emits thought signatures when there are tools: https://ai.google.dev/gemini-api/docs/thinking#signatures
     @agent.tool_plain
@@ -1971,15 +1958,12 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2019,6 +2003,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2052,7 +2037,7 @@ async def test_google_model_thinking_part_from_other_model(
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-5', provider=provider)
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
-    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+    agent = Agent(m, instructions='You are a helpful assistant.', model_settings=settings)
 
     # Google only emits thought signatures when there are tools: https://ai.google.dev/gemini-api/docs/thinking#signatures
     @agent.tool_plain
@@ -2063,15 +2048,12 @@ async def test_google_model_thinking_part_from_other_model(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2123,6 +2105,7 @@ async def test_google_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2153,7 +2136,7 @@ async def test_google_model_thinking_part_from_other_model(
 async def test_google_model_thinking_part_iter(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
-    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+    agent = Agent(m, instructions='You are a helpful assistant.', model_settings=settings)
 
     # Google only emits thought signatures when there are tools: https://ai.google.dev/gemini-api/docs/thinking#signatures
     @agent.tool_plain
@@ -2172,15 +2155,12 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -3060,7 +3040,7 @@ async def test_google_vertexai_model_usage_limit_exceeded(
 ):  # pragma: lax no cover
     model = GoogleModel('gemini-2.0-flash', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
 
-    agent = Agent(model, system_prompt='You are a chatbot.')
+    agent = Agent(model, instructions='You are a chatbot.')
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -4213,7 +4193,7 @@ async def test_google_nested_models_without_native_output(allow_model_requests: 
     agent = Agent(
         m,
         output_type=TopModel,
-        system_prompt='You are a helpful assistant that creates structured data.',
+        instructions='You are a helpful assistant that creates structured data.',
         retries=5,
     )
 
@@ -4258,7 +4238,7 @@ async def test_google_nested_models_with_native_output(allow_model_requests: Non
     agent = Agent(
         m,
         output_type=NativeOutput(TopModel),
-        system_prompt='You are a helpful assistant that creates structured data.',
+        instructions='You are a helpful assistant that creates structured data.',
     )
 
     result = await agent.run('Create a simple example with 2 pages, each with 2 items')
