@@ -19,7 +19,25 @@ def dump_provider_metadata(
     wrapper_key: str | None = PROVIDER_METADATA_KEY,
     **kwargs: ProviderDetailsDelta | str,
 ) -> dict[str, Any] | None:
-    """Dump provider metadata from keyword arguments."""
+    """Dump provider metadata from keyword arguments.
+
+    Args:
+        wrapper_key: The key to wrap the metadata in. Defaults to 'pydantic_ai'.
+        **kwargs: The keyword arguments to dump.
+
+    Returns:
+        The dumped provider metadata.
+
+    Examples:
+        >>> dump_provider_metadata(id='test_id', provider_name='test_provider', provider_details={'test_detail': 1})
+        {'pydantic_ai': {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}}
+
+        >>> dump_provider_metadata(wrapper_key='test', id='test_id', provider_name='test_provider', provider_details={'test_detail': 1})
+        {'test': {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}}
+
+        >>> dump_provider_metadata(wrapper_key=None, id='test_id', provider_name='test_provider', provider_details={'test_detail': 1})
+        {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}
+    """
     filtered = {k: v for k, v in kwargs.items() if v is not None}
     if wrapper_key:
         return {wrapper_key: filtered} if filtered else None

@@ -206,19 +206,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         if builtin_tool:
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
                             # The call and return metadata are combined in the output part.
-                            # We extract and return them to the respective parts for pydantic_ai.
+                            # So we extract and return them to the respective parts
                             call_meta = return_meta = {}
-                            output: Any | None = None
-                            has_output = isinstance(part, (ToolOutputAvailablePart, ToolOutputErrorPart))
+                            has_tool_output = isinstance(part, (ToolOutputAvailablePart, ToolOutputErrorPart))
 
-                            if has_output:
+                            if has_tool_output:
                                 loaded_call_meta, loaded_return_meta = cls._load_builtin_tool_meta(provider_meta)
                                 call_meta = loaded_call_meta or {}
                                 return_meta = loaded_return_meta or {}
-                                if isinstance(part, ToolOutputAvailablePart):
-                                    output = part.output
-                                elif isinstance(part, ToolOutputErrorPart):
-                                    output = {'error_text': part.error_text, 'is_error': True}
 
                             builder.add(
                                 BuiltinToolCallPart(
@@ -231,7 +226,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 )
                             )
 
-                            if has_output:
+                            if has_tool_output:
+                                output: Any | None = None
+                                if isinstance(part, ToolOutputAvailablePart):
+                                    output = part.output
+                                elif isinstance(part, ToolOutputErrorPart):
+                                    output = {'error_text': part.error_text, 'is_error': True}
                                 builder.add(
                                     BuiltinToolReturnPart(
                                         tool_name=tool_name,
@@ -365,11 +365,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     )
                 )
             elif isinstance(part, BuiltinToolCallPart):
+                tool_name = f'tool-{part.tool_name}'
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):
                     # Builtin tool calls are represented by two parts in pydantic_ai:
                     #   1. BuiltinToolCallPart (the tool request) -> part
                     #   2. BuiltinToolReturnPart (the tool's output) -> builtin_return
-                    # The Vercel AI SDK only has a single ToolOutputAvailablePart.
+                    # The Vercel AI SDK only has a single ToolOutputPart (ToolOutputAvailablePart or ToolOutputErrorPart).
                     # So, we need to combine the metadata so that when we later convert back from Vercel AI to pydantic_ai,
                     # we can properly reconstruct both the call and return parts with their respective metadata.
                     # Note: This extra metadata handling is only needed for built-in tools, since normal tool returns
@@ -388,25 +389,40 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     )
                     combined_provider_meta = cls._dump_builtin_tool_meta(call_meta, return_meta)
 
-                    content = builtin_return.model_response_str()
-                    ui_parts.append(
-                        ToolOutputAvailablePart(
-                            type=f'tool-{part.tool_name}',
-                            tool_call_id=part.tool_call_id,
-                            input=part.args_as_json_str(),
-                            output=content,
-                            state='output-available',
-                            provider_executed=True,
-                            call_provider_metadata=combined_provider_meta,
+                    response_object = builtin_return.model_response_object()
+                    is_error = response_object.get('is_error') is True and 'error_text' in response_object
+                    if is_error:
+                        ui_parts.append(
+                            ToolOutputErrorPart(
+                                type=tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=part.args_as_json_str(),
+                                error_text=response_object.get('error_text', ''),
+                                state='output-error',
+                                provider_executed=True,
+                                call_provider_metadata=combined_provider_meta,
+                            )
                         )
-                    )
+                    else:
+                        content = builtin_return.model_response_str()
+                        ui_parts.append(
+                            ToolOutputAvailablePart(
+                                type=tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=part.args_as_json_str(),
+                                output=content,
+                                state='output-available',
+                                provider_executed=True,
+                                call_provider_metadata=combined_provider_meta,
+                            )
+                        )
                 else:
                     call_provider_metadata = dump_provider_metadata(
                         id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
                     )
                     ui_parts.append(
                         ToolInputAvailablePart(
-                            type=f'tool-{part.tool_name}',
+                            type=tool_name,
                             tool_call_id=part.tool_call_id,
                             input=part.args_as_json_str(),
                             state='input-available',
