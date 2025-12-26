@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -47,10 +47,22 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
+    from botocore.eventstream import EventStream
     from botocore.exceptions import ClientError
-    from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
+    from mypy_boto3_bedrock_runtime.type_defs import (
+        ConverseResponseTypeDef,
+        ConverseStreamMetadataEventTypeDef,
+        MessageUnionTypeDef,
+        SystemContentBlockTypeDef,
+        ToolTypeDef,
+    )
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
+    from pydantic_ai.models.bedrock import (
+        BedrockConverseModel,
+        BedrockModelName,
+        BedrockModelSettings,
+        BedrockStreamedResponse,
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -152,6 +164,143 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('usage_payload', 'expected_usage'),
+    [
+        pytest.param(
+            {
+                'inputTokens': 3,
+                'outputTokens': 5,
+                'cacheReadInputTokens': 7,
+                'cacheWriteInputTokens': 11,
+            },
+            RequestUsage(
+                input_tokens=21,
+                output_tokens=5,
+                cache_read_tokens=7,
+                cache_write_tokens=11,
+            ),
+            id='full-usage',
+        ),
+        pytest.param(
+            {
+                'outputTokens': 5,
+                'cacheReadInputTokens': 7,
+                'cacheWriteInputTokens': 11,
+            },
+            RequestUsage(
+                input_tokens=18,
+                output_tokens=5,
+                cache_read_tokens=7,
+                cache_write_tokens=11,
+            ),
+            id='missing-input-tokens',
+        ),
+        pytest.param(
+            {
+                'inputTokens': 3,
+                'cacheReadInputTokens': 7,
+                'cacheWriteInputTokens': 11,
+            },
+            RequestUsage(
+                input_tokens=21,
+                output_tokens=0,
+                cache_read_tokens=7,
+                cache_write_tokens=11,
+            ),
+            id='missing-output-tokens',
+        ),
+    ],
+)
+async def test_bedrock_process_response_includes_cache_tokens(
+    bedrock_provider: BedrockProvider,
+    usage_payload: dict[str, int],
+    expected_usage: RequestUsage,
+):
+    model = BedrockConverseModel(
+        'eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+    )
+    response = cast(
+        ConverseResponseTypeDef,
+        cast(
+            Any,
+            {
+                'output': {'message': {'content': [{'text': 'Hello'}]}},
+                'usage': usage_payload,
+                'stopReason': 'end_turn',
+                'ResponseMetadata': {'RequestId': 'req-1'},
+            },
+        ),
+    )
+
+    result = await model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+    assert result.usage == expected_usage
+
+
+@pytest.mark.parametrize(
+    ('usage_payload', 'expected_usage'),
+    [
+        pytest.param(
+            {
+                'inputTokens': 3,
+                'outputTokens': 5,
+                'cacheReadInputTokens': 7,
+                'cacheWriteInputTokens': 11,
+            },
+            RequestUsage(
+                input_tokens=21,
+                output_tokens=5,
+                cache_read_tokens=7,
+                cache_write_tokens=11,
+            ),
+            id='full-usage',
+        ),
+        pytest.param(
+            {
+                'outputTokens': 5,
+                'cacheReadInputTokens': 7,
+                'cacheWriteInputTokens': 11,
+            },
+            RequestUsage(
+                input_tokens=18,
+                output_tokens=5,
+                cache_read_tokens=7,
+                cache_write_tokens=11,
+            ),
+            id='missing-input-tokens',
+        ),
+        pytest.param(
+            {
+                'inputTokens': 3,
+                'cacheReadInputTokens': 7,
+                'cacheWriteInputTokens': 11,
+            },
+            RequestUsage(
+                input_tokens=21,
+                output_tokens=0,
+                cache_read_tokens=7,
+                cache_write_tokens=11,
+            ),
+            id='missing-output-tokens',
+        ),
+    ],
+)
+async def test_bedrock_stream_usage_includes_cache_tokens(usage_payload: dict[str, int], expected_usage: RequestUsage):
+    stream = BedrockStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        _event_stream=cast('EventStream[Any]', cast(Any, [])),
+        _provider_name='bedrock',
+        _provider_url='https://bedrock.stub',
+    )
+
+    usage = stream._map_usage(  # pyright: ignore[reportPrivateUsage]
+        cast(ConverseStreamMetadataEventTypeDef, cast(Any, {'usage': usage_payload}))
+    )
+    assert usage == expected_usage
 
 
 @pytest.mark.vcr()
@@ -1813,7 +1962,7 @@ async def test_bedrock_cache_point_adds_cache_control(
     # Different tokens usage depending on a model - could be written or read depending on the cassette read/write
     usage = result.usage()
     assert usage.cache_write_tokens >= 1000 or usage.cache_read_tokens >= 1000
-    assert usage.input_tokens <= 20
+    assert usage.input_tokens >= usage.cache_write_tokens + usage.cache_read_tokens
 
 
 @pytest.mark.vcr()
@@ -1850,12 +1999,12 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     first = await agent.run(run_args)
     assert first.output == snapshot('21')
     first_usage = first.usage()
-    assert first_usage == snapshot(RunUsage(input_tokens=2, cache_write_tokens=1322, output_tokens=5, requests=1))
+    assert first_usage == snapshot(RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1))
 
     second = await agent.run(run_args)
     assert second.output == snapshot('21')
     second_usage = second.usage()
-    assert second_usage == snapshot(RunUsage(input_tokens=2, output_tokens=5, cache_read_tokens=1322, requests=1))
+    assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
 
 
 async def test_bedrock_cache_point_as_first_content_raises_error(
