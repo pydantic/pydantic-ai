@@ -667,6 +667,25 @@ Pydantic AI provides two toolsets that allow an agent to connect to and call too
 1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
 2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
 
+### Task Management
+
+Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
+
+- [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+
+### File Operations
+
+Toolsets for file operations help agents read, write, and edit files:
+
+- [`pydantic-ai-filesystem-sandbox`](https://github.com/zby/pydantic-ai-filesystem-sandbox) - `FileSystemToolset` with a sandbox and LLM-friendly errors
+- [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) — Deep agent framework that includes a `FilesystemToolset` with multiple backends (in-memory, real filesystem, Docker sandbox).
+
+### Code Execution
+
+Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
+
+- [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
+
 ### LangChain Tools {#langchain-tools}
 
 If you'd like to use tools or a [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits) from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] which takes a list of LangChain tools. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.

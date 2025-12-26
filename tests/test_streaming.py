@@ -841,7 +841,6 @@ class TestPartialOutput:
             ]
         )
 
-    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3813')
     async def test_output_function_text(self):
         """Test that output functions receive correct value for `partial_output` with text output."""
         call_log: list[tuple[str, bool]] = []
