@@ -351,6 +351,75 @@ You can use `prepare_tools` to:
 
 If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool `prepare` is applied first to each tool, and then `prepare_tools` is called with the resulting list of tool definitions.
 
+## Tool Choice {#tool-choice}
+
+The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSettings] controls which tools the model can use during a request. This is useful for disabling tools, forcing tool use, or restricting which tools are available.
+
+Pydantic AI distinguishes between **function tools** (tools you register via `@agent.tool`, toolsets, or MCP) and **output tools** (internal tools used for [structured output](output.md#tool-output)). The `tool_choice` setting controls function tools; output tools are handled separately.
+
+### Options
+
+| Value | Description |
+|-------|-------------|
+| `'auto'` (default) | Model decides whether to use tools. All function and output tools available. |
+| `'none'` | Disable function tools. Model can only respond with text or use output tools. |
+| `'required'` | Force the model to use a function tool. Output tools excluded. |
+| `['tool_a', ...]` | Restrict to specific function tools by name. Output tools excluded. |
+| [`ToolsPlusOutput`][pydantic_ai.settings.ToolsPlusOutput]`(function_tools=['...'])` | Restrict function tools while keeping output tools available. |
+
+### Limitations
+
+!!! warning "Per-Run Setting"
+    The `tool_choice` setting applies to **every model request** in an agent run:
+
+    - `'required'` forces a tool call at every step, not just the first
+    - `['tool_a']` restricts to that tool for the entire run, preventing completion if the agent needs output tools
+
+    For per-request control, use [direct model requests](direct.md) or the `prepare_tools` function above.
+
+### Example
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+agent = Agent(TestModel())
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    return f'Sunny in {city}'
+
+
+@agent.tool_plain
+def get_time(city: str) -> str:
+    return f'12:00 in {city}'
+
+
+# Pass tool_choice via model_settings
+result = agent.run_sync('Hello', model_settings={'tool_choice': 'none'})
+result = agent.run_sync('Hello', model_settings={'tool_choice': 'required'})
+result = agent.run_sync('Hello', model_settings={'tool_choice': ['get_weather']})
+```
+
+_(This example is complete, it can be run "as is")_
+
+!!! note
+    The [`TestModel`][pydantic_ai.models.test.TestModel] used above does not simulate tool_choice behavior.
+    With real models, `'none'` disables tools and `'required'` forces tool use.
+
+### Provider Support
+
+All providers support `'auto'` and `'none'`. Key differences for other options:
+
+| Provider | `'required'` | Specific tools | Notes |
+|----------|:------------:|:--------------:|-------|
+| OpenAI | ✓ | ✓ | Full support |
+| Anthropic | ⚠️ | ⚠️ | Not supported with thinking enabled |
+| Google | ✓ | ✓ | |
+| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
+| Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
+
 ## Tool Execution and Retries {#tool-retries}
 
 When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
