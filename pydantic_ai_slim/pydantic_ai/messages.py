@@ -1179,12 +1179,14 @@ class BaseToolCallPart:
 
     def has_content(self) -> bool:
         """Return `True` if the arguments contain any data."""
+        if self.args is None or self.args == '' or self.args == {}:
+            return False
         if isinstance(self.args, dict):
-            # TODO: This should probably return True if you have the value False, or 0, etc.
-            #   It makes sense to me to ignore empty strings, but not sure about empty lists or dicts
-            return any(self.args.values())
-        else:
-            return bool(self.args)
+            # Check if any value is non-empty. Empty strings and empty lists are placeholders
+            # during streaming, but False, 0, None, etc. ARE meaningful values (the bug fix).
+            return any(v != '' and v != [] for v in self.args.values())
+        # String args (JSON) - non-empty string is content
+        return True
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
