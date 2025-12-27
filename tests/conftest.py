@@ -24,7 +24,7 @@ from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model
 
 __all__ = (
     'IsDatetime',
@@ -311,18 +311,30 @@ def vcr_config():
 
 
 @pytest.fixture(autouse=True)
-async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
-    from pydantic_ai.models import _used_async_http_client_providers  # pyright: ignore[reportPrivateUsage]
+async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
+    """Track and close cached httpx clients created during each test.
+    Prevents reusing AsyncClient instances across tests (and event loops),
+    which can cause 'Event loop is closed' errors, without touching prod code.
+    """
+    created_clients: set[httpx.AsyncClient] = set()
 
-    # Snapshot providers that existed before this test (e.g., module-level clients like in test_prefect.py)
-    providers_before = set(_used_async_http_client_providers)
+    # Patch the cached factory to record returned clients while preserving caching.
+    original_cached_func = pydantic_ai.models._cached_async_http_client  # type: ignore[reportPrivateUsage]
+
+    def tracked_cached_async_http_client(*args: Any, **kwargs: Any):
+        client = original_cached_func(*args, **kwargs)
+        created_clients.add(client)
+        return client
+
+    monkeypatch.setattr(pydantic_ai.models, '_cached_async_http_client', tracked_cached_async_http_client)
     yield
 
-    # Only close providers added during this test
-    providers_to_close = _used_async_http_client_providers - providers_before
-    for provider in providers_to_close:
-        await cached_async_http_client(provider=provider).aclose()
-    _used_async_http_client_providers.difference_update(providers_to_close)
+    # Close only the clients that were actually created/accessed in this test
+    for client in created_clients:
+        await client.aclose()
+
+    # Ensure no stale cached clients persist between tests (new event loop per test)
+    original_cached_func.cache_clear()
 
 
 @pytest.fixture(scope='session')
