@@ -673,6 +673,53 @@ except UsageLimitExceeded as e:
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
     - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
+##### Soft Tool Use Limits
+
+If you want to limit successful tool uses but let the model decide how to proceed instead of raising an error, use the [`AgentToolPolicy`][pydantic_ai.AgentToolPolicy]. When exceeded, instead of executing the tool, the agent returns a message to the model (`'Tool call limit reached for tool "{tool_name}".'`), allowing it to adapt gracefully rather than raising a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception.
+
+```py
+from pydantic_ai import Agent, AgentToolPolicy
+
+agent = Agent('anthropic:claude-sonnet-4-5', tools_usage_policy=AgentToolPolicy(max_uses=2))
+
+
+@agent.tool_plain
+def do_work() -> str:
+    return 'ok'
+
+
+# The model can make up to 2 successful tool calls
+result = agent.run_sync('Please call the tool three times')
+print(result.output)
+#> I was able to call the tool twice, but the third call reached the limit.
+```
+
+You can also override `tools_usage_policy` per-run:
+
+```py
+from pydantic_ai import Agent, AgentToolPolicy
+
+agent = Agent('anthropic:claude-sonnet-4-5', tools_usage_policy=AgentToolPolicy(max_uses=5))
+
+
+@agent.tool_plain
+def calculate(x: int) -> int:
+    return x * 2
+
+
+# Override the limit for this specific run
+result = agent.run_sync('Calculate something', tools_usage_policy=AgentToolPolicy(max_uses=1))
+```
+
+Both `tools_usage_policy.max_uses` and `tool_calls_limit` count only **successful** tool invocations:
+
+| Parameter | Behavior | Use Case |
+| --------- | -------- | -------- |
+| `tool_calls_limit` | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop when you need to prevent runaway costs |
+| `tools_usage_policy.max_uses` | Returns message to model | Soft limit where you want the model to adapt gracefully |
+
+For per-tool limits and advanced usage patterns, see [Soft Tool Usage Limits](tools-advanced.md#soft-tool-usage-limits).
+
 #### Model (Run) Settings
 
 Pydantic AI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.

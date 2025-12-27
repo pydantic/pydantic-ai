@@ -15,6 +15,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    AgentToolPolicy,
     ExternalToolset,
     FunctionToolset,
     ModelMessage,
@@ -26,6 +27,7 @@ from pydantic_ai import (
     TextPart,
     Tool,
     ToolCallPart,
+    ToolLimits,
     ToolReturn,
     ToolReturnPart,
     UserError,
@@ -1324,6 +1326,163 @@ def test_tool_retries():
     assert call_retries == snapshot([0, 1, 2, 3, 4, 5])
     assert call_max_retries == snapshot([5, 5, 5, 5, 5, 5])
     assert call_last_attempt == snapshot([False, False, False, False, False, True])
+
+
+def test_tool_max_uses():
+    """Test ToolLimits.max_uses_per_step with partial acceptance on an individual tool.
+
+    ToolLimits is set on individual tools via @agent.tool(usage_limits=...).
+    It limits how many times that specific tool can be called during an agent run.
+
+    Here we set max_uses=2 and max_uses_per_step=1. When the model tries to call
+    the tool twice in the same step (exceeding max_uses_per_step), partial acceptance
+    kicks in: the first call is accepted and executed, the second call is rejected
+    with a message. Both ToolLimits.partial_acceptance and AgentToolPolicy.partial_acceptance
+    default to True, so partial acceptance works by default.
+    """
+    call_count = 0
+
+    def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First round: call the tool twice.
+            # With max_uses_per_step=1 and partial_acceptance=True (default):
+            # - First call is accepted and executed
+            # - Second call is rejected with a limit message
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_1'),
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_2'),
+                ]
+            )
+        else:
+            # Second round: return final output
+            return ModelResponse(parts=[TextPart(content='Done')])
+
+    agent = Agent(FunctionModel(my_model), output_type=str)
+
+    @agent.tool(usage_limits=ToolLimits(max_uses=2, max_uses_per_step=1))
+    def tool_with_max_use(ctx: RunContext[None]) -> str:
+        return 'Used'
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('Done')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_1'),
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_2'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='tool_with_max_use',
+                        content='Tool use limit reached for tool "tool_with_max_use".',
+                        tool_call_id='call_2',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='tool_with_max_use',
+                        content='Used',
+                        tool_call_id='call_1',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done')],
+                usage=RequestUsage(input_tokens=60, output_tokens=5),
+                model_name='function:my_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_tools_usage_policy_max_uses():
+    """Test AgentToolPolicy.max_uses on an agent.
+
+    AgentToolPolicy is set on the Agent via tools_usage_policy parameter.
+    It applies collectively to ALL tools during an agent run (unlike ToolLimits
+    which applies to a specific tool).
+
+    Here we set max_uses=0 on the agent level, meaning no tool calls are allowed
+    at all. When the model tries to call any tool, it receives an error message
+    prompting it to produce output without using tools.
+    """
+    agent = Agent(TestModel(), tools_usage_policy=AgentToolPolicy(max_uses=0))
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:  # pragma: no cover
+        return x + 1
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='Tool use limit reached for all tools. Please produce an output without calling any tools.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='{"my_tool":"Tool use limit reached for all tools. Please produce an output without calling any tools."}'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=67, output_tokens=22),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_tool_raises_call_deferred():

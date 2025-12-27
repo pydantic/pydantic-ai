@@ -138,7 +138,7 @@ class WebSearchTool(AbstractBuiltinTool):
     """
 
     max_uses: int | None = None
-    """If provided, the tool will stop searching the web after the given number of uses.
+    """If provided, the tool will stop searching the web after the given number of successful uses.
 
     Supported by:
 
@@ -199,7 +199,7 @@ class WebFetchTool(AbstractBuiltinTool):
     """
 
     max_uses: int | None = None
-    """If provided, the tool will stop fetching URLs after the given number of uses.
+    """If provided, the tool will stop fetching URLs after the given number of successful uses.
 
     Supported by:
 

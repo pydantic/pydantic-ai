@@ -11,6 +11,7 @@ from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._tool_usage_policy import AgentToolPolicy
 
 from . import _utils, messages as _messages
 
@@ -50,6 +51,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict)
     """Number of retries for each tool so far."""
+    tools_use_counts: dict[str, int] = field(default_factory=dict)
+    """Successful use counts per tool. Only tools that have been used appear here."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
@@ -66,6 +69,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
+    tools_usage_policy: AgentToolPolicy | None = None
+    """The tools usage policy for this run, if not provided, the default policy will be used."""
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
 
@@ -73,6 +78,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    @property
+    def tool_use(self) -> int | None:
+        """Successful use count for the current tool.
+
+        Returns:
+            The number of times the current tool has been successfully called,
+            or `None` if not currently in a tool context (i.e., `tool_name` is not set).
+        """
+        if self.tool_name:
+            return self.tools_use_counts.get(self.tool_name, 0)
+        return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
