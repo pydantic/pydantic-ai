@@ -2030,17 +2030,14 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='GJYBCIkcS')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
                 usage=RequestUsage(input_tokens=65, output_tokens=16),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
-                provider_details={
-                    'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 11, 28, 2, 19, 58, tzinfo=timezone.utc),
-                },
-                provider_response_id='412174432ea945889703eac58b44ae35',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='20c656d7c70e4362858160d9d241ce92',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -2048,18 +2045,12 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
-                        tool_call_id='GJYBCIkcS',
+                        content='See file 241a70',
+                        tool_call_id='FI5qQGzDE',
                         timestamp=IsDatetime(),
                         return_kind='tool-executed',
                     ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 1c8566:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -2067,19 +2058,16 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='The image you\'re referring to, labeled as "file 1c8566," shows a kiwi fruit that has been cut in half. The kiwi is known for its bright green flesh with tiny black seeds and a central white core. It is a popular fruit known for its sweet taste and nutritional benefits.'
+                        content='The image shows a kiwi fruit that has been cut in half. Kiwis are small, oval-shaped fruits with a bright green flesh and tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=2931, output_tokens=66),
+                usage=RequestUsage(input_tokens=1540, output_tokens=54),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 11, 28, 2, 20, 5, tzinfo=timezone.utc),
-                },
-                provider_response_id='049b5c7704554d3396e727a95cb6d947',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='b9df7d6167a74543aed6c27557ab0a29',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

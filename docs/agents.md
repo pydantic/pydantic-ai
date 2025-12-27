@@ -126,7 +126,7 @@ It also takes an optional `event_stream_handler` argument that you can use to ga
 The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
 
 !!! note
-    The `run_stream()` method will consider the first output that matches the [output type](output.md#structured-output) to be the final output of the agent run, even when the model generates tool calls after this "final" output.
+    The `run_stream()` and `run_stream_sync()` methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
 
 	These "dangling" tool calls will not be executed unless the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] is set to `'exhaustive'`, and even then their results will not be sent back to the model as the agent run will already be considered completed.
 
@@ -226,6 +226,8 @@ if __name__ == '__main__':
     ]
     """
 ```
+
+_(This example is complete, it can be run "as is")_
 
 ### Streaming All Events
 
@@ -417,7 +419,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
-Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
+Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
 #### Streaming All Events and Output
 
@@ -713,6 +715,49 @@ The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from mode
 
 !!! note "Model Settings Support"
     Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like [`FallbackModel`](models/overview.md#fallback-model), [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], and [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel] don't have their own settings - they use the settings of their underlying models.
+
+#### Run metadata
+
+Run metadata lets you tag each agent execution with contextual details (for example, a tenant ID to filter traces and logs)
+and read it after completion via [`AgentRun.metadata`][pydantic_ai.agent.AgentRun],
+[`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult], or
+[`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult].
+The resolved metadata is attached to the [`RunContext`][pydantic_ai.tools.RunContext] during the run and,
+when instrumentation is enabled, added to the run span attributes for observability tools.
+
+Configure metadata on an [`Agent`][pydantic_ai.agent.Agent] or pass it to a run.
+Both accept either a static dictionary or a callable that receives the [`RunContext`][pydantic_ai.tools.RunContext].
+Metadata is computed (if a callable) and applied when the run starts, then recomputed after a run ends successfully,
+so it can include end-of-run values.
+Agent-level metadata and per-run metadata are merged, with per-run values overriding agent-level ones.
+
+```python {title="run_metadata.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+
+
+@dataclass
+class Deps:
+    tenant: str
+
+
+agent = Agent[Deps](
+    'openai:gpt-5',
+    deps_type=Deps,
+    metadata=lambda ctx: {'tenant': ctx.deps.tenant},  # agent-level metadata
+)
+
+result = agent.run_sync(
+    'What is the capital of France?',
+    deps=Deps(tenant='tenant-123'),
+    metadata=lambda ctx: {'num_requests': ctx.usage.requests},  # per-run metadata
+)
+print(result.output)
+#> The capital of France is Paris.
+print(result.metadata)
+#> {'tenant': 'tenant-123', 'num_requests': 1}
+```
 
 ### Model specific settings
 

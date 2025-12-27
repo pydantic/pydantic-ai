@@ -3894,7 +3894,9 @@ async def test_google_vertexai_image_generation(allow_model_requests: None, vert
     agent = Agent(model, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/png', identifier='b037a4'))
+    assert result.output == snapshot(
+        BinaryImage(data=IsBytes(), media_type='image/png', _identifier='b037a4', identifier='b037a4')
+    )
 
 
 async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):

@@ -100,6 +100,7 @@ class GraphAgentState:
     retries: int = 0
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
+    metadata: dict[str, Any] | None = None
 
     def increment_retries(
         self,
@@ -361,8 +362,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                             if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
                                 part.dynamic_ref
                             ):
+                                # To enable dynamic system prompt refs in future runs, use a placeholder string
                                 updated_part_content = await runner.run(run_context)
-                                part = _messages.SystemPromptPart(updated_part_content, dynamic_ref=part.dynamic_ref)
+                                part = _messages.SystemPromptPart(
+                                    updated_part_content or '', dynamic_ref=part.dynamic_ref
+                                )
 
                         reevaluated_message_parts.append(part)
 
@@ -376,8 +380,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         for sys_prompt_runner in self.system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
             if sys_prompt_runner.dynamic:
-                messages.append(_messages.SystemPromptPart(prompt, dynamic_ref=sys_prompt_runner.function.__qualname__))
-            else:
+                # To enable dynamic system prompt refs in future runs, use a placeholder string
+                messages.append(
+                    _messages.SystemPromptPart(prompt or '', dynamic_ref=sys_prompt_runner.function.__qualname__)
+                )
+            elif prompt:
+                # omit empty system prompts
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
 
@@ -481,6 +489,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     _run_ctx=build_run_context(ctx),
                     _usage_limits=ctx.deps.usage_limits,
                     _tool_manager=ctx.deps.tool_manager,
+                    _metadata_getter=lambda: ctx.state.metadata,
                 )
                 yield agent_stream
                 # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
@@ -854,6 +863,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
+        metadata=ctx.state.metadata,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
