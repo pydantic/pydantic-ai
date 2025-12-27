@@ -24,7 +24,7 @@ from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model
 
 __all__ = (
     'IsDatetime',
@@ -308,20 +308,30 @@ def vcr_config():
 
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
+    """Close only the HTTP clients that were actually accessed during the test."""
+    _accessed_http_client: list[httpx.AsyncClient] = []
+
+    # Monkey-patch the cached function to track accesses
+    original_cached_func = pydantic_ai.models._cached_async_http_client  # type: ignore
+    original_inner = original_cached_func.__wrapped__
+
+    def tracked_wrapper(*args: Any, **kwargs: Any):
+        client = original_cached_func(*args, **kwargs)
+        _accessed_http_client.append(client)
+        return client
+
+    # Replace with tracked version
+    pydantic_ai.models._cached_async_http_client.__wrapped__ = tracked_wrapper  # type: ignore
+
     yield
-    for provider in [
-        'openai',
-        'anthropic',
-        'azure',
-        'google-gla',
-        'google-vertex',
-        'groq',
-        'mistral',
-        'cohere',
-        'deepseek',
-        None,
-    ]:
-        await cached_async_http_client(provider=provider).aclose()
+
+    # Restore original
+    pydantic_ai.models._cached_async_http_client.__wrapped__ = original_inner  # type: ignore
+
+    # Close only the clients that were actually accessed
+    if _accessed_http_client:
+        for client in _accessed_http_client:
+            await client.aclose()
 
 
 @pytest.fixture(scope='session')
