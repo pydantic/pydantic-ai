@@ -21,6 +21,7 @@ class EmbeddingSettings(TypedDict, total=False):
 
     * OpenAI
     * Cohere
+    * Google
     * Sentence Transformers
     """
 
