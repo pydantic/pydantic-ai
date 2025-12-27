@@ -2,25 +2,24 @@
   "permissions": {
     "allow": [
       "Bash(rg:*)",
-      "Bash(make:*)",
-      "Bash(uv run pytest:*)",
-      "Bash(uv run:*)",
-      "Bash(git push:*)",
-      "Bash(git checkout:*)",
-      "Bash(gh pr create:*)",
-      "Bash(gh pr view:*)",
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
-      "Bash(gh pr comment:*)",
-      "Bash(gh pr checks:*)",
-      "Bash(gh run view:*)",
-      "Bash(gh pr list:*)",
-      "Bash(gh api:*)",
-      "Bash(pre-commit run:*)",
+      "Bash(ls:*)",
+      "Bash(tree:*)",
       "Bash(grep:*)",
-      "Bash(find:*)",
-      "Bash(coverage:*)"
-    ],
-    "deny": []
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git diff:*)",
+      "Bash(git grep:*)",
+      "Bash(git status:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh run list:*)",
+      "Bash(uv run:*)",
+      "Bash(make:*)"
+    ]
   }
 }
