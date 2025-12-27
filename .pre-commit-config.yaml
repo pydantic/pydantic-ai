@@ -15,6 +15,7 @@ repos:
         exclude: |
           (?x)^(
               tests/models/cassettes/.*|
+              tests/models/openai_responses/cassettes/.*|
               tests/cassettes/.*|
               uv.lock
           )$
