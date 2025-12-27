@@ -120,7 +120,6 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
-      - run: uv sync ${{ matrix.install.command }}
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -130,7 +129,7 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: uv run --no-sync coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
