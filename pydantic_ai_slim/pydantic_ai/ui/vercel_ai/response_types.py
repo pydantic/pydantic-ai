@@ -1,7 +1,9 @@
 """Vercel AI response types (SSE chunks).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui-message-stream/ui-message-chunks.ts
+https://github.com/vercel/ai/blob/ai%406.0.0-beta.159/packages/ai/src/ui-message-stream/ui-message-chunks.ts
+
+Tool approval types (`ToolApprovalRequestChunk`, `ToolOutputDeniedChunk`) require AI SDK UI v6 or later.
 """
 
 from abc import ABC
@@ -149,7 +151,10 @@ class ToolOutputErrorChunk(BaseChunk):
 
 
 class ToolApprovalRequestChunk(BaseChunk):
-    """Tool approval request chunk for human-in-the-loop approval."""
+    """Tool approval request chunk for human-in-the-loop approval.
+
+    Requires AI SDK UI v6 or later.
+    """
 
     type: Literal['tool-approval-request'] = 'tool-approval-request'
     approval_id: str
@@ -157,7 +162,10 @@ class ToolApprovalRequestChunk(BaseChunk):
 
 
 class ToolOutputDeniedChunk(BaseChunk):
-    """Tool output denied chunk when user denies tool execution."""
+    """Tool output denied chunk when user denies tool execution.
+
+    Requires AI SDK UI v6 or later.
+    """
 
     type: Literal['tool-output-denied'] = 'tool-output-denied'
     tool_call_id: str
