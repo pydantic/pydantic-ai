@@ -118,15 +118,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         if not isinstance(self._output_schema, TextOutputSchema):
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
+        # Yield cached output for both delta and non-delta modes
+        # This is expected that the subsequent calls to `stream_text()`
+        # yield full not delta output even for `delta=True`
+        if isinstance(self._cached_output, str):
+            yield self._cached_output
+            return
+
         if delta:
             async for text in self._stream_response_text(delta=True, debounce_by=debounce_by):
                 yield text
         else:
-            # Yield cached output only for non-delta streaming
-            if isinstance(self._cached_output, str):
-                yield self._cached_output
-                return
-
             async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
                 for validator in self._output_validators:
                     text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
