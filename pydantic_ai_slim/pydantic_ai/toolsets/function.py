@@ -131,6 +131,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        examples: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
@@ -150,6 +151,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        examples: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:
@@ -206,6 +208,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
+                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
@@ -229,6 +234,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                examples=examples,
                 metadata=metadata,
                 timeout=timeout,
             )
@@ -250,6 +256,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        examples: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> None:
@@ -284,6 +291,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
+                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
@@ -315,6 +325,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict=strict,
             sequential=sequential,
             requires_approval=requires_approval,
+            examples=examples,
             metadata=metadata,
             timeout=timeout,
         )
