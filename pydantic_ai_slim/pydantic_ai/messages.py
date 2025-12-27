@@ -961,18 +961,10 @@ class RetryPromptPart:
         if self.retry_message is not None:
             return self.retry_message
 
-        # Default fallback when no template was applied
-        from .prompt_config import DEFAULT_MODEL_RETRY, default_validation_error, default_validation_feedback
+        # Default fallback when no template was applied - use default templates
+        from .prompt_config import DEFAULT_PROMPT_TEMPLATES
 
-        if isinstance(self.content, str):
-            if self.tool_name is None:
-                description = default_validation_feedback(self.content)
-            else:
-                description = self.content
-        else:
-            description = default_validation_error(self.content)
-
-        return f'{description}\n\n{DEFAULT_MODEL_RETRY}'
+        return DEFAULT_PROMPT_TEMPLATES.format_retry_message(self)
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:

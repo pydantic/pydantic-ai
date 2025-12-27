@@ -24,6 +24,7 @@ __all__ = (
     'DEFAULT_TOOL_CALL_DENIED',
     'DEFAULT_MODEL_RETRY',
     'DEFAULT_PROMPTED_OUTPUT_TEMPLATE',
+    'default_retry_description',
 )
 
 # Default template strings - used when template field is None
@@ -57,21 +58,36 @@ DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
 """Default template for prompted output schema instructions."""
 
 
-def default_validation_feedback(content: str | list[pydantic_core.ErrorDetails]) -> str:
-    """Generate a default validation feedback message."""
-    assert isinstance(content, str)
+def _format_validation_feedback(content: str) -> str:
+    """Format a string validation feedback message."""
     return f'Validation feedback:\n{content}'
 
 
-def default_validation_error(content: str | list[pydantic_core.ErrorDetails]) -> str:
-    """Generate a default validation error message from a list of Pydantic `ErrorDetails`."""
+def _format_validation_errors(content: list[pydantic_core.ErrorDetails]) -> str:
+    """Format a list of Pydantic validation errors as JSON."""
     from .messages import error_details_ta
-
-    assert isinstance(content, list)
 
     json_errors = error_details_ta.dump_json(content, exclude={'__all__': {'ctx'}}, indent=2)
     plural = len(content) != 1
     return f'{len(content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+
+
+def default_retry_description(content: str | list[pydantic_core.ErrorDetails]) -> str:
+    r"""Generate a default retry description based on content type.
+
+    This is the default formatter for
+    [`retry_description_template`][pydantic_ai.PromptTemplates.retry_description_template].
+
+    Args:
+        content: Either a string message or a list of Pydantic validation errors.
+
+    Returns:
+        - For string content: `'Validation feedback:\n{content}'`
+        - For validation errors: `'{count} validation error(s):\n```json\n{errors}\n```'`
+    """
+    if isinstance(content, str):
+        return _format_validation_feedback(content)
+    return _format_validation_errors(content)
 
 
 return_kind_to_default_prompt_template: dict[ToolReturnKind, str] = {
@@ -172,8 +188,37 @@ class PromptTemplates:
     is used.
     """
 
-    description_template: Callable[[str | list[pydantic_core.ErrorDetails]], str] | None = None
-    """Format a description message while asking the model to retry."""
+    retry_description_template: Callable[[str | list[pydantic_core.ErrorDetails]], str] = default_retry_description
+    """Callable to format the error content explaining why a retry is being requested.
+
+    This receives either:
+    - A `str` message (from `ModelRetry` exceptions or output validators)
+    - A `list[pydantic_core.ErrorDetails]` (from Pydantic validation errors)
+
+    The callable should return a formatted string describing the error(s) to the model.
+    This description is then combined with the retry prompt (e.g., 'Fix the errors and try again.').
+
+    Defaults to [`default_retry_description`][pydantic_ai.prompt_config.default_retry_description], which formats:
+    - String content as: `'Validation feedback:\\n{content}'`
+    - Validation errors as: `'{count} validation error(s):\\n```json\\n{errors}\\n```'`
+
+    Example:
+        ```python
+        from pydantic_core import ErrorDetails
+
+        from pydantic_ai import PromptTemplates
+
+
+        def custom_error_formatter(content: str | list[ErrorDetails]) -> str:
+            if isinstance(content, str):
+                return f'Issue: {content}'
+            else:
+                return f'Found {len(content)} problem(s). Please review and correct.'
+
+
+        templates = PromptTemplates(retry_description_template=custom_error_formatter)
+        ```
+    """
 
     def apply_template(self, message_part: ModelRequestPart, ctx: RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
@@ -204,7 +249,7 @@ class PromptTemplates:
                 return self._apply_tool_template(message_part, ctx, template)
 
         elif isinstance(message_part, RetryPromptPart):
-            return self._apply_retry_template(message_part, ctx)
+            return replace(message_part, retry_message=self.format_retry_message(message_part, ctx))
 
         return message_part
 
@@ -219,23 +264,25 @@ class PromptTemplates:
             for message in _messages
         ]
 
-    def _apply_retry_template(
-        self,
-        message_part: RetryPromptPart,
-        ctx: RunContext[Any],
-    ) -> RetryPromptPart:
-        """Render the full retry response based on content type.
+    def format_retry_message(self, part: RetryPromptPart, ctx: RunContext[Any] | None = None) -> str:
+        """Format a retry message from a RetryPromptPart.
 
-        Selects the appropriate templates and applies them in a single pass,
-        pre-rendering everything so model_response() can just return the result.
+        This is the single source of truth for formatting retry messages.
+
+        Args:
+            part: The retry prompt part containing content and tool context.
+            ctx: Optional run context, required for callable templates.
+
+        Returns:
+            The formatted retry message string.
         """
-        content = message_part.content
+        content = part.content
+        retry_template = DEFAULT_MODEL_RETRY
 
         if isinstance(content, str):
-            if message_part.tool_name is None:
+            if part.tool_name is None:
                 # String without tool context (e.g., output validator raising ModelRetry)
-                description_template = self.description_template or default_validation_feedback
-                description = description_template(content)
+                description = self.retry_description_template(content)
                 retry_template = self.no_tool_retry_prompt or DEFAULT_MODEL_RETRY
             else:
                 # String from a tool - use content directly
@@ -243,15 +290,13 @@ class PromptTemplates:
                 retry_template = self.tool_retry_prompt or DEFAULT_MODEL_RETRY
         else:
             # List of ErrorDetails (validation errors)
-            description_template = self.description_template or default_validation_error
-            description = description_template(content)
+            description = self.retry_description_template(content)
             retry_template = self.validation_errors_retry_prompt or DEFAULT_MODEL_RETRY
 
-        # Resolve callable if needed
-        if callable(retry_template):
-            retry_template = retry_template(message_part, ctx)
+        if callable(retry_template) and ctx is not None:
+            retry_template = retry_template(part, ctx)
 
-        return replace(message_part, retry_message=f'{description}\n\n{retry_template}')
+        return f'{description}\n\n{retry_template}'
 
     def _apply_tool_template(
         self,
@@ -460,5 +505,5 @@ DEFAULT_PROMPT_TEMPLATES = PromptTemplates(
     tool_retry_prompt=DEFAULT_MODEL_RETRY,
     no_tool_retry_prompt=DEFAULT_MODEL_RETRY,
     prompted_output_template=DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
-    description_template=None,
+    retry_description_template=default_retry_description,
 )

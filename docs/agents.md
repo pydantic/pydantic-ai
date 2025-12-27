@@ -859,9 +859,9 @@ The available template fields in [`PromptTemplates`][pydantic_ai.PromptTemplates
 | `tool_retry_prompt` | Message appended when a `ModelRetry` exception is raised from a tool |
 | `no_tool_retry_prompt` | Message appended when a `ModelRetry` exception is raised outside of a tool context |
 | `prompted_output_template` | Template for prompted output schema instructions (uses `{schema}` placeholder) |
-| `description_template` | Template for the *description* portion of retry prompts |
+| `retry_description_template` | Callable to format the error content explaining why a retry is requested |
 
-The [`PromptTemplates.description_template`][pydantic_ai.PromptTemplates] callable lets you customize the first part of
+The [`PromptTemplates.retry_description_template`][pydantic_ai.PromptTemplates] callable lets you customize the first part of
 the retry message (the "description"), for cases where Pydantic AI is generating validation feedback:
 
 - Validation errors (`list[pydantic_core.ErrorDetails]`) when asking the model to retry after a tool argument or output
@@ -871,13 +871,13 @@ the retry message (the "description"), for cases where Pydantic AI is generating
 This does not change the retry description when a tool raises `ModelRetry`: in that case the tool's exception message is
 used directly as the description, and `tool_retry_prompt` controls the appended "retry" string.
 
-```python {title="prompt_templates_description_template.py"}
+```python {title="prompt_templates_retry_description_template.py"}
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import Agent, PromptConfig, PromptTemplates
 
 
-def my_description_template(content: str | list[ErrorDetails]) -> str:
+def my_retry_description_template(content: str | list[ErrorDetails]) -> str:
     if isinstance(content, str):
         return f'Please address this issue:\n{content}'
     else:
@@ -886,7 +886,7 @@ def my_description_template(content: str | list[ErrorDetails]) -> str:
 
 agent = Agent(
     'openai:gpt-5',
-    prompt_config=PromptConfig(templates=PromptTemplates(description_template=my_description_template)),
+    prompt_config=PromptConfig(templates=PromptTemplates(retry_description_template=my_retry_description_template)),
 )
 ```
 
