@@ -1,0 +1,82 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '391'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Hello
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get weather for a city
+          name: get_weather
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '985'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=636
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: London
+              name: get_weather
+            thoughtSignature: Cp8BAXLI2nwjd6jYGZbMyJVqCJmrERJUwkgIIwcQIw8RKxjuRPbQggunE42Vi5DOr+NxYGm7uSPgQ2yX43hD+VOsYxh5mlPrIODm+F6SAAL9qKPqWlt0BIIeo+HHMRSh4brmMo1uH+Q8Cd4rwFCtjx9A7a6engI9+t6JWJwFA905wlBd9ls32Tl2FekZxkGfMwvHTYLrGcyjy4yfV+cWfjZp
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: asVFaez0Fobpz7IPvrH0uQM
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 39
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 39
+        thoughtsTokenCount: 27
+        totalTokenCount: 81
+    status:
+      code: 200
+      message: OK
+version: 1

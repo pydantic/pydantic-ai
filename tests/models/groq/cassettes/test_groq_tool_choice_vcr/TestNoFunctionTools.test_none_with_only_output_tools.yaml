@@ -1,0 +1,95 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '416'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Tell me about Boston
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '901'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Boston","summary":"Boston is the capital and most populous city of the Commonwealth of
+                Massachusetts in the United States. It is also the cultural and economic center of the New England region."}'
+              name: final_result
+            id: bm3v7a482
+            type: function
+      created: 1766183512
+      id: chatcmpl-686c3ec2-6aaa-4e7c-b44c-49dbc278acc8
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_130a0cd72d
+      usage:
+        completion_time: 0.164226415
+        completion_tokens: 67
+        prompt_time: 0.023834957
+        prompt_tokens: 733
+        queue_time: 0.096536159
+        total_time: 0.188061372
+        total_tokens: 800
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbvaepfq1sr2t6kzhy2rey
+        seed: 1028499466
+    status:
+      code: 200
+      message: OK
+version: 1

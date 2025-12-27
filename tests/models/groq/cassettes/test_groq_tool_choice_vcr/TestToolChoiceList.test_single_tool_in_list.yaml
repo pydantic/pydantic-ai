@@ -1,0 +1,93 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '407'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Give me some info about Paris
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice:
+        function:
+          name: get_weather
+        type: function
+      tools:
+      - function:
+          description: Get weather for a city
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '708'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: k21yyzx9y
+            type: function
+      created: 1766183508
+      id: chatcmpl-e741a776-69b9-4e4b-ae7d-88a0946a2a1b
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_130a0cd72d
+      usage:
+        completion_time: 0.654201947
+        completion_tokens: 262
+        prompt_time: 0.022737286
+        prompt_tokens: 723
+        queue_time: 0.269600863
+        total_time: 0.676939233
+        total_tokens: 985
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbv60xfj0aqtsbbyd8jrjg
+        seed: 790644180
+    status:
+      code: 200
+      message: OK
+version: 1

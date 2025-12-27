@@ -1,0 +1,104 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '460'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Tell me about Madrid
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice:
+        function:
+          name: final_result
+        type: function
+      tools:
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1524'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Madrid","summary":"Madrid, the capital city of Spain, is known for its vibrant culture,
+                rich history, and beautiful architecture. The city is home to many world-class museums, including the Prado
+                Museum, which features an extensive collection of European art. Madrid is also famous for its lively nightlife,
+                with many bars, restaurants, and clubs to choose from. The city''s historic center is filled with charming
+                streets, picturesque plazas, and stunning landmarks like the Royal Palace of Madrid and the Almudena Cathedral.
+                Visitors can also enjoy the city''s beautiful parks and gardens, such as the Retiro Park, which offers a peaceful
+                escape from the hustle and bustle of city life. Overall, Madrid is a must-visit destination for anyone interested
+                in exploring the best of Spanish culture, history, and cuisine."}'
+              name: final_result
+            id: bh6yp4bhz
+            type: function
+      created: 1766183506
+      id: chatcmpl-f31b553f-6349-4657-aa8f-e36212dd1157
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_130a0cd72d
+      usage:
+        completion_time: 0.476593711
+        completion_tokens: 189
+        prompt_time: 0.025955799
+        prompt_tokens: 733
+        queue_time: 0.370442745
+        total_time: 0.50254951
+        total_tokens: 922
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbv3j8fpdv7m7r5xetwt3z
+        seed: 1611282857
+    status:
+      code: 200
+      message: OK
+version: 1

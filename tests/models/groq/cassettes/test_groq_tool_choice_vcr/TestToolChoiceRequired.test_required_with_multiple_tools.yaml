@@ -1,0 +1,101 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '558'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What time is it in London?
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get weather for a city
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: Get current time in a timezone
+          name: get_time
+          parameters:
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '717'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"timezone":"Europe/London"}'
+              name: get_time
+            id: td5txahq5
+            type: function
+      created: 1766183507
+      id: chatcmpl-4a828827-a049-4a24-aa2a-1c7a819395b5
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_130a0cd72d
+      usage:
+        completion_time: 0.070313982
+        completion_tokens: 31
+        prompt_time: 0.025431839
+        prompt_tokens: 759
+        queue_time: 0.080431599
+        total_time: 0.095745821
+        total_tokens: 790
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbv5byfhyrj04x6sdgsasm
+        seed: 2055289163
+    status:
+      code: 200
+      message: OK
+version: 1

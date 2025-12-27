@@ -1,0 +1,56 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Berlin?"}]}], "system": [], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NmYzYzFiMDEtNWRhYS00MGQzLWJiYmMtMDkwMmU4MWZkZWFj
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '125'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '842'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3551
+      output:
+        message:
+          content:
+          - text: |-
+              I don't have access to real-time weather information. To get the current weather in Berlin, I recommend:
+
+              1. **Weather websites**: Check weather.com, accuweather.com, or weather.gov
+              2. **Search engines**: Simply search "Berlin weather" on Google
+              3. **Weather apps**: Use apps like Weather Channel, AccuWeather, or your phone's built-in weather app
+              4. **Voice assistants**: Ask Siri, Google Assistant, or Alexa
+
+              Would you like me to help you with something else about Berlin, such as typical weather patterns by season?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 14
+        outputTokens: 133
+        serverToolUsage: {}
+        totalTokens: 147
+    status:
+      code: 200
+      message: OK
+version: 1

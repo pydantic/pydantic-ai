@@ -1,0 +1,88 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '454'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me about New York
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2133'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3008
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: New York
+                summary: New York City is a major global hub for finance, fashion, art, and culture. It is known for its iconic
+                  landmarks like the Statue of Liberty, Times Square, and Central Park, as well as its diverse neighborhoods
+                  and Broadway shows.
+              name: final_result
+            thoughtSignature: CrQGAXLI2nzbBKDwZPQfXJVHd5sT5nFoVYYs7Jxgf6FZe+itBmi18+Gw+Z3gXLMiVgOZ9shPfTxfYxm3MnmJ1coT8G5SsjBd5kbotHKq0xFt/RPKTzpwyRcu5eWsjCRwPASvNl1fZT2c+2Wjp+DhkrAxj4SoQrFzS1ci37zOmTieDp34HG1gS13ZbuyauymmPDC3Ags0ydLP/YdrRAJ05NgJ0vjF2hVpv07IK6A1T4GbdhC58V4amcI5PfVABmcr93DDmHkGBArmaCHt7WpMuy2VG1p6pHqQpfxqz0rCJ0Xuo5RuJXFlkGShIRO/0MqLw2s37RM7dQXVQsJiGpV8JvsgS8zVAIBNOplMcQHNjdc0rXvKcM9ZrRS/6KnqNwrvN7/FL5gAxE2E1GGWQxn1MhTcgvPGS0OmPJEqmn2RmKimTWlMXadVJJpTzzKbvUdnqkdEkN43ZVddtVUBVUkyc5AGfKN0Mq2jmHIkI+czwbQ9UrYf+goGI4t7F/hWJaDsrCkO1Nw9URi01MVIt/Wr7ShA7ylhVF2DRlcdzP+7yHiG7abu0qYjhjy1bACgRn9BEFWfSSFKYxv+7bXeS592W89PAK189eIyNypGYkiqrLYz3HvubjzSZGWo3f3Nqg7o1S29PWgwWRxz9fZOny0TGU3ZIqSZq8Qz0ACfR5J5lwGsPVb3KU5lxjB1Pu6KyYIDEJCqaN789Cx/fUJ928gSXvQrpzk7x/Zre4838QEPORsIG5yzi9FBngq9W0+fySX5Yq9+XCVyaFRz/czv5aK5l4VNMNgOMpxAIAMG7vgK49QY7YZqGZYvaHvn7h4aEYH5T6HwbB/+AMAPqe2T7ql3hAralMU2SBBe/ZjuQoTrMhJWFebCGAuOAUhgcBDDjqzej1qP2osuiVQIMGc0MOc4cdTXCCs6VTmwDk/aEpLNgxOtqvj+TqMMvdsL7d9s6vJM7pl8ttkad2iS8yGeq/RwRARGaQYz5eJ98UadgroYTGOyExO1zShM58Wko8T60OQCJFPSBn28FFK81folkWGAk0pSCDiQ5rF/FwwgcTk75Hv/E5cIEL+wybmmkW9i0FbPTBH4YvUwGQ==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: ecVFabTpKMaHz7IPmYyeWA
+      usageMetadata:
+        candidatesTokenCount: 67
+        promptTokenCount: 54
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 54
+        thoughtsTokenCount: 178
+        totalTokenCount: 299
+    status:
+      code: 200
+      message: OK
+version: 1

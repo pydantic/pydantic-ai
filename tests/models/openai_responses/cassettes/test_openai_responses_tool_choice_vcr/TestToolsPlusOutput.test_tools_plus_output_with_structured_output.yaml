@@ -1,0 +1,469 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1253'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get weather for Sydney and summarize
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5149'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2589'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174142
+      created_at: 1766174140
+      error: null
+      id: resp_02930ea85df92c07006945adbc87b481a380f77ad811650cac
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa2_U_ZIK2RaQbq3TjYjEtFWVi0nEpUZA31bO66Xja18bIgeL1Y3-SkryTx_53GZ50iODKl2Io9ipWX3j3J1859ZG9wK7edofHhMR9D66wrMkutQzDfX0VGJ8hvns_x-w26drVwXU7q0oRQB3djisO6cqMYvo4RMFlLDN-qio0Uwxf0FeI3f5CPJ6zo44CXyaERFCHDmy1gkMwsvbT2sVGeAzD5Pw1djLDdkp_7VKpU0ZXWL7LMg_iXILZPFyc0utzJs3LoBLHisOeNqF0dYAHmJOFOVQ2TrkKw5wrfd7QoHNqdwg6wqgsp6ML0JiaN_gLqY1_x4gH4Oeca0r9JK9zRmgdneexn4nl1YC-NlawwGUMThTKQulhfkNH7W3EXXs47q99Ao6q7rDMWaQssyw8Ks8ycOEw_x4JCDpfVF_nB9I1moqHRXFDrsvOskZzgz9RaHxgA23fyeWuZ1gAa6gX4yaMJtchJl0dA4fAR2Yp4zDpYWrYUXsRaVmMInzBIv_WN5y3z_6nhLHSTp-69BZU9DQs4Yva3CfTZmqKOKV2OUnd8wrJyqa0rQd_Q9wT8MsREKtZUEm8NEMVHvgPiaZrnzp_DLBFsoxttPEk-IcqbN4J6sOVacg3mMwKxSTtILkhbht8kmgX9JqnbuL_CM15GGVpkcdAxB_euLKramymMgoNTZ5KDHeo0IcnxToTl-3p5td5vEVcOd1lA9_76LBzDbutPczG62Ok99nYlrFj8o7eKiDfo384z3eO-McGLR1RSaiK7ydjP1S4GKmj1HcYcsySiaY67DAiWgfOTkR9CtIWA4tADOPeTux4pMSv9u8nxHVSl5CsLFoCB8oCi9u_mvKf4ktEUZOrRDlkZ22F1Dhuaw7nezRrh_k7_o2cVh8krMqx3TQ57eXS92gnSU4uFC5WA26VRI3SisnugTM4TenopE3CFrbdQ10jEx4zgokQHQnAYg--i_DLj_vvZW6ls4QYeILPjqG7-GhkoFosbj2Yj_1PE9_4ck3aQH8guTkWtojutFM3pxETqbGvZcwX-w9yTZF5IQhKCy4NKTpSp-w-LYHeI5jd1fVq6xyTMHH9jQQSN4aah2iqdUcEPMEaOxdZ5pTg3RQO7N4K5QnpKc9MGhyr76dooivM9lUQkpuRPIThuIbVmTSEpfPqbAXKeq0BwKd58Ibs2l0-DSCP4BaYR7MWvCrc0rjvKII9cw11gJiZ76TMPCtiK0WW9nSMuD5TTgCMH-tx-l3F4Gpy2KWWSgDtnXcqFInwcP1rlWhST9OL2q54Q5y3Nopy7rK1EYSyfoBMdEaYQAAnm1F7hkfLWTvIcqiI4CEGhMUI9bgvmv7KTi_c0-NmB2fI8_4mr2k6O0d0xX2YT7m6hKgH_X1AECTfhDu_Yh2pjuGf5k-wbcH-_qrf27uBYhkdG21yJ4BInOCGN5qYiKpytkON7KR4Y_yPYk0oOM9bdkrbVSJXIMOcyzeCzj1Hoz4x85qjQoKjho3NdXl7fa0RHmp5J-8A4Ovnn9xBdbid-YPHABp9M444TEHxfLR1lQCtRDYfTGvR3yb0r4uIkIcH_U0rzdjJXXbBH10OLnZXpalZjrxMRYknrUxVilbNRdb1gbkhAJpGGbO2Ir5R53357aIbBRkbXpa84d-wBUIZ-UcEIZnHE17DM5ytMksTznkfG-xaEQaw==
+        id: rs_02930ea85df92c07006945adbce16481a3952b06cd588f2b38
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Sydney"}'
+        call_id: call_VHaUOnJSRlDiWZxoTwnKXJwX
+        id: fc_02930ea85df92c07006945adbea6e881a3ae47c2f6bf1e729e
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 116
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 148
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 264
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '3362'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=_I33LLvidZhUGJgc.VN3KV0kVGrHmRkg.ZqZKlPQaGg-1766174143-1.0.1.1-5yLqMuXpL5pYw2c9a4.Paq3vJHsQa_pyTK5i_9AjWEzhO0b_kMwBR__xb4gMWVu5o5fQv_H811HsRyKnWU6vWUmmf2JDy8BLOJVNDkeYV2c;
+        _cfuvid=JEHTmOn.vvQFzEwNrRwl8sfMgok40eFcoiud2SHGTMY-1766174143131-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get weather for Sydney and summarize
+        role: user
+      - encrypted_content: gAAAAABpRa2_U_ZIK2RaQbq3TjYjEtFWVi0nEpUZA31bO66Xja18bIgeL1Y3-SkryTx_53GZ50iODKl2Io9ipWX3j3J1859ZG9wK7edofHhMR9D66wrMkutQzDfX0VGJ8hvns_x-w26drVwXU7q0oRQB3djisO6cqMYvo4RMFlLDN-qio0Uwxf0FeI3f5CPJ6zo44CXyaERFCHDmy1gkMwsvbT2sVGeAzD5Pw1djLDdkp_7VKpU0ZXWL7LMg_iXILZPFyc0utzJs3LoBLHisOeNqF0dYAHmJOFOVQ2TrkKw5wrfd7QoHNqdwg6wqgsp6ML0JiaN_gLqY1_x4gH4Oeca0r9JK9zRmgdneexn4nl1YC-NlawwGUMThTKQulhfkNH7W3EXXs47q99Ao6q7rDMWaQssyw8Ks8ycOEw_x4JCDpfVF_nB9I1moqHRXFDrsvOskZzgz9RaHxgA23fyeWuZ1gAa6gX4yaMJtchJl0dA4fAR2Yp4zDpYWrYUXsRaVmMInzBIv_WN5y3z_6nhLHSTp-69BZU9DQs4Yva3CfTZmqKOKV2OUnd8wrJyqa0rQd_Q9wT8MsREKtZUEm8NEMVHvgPiaZrnzp_DLBFsoxttPEk-IcqbN4J6sOVacg3mMwKxSTtILkhbht8kmgX9JqnbuL_CM15GGVpkcdAxB_euLKramymMgoNTZ5KDHeo0IcnxToTl-3p5td5vEVcOd1lA9_76LBzDbutPczG62Ok99nYlrFj8o7eKiDfo384z3eO-McGLR1RSaiK7ydjP1S4GKmj1HcYcsySiaY67DAiWgfOTkR9CtIWA4tADOPeTux4pMSv9u8nxHVSl5CsLFoCB8oCi9u_mvKf4ktEUZOrRDlkZ22F1Dhuaw7nezRrh_k7_o2cVh8krMqx3TQ57eXS92gnSU4uFC5WA26VRI3SisnugTM4TenopE3CFrbdQ10jEx4zgokQHQnAYg--i_DLj_vvZW6ls4QYeILPjqG7-GhkoFosbj2Yj_1PE9_4ck3aQH8guTkWtojutFM3pxETqbGvZcwX-w9yTZF5IQhKCy4NKTpSp-w-LYHeI5jd1fVq6xyTMHH9jQQSN4aah2iqdUcEPMEaOxdZ5pTg3RQO7N4K5QnpKc9MGhyr76dooivM9lUQkpuRPIThuIbVmTSEpfPqbAXKeq0BwKd58Ibs2l0-DSCP4BaYR7MWvCrc0rjvKII9cw11gJiZ76TMPCtiK0WW9nSMuD5TTgCMH-tx-l3F4Gpy2KWWSgDtnXcqFInwcP1rlWhST9OL2q54Q5y3Nopy7rK1EYSyfoBMdEaYQAAnm1F7hkfLWTvIcqiI4CEGhMUI9bgvmv7KTi_c0-NmB2fI8_4mr2k6O0d0xX2YT7m6hKgH_X1AECTfhDu_Yh2pjuGf5k-wbcH-_qrf27uBYhkdG21yJ4BInOCGN5qYiKpytkON7KR4Y_yPYk0oOM9bdkrbVSJXIMOcyzeCzj1Hoz4x85qjQoKjho3NdXl7fa0RHmp5J-8A4Ovnn9xBdbid-YPHABp9M444TEHxfLR1lQCtRDYfTGvR3yb0r4uIkIcH_U0rzdjJXXbBH10OLnZXpalZjrxMRYknrUxVilbNRdb1gbkhAJpGGbO2Ir5R53357aIbBRkbXpa84d-wBUIZ-UcEIZnHE17DM5ytMksTznkfG-xaEQaw==
+        id: rs_02930ea85df92c07006945adbce16481a3952b06cd588f2b38
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Sydney"}'
+        call_id: call_VHaUOnJSRlDiWZxoTwnKXJwX
+        id: fc_02930ea85df92c07006945adbea6e881a3ae47c2f6bf1e729e
+        name: get_weather
+        type: function_call
+      - call_id: call_VHaUOnJSRlDiWZxoTwnKXJwX
+        output: Sunny, 22C in Sydney
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '7731'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '8492'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174151
+      created_at: 1766174143
+      error: null
+      id: resp_02930ea85df92c07006945adbf4aec81a381ae9fe000c17478
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa3HTpK93lZ8syK7wIbo6KvylddxQAaUiX3JhwX-EkDb0Hyxm-T_M82GwuWNuROBGXpsmgmSv4GGyNuo3wScaNRbC99JhlBEuDLKDx1J2AbckJ-3GUzl0V_0BwCuiP6sFoHq8Z6Gw9vD7s-mNTUkK1JdgUZv2jbh78fMC5V49kQAjPeindHckdZPgvT30OppSa5Cmi-dyMLlZhYnstRZLE8nmQj7DqiE9VB38tcTROmATnvHLEikntcTu0DLu_xw7h2DLK7DkfYOsKOEqbtuhmlksFa7HOmvfgyblp8L3-Zm7_oGXxv969Pktoc5qxkSGsa_tbplyjShp7F1mi6OhBCmWyZd8KfCDXMk2MY-lTXNwG69DtYeXMWL3HzDNx_l8iOY_x5pR1nrHfLFzow_YQ1LQbJ3MKdmYh5mVfmVgXMl_VNJf2vYmqzCJGuQRa3Nfn0gaOsVMQbTx8p41VtcSgaV_bPAaRgud_9Jfnstmfzwsv7nlfJncXU_cgLn5Pjl-X4j8FddkrIIQaz1gw-WcY5i4PMXQCHvCZLsM6kSBXtpIBv9BQyh40hsQQlN5BISWRYJHfRkNXUEhJp81mKsU12IhotVw-iwVU4xhsiTX75f2ZxIYWgXnbXttw5BrmWwrsYT2XUK1y73JQDxjXubKjcIS7CyrQ8hwxKeP5iiNQrc4C-HoyD_AXdAxSHyRgMoHMarcs6b0HHjQXitZIOTrtw2nDpFe5uDOXAuFDNPIS6zIYogT2hKRR3312zYwogpsdxyLuIZzOlnaWK7SsJJnnWa09cWWzmB4-BxkS5VAAP0VHSZnd072EOGy4RJNyOSmLYN73RaHFZ3jKT9_7fuVtruQ4iiMxCScZitr1yC7LLRyUQ-jSCVXqnHf-rgMBJle0zVnttusMJNRMUcEAkcQEplbcRpXjGcgmbhjCABNw9UqPIR7ovm4X0L-ioZR6HPluf-3wfpmxdkpAf9ish5jar8o36jCHTmqFkZm6noLPKylmeLhxTWtWuqMbUFmEH34NomqdCsSSLI3OokqH6-9-KXJdGvyKvIcjf7twvYJthzmn2aqaHACKrQfxy6QvkK8_8bcj2WfTb-Gwd6EtzY2_pPbxQeemUwqw4x5JAHjSiuzcCW1gC7OVb6tHnUY4uCggP1vvNWUa-z7RFT38ixICXbYRjrmhkREYJWprknaXbDhKCFyPJnom4CVsWWA9VWApU559lo7VY9rM3V1SljH97X12nEs4fBN0FZUfLmPMCfqTKWYscLcVLbFyALO-R6y1YcJDhEKyXJCIIvr0oK73HF91_-GOgFVszWWvGDgfWwMmjzeJ8jfYill9nXer7kuTv0o1DmL7ypiefY72pleo-FzjcLiApnZpXCx6gEGpTmG4Pwn3Gh0bf8HxDKEm1lRXAx30fMbE3SvZm2t6hqJsY_Jn4eMoavootTOxuW_xgCPWzW_ZX6lQLTQMHRoFESnHf3My5pwXkmvEYD_HgsXDA8nTX8Palow_qlgHpvegR7rKd1PTNEKbqhltRB7NsL0vgNyxGnnvOXOw0wpPBiFxYVCuMXkNALcbXOImMZMqDHKgtEahLrKJqEsnKbQaPGRxLPT1HJDLl38bnvRLUFA-Ic8ukTdABdSJzIVvtRZ58UTUyWRbkhGjLXdhpe_RUn-1NLwqsW0ShBCAg__rOVId39ezuXUeTNl3o3ANGfqRtDFBETcBMnWtykT2s6MymkM1EXbu3xBVraZcXTHhz0bXSVLLUkj2VOuDJTCtLsJfYNN_SD1o3zcNTJkkXAF-fUWvquytWoxE3_4vp3Vd_GEjJL3zSUSvTaDx1ic6Jwgp6O-4jS_J74HvvF2hOblCz3gfKacdNVgGFy9A7gZmErxNTdRLm3Gzv7tFJlJEeVV1kvfvRKrovc1B11xt5wSlcCEmU_c6l3RQLqyiWcFXejyYHG9-gpYjq-T0Iw0mhqEx0OIOoo0szBo3gLk8gClTMM1u_jX3hN5QeaVAKmo3J9GbM6vD2Xeueq-T-Q8XdltSKkBFtCfM78Af5jGk7D4eEatVlJw-wq5thwh8iklZcPmJnEeYoMIWZl-PGTI29069epbmLjkNgZSHg9jS0c-qxtDipjXqV4jdIzXBND5nTWohLazyvIcsjgpzsTSGjTgrGUt868pmnVPYWMD1qDEmL5-RcsD75cvg27hrmA0KTqPTD7ueqlFHD3TtniiR1x_oYJeaPzaM7LwokOyWSwBWU2P3CLTw3FE3VKv4ZCHwM1yVqs86jE6tzmsxcYowO6aG0g13IbIkRWEsWAqqNfC4N7xTDBtCQFPgn60WWS3VVTgxYLCZJX_D6PsZvXPmPwMIfpc2EaXNfBZZzl2okxmL0aBxwdZrq15QXjF_uF1zxtWhmoARObQZOwBMPICZYjzGcuOF3lIL2jaMLmsgGD1B-x-WS2r0UKr4DjZeh0QpYNqVDGmBmUY74prw5OYbKAQEa6ID8p1rK59n3y6SJ6NGSSrp3TRZcHGZVtxuGdTgMW-lhvbR97T0CRT3RpKsL2abE1wGOhA7nG2kaGh_DlcNxwQbK71kQC14My25oLr4q-iT-MtJZiYavqrTdDLntnaR_-4tFZT0mbzABCZEJP0t2cJJuPDlkwNHsFNedSf6aEEYe96DZyM-oK_pie1KzIXtqaBzzY0hgDpGqCBq0-nyqSYJvX4N1t-XipAfno6XL2t1JC1J8JNlTBJUwvb4y9UW54i_ixG5Dvh_mjA5wJIeFuIDSEcrYtE3Fxx0BZE6gye3DhJtOtypcfTUf-NaBqQGMDZN0g4e-WnnLKtoT73r516QyXnKJ_dUt6mpfVQmgkgP248GKRryF2E9nnJ4jwAFAt7a5tiqodP1VPSH4Kb3PoPWY6tp29nahnoOSiv0njHccZsxJL_gWa7QQVSvo7uYgLM3EMnN4k0INErJjEhTPvO04BwuSiWJUadvXU83zrr7sWkBftj5bg4ttruvkNlz_HeKw=
+        id: rs_02930ea85df92c07006945adbf9b9c81a389c5865b779abc87
+        summary: []
+        type: reasoning
+      - encrypted_content: gAAAAABpRa3H0iNAr3AhGjsou4Qz5Tx6OFIok0ogB4uzbBZBCn_slzsYyE1ECQYmOaRCjMt7r8wyUgMUsUWLrWNO3WaCA-Nz4FS60MFyupIZnA-L6fuKu4HoWUqiBLX0qFTGjm3NFw48TWkuq2UAlDhexCDKfjbpAsucYq_zAKZdjAj8xajHdLmdHru_YKpxHmQL5ennRHSy-zoUb4q4nYdSFl0t6y3Jj1IIwTf0RR98pg1teTRD290Y720p7xpBrKkB3lhrpNwRHDbKaKpJmJ9uPrboTP1cWtnGOm6UrevY0glEyGP9xA7aL1mJkQqnE0eEUbPUopY-e8md_PRQ4JMikjHaz9Z7Xdj09GYEX-w0Ray14eIX4dD0XoVFHIOd19Mg3RKYKAYGz3pymfzSIA39Cs9cO4nW_1acn8s0XxfZKhW-CA3_c2dIk_Bk2EHvoYnkxPvk05lwCmHvRTuskJiFh-uqTa2lacy3nCzumuCuuOdkAGLBexYWUOZDW0E594OZG60m_tMSNZCyX_nh4fAgFHCtHLkOFt9WvMIMiKWZZrwMmMRBOUkeJe_xqt66SbHGajgWw4DLvz1M5OLdqEL5cW858rXwGzzDIWdnM0wpn-pB-qUoK3Zy9KqCpJsN1bDmzT-3X9vdXsdSOJ6A7VhUnid8qrzCJWWSYZdAS_zDAlMKTPsL7QfYpHiiVC0WwoO3Dl_9kMkOvolhLiMa6P9ogM0jUewAS4LSlas6GCX_RbMd32knXc3Hy3uLsFEH0929Wb5_cchq3fmpnuKFdXSla3_AyNkaDKq6mfjTpM3P7vS4EOtVdNE6XjtOHDPMIL9lrXONcFZ2KPpMK4sUlJTGlB26vtEtJA==
+        id: rs_02930ea85df92c07006945adc4aa7081a39b9caa32e16dc26b
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Sydney","summary":"Sunny, 22°C in Sydney. Clear skies and mild — pleasant for outdoor activities.
+          Recommend sunglasses and sunscreen for daytime; a light layer for cooler mornings/evenings. Would you like an hourly
+          forecast or multi-day outlook?"}'
+        call_id: call_lCfU4P0xSJSWrNBiBGpeKBdh
+        id: fc_02930ea85df92c07006945adc4ec7081a392bfae053d0d27bb
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 284
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 389
+        output_tokens_details:
+          reasoning_tokens: 320
+        total_tokens: 673
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

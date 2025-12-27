@@ -42,7 +42,13 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    download_item,
+)
+from pydantic_ai.models._tool_choice import validate_tool_choice
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -291,9 +297,6 @@ class BedrockConverseModel(Model):
         """The model provider."""
         return self._provider.name
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
-
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
@@ -528,9 +531,35 @@ class BedrockConverseModel(Model):
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
-        tools = self._get_tools(model_request_parameters)
-        if not tools:
+        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        tool_choice: ToolChoiceTypeDef
+        if validated_tool_choice == 'auto':
+            tool_choice = {'auto': {}}
+        elif validated_tool_choice == 'required':
+            tool_choice = {'any': {}}
+        elif validated_tool_choice == 'none':
+            # Bedrock doesn't support a native 'none' mode, so we don't send tools
+            # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html
             return None
+        elif isinstance(validated_tool_choice, tuple):
+            tool_names, tool_choice_mode = validated_tool_choice
+            if tool_choice_mode == 'auto':
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = {'auto': {}}
+            elif len(tool_names) == 1:
+                tool_choice = {'tool': {'name': tool_names[0]}}
+            else:
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = {'any': {}}
+        else:
+            assert_never(validated_tool_choice)
+
+        if not tool_defs:
+            return None
+
+        tools: list[ToolTypeDef] = [self._map_tool_definition(t) for t in tool_defs.values()]
 
         profile = BedrockModelProfile.from_profile(self.profile)
         if (
@@ -540,14 +569,8 @@ class BedrockConverseModel(Model):
         ):
             tools.append({'cachePoint': {'type': 'default'}})
 
-        tool_choice: ToolChoiceTypeDef
-        if not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}
-        else:
-            tool_choice = {'auto': {}}
-
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
-        if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:
+        if profile.bedrock_supports_tool_choice:
             tool_config['toolChoice'] = tool_choice
 
         return tool_config

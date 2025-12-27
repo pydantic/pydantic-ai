@@ -1,0 +1,157 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '617'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Give me any information
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get current time in a timezone
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4523'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '4205'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174126
+      created_at: 1766174122
+      error: null
+      id: resp_0f1df6a79361234d006945adaad354819d8a85b3ab90294961
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa2vJ0_OgvEYf6vlD91z_yLW98ID5S_kSVm5MVstj4bD9BDY75hrkvWMmACdV3c-LsPoYj505RK09c8vFqkgVT_CT5UPsThEOU7iI4MUknYTklhCPRhqXf3IUw6sYuiwQNyhiJu4xb1tBU0Ao0HroSNYMWc14ovjvEscgUwaezuLacKGvJOaG6mHfcmk6m2ZtVK3zRCL0VITN4lTpBW8-SdJANLRqxWsOF4bwLy3k1dsZsZbsHRec-YkKH_DSsHZdM50wpYpPXEefQXsQ_nEIru3R2BV6fae7VTAOEsn_AUCqXpbEdbBqyEHLwi-MZuV7BFxnPba7ure7vJIyrIsPglswIXhDC-hdNIflLT0uO3V2hy8qifXZZRktMFYPVmfIXUl1XETlnZglnE4t0kGBpnYRsVsGPFOwc2r3-upXXtcHkrxD5COtfgkzAmMXcbqt57JOfpZ-xhtuM5FQjaaGTlu_YEFjaKjQAoaPomkJlZoCqToaZL8O9ec4oKaBClMPkaOncpTWUfo7FVezHJq3u_iGB0mp3Op-QNeJXN0d84kxebJVref1YRdWuDUMdv87JP1zV3xN8Uffq3qxNMR6gujUMHtcxlr03dV9WJblrSRBdT0OX4QU645Lveo8gZenHYaXg10s-RPmKjgHwUhTylFHwZtbDzL2zns93D3-hfI22BrtykUBQbXk2hBXLWI3aJvdpsLil_FFCu6J7UftYwiBs7hA9Dw9PNmnCRL5gh8pEhRZ9JereFFwcGc2NIn2TOS5GwB4sBTN242KSWXCyvhhzgAWTXGT51vjGsn6aY5GWinVB8y5BcEvmWLyucdobefZxNbkmv1qnSSw00i047pOUYRAofozL_B8OJpv9XWaix4tGbmnwOJQ0-jE4lj0LMlKf6vGK7sThRiDiqTGGH1ngbSw7wnx0avbtH9BEQZkNCmkoyYEpO6Hh0KmC4QP2i9jK5EDrFBjbKWpnHvxt4wx55-p3jGoEOvwR-RDSAlAQw-4512ST2LIve1-3gMbhY56GzfAiF-KyflET4HXlDwbRIAuPxzUWyMOqYJo1ykoeojvCMmlc878Z8UgzBQXNBpNNabB3oGb9GmudM2qdZaaqE4B7ulpeQWVBD9B5YJ9uIcNkrKcAM1_BMNIqTjO2fwXr7seGsq4a-9TGVrrLgzhZ8x4T-M6rkbWF92sBo62BfwhcIC1kiVGrceel93Dk-pFjVAE6Umx_RTVLv61k2VXwh06IOb9CGYAK8EIEe6KUhY7ulTu_pgidl3H9yHavdfNhHRbD7xGjhdPAyABILkHxe9trqB2Uqwr7oyalcQkciz_eTDkhNbKK8FuM9CM6v1XPbjF6ZP4GPQjFVRc0fQM4ETDQRYPxatUD4x044V5Xv9Flyd_qS7J1jpZW8bfCivlYniE_QAfatJp9RJzAQGOT9d65xao4_zYbv8KCMXMEQz7QSZshynk8vW-ELa-9X3airJMfCZzQcHAZNUfplwG38xjYHGWvxEUxFgvNv4H2eTaCd44rF2oaLWdojrWv4GwTfts7C27bA2rj52PnVB7Z2ELYIiFiPMBVHke0-VrWQKduMQO-SLGG0RpnsIL3MEkfgk9ZHNQs_WNUZ2DEeco4JKmYdP8-Zp76kfzg1Fe7VajvVQ8UG1IMtbE2fpQkkiFxAL5iz4ofpig6G0RrKr9bB9AbtHI4V8080gMvqZ44FO0ESa8u0tVn77xnvR7Y9rGHC6rVlA-1EbK0VI9iuTbVfXAEIB9MFZjAnx-fhTO4S6jhh-nlmfYkl_U54J1r-1nmspY4nCQKJf3fed2k5VFxuD_MKzym_ijFq4tql2-2fd1jdKM1qgryS5Id3UdCLN-AWz8T2tMtlDNBVDGxGTkJ4cQLTOcj5oAI8I4DxXX5uhJm0pYhbJnhX_fBtEvvWTaCK9O9b3fOkiN4Gl0TKpty0bv-8OgqY4XW7neBlHBML15FYaUY0zDcx2TYotThQFKTnTmKZiT-z0jzAgvO0tfXMfr6l3ZCKMZYyMZ1mqMWgScZuOiMJfsbfZer2Nv-WKFVbCDNN126IsLQqSJkP8qYWPvt0wO9Oh0U9vR9OK4HXsVTACJphR2dh4uhWOSjgiM6-cjQWE2swLMXXwnirfXcGSqqDODQstwVcZtr4pyiQ=
+        id: rs_0f1df6a79361234d006945adab4b88819db764b555415861a7
+        summary: []
+        type: reasoning
+      - arguments: '{"timezone":"UTC"}'
+        call_id: call_uhQDpmAxwngXvpVwszNO7bqj
+        id: fc_0f1df6a79361234d006945adaea37c819dbe9df62aa6e6c34b
+        name: get_time
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get current time in a timezone
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 67
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 212
+        output_tokens_details:
+          reasoning_tokens: 192
+        total_tokens: 279
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,339 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '671'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get weather for Tokyo and summarize
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4570'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3577'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174070
+      created_at: 1766174067
+      error: null
+      id: resp_04d4446a114c6f4a006945ad73674c8192b1e5d9a2edda2808
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa12tssRxVQKkhlilPudBgRz0O5uXQPcp15Ya7HOMevn1Mdg_NELXKqjBFvTAglNgvYmm84ux6fQy3JPTuMPRUBdD0WmxW50Di6OBRHfmZf_NT508vdI9BDtABpTf1BjGDI2GUX8U68_gPC0LrKIcENzAjtfsbinYMZdnf5NYnIpyBr1QRSLdUf7NwxjUZIj2T3enJRxs9J6Exkxp1eQtBQkOgDCbPUW6hEGF8wi84QHYop2w1gBMwVf-AJ4JIYo5ptr8fCxqCsFGiOCDEPLP3cILO3B4cS4CQDMyew9VqEgfTxP1DWgdSE2_p03vxpE4s23Q3XuMdkWXkLq8bewffRa97NB6jvHqSLfH2YueP_pO0tf_bRl8ZQkWc8QKOk6smpu4eWVETshP8VfOQqOWk6G9SipBlHghAjfxWcVJ9tigiNRChDcQzZUhIaM6CQMHsYqahsRBJI5bLL3Dc_Tclafk4IN0V5ms2WurhK1khxL-6QaMEmCidOajsDAEczrWnqjbyE6yy0MynQT-AqeMwcVY-f_2nNjUX0kgS5aooqioSyfNYHXU7Xseit97R0vwimHq4yr2ZtXHnA7qmnZTdZf-u5fwWq0p2SAAlsNwkYaW0WLIAN1aqsqRVia-wZbToxaRjn6klRESAZiNwg5aEUlZVe7GDL0PGu8MqV_laTuIEsxTA8Mzu39oTiPN0w4FeapW5bFVoji88q1RVmr9dPS_5qM2uX4FVX2h7abFbEv9sA13AL4ORvALeXPIKvdWeCqs3qoEGuIYX7kxvDhh_5e7NH8ia_klDKXKksh9J55K1WfqL3YvKOcDa5nNX9Twe3NY5767V9kWQUy1UYWJ4Vh6xDWQZttH-ABnr2Jqk-FdbJWvpJiiIyqYxftt-ykZui3sjN2ebuQohUgQOntEafIe4tdYJioa_EPY9ZzHkBhSVM2A_abNDch70dOgpHCvZCbrp8vHCsVUbQz1fR9GV1ORfhY2LP6GZi2DAF4q-cKEUwsuXAD4SClBj43KIpb3XCfDr0tJvhJhxYW6QDX7KoDcLYEcQiIsf9XK7HKFfbF3q_FqM4QjrSwnEmtY_kE1D5UyBmtdNyeRads4WlnkQI1eIH3GtRgYE0D7oHFxrzbY2YleVP51MqkT_aM81CTmw8fuLr3JBaJfm-SzmN8xTtgzOqgh-gA6CFJ9pjM8_Xwzyqv8qcZt3E_JsgDbe0q-cl-1NIASsLk02OZpQRVjTOF3iEbiVkhjC9CjRaO_7fPhA8WZ9xuMjDomVDJrWVMjGl95cEN84MbJvvzsdBKz02taubyqoeYaYAsCbTUXJN3IzlI_dKxqcZTVladhhUaZnitaiqoyG_4trX5o0sDicEyu0ZjxR5ulS1gku8htBilMpw6pKWB-2kVsYgLxK_FLMHwxAutDNwLFsdOtjk3nvET87tFllrAPUvGMyxEaIbSCRQfRN2F8ffk_ypTup4q1iT6VzxtpkQREtBNaWVKoTX10ngjYtJGRTXmpH9tlewQ5Nj8_xnHOfQeH58FBncQSBOX3i4znWmY_c8DESMmjiIs-WqYGFr50iTDv0errbMFKZFPHiAhbv3f7hsA-hugUQDFsEuw911vgD2SM6PX0dg6gFIH_jG6sRhxjbefzxUPOvHmIdd0tPrxEzJJuEmwoBrHd9m2yMCUbKD4CXeMblp6xIEIoEEq7KKZ3MBwZZEXmuJ9DQGDLbsABaPRHK-MISU4wzo3uzgO_Bh4UUaLooC7on1J5q-3qA8G8ep8YEP6Y655KLoNJK41NnPbFkz8QkgtSAyFrBm_N4w1yrhkpGCGid5XYX0kA5bLtk7mHiNTCDjl4FrpjA0p9C4bRR92cPYbf-saGUow8HDV7jb-ClxphpPerTQBH83wy7uCUG76wg7Vavws-dlL5azM9QrkZXTcBWig4eYi6hgDEq57fVqKiAHu7Zkmd0WzKCdJQDM_ILx3K69kWyuYTXE3_Fzwa2zLvQNj0pd9zfXxuZ_4Q9Ve9fID_NTWk1EYiYYExoFrS7iqvFgJbIvKujEPNhh8DqI_Dpj3g8wACbd0r7Fhvw1SaveE49iu6FC3l_iwCiQLXyhsMkq42abXsowQbAI-0L_a
+        id: rs_04d4446a114c6f4a006945ad73e0cc8192aa6ae0d717242cda
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Tokyo"}'
+        call_id: call_feBPBYdjmBHdDh4zMVgTUCg7
+        id: fc_04d4446a114c6f4a006945ad765d9c81929c7d63cce482bab1
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 73
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 148
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 221
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '3202'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=4zeWCms9XDHnt3JiLJG8R2TWFdh9ST6F_qpurbuoDo4-1766174070-1.0.1.1-sn5Yz_0uQKzbd3nIEa.VNh44pKCmiZA1cgvpZW0IrVHxzghFTt6CG3zGrnx_XYfwTKtV5qHx9ktzSWRsl6GIjEt4aQXMX4UCj1SmKJ7Dhtk;
+        _cfuvid=8Ai9k0ZdJ.uM9IIfjz2DN9m7MtARTwNAGXRtqFrLzz0-1766174070999-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get weather for Tokyo and summarize
+        role: user
+      - encrypted_content: gAAAAABpRa12tssRxVQKkhlilPudBgRz0O5uXQPcp15Ya7HOMevn1Mdg_NELXKqjBFvTAglNgvYmm84ux6fQy3JPTuMPRUBdD0WmxW50Di6OBRHfmZf_NT508vdI9BDtABpTf1BjGDI2GUX8U68_gPC0LrKIcENzAjtfsbinYMZdnf5NYnIpyBr1QRSLdUf7NwxjUZIj2T3enJRxs9J6Exkxp1eQtBQkOgDCbPUW6hEGF8wi84QHYop2w1gBMwVf-AJ4JIYo5ptr8fCxqCsFGiOCDEPLP3cILO3B4cS4CQDMyew9VqEgfTxP1DWgdSE2_p03vxpE4s23Q3XuMdkWXkLq8bewffRa97NB6jvHqSLfH2YueP_pO0tf_bRl8ZQkWc8QKOk6smpu4eWVETshP8VfOQqOWk6G9SipBlHghAjfxWcVJ9tigiNRChDcQzZUhIaM6CQMHsYqahsRBJI5bLL3Dc_Tclafk4IN0V5ms2WurhK1khxL-6QaMEmCidOajsDAEczrWnqjbyE6yy0MynQT-AqeMwcVY-f_2nNjUX0kgS5aooqioSyfNYHXU7Xseit97R0vwimHq4yr2ZtXHnA7qmnZTdZf-u5fwWq0p2SAAlsNwkYaW0WLIAN1aqsqRVia-wZbToxaRjn6klRESAZiNwg5aEUlZVe7GDL0PGu8MqV_laTuIEsxTA8Mzu39oTiPN0w4FeapW5bFVoji88q1RVmr9dPS_5qM2uX4FVX2h7abFbEv9sA13AL4ORvALeXPIKvdWeCqs3qoEGuIYX7kxvDhh_5e7NH8ia_klDKXKksh9J55K1WfqL3YvKOcDa5nNX9Twe3NY5767V9kWQUy1UYWJ4Vh6xDWQZttH-ABnr2Jqk-FdbJWvpJiiIyqYxftt-ykZui3sjN2ebuQohUgQOntEafIe4tdYJioa_EPY9ZzHkBhSVM2A_abNDch70dOgpHCvZCbrp8vHCsVUbQz1fR9GV1ORfhY2LP6GZi2DAF4q-cKEUwsuXAD4SClBj43KIpb3XCfDr0tJvhJhxYW6QDX7KoDcLYEcQiIsf9XK7HKFfbF3q_FqM4QjrSwnEmtY_kE1D5UyBmtdNyeRads4WlnkQI1eIH3GtRgYE0D7oHFxrzbY2YleVP51MqkT_aM81CTmw8fuLr3JBaJfm-SzmN8xTtgzOqgh-gA6CFJ9pjM8_Xwzyqv8qcZt3E_JsgDbe0q-cl-1NIASsLk02OZpQRVjTOF3iEbiVkhjC9CjRaO_7fPhA8WZ9xuMjDomVDJrWVMjGl95cEN84MbJvvzsdBKz02taubyqoeYaYAsCbTUXJN3IzlI_dKxqcZTVladhhUaZnitaiqoyG_4trX5o0sDicEyu0ZjxR5ulS1gku8htBilMpw6pKWB-2kVsYgLxK_FLMHwxAutDNwLFsdOtjk3nvET87tFllrAPUvGMyxEaIbSCRQfRN2F8ffk_ypTup4q1iT6VzxtpkQREtBNaWVKoTX10ngjYtJGRTXmpH9tlewQ5Nj8_xnHOfQeH58FBncQSBOX3i4znWmY_c8DESMmjiIs-WqYGFr50iTDv0errbMFKZFPHiAhbv3f7hsA-hugUQDFsEuw911vgD2SM6PX0dg6gFIH_jG6sRhxjbefzxUPOvHmIdd0tPrxEzJJuEmwoBrHd9m2yMCUbKD4CXeMblp6xIEIoEEq7KKZ3MBwZZEXmuJ9DQGDLbsABaPRHK-MISU4wzo3uzgO_Bh4UUaLooC7on1J5q-3qA8G8ep8YEP6Y655KLoNJK41NnPbFkz8QkgtSAyFrBm_N4w1yrhkpGCGid5XYX0kA5bLtk7mHiNTCDjl4FrpjA0p9C4bRR92cPYbf-saGUow8HDV7jb-ClxphpPerTQBH83wy7uCUG76wg7Vavws-dlL5azM9QrkZXTcBWig4eYi6hgDEq57fVqKiAHu7Zkmd0WzKCdJQDM_ILx3K69kWyuYTXE3_Fzwa2zLvQNj0pd9zfXxuZ_4Q9Ve9fID_NTWk1EYiYYExoFrS7iqvFgJbIvKujEPNhh8DqI_Dpj3g8wACbd0r7Fhvw1SaveE49iu6FC3l_iwCiQLXyhsMkq42abXsowQbAI-0L_a
+        id: rs_04d4446a114c6f4a006945ad73e0cc8192aa6ae0d717242cda
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Tokyo"}'
+        call_id: call_feBPBYdjmBHdDh4zMVgTUCg7
+        id: fc_04d4446a114c6f4a006945ad765d9c81929c7d63cce482bab1
+        name: get_weather
+        type: function_call
+      - call_id: call_feBPBYdjmBHdDh4zMVgTUCg7
+        output: Sunny, 22C in Tokyo
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5252'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '5560'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174076
+      created_at: 1766174071
+      error: null
+      id: resp_04d4446a114c6f4a006945ad772260819283bf81f129520f37
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa18lZTQE2XJ57ZOAd9a3BMOcWtmwQGsBo1PbuZtSlr9nbKi1_-G0v5f5pH13Ki3HWyByP3Y5qcvs53b9JhqtwHZI_9MR2psAjzN5uZeFfwc4-17YQg5ugjMpy8Axjt_igclvpeUQ-yWFGIznB07bCpWelI9JA0ETZUkBgdUWTzSTREpWiXR77AwOb31A3--10GjrBTIwQauwdfpouvxKc878P6IZ3K1Wl6GPQhOBINxGgX03LwAhoT76Vp7re7LxuWYnhCZZPF85lAsMHJHsIH3FkTtkrwdpbf3sumcTu9_WB22lRuOj-EJBqlgj79FvGBhyFPpSBBIIeDxpI3gzOIwzt5eq1H1xb7tCksVu2dKxZd2CmOXXqcIekaVKQ_DkBnz9QYTMPq1oiIIUrmg4WkZ7JX3HtmI1cANDusnl8tdptYRKMkECQvn1iX_p0Nc-3CTITNPFL3g-hZ5-x2CIaI8hDWePKg0o-g8btuDOt_NCeV_H9WJ8wstMSeaMKb8PGzReG2iY1Rndgs1GYH9XIrakLeUMNozf52Xmrkszean1VGyDGaZFKYzP4DdWLGPXV_SZ0SI-xbhLYaV0ZoJupnl-1prqZLsQC4nIBm0157Rq9ybwJqurfqjU6KbOwz3yCYT_b_x5y5XyJ2npUxBaP-9MZl1ZlLCU-YmYVfMMDiPwTCR8N34pnc7tFpS89Jlp-db_Yi3Y9c8JeWN3uGZlHcZ78vkMYWQ7f-XDOY_91YCMz2ofL0ItiwFAxryvqMJqVvqY427IubXZ6l_DNZhRSqGR2f6zXyi8al2hE5HCvezxT8O6EkrnDhfA0HeD8bl6Irnwu9SFup8qhtdCR9SGsPMQQLPUfGFdLhxQrQxL-_WPuTK1Z2m28WhuBkUbkKfI-DYg04-PUe3Y_9nvsdfVInBhc5698N43QQ45eP-KIkx0J8UPoLBOufI313yvcJrKAUJaCaoKVKxCjxYJAPYr4Cl4KoL_WmS8jp6VwcDKSfvrpyvAZ8X6V5rAQgIa7tlZVkBHYuY0RakX1EOeqcyhvDd-dLToB5WiK8Jp-B37mvRwOnb-JTknciv99duQ1el335zGIB5Ilq0vuivfaShPPp-3FzWr_XM_yUZLYXWx9j-p0sW4mM8dxW4chV6c9TK7SVR2sgbYd0KCHNY2HrkzrecW2P5nedxsKGdsiDEHvWLonttCMS8ocJRPR73rCyXU4WZinWelgKxvusJzL7V5q5FJqYuwUByUV-FY-W-0F2-y69ok-YYjkwhc48AYLRi6tHLJdir5LkX4Uae7c-qR-76B9eTIZDWPygguShgTdqrOTrbfyqe6LcTywhjo9-qUJIyUe7-eBw3xndFMK9Klngvrl-Nehs9m-hrO-HSR1xsvu5ACwR5JTSs6xTdzOG8kuNgp6-ZPJR78uPDVaOh2KOwOKldpT-Vn1yKfFhl0Xz6EFFzjU545CfywPcMXLM2WEmcq3M6qqcBTZRV5lC01Xw1aQxmhggSu1WAiX-O4yQnKN3faqsET-eGFnlZIuivMyHGXRFYHdCir28LYtE4SIUv-l6OSaf9h7DDAXoTcY5P5YiSKVTV51nLaqd0scBFjd8lUCrsS_Fmr85t7YK8XvVHquZ6YpHW0LhHuqEyMAH7aZwXjI31lydJf27uDWXVjB671Q0j5V4mSwNLokfUQBbz9s_9cgn5NKloGzUmgvDosnr9i7OslRwBLOAVRHDqBYymsfG340VAItZ4oJ_NjpdpON6PWqy3R0CWLx9wwfDgoibjdosyqtX18uuKwMpr_DBl0pNzA9dV4Wc6R3iA-1LkjxPQKB29_sBpUmCoNQRgZcl3o2nmcd7kkyBy39bFBmtBSPekS5N8h8Vv32Jr1eGutrzR01jkk5cpT066xxJe-brgs8mdyeqkMryLWYmlHtExw4TUQYg2lE4_uEVx5bs6fZFp_5MUrSrIUVL38lI9_51lqqhFFelRsC4U-uzx__KZbE4w-wYn90-06Caikty7VVuEFDKtEuHwX30NtSKki_Va7qCgXLM2yRXpmK_Qe31o9Gyph2J3QJ6_KgFGPg2-bsvkeRM9iCWF-ySNIbMFvhnko0Z0yDM0XXE8IFdHOGUtZo7vDPLAMPyl8aRN10RMSVVDOIDtEwh_pMzJghzdXLwC1v35YieeQ_Oze5LjlhOdFD6SbOLtcPPscZUPav6ksK9h2ej7myzAyG56gyczd4kmx2wUgYdVBuNmShaMwaoB7itcihdLg7sY39bhPcnZf80QZ2fU25Yd8swHTnMDvP1Gy7aQJaX6-YK0Z4sBa3pipHS9YKrs30P_jn6CH8mVCrcrOgKOhFqrkIs7wLQG6oaduNRF6FwnDbUovB-G_BvMiHAGGgYOSJsbtyqlsvat9LilhSZq4M1YKGazgw_FpBeQP3ttZV3iPExaMMg9865rjsJ5B7ol9iplPj7FvpdBuvvDAUJMmhAVdjzCjS1WrELDRm1I3_KQ69s0AwriQKG4ynv39GngaErY6ML6f_Hbi4dSxo0p0E8KQC05C4qqCIwmgmtiBiyxn-zIEahERRfxKM8zQP2rtr9vSuizJW4slIkjTqtOdpbDKM50We22EkZCmvbCTsA3P0kZrAnRjFCmiku3InpgdAQHRxJCyFOhuw3SsHlBq8AgiRJd1qgWozlhKpJRx3l68uRmk1tLqbQWJLyhzKRbsuNmFZOwhbVwiMmWgr3zBPmn8v9GwE7YQfM=
+        id: rs_04d4446a114c6f4a006945ad7768c881928bd69a27d03681e7
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Tokyo","summary":"Current weather in Tokyo: Sunny, 22°C."}'
+        call_id: call_4kZueRSDVZZfXi0xGLr0cGb6
+        id: fc_04d4446a114c6f4a006945ad7be1e8819285a05650a14dec9e
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 295
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 290
+        output_tokens_details:
+          reasoning_tokens: 256
+        total_tokens: 585
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

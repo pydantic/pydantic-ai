@@ -1,0 +1,142 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '431'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Tell me about New York
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '6780'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '12052'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174181
+      created_at: 1766174170
+      error: null
+      id: resp_0e706bda8f41fb38006945add9fee48195a51c2a5d74af5d46
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa3mGAubjW_qB5YJJz1L7N6XyHkwiwa_6quW3bdQ3T3m7jGHe_ESHVNxc6nqIU_WKqI3NqdGlO5B2-JZfBKCxY6XlUGGsNt1rc4hx0IALokqkvvAEOT6siL-gpYsAbfICmDdUAdcQ8tbIjs2rLrGJYvjcIIQPDwYaDGzvlwXDDe9KUke7aV3aMnII5_l-fxnTbqXSYcWPiB2hNuqOXgnbTCrjH9ZkhmcVihn6qMav_WCkIz8EfNV3WR8J6mgb8_z9GSn5AqajYgqYCRebL8fEXXrPwwnATX38lBxFXP2moos9pq7CQStlMHZZsfupwoP8BsSb81p1re9mYqa4fT0DPRoEoOBl1kUI19CDm_jqUoiK9PtWSv3M9mxE5ZQgZ6l1um5YR55CBqoV2MxOEICAjD2-yyjncvceG0fF98v7DpByWAZv1zjgTo2_rvYgIjdWo8c6un_52LYS86sKxi93AvokxuQsV7NDIM_69LOzXmgjemOnaNA8oseXohyFMe4MPaD8qqPntKvw-D-ZuwxWzuu_u7ul8rH9zOE8CpzX0ANXaavHYgQ1TvvYDQtPGY8ZJ6lTBsce7HQ_8Q_7SFSLCliBuuPLccsmh_RTo1ToCVMHHgGPCH77ugVIirAangGtMHa5ihUBKALKhw0oN1vDKEDtCKmtg79Nbt_YF66riu2burKixFvmjyWWbb2LxMosweKsBgZ3phtGSZ5YTDeh03unEB1WO8JkkzqCTcfNFkiHBL_iinFIqQh_C3V9sfKIEV2Ah8bu6dMbCan7VPMdH-_Cw5jzeKhVKv52YJcvML2-iesBv0Q5SXe7f547heGH7ueBBDVNpzJ9rwBoUhRiyqEaET-j53Vp90RPRnX8zAf6Kb5MHkpYxq8_iF3tmucuSoryflX4Z44voNXg2p8bSzKWwBq0UZHRcQeVOC-oJ1BVjZiRRpsFcquuZAqEI5IJwfyvG7HI7aHIKZQ5UYzE9dwdC3rb9OxFwjQ07r_x__BErktd65zL7yLE-IQFZGX7g6QSQQktc00AtikJ4EbRXYy5eYYpeh2ftfy6YuHh-W9jprQfhn-D1HzuLn1IWO1K8Bbmh-nSgOgnjphQj8u-7Yc-t9xLC-QZoTLKbm-YVl7u2o5OIxAEFxXtSUcv5WGvcDrcL43DUIU5hNamXZT3RnF5fkyB0tJW-ZN7sTtlDN8KCSyuhqL0j-RPBrdVp1wldx3umCWUzTZmPrYH4K0x0MGnymDSgh6Qw1IPxHtlPVAGD48Bb5ZH7Jy3NRHkAqRGur2fH6_KnUMP_bWxA5T4_z2slJneRLLv5pDfZfMD2OVCgO59Yx2a3mCyikNHHq4xp-re8_-XlxSRx-lCmPOaE94wXd9MbtNEH4IcGyiHy1LNbdD_3U3z-0QHjNvPWFClfZAzQSBfBObA-j5wNH81y20NLyDWTTPPRlFgqebiMLkFaR8lwKZWUhrugNTIoCP-wN6yZxxOcKJuqK1Jk2s0FtHRR9Qa6lel9Ijt3qYvHY3dwWYIj5ziRFvY7wvnMiOtvyz_x-7coUPpx2iTLQAAgSEh1YdbnWsXf-A0J-y_xVLTLddz3F588s3Al0njgsjvkhHesvq1qJE3QuDF0sNAOTr-8Lao3dSygVSzUBvBxtyG_EU9qnKljyi4ftoTy1nljWnSySIQ1e61FSvSuHZULcwLNlFJBoPTe_QPUjYN21NQZFNrutLhovczRKMJcpjWO-INIWsrC7ib-cHG8UTDuN9Wvj8VTC9Vj5jeT5kAaUnfFoSv_KWcvmdYjHqHfujjCPsUMqRB3Q3aLN6IBkAHxtlsFmLiW52mpABvhLpsc-K3Bg8hIvHhT62qrzqdxf_Bvo3hXnJIEidZYVJ7C5IlfhymEILo51FfjYFABkSz-1E3qHn3TsF0yy8TTXlNTLyHwgzQeq-A4ZjXQaidWLu7Dc8YjQaFg6tVEjF8H4WJDWy5Kdq4WqKiA53ikYayVHE4ymR4W1kvw0lTBrYWGLHtZ53v52-nWns72_sh2hff51QozmZImI83b7jcHWr5BE3K4gvmt0Tp4J5RuRV33Gshb85VDhiSXwAyVHHikIz92HEgPqqn44gpeVmZwCJ2qUO600q8RL1tJNhdShL2t0lSYltNy-exEa4nOIjRU6axHdOB05NcuQdI-ap5TxDO0E64ktAqqKXoD9KJcAOcCgkE0cPUHDKUCrquDl6l5dHFspFmasHbcjFJomwkrI1-SOkLomQTlL9ATo0I7B18VF-OVoPwue6AY0pUg-m3OVj96YkGI0Hly_H7dyQXY9upwHQEpCbX4dE9FCsGCRyF0F62stdVFySuPK-vZ7Y_UtmTmeGD6C-RYwX60mFkdMQm56MKeZm8LkU4JKsQl29TWXzddZlMKZX40luuQTPb8TknPdqMR7IShqADJGH3NEl22z3UF-0ZzvNuYER58KZzhyr3wzhlnDez0gzARwdYURX7j-SMU55BEhs1bSc4uFywlRgwibgjfAH7Jy2k1K_xTiaanEuWZku7ae1KK4mywG8UvVpvMBlZwUMW8SwtO7R-MyCWCKah1FKZRZrzOR8ZeRgeKVTMh2X9wVQFn7nruKIQ5Ey2VDUPcxiycdeP0GVAltgszVP1A0tD1Rbcv09c9X52WDy6e9DI0G8JFUA_SxKMQzKrjf8f8VWN9lyZd8S9JExl_CYD4HU6nObbxEeY9jbUUZKAoXnO32aU-fhQ1yIlT1Du1o-LKraaOPZ9y79iEGOAsvv_VhV4bSfWyFhbn8Sdjz8015Z2Si51YU273uxJSpAxRQEvW8r-ojrKzBnwVNxFJGBhbktXl2_cNZrINAlrFX8gSh5h9YLmGYBDGTtt5aD-x-raRMaKiUbaMriGjJ0EsJ-Mxneu-fhwf0h8QV9XffSkB3GwHSltNnbULTalAFvYR9XzztudYdeyLL6gD_XV4wlJDTt83S6-i8DCaUYUKRU1o3wo6ulRInOk1MPYjRiFkfxiA7T8fEJCuTtxuYV2-M4kkSZvoAUMe4c6AqR-8RgbGaHI80lZ-m1sPehrcq06r0L9VO9lVj-RZoxafvdwqR11nIrlm_3AzJcZ05rcgdgmwy-Q-czXbDuy2srKwuj5SAuMM6QJ8CR_J9Elkavrcg9rCI4_SwjfHZPFI5jAndeWdCzspuj9qHJiHNHkQGQqHWPQh09P6_9BTw6qI160toEetwgyaB604P3mEa5dwgvGhjcITlSgCZiPsSJngQobJkgAjwhDGZgGiyJyuzr2mm2oKrffjXmPAzi4Ovs7vxC9BfEKXiuTm3Gt8MTYkE0oXbQY7hVIImmv73fMTSffy7oFEpt5yM9Sj0QvqJ8EJVPPtWQBcdmuEF6S79VIyyoWhci0OGkUi1gAej40ryr3ZQG-6VaC1MbBpC4CrQHkumUoFi7Brt6Cg2g6opx-t0c7ZVWnbHZERTkhhzqKMaIXfcd9x_5ioRay_ml5W5z9SRniG7ckcMAEgZbUZ5TMxsZGG0isJld3mesbCk4Ge1QcBEvfBWmrBprXJbQDpdFTqL9Zogz51TCwdJ1SSoxVSX1N1rJizz2lL55MQ_KCPBcblRxCFo1LvtMhrafJz4-QiVe0Er_KsPfjXifKHKWw9fTSL6iAwBXa12-Pl70k88yMhdHhQJ_tCM4hZe_tjqc0vqreZ2Lvp64OiCjn4Evr4_ZL_fk0meXBvc14ZyVNcQEcsXVbIYxRp2_ewsaCfPyhC0eZVI79i3vHWPh4xTVzzHigKC6GEqoI6hzvZCSK3M7QJ-RFvRlFAsRifVlIZd7qroaqPnvb2InM5Zhgyw1O9uIu9vk5z-JPfFQ4VFcNSei198PH0RXOj-A-rAzMGrSPdF-VXDX1K2lRjR-XWPP4pgo-dt-INfIT0wa-6RBpxHErKoVCIpkHE3XXL6VmWMCLEj4vzZAaDgDvyu0RZGi2YmTg9NctyA9-eIyKmhDrU4Hc-Rp85Q5HmIe3d-GBxo6wi2HnmXk9VCTFRFbKq-VajvHWVk6Nv54rL0CsDcqJc4h4ZM-70-OQYCw5oYDfBlEwG6sOxcqLzt0Fo7LgmrGFYMyssG5ezZAjIu2bzkP1SUOgQ8HIfIolTLN0OxYZxEaQNmpmZ8t8cmtZyuLB-KPltnh7UF8cuJd-1qPT9eMIogDTN365qNysBXuphDHfoN0QxtY9eqkhds4oKVTno1tpaZq15Lt_RxQ3UsLf-gdEgnPXfIOBHdBqHV0_UXt1db_5hn4Fkd0JrcPZfAkZB8DyprgcfZbnvqmhPNxMsepLnr6tXYdEr6efH0rbXAwlinwgv7xPHpU1CZ14M6ZbE2hOFNLl2PAU7yK9uyGXeVxZ7Y1NgHPECKitW_RQEee7L2mwpyOjA==
+        id: rs_0e706bda8f41fb38006945adda7b6c8195832e7b5bf2482346
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"New York","summary":"Overview of New York City: location, population, five boroughs, major landmarks
+          (Statue of Liberty, Central Park, Times Square, Empire State Building, Brooklyn Bridge), culture and diversity,
+          economy (finance, media, tech), transport (subway, airports), climate, visitor tips (best times, transit, safety,
+          tipping)."}'
+        call_id: call_ruWSF42LyQm6DD0SEzmOxG8i
+        id: fc_0e706bda8f41fb38006945ade45a8c81958d19729cc9babf44
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 50
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 604
+        output_tokens_details:
+          reasoning_tokens: 512
+        total_tokens: 654
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

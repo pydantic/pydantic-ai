@@ -1,0 +1,96 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '418'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Tell me about New York
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '943'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"New York","summary":"New York is a state in the northeastern United States. It is known
+                for its diverse culture, iconic landmarks like the Statue of Liberty and Central Park, and being a major hub
+                for finance, media, and entertainment."}'
+              name: final_result
+            id: e54c62maj
+            type: function
+      created: 1766183512
+      id: chatcmpl-4ab8444c-1dd1-4412-a2de-3412ffc32ae7
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_130a0cd72d
+      usage:
+        completion_time: 0.201992195
+        completion_tokens: 80
+        prompt_time: 0.024062833
+        prompt_tokens: 734
+        queue_time: 0.083002271
+        total_time: 0.226055028
+        total_tokens: 814
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbv9tjfjcr0g6148bvdypf
+        seed: 1621125221
+    status:
+      code: 200
+      message: OK
+version: 1

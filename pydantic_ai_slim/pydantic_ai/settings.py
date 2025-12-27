@@ -1,14 +1,36 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
+
 from httpx import Timeout
 from typing_extensions import TypedDict
+
+ToolChoiceScalar = Literal['none', 'required', 'auto']
+
+
+@dataclass
+class ToolsPlusOutput:
+    """Restricts function tools while keeping output tools available.
+
+    Use this when you want to control which function tools the model can use
+    in an agent run while still allowing the agent to complete with structured output.
+
+    See the [Tool Choice guide](https://ai.pydantic.dev/tool-choice/#toolsplusoutput---specific-tools-with-output)
+    for examples.
+    """
+
+    function_tools: list[str]
+    """The names of function tools available to the model."""
 
 
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
-    Here we include only settings which apply to multiple models / model providers,
+    Includes only settings which apply to multiple models / model providers,
     though not all of these settings are supported by all models.
+
+    All types must be JSON-serializable.
     """
 
     max_tokens: int
@@ -86,6 +108,33 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    """
+
+    tool_choice: ToolChoiceScalar | list[str] | ToolsPlusOutput | None
+    """Control which function tools the model can use.
+
+    See the [Tool Choice guide](https://ai.pydantic.dev/tool-choice/) for detailed documentation
+    and examples.
+
+    Warning: when using `'required'` or passing a list of tool names, the model will be unable to
+    respond with text directly. Use these settings only with [direct model requests](https://ai.pydantic.dev/direct/).
+
+    * `None` (default): Defaults to `'auto'` behavior
+    * `'auto'`: All tools available, model decides whether to use them
+    * `'none'`: Disables function tools; model responds with text only (output tools remain for structured output)
+    * `'required'`: Forces tool use; no output tools sent (for direct model requests only)
+    * `list[str]`: Only specified tools available; no output tools sent (for direct model requests only)
+    * [`ToolsPlusOutput`][pydantic_ai.settings.ToolsPlusOutput]: Specified function tools plus all output tools
+
+    Supported by:
+
+    * OpenAI (full support)
+    * Anthropic (`'required'` and specific tools not supported with thinking enabled)
+    * Google (full support)
+    * Groq (single tool forcing only)
+    * Mistral (limited specific tool support)
+    * HuggingFace (single tool forcing only)
+    * Bedrock (single tool forcing only; no native `'none'`)
     """
 
     seed: int

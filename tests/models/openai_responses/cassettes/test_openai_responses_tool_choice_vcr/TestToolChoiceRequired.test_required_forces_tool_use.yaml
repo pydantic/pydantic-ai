@@ -1,0 +1,133 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '372'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Hello
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3950'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3455'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174122
+      created_at: 1766174119
+      error: null
+      id: resp_0a8ab955cd861bf0006945ada70d7481919bdb637234e2cdc7
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa2qk8Ao3j_vhzoQGjcYVMyg31oVq7qswpwhEBnLj-43H3kSfpCUKZDpr5oJsOCwRYud-SWZVD24Jq8cajT8IUv_ytOeoNGW3MxZipq3vuicH9Xmx6q-zsFqUZUnC5uEXoWpnRuTwqmUKWG2JZOR8MhuelP8BX1hNxU1gJNxESwPYYb3J3KmqQSfxvwgFLBcWjSOI23bqKrRiEYndTNXZXHNRu_PY45Y2PdJaKAosO3OMjamxGKz8NyqmsDLDT3KymMtBWtKFGm2PYGjpwuZXAdvv13nxUQKEFEummH0EkZaBBxDmtidAjZtJzpPYAjncBbwB75nV0lstqP_4KcoF7ZMZLU_0YdO7QR7OWOqgciQhp1FYL4OuRCi0LlL7yJSrBAZK3RVfr879RApme-YyHarHCjnkq7-ouvPc9Nluur9UdnZSQnMZTPrmXIkZzqF_aiSTJEXeTDfaozev6As4Sm82v3hsrNFjmUGIzkng9NmkUdHZIqk9unNv-3IXMdyyVWnvR3VPVwp4FketEKtqujR5zFlOdpTfbbwfduCAGRwckOCk6bfO19Sfn4dybhcexIgiFw5SAtu71GpeUC5YYzvaNfw7wzo2H5VjxLUU0QsLfoVYQBRDDS5xFAq4bv95GlrAXiLF-Vd4Y22vqQZrK2Q5nYUMkrsB69xMjC5lwXfkOPYTElaFcAhqQmDq3fSuoOM0eJ57M8h6zOYjqFcl3u7m7e6HdHXfcAllwGWQbeQytPdPZJVbYauP5h9N8GqvozAgkoqB-haUQgSrIwmYrpHPyOidNrq7H1FC17Y1NLXAEjunde_L6583QUqTSNYgaB55XUTt-b0VN99Sj4nodMdEDAj74wjYeBbroL3Jq38pqITFRNn4fKh1LKciAOTUUQ_JO2wDZMa1mH37xGMBYFocctq9bNp6iPscS-0WyxwCCrtkjtIMFNTEp0tUuLd7QSdHatOTWEyoPr6QL4gc0CXyP4MnLz2OReCy0UnTGNaR2Z-mEE4mrGcwwiNqgAwwg_kzruu52tpJEQVBn6PMkNFW_Rn0knoYkL3hFtD7Cm3_0sRh7tIF31b9rtnYSoG0sznnkWOcaN7W4cIO12KrvQrLzP_gmum8tD5B9X76Au_-hMQiZMV-8VaZWYNk4rvjAbT8QyFzvFmM8_2hE7T0-S59K13UfHKNZ2F6efofsZIeUTBgSBZSIpZRYuWGPBX_GPU2cXlISQD9_oz7ISykBSEpkVJGCKhMc4kf3fJ2o0YV_RqdSm_hgh_Hw5mK5pztxkaKRqTFIHEgbsCtXUmgwnmnomFZLEaXOYQYKO7AIMp9CQCRL8a6gNlZ4V8WXrnzdLu-eeN627vzq1EKCYey4Ynz3FEeq86GZ44gAJnrSR_llaTUku_jru_Kfh-FUsG3uV3JTT9lYkSx7P3wQfGi5vqs7xsCiOVpYMSQeRBWxjssI_0tIVLkxQKCg0MEzG7hfoW793STp6uaUX3pIg16xH225FoIR2_grBtMU3ptg_f5OSVm1v4WtQFcjdojjz2GlBnXCbinSS-63WSri7oR6e5Suw3phxgpfLDsawqaqUn8gHyf6-OUrvlHexMD1JSw48Hgg1nt0D_CHT_CSzVG8PbBwnhdOlN_eYEzGu9goCtTatzVnbHP8z_4lV55E6_swF_-TZjfjumrogkE4Bic53uE9yWce0-lLl3Sc9GhcKMKfvcgx-mBV6rEoMyvzX4ab2b00zPCiQneymLybd4WhaIeFo_O7ZknxMkNWPisVelAjx3Kua6D0TV6QBqmWF-oUyOU1WsumB32gGkG-NcbXZCyzrRcsQrO7he8pXeVg7L_AsIPaMydwigFscVCwYr2cDnifJzLZRqdlXSgQq6KCCaSXMl_IhygfTZTTcD12XdULo0GeYD5PzQ6-R7FFqsm2P9dxVhZ8cd-X-yvQCmGCIKQQdcZ-4UMVvS3roKHqBTv5k=
+        id: rs_0a8ab955cd861bf0006945ada750548191a99d652183eca617
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"San Francisco"}'
+        call_id: call_TAUogdpeEGrCrNEjaghnmMoO
+        id: fc_0a8ab955cd861bf0006945adaa137c819183ab43621a285b28
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 43
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 149
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 192
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
