@@ -2849,6 +2849,10 @@ def test_tool_return_schema():
     def tool_with_return_image_url() -> ImageUrl:
         return ImageUrl(url='https://example.com/image.jpg')
 
+    @agent.tool_plain
+    def tool_with_return_tool_return() -> ToolReturn:
+        return ToolReturn(return_value='hello', content=[ImageUrl(url='https://example.com/image.jpg')])
+
     # @agent.tool_plain
     # def tool_with_return_schema_subagent() -> (await subagent.run(...)).result:
     #     return (await subagent.run(...)).result
@@ -3181,6 +3185,251 @@ def test_tool_return_schema():
                     },
                     'required': ['url'],
                     'title': 'ImageUrl',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_tool_return',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    '$defs': {
+                        'AudioUrl': {
+                            'description': 'A URL to an audio file.',
+                            'properties': {
+                                'url': {'title': 'Url', 'type': 'string'},
+                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'media_type': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Media Type',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {
+                                    'const': 'audio-url',
+                                    'default': 'audio-url',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                            },
+                            'required': ['url'],
+                            'title': 'AudioUrl',
+                            'type': 'object',
+                        },
+                        'BinaryContent': {
+                            'description': 'Binary content, e.g. an audio or image file.',
+                            'properties': {
+                                'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                                'media_type': {
+                                    'anyOf': [
+                                        {
+                                            'enum': [
+                                                'audio/wav',
+                                                'audio/mpeg',
+                                                'audio/ogg',
+                                                'audio/flac',
+                                                'audio/aiff',
+                                                'audio/aac',
+                                            ],
+                                            'type': 'string',
+                                        },
+                                        {
+                                            'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+                                            'type': 'string',
+                                        },
+                                        {
+                                            'enum': [
+                                                'application/pdf',
+                                                'text/plain',
+                                                'text/csv',
+                                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                                'text/html',
+                                                'text/markdown',
+                                                'application/msword',
+                                                'application/vnd.ms-excel',
+                                            ],
+                                            'type': 'string',
+                                        },
+                                        {'type': 'string'},
+                                    ],
+                                    'title': 'Media Type',
+                                },
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                            },
+                            'required': ['data', 'media_type'],
+                            'title': 'BinaryContent',
+                            'type': 'object',
+                        },
+                        'CachePoint': {
+                            'properties': {
+                                'kind': {
+                                    'const': 'cache-point',
+                                    'default': 'cache-point',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                                'ttl': {'default': '5m', 'enum': ['5m', '1h'], 'title': 'Ttl', 'type': 'string'},
+                            },
+                            'title': 'CachePoint',
+                            'type': 'object',
+                        },
+                        'DocumentUrl': {
+                            'description': 'The URL of the document.',
+                            'properties': {
+                                'url': {'title': 'Url', 'type': 'string'},
+                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'media_type': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Media Type',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {
+                                    'const': 'document-url',
+                                    'default': 'document-url',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                            },
+                            'required': ['url'],
+                            'title': 'DocumentUrl',
+                            'type': 'object',
+                        },
+                        'ImageUrl': {
+                            'description': 'A URL to an image.',
+                            'properties': {
+                                'url': {'title': 'Url', 'type': 'string'},
+                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'media_type': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Media Type',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {
+                                    'const': 'image-url',
+                                    'default': 'image-url',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                            },
+                            'required': ['url'],
+                            'title': 'ImageUrl',
+                            'type': 'object',
+                        },
+                        'VideoUrl': {
+                            'description': 'A URL to a video.',
+                            'properties': {
+                                'url': {'title': 'Url', 'type': 'string'},
+                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'media_type': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Media Type',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {
+                                    'const': 'video-url',
+                                    'default': 'video-url',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                            },
+                            'required': ['url'],
+                            'title': 'VideoUrl',
+                            'type': 'object',
+                        },
+                    },
+                    'description': """\
+A structured return value for tools that need to provide both a return value and custom content to the model.
+
+This class allows tools to return complex responses that include:
+- A return value for actual tool return
+- Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
+- Optional metadata for application use\
+""",
+                    'properties': {
+                        'return_value': {'title': 'Return Value'},
+                        'content': {
+                            'anyOf': [
+                                {'type': 'string'},
+                                {
+                                    'items': {
+                                        'anyOf': [
+                                            {'type': 'string'},
+                                            {'$ref': '#/$defs/ImageUrl'},
+                                            {'$ref': '#/$defs/AudioUrl'},
+                                            {'$ref': '#/$defs/DocumentUrl'},
+                                            {'$ref': '#/$defs/VideoUrl'},
+                                            {'$ref': '#/$defs/BinaryContent'},
+                                            {'$ref': '#/$defs/CachePoint'},
+                                        ]
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Content',
+                        },
+                        'metadata': {'default': None, 'title': 'Metadata'},
+                        'kind': {'const': 'tool-return', 'default': 'tool-return', 'title': 'Kind', 'type': 'string'},
+                    },
+                    'required': ['return_value'],
+                    'title': 'ToolReturn',
                     'type': 'object',
                 },
             },
