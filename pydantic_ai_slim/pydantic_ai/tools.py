@@ -2,10 +2,11 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from inspect import signature
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag, TypeAdapter
+from pydantic._internal import _typing_extra
+from pydantic.errors import PydanticSchemaGenerationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
@@ -383,7 +384,14 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
-        self.return_schema = return_schema or TypeAdapter(signature(function).return_annotation).json_schema()
+        type_hints = _typing_extra.get_function_type_hints(function)
+        if return_annotation := type_hints.get('return'):
+            try:
+                self.return_schema = return_schema or TypeAdapter(return_annotation).json_schema()
+            except PydanticSchemaGenerationError:
+                self.return_schema = return_schema
+        else:
+            self.return_schema = return_schema
 
     @classmethod
     def from_schema(
@@ -435,6 +443,28 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self):
+        # TODO: 
+        # To be handled, Douwe's comment from the issue: #3122
+        # - ToolReturn which has a return_value: Any that holds the value returned to the model as the tool result, and content that can hold things like FileUrl and BinaryContent, 
+        # which will be returned to the model as follow-up user parts because tools can not return them directly. 
+        # What should the output schema be? When chaining tool calls, the value passed around should probably be the content, or both. 
+        # So we'd need to create a list/union schema of str | UserContent.
+
+        # Tools can also have a return type of FileUrl, BinaryContent, or one of their subclasses, which may also require special consideration.
+
+        # Tools that return a BaseModel or dataclass.
+
+        # Handoff tools that return (await subagent.run(...)).result and have a complex signature including things like DeferredToolRequests (see OutputSpec in the codebase).
+
+        # We may have to handle those deferred tools (frontend tools or approval-required tools) in a special way when used in chaining context, 
+        # perhaps by causing the super-agent to end on DeferredToolRequests itself.
+        # We may also need a way to generate a JSON schema for any agent/agent._output_schema: OutputSchema): 
+        # Add method to get an agent's output JSON schema #3225 -> This is already implemented now
+
+        # -> Issue with CallDeferred, need to read how that works exactly?
+
+
+
         return ToolDefinition(
             name=self.name,
             description=self.description,
