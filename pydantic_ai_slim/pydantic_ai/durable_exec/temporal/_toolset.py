@@ -75,13 +75,17 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         # Temporalized toolsets cannot be swapped out after the fact.
         return self
 
+    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
+        # Stop recursion at temporalized toolsets - they're already wrapped and validated.
+        visitor(self)
+
     async def __aenter__(self) -> Self:
-        if not workflow.in_workflow():  # pragma: no cover
+        if not workflow.in_workflow():
             await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if not workflow.in_workflow():  # pragma: no cover
+        if not workflow.in_workflow():
             return await self.wrapped.__aexit__(*args)
         return None
 
@@ -126,10 +130,10 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
 
 def temporalize_toolset(
     toolset: AbstractToolset[AgentDepsT],
-    activity_name_prefix: str,
-    activity_config: ActivityConfig,
-    tool_activity_config: dict[str, ActivityConfig | Literal[False]],
-    deps_type: type[AgentDepsT],
+    activity_name_prefix: str | None = None,
+    activity_config: ActivityConfig | None = None,
+    tool_activity_config: dict[str, ActivityConfig | Literal[False]] | None = None,
+    deps_type: type[AgentDepsT] | None = None,
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
 ) -> AbstractToolset[AgentDepsT]:
     """Temporalize a toolset.

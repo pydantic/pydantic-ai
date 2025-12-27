@@ -18,6 +18,7 @@ from typing_extensions import Never
 from pydantic_ai import (
     AbstractToolset,
     AgentRunResultEvent,
+    FunctionToolset,
     _utils,
     messages as _messages,
     models,
@@ -45,6 +46,63 @@ from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
 
+def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]]) -> None:
+    """Validate that all leaf toolsets requiring temporal wrapping are properly wrapped.
+
+    This function recursively traverses the toolset hierarchy and checks that any leaf
+    toolsets that need temporal wrapping (FunctionToolset, MCPServer, FastMCPToolset, DynamicToolset)
+    are wrapped in a TemporalWrapperToolset.
+
+    Args:
+        toolsets: The toolsets to validate.
+
+    Raises:
+        UserError: If an unwrapped leaf toolset is found that requires temporal wrapping.
+            The error message includes the toolset label for identification.
+    """
+
+    def validate_toolset(t: AbstractToolset[AgentDepsT]) -> None:
+        # If we encounter a TemporalWrapperToolset, we don't need to check its children
+        # since they're already wrapped
+        if isinstance(t, TemporalWrapperToolset):
+            return
+
+        if isinstance(t, FunctionToolset):
+            raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
+
+        # Check if this is a DynamicToolset that needs wrapping
+        from pydantic_ai.toolsets._dynamic import DynamicToolset
+
+        if isinstance(t, DynamicToolset):
+            raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
+
+        # Check if this is an MCPServer that needs wrapping
+        try:
+            from pydantic_ai.mcp import MCPServer
+        except ImportError:
+            pass
+        else:
+            if isinstance(t, MCPServer):
+                raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
+
+        # Check if this is a FastMCPToolset that needs wrapping
+        try:
+            from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+        except ImportError:
+            pass
+        else:
+            if isinstance(t, FastMCPToolset):
+                raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
+
+        # For other toolsets (like CombinedToolset, WrapperToolset, etc.),
+        # we return them unchanged - apply will handle recursion
+        return  # pragma: no cover - defensive code for future toolset types
+
+    # Visit and validate each toolset recursively
+    for toolset in toolsets:
+        toolset.apply(validate_toolset)
+
+
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
@@ -58,6 +116,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         name: str | None = None,
+        toolsets: Mapping[str, AbstractToolset[AgentDepsT]] | None = None,
         models: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -85,6 +144,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Args:
             wrapped: The agent to wrap.
             name: Optional unique agent name to use in the Temporal activities' names. If not provided, the agent's `name` will be used.
+            toolsets:
+                Optional mapping of toolset names to toolset instances to register with the agent.
+                Toolsets passed here will be temporalized and their activities registered alongside the wrapped agent's existing toolsets.
+                Registered toolsets can be referenced by name in `run(toolsets=['name'])`.
+
             models:
                 Optional mapping of model instances to register with the agent.
                 Keys define the names that can be referenced at runtime and the values are `Model` instances.
@@ -195,9 +259,15 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 activities.extend(toolset.temporal_activities)
             return toolset
 
-        temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
+        # Temporalize wrapped agent's toolsets
+        self._toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
 
-        self._toolsets = temporal_toolsets
+        # Process additional toolsets (if provided)
+        # Temporalize named toolsets and store the mapping
+        self._named_toolsets: Mapping[str, AbstractToolset[AgentDepsT]] = {
+            name: toolset.visit_and_replace(temporalize_toolset) for name, toolset in (toolsets or {}).items()
+        }
+
         self._temporal_activities = activities
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
@@ -254,21 +324,30 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _temporal_overrides(
-        self, *, model: models.Model | models.KnownModelName | str | None = None, force: bool = False
+        self,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        force: bool = False,
     ) -> Iterator[None]:
-        """Context manager for workflow-specific overrides.
+        in_workflow = workflow.in_workflow()
 
-        When called outside a workflow, this is a no-op.
-        When called inside a workflow, it overrides the model and toolsets.
-        """
-        if not workflow.in_workflow() and not force:
-            yield
+        if toolsets:
+            overridden_toolsets = [*self._toolsets, *toolsets]
+        else:
+            overridden_toolsets = list(self._toolsets)
+
+        # Outside workflow, only apply toolsets override (model is passed directly to run)
+        if not in_workflow and not force:
+            if toolsets:
+                with super().override(toolsets=overridden_toolsets, tools=[]):
+                    yield
+            else:
+                yield
             return
 
-        # We reset tools here as the temporalized function toolset is already in self._toolsets.
-        # Override model and set the model for workflow execution
+        # We reset tools here as the temporalized function toolset is already in overridden_toolsets.
         with (
-            super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
+            super().override(model=self._temporal_model, toolsets=overridden_toolsets, tools=[]),
             self._temporal_model.using_model(model),
             _utils.disable_threads(),
         ):
@@ -281,6 +360,45 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 ) from e
             finally:
                 self._temporal_overrides_active.reset(temporal_active_token)
+
+    def _resolve_toolsets(
+        self, toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None
+    ) -> Sequence[AbstractToolset[AgentDepsT]] | None:
+        if toolsets is None:
+            return None
+
+        resolved_toolsets: list[AbstractToolset[AgentDepsT]] = []
+        for t in toolsets:
+            if isinstance(t, str):
+                # String name: lookup in named toolsets
+                try:
+                    resolved_toolsets.append(self._named_toolsets[t])
+                except KeyError as e:
+                    if not self._named_toolsets:
+                        raise UserError(f"Unknown toolset name: '{t}'. No named toolsets registered.") from e
+                    raise UserError(
+                        f"Unknown toolset name: '{t}'. Available toolsets: {list(self._named_toolsets.keys())}"
+                    ) from e
+            elif isinstance(t, TemporalWrapperToolset):
+                # Already a temporal wrapper: use as-is
+                resolved_toolsets.append(t)
+            else:
+                # Original toolset instance: find its temporal wrapper
+                # Check if this toolset instance is wrapped in any of our named toolsets
+                wrapper = next(
+                    (
+                        wrapper
+                        for wrapper in self._named_toolsets.values()
+                        if isinstance(wrapper, TemporalWrapperToolset) and wrapper.wrapped is t
+                    ),
+                    None,
+                )
+                if wrapper is not None:
+                    resolved_toolsets.append(wrapper)
+                else:
+                    # Not found in named toolsets, use as-is (will be validated later)
+                    resolved_toolsets.append(t)
+        return resolved_toolsets
 
     @overload
     async def run(
@@ -298,7 +416,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
@@ -319,7 +437,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
@@ -339,7 +457,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
@@ -377,13 +495,27 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
+            toolsets: Optional additional toolsets for this run. Can be toolset instances or strings
+                referencing toolsets registered by name in the agent constructor's `toolsets` parameter.
             event_stream_handler: Optional event stream handler to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
             The result of the run.
         """
+        # Validate and resolve toolsets at callsite
+        resolved_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
+        if toolsets:
+            if workflow.in_workflow():
+                # Validate toolsets in workflow context
+                try:
+                    _validate_temporal_toolsets([t for t in toolsets if not isinstance(t, str)])
+                except UserError as e:
+                    raise UserError(
+                        f'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. {e}'
+                    ) from e
+            resolved_toolsets = self._resolve_toolsets(toolsets)
+
         if workflow.in_workflow():
             if event_stream_handler is not None:
                 raise UserError(
@@ -393,7 +525,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         else:
             resolved_model = self._temporal_model.resolve_model(model)
 
-        with self._temporal_overrides(model=model):
+        with self._temporal_overrides(toolsets=resolved_toolsets, model=model):
             return await super().run(
                 user_prompt,
                 output_type=output_type,
@@ -407,7 +539,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
                 metadata=metadata,
                 infer_name=infer_name,
-                toolsets=toolsets,
+                toolsets=None,  # Toolsets are set via _temporal_overrides
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
                 **_deprecated_kwargs,
@@ -429,7 +561,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
@@ -450,7 +582,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
@@ -470,7 +602,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
@@ -506,7 +638,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
+            toolsets: Optional additional toolsets for this run. Can be toolset instances or strings
+                referencing toolsets registered by name in the agent constructor's `toolsets` parameter.
             event_stream_handler: Optional event stream handler to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
 
@@ -531,7 +664,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
-            toolsets=toolsets,
+            toolsets=self._resolve_toolsets(toolsets),
             builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
             **_deprecated_kwargs,
@@ -553,7 +686,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
@@ -574,7 +707,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
@@ -595,7 +728,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
@@ -629,7 +762,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
+            toolsets: Optional additional toolsets for this run. Can be toolset instances or strings
+                referencing toolsets registered by name in the agent constructor's `toolsets` parameter.
             builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
 
@@ -655,7 +789,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
-            toolsets=toolsets,
+            toolsets=self._resolve_toolsets(toolsets),
             event_stream_handler=event_stream_handler,
             builtin_tools=builtin_tools,
             **_deprecated_kwargs,
@@ -678,7 +812,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
 
@@ -698,7 +832,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
 
@@ -717,13 +851,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
-        This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
-        uses the `event_stream_handler` kwarg to get a stream of events from the run.
+        This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run].
 
         Example:
         ```python
@@ -751,8 +884,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             '''
         ```
 
-        Arguments are the same as for [`self.run`][pydantic_ai.agent.AbstractAgent.run],
-        except that `event_stream_handler` is now allowed.
+        Arguments are the same as for [`self.run`][pydantic_ai.agent.AbstractAgent.run].
 
         Args:
             user_prompt: User input to start/continue the conversation.
@@ -769,7 +901,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
+            toolsets: Optional additional toolsets for this run. Can be toolset instances or strings
+                referencing toolsets registered by name in the agent constructor's `toolsets` parameter.
             builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
@@ -795,7 +928,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
-            toolsets=toolsets,
+            toolsets=self._resolve_toolsets(toolsets),
             builtin_tools=builtin_tools,
         )
 
@@ -950,12 +1083,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                 )
 
-            assert model is None, 'Temporal overrides must set the model before `agent.iter()` is invoked'
-
-            if toolsets is not None:
+            if model is not None:  # pragma: no cover - defensive check for workflow execution path
                 raise UserError(
-                    'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                    'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
                 )
+            if toolsets is not None:  # pragma: no cover - defensive check for workflow execution path
+                try:
+                    _validate_temporal_toolsets(toolsets)
+                except UserError as e:
+                    raise UserError(
+                        f'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. {e}'
+                    ) from e
 
             resolved_model = None
         else:
@@ -1010,9 +1148,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Model cannot be contextually overridden inside a Temporal workflow, it must be set at agent creation time.'
                 )
             if _utils.is_set(toolsets):
-                raise UserError(
-                    'Toolsets cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
-                )
+                try:
+                    _validate_temporal_toolsets(toolsets)
+                except UserError as e:
+                    raise UserError(
+                        f'Toolsets cannot be contextually overridden inside a Temporal workflow, unless they are wrapped in a `TemporalWrapperToolset`. {e}'
+                    ) from e
             if _utils.is_set(tools):
                 raise UserError(
                     'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'

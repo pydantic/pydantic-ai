@@ -17,10 +17,10 @@ class TemporalMCPServer(TemporalMCPToolset[AgentDepsT]):
         self,
         server: MCPServer,
         *,
-        activity_name_prefix: str,
-        activity_config: ActivityConfig,
-        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
-        deps_type: type[AgentDepsT],
+        activity_name_prefix: str | None = None,
+        activity_config: ActivityConfig | None = None,
+        tool_activity_config: dict[str, ActivityConfig | Literal[False]] | None = None,
+        deps_type: type[AgentDepsT] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     ):
         super().__init__(
