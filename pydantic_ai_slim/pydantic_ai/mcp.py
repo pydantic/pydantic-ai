@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import functools
 import os
 import re
 import warnings
@@ -32,7 +31,7 @@ try:
     from mcp.client.session import ClientSession, ElicitationFnT, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.client.streamable_http import GetSessionIdCallback, streamable_http_client
     from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
     from mcp.shared.message import SessionMessage
@@ -1145,33 +1144,24 @@ class _MCPServerHTTP(MCPServer):
         if self.http_client and self.headers:
             raise ValueError('`http_client` is mutually exclusive with `headers`.')  # pragma: no cover
 
-        transport_client_partial = functools.partial(
-            self._transport_client,
-            url=self.url,
-            timeout=self.timeout,
-            sse_read_timeout=self.read_timeout,
-        )
-
         if self.http_client is not None:
-            # TODO: Clean up once https://github.com/modelcontextprotocol/python-sdk/pull/1177 lands.
-            @asynccontextmanager
-            async def httpx_client_factory(
-                headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> AsyncIterator[httpx.AsyncClient]:
-                assert self.http_client is not None
-                yield self.http_client
-
-            async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
+            # Use the provided http_client directly
+            async with self._transport_client(url=self.url, http_client=self.http_client) as (
                 read_stream,
                 write_stream,
                 *_,
             ):
                 yield read_stream, write_stream
         else:
-            async with transport_client_partial(headers=self.headers) as (read_stream, write_stream, *_):
-                yield read_stream, write_stream
+            # Create a new http_client with the configured timeout and headers
+            timeout = httpx.Timeout(self.timeout, read=self.read_timeout)
+            async with httpx.AsyncClient(timeout=timeout, headers=self.headers) as http_client:
+                async with self._transport_client(url=self.url, http_client=http_client) as (
+                    read_stream,
+                    write_stream,
+                    *_,
+                ):
+                    yield read_stream, write_stream
 
     def __repr__(self) -> str:  # pragma: no cover
         repr_args = [
@@ -1282,7 +1272,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
     @property
     def _transport_client(self):
-        return streamablehttp_client
+        return streamable_http_client
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url

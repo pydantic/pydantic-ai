@@ -56,7 +56,7 @@ try:
     from outlines.models.sglang import AsyncSGLang, SGLang, from_sglang
     from outlines.models.transformers import (
         Transformers,
-        from_transformers,
+        from_transformers,  # pyright: ignore[reportUnknownVariableType]
     )
     from outlines.models.vllm_offline import (
         VLLMOffline,

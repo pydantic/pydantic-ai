@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, overload
+from typing import Any, cast, overload
 
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
@@ -105,6 +105,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
+                tool = cast(Tool[AgentDepsT], tool)
                 self.add_tool(tool)
             else:
                 self.add_function(tool)

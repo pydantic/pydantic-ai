@@ -32,8 +32,10 @@ ask_agent = Agent('openai:gpt-5', output_type=str)
 @dataclass
 class QuestionState:
     question: str | None = None
-    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    evaluate_agent_messages: list[ModelMessage] = field(
+        default_factory=list[ModelMessage]
+    )
 
 
 @dataclass

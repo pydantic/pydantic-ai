@@ -6,9 +6,11 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import MagicMock
+from urllib.parse import urlparse
 
+import httpcore
 import pytest
 from pydantic import BaseModel
 
@@ -77,6 +79,68 @@ pytestmark = [
     # TODO(Marcelo): We are temporarily disabling it. We should enable them again.
     pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
 ]
+
+LOCALHOST_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0'}
+
+
+def _is_localhost_request(request: httpcore.Request) -> bool:
+    """Check if an httpcore request is to localhost."""
+    url = bytes(request.url).decode('ascii')
+    parsed = urlparse(url)
+    return parsed.hostname in LOCALHOST_HOSTS
+
+
+@pytest.fixture(autouse=True, scope='module')
+def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
+    """Patch VCR's httpcore stubs to completely bypass localhost requests.
+
+    VCR patches httpcore's handle_async_request and handle_request at the class level,
+    meaning ALL requests go through VCR's wrapper - even 'ignored' localhost ones.
+    This can corrupt httpcore's connection pool state when using cached HTTP clients.
+
+    This patch makes localhost requests bypass VCR's wrapper entirely, preventing
+    httpcore pool corruption that causes hangs in tests with multiple agent runs.
+    """
+    try:
+        import vcr.stubs.httpcore_stubs as httpcore_stubs
+    except ImportError:  # pragma: no cover
+        yield
+        return
+
+    # Patch async version
+    original_async: Any = httpcore_stubs.vcr_handle_async_request  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+    def patched_async(cassette: Any, real_handle_async_request: Any) -> Any:
+        vcr_wrapper: Any = original_async(cassette, real_handle_async_request)
+
+        def localhost_aware_wrapper(self: httpcore.AsyncConnectionPool, real_request: httpcore.Request) -> Any:
+            if _is_localhost_request(real_request):
+                return real_handle_async_request(self, real_request)
+            return vcr_wrapper(self, real_request)
+
+        return localhost_aware_wrapper
+
+    # Patch sync version
+    original_sync: Any = httpcore_stubs.vcr_handle_request  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+    def patched_sync(cassette: Any, real_handle_request: Any) -> Any:
+        vcr_wrapper: Any = original_sync(cassette, real_handle_request)
+
+        def localhost_aware_wrapper(self: httpcore.ConnectionPool, real_request: httpcore.Request) -> Any:
+            if _is_localhost_request(real_request):
+                return real_handle_request(self, real_request)
+            return vcr_wrapper(self, real_request)  # pragma: no cover
+
+        return localhost_aware_wrapper
+
+    httpcore_stubs.vcr_handle_async_request = patched_async
+    httpcore_stubs.vcr_handle_request = patched_sync
+    try:
+        yield
+    finally:
+        httpcore_stubs.vcr_handle_async_request = original_async
+        httpcore_stubs.vcr_handle_request = original_sync
+
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
@@ -184,7 +248,7 @@ class Response:
 @dataclass
 class BasicSpan:
     content: str
-    children: list[BasicSpan] = field(default_factory=list)
+    children: list[BasicSpan] = field(default_factory=list['BasicSpan'])
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 

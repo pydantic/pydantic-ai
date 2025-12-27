@@ -14,9 +14,9 @@ app = modal.App(
     name='slack-lead-qualifier',
     image=image,
     secrets=[
-        modal.Secret.from_name('logfire'),
-        modal.Secret.from_name('openai'),
-        modal.Secret.from_name('slack'),
+        modal.Secret.from_name('logfire'),  # pyright: ignore[reportUnknownMemberType]
+        modal.Secret.from_name('openai'),  # pyright: ignore[reportUnknownMemberType]
+        modal.Secret.from_name('slack'),  # pyright: ignore[reportUnknownMemberType]
     ],
 )  ### [/setup_modal]
 
@@ -31,7 +31,7 @@ def setup_logfire():
 
 
 ### [web_app]
-@app.function(min_containers=1)
+@app.function(min_containers=1)  # pyright: ignore[reportUnknownMemberType]
 @modal.asgi_app()  # type: ignore
 def web_app():
     setup_logfire()
@@ -42,7 +42,7 @@ def web_app():
 
 
 ### [process_slack_member]
-@app.function()
+@app.function()  # pyright: ignore[reportUnknownMemberType]
 async def process_slack_member(profile_raw: dict[str, Any], logfire_ctx: Any):
     setup_logfire()
 
@@ -57,7 +57,7 @@ async def process_slack_member(profile_raw: dict[str, Any], logfire_ctx: Any):
 
 
 ### [send_daily_summary]
-@app.function(schedule=modal.Cron('0 8 * * *'))  # Every day at 8am UTC
+@app.function(schedule=modal.Cron('0 8 * * *'))  # pyright: ignore[reportUnknownMemberType]  # Every day at 8am UTC
 async def send_daily_summary():
     setup_logfire()
 

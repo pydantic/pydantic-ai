@@ -280,7 +280,11 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 
 
 @pytest.fixture(autouse=True)
-def mock_vcr_aiohttp_content(mocker: MockerFixture):
+def mock_vcr_aiohttp_content(request: pytest.FixtureRequest, mocker: MockerFixture):
+    # Only patch if test uses VCR marker
+    if request.node.get_closest_marker('vcr') is None:
+        return
+
     try:
         from vcr.stubs import aiohttp_stubs
     except ImportError:  # pragma: lax no cover
@@ -309,7 +313,6 @@ def vcr_config():
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
     """Track and close cached httpx clients created during each test.
-
     Prevents reusing AsyncClient instances across tests (and event loops),
     which can cause 'Event loop is closed' errors, without touching prod code.
     """
@@ -324,7 +327,6 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
         return client
 
     monkeypatch.setattr(pydantic_ai.models, '_cached_async_http_client', tracked_cached_async_http_client)
-
     yield
 
     # Close only the clients that were actually created/accessed in this test
