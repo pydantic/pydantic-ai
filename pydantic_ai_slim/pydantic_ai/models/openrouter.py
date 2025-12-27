@@ -619,35 +619,30 @@ class OpenRouterModel(OpenAIChatModel):
         return OpenRouterStreamedResponse
 
     @override
-    async def _map_content_item(
-        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
-    ) -> ChatCompletionContentPartParam | None:
-        """Map a content item to a chat completion content part, handling VideoUrl for OpenRouter.
+    async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:
+        """Map a VideoUrl to a chat completion content part for OpenRouter.
 
         OpenRouter supports video_url content parts, which the OpenAI client doesn't support.
-        This method handles VideoUrl before delegating to the parent class for other content types.
+        This method handles VideoUrl by creating the appropriate content part structure.
 
         Args:
-            item: The content item to map.
+            item: The VideoUrl item to map.
 
         Returns:
-            A chat completion content part, or None if the item should be filtered out.
+            A chat completion content part with video_url type.
         """
-        if isinstance(item, VideoUrl):
-            video_url: dict[str, str] = {'url': item.url}
-            if item.force_download:
-                from . import download_item
+        video_url: dict[str, str] = {'url': item.url}
+        if item.force_download:
+            from . import download_item
 
-                video_content = await download_item(item, data_format='base64_uri', type_format='extension')
-                video_url['url'] = video_content['data']
-            # OpenRouter extends OpenAI's API to support video_url, but it's not in the OpenAI client types.
-            # At runtime, the OpenAI client accepts dicts that match the expected structure.
-            return cast(
-                ChatCompletionContentPartParam,
-                ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
-            )
-        else:
-            return await super()._map_content_item(item)
+            video_content = await download_item(item, data_format='base64_uri', type_format='extension')
+            video_url['url'] = video_content['data']
+        # OpenRouter extends OpenAI's API to support video_url, but it's not in the OpenAI client types.
+        # At runtime, the OpenAI client accepts dicts that match the expected structure.
+        return cast(
+            ChatCompletionContentPartParam,
+            ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
+        )
 
     @override
     def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]

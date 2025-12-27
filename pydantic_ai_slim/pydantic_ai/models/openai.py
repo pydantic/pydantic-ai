@@ -1231,6 +1231,22 @@ class OpenAIChatModel(Model):
                 type='file',
             )
 
+    async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:  # pragma: no cover
+        """Map a VideoUrl to a chat completion content part.
+
+        This method can be overridden by subclasses (e.g., OpenRouterModel) to support VideoUrl.
+
+        Args:
+            item: The VideoUrl item to map.
+
+        Returns:
+            A chat completion content part.
+
+        Raises:
+            NotImplementedError: VideoUrl is not supported for OpenAI.
+        """
+        raise NotImplementedError('VideoUrl is not supported for OpenAI')
+
     async def _map_content_item(
         self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
     ) -> ChatCompletionContentPartParam | None:
@@ -1256,8 +1272,8 @@ class OpenAIChatModel(Model):
             return await self._map_audio_url_item(item, profile)
         elif isinstance(item, DocumentUrl):
             return await self._map_document_url_item(item, profile)
-        elif isinstance(item, VideoUrl):  # pragma: no cover
-            raise NotImplementedError('VideoUrl is not supported for OpenAI')
+        elif isinstance(item, VideoUrl):
+            return await self._map_video_url_item(item)
         elif isinstance(item, CachePoint):
             # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
             return None
