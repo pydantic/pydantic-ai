@@ -5733,3 +5733,74 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
             ),
         ]
     )
+
+
+async def test_groq_gpt_oss_default_native_output(allow_model_requests: None, groq_api_key: str):
+    """Test that GPT-OSS models default to native structured output.
+
+    This verifies that when using a plain output_type (no explicit NativeOutput/ToolOutput wrapper),
+    GPT-OSS models use native structured output by default instead of tool calling.
+    """
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # No explicit NativeOutput/ToolOutput wrapper - uses profile default
+    agent = Agent(m, output_type=CityLocation)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+
+    # Verify it used native output (TextPart with JSON) not tool calling (ToolCallPart)
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    # Native output returns TextPart with JSON content, not ToolCallPart
+    part_types = [type(part).__name__ for part in response.parts]
+    assert 'ToolCallPart' not in part_types, f'Expected native output but got tool call: {part_types}'
+    assert 'TextPart' in part_types, f'Expected TextPart for native output: {part_types}'
+
+
+async def test_groq_llama4_default_native_output(allow_model_requests: None, groq_api_key: str):
+    """Test that Llama 4 models default to native structured output."""
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # No explicit NativeOutput/ToolOutput wrapper - uses profile default
+    agent = Agent(m, output_type=CityLocation)
+
+    result = await agent.run('What is the capital of Japan?')
+    assert result.output == snapshot(CityLocation(city='Tokyo', country='Japan'))
+
+    # Verify it used native output (TextPart with JSON) not tool calling (ToolCallPart)
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part_types = [type(part).__name__ for part in response.parts]
+    assert 'ToolCallPart' not in part_types, f'Expected native output but got tool call: {part_types}'
+    assert 'TextPart' in part_types, f'Expected TextPart for native output: {part_types}'
+
+
+async def test_groq_kimi_default_native_output(allow_model_requests: None, groq_api_key: str):
+    """Test that Kimi K2 models default to native structured output."""
+    m = GroqModel('moonshotai/kimi-k2-instruct-0905', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # No explicit NativeOutput/ToolOutput wrapper - uses profile default
+    agent = Agent(m, output_type=CityLocation)
+
+    result = await agent.run('What is the capital of Germany?')
+    assert result.output == snapshot(CityLocation(city='Berlin', country='Germany'))
+
+    # Verify it used native output (TextPart with JSON) not tool calling (ToolCallPart)
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part_types = [type(part).__name__ for part in response.parts]
+    assert 'ToolCallPart' not in part_types, f'Expected native output but got tool call: {part_types}'
+    assert 'TextPart' in part_types, f'Expected TextPart for native output: {part_types}'

@@ -21,3 +21,19 @@ def groq_model_profile(model_name: str) -> ModelProfile:
     return GroqModelProfile(
         groq_always_has_web_search_builtin_tool=model_name.startswith('compound-'),
     )
+
+
+def groq_gpt_oss_model_profile(model_name: str) -> ModelProfile:
+    """Get profile for OpenAI GPT-OSS models on Groq.
+
+    GPT-OSS models (gpt-oss-20b, gpt-oss-120b) support strict native structured output
+    with 100% schema adherence.
+    """
+    from .openai import OpenAIJsonSchemaTransformer
+
+    return GroqModelProfile(
+        supports_json_schema_output=True,
+        supports_json_object_output=True,
+        default_structured_output_mode='native',
+        json_schema_transformer=OpenAIJsonSchemaTransformer,
+    )
