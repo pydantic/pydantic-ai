@@ -443,11 +443,11 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self):
-        # TODO: 
+        # TODO:
         # To be handled, Douwe's comment from the issue: #3122
-        # - ToolReturn which has a return_value: Any that holds the value returned to the model as the tool result, and content that can hold things like FileUrl and BinaryContent, 
-        # which will be returned to the model as follow-up user parts because tools can not return them directly. 
-        # What should the output schema be? When chaining tool calls, the value passed around should probably be the content, or both. 
+        # - ToolReturn which has a return_value: Any that holds the value returned to the model as the tool result, and content that can hold things like FileUrl and BinaryContent,
+        # which will be returned to the model as follow-up user parts because tools can not return them directly.
+        # What should the output schema be? When chaining tool calls, the value passed around should probably be the content, or both.
         # So we'd need to create a list/union schema of str | UserContent.
 
         # Tools can also have a return type of FileUrl, BinaryContent, or one of their subclasses, which may also require special consideration.
@@ -456,14 +456,12 @@ class Tool(Generic[ToolAgentDepsT]):
 
         # Handoff tools that return (await subagent.run(...)).result and have a complex signature including things like DeferredToolRequests (see OutputSpec in the codebase).
 
-        # We may have to handle those deferred tools (frontend tools or approval-required tools) in a special way when used in chaining context, 
+        # We may have to handle those deferred tools (frontend tools or approval-required tools) in a special way when used in chaining context,
         # perhaps by causing the super-agent to end on DeferredToolRequests itself.
-        # We may also need a way to generate a JSON schema for any agent/agent._output_schema: OutputSchema): 
+        # We may also need a way to generate a JSON schema for any agent/agent._output_schema: OutputSchema):
         # Add method to get an agent's output JSON schema #3225 -> This is already implemented now
 
         # -> Issue with CallDeferred, need to read how that works exactly?
-
-
 
         return ToolDefinition(
             name=self.name,
