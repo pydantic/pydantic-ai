@@ -72,7 +72,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsBytes, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -5005,22 +5005,30 @@ def test_image_url_serializable():
     assert messages == result.all_messages()
 
 
-def test_tool_return_part_binary_content_serialization():
-    """Test that ToolReturnPart can properly serialize BinaryContent."""
+def test_tool_return_part_file_content_methods():
+    """Test that ToolReturnPart properly separates files from data content."""
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
     binary_content = BinaryContent(png_data, media_type='image/png')
 
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
 
-    assert tool_return.model_response_object() == snapshot(
-        {
-            'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
-            'media_type': 'image/png',
-            'vendor_metadata': None,
-            '_identifier': None,
-            'kind': 'binary',
-        }
+    # File-only content: text_or_json_content is None, files accessible via multimodal_content
+    assert tool_return == snapshot(
+        ToolReturnPart(
+            tool_name='test_tool',
+            content=BinaryContent(
+                data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
+                media_type='image/png',
+            ),
+            tool_call_id='test_call_123',
+            timestamp=IsDatetime(),
+        )
     )
+    # Verify the new methods work correctly
+    assert tool_return.text_or_json_content is None
+    assert tool_return.model_response_object() == {}
+    assert tool_return.model_response_str() == ''
+    assert tool_return.multimodal_content == [binary_content]
 
 
 def test_tool_returning_binary_content_directly():
@@ -5040,7 +5048,6 @@ def test_tool_returning_binary_content_directly():
         png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
         return BinaryContent(png_data, media_type='image/png')
 
-    # This should work without the serialization error
     result = agent.run_sync('Get an image')
     assert result.output == 'Image received'
 
@@ -5062,26 +5069,18 @@ def test_tool_returning_binary_content_with_identifier():
         png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
         return BinaryContent(png_data, media_type='image/png', identifier='image_id_1')
 
-    # This should work without the serialization error
     result = agent.run_sync('Get an image')
     assert result.all_messages()[2] == snapshot(
         ModelRequest(
             parts=[
                 ToolReturnPart(
                     tool_name='get_image',
-                    content='See file image_id_1',
+                    content=BinaryContent(
+                        data=IsBytes(),
+                        media_type='image/png',
+                        _identifier='image_id_1',
+                    ),
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
-                    content=[
-                        'This is file image_id_1:',
-                        BinaryContent(
-                            data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
-                            media_type='image/png',
-                            _identifier='image_id_1',
-                        ),
-                    ],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
@@ -5118,23 +5117,13 @@ def test_tool_returning_file_url_with_identifier():
             parts=[
                 ToolReturnPart(
                     tool_name='get_files',
-                    content=['See file img_001', 'See file vid_002', 'See file aud_003', 'See file doc_004'],
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
                     content=[
-                        'This is file img_001:',
-                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001', identifier='img_001'),
-                        'This is file vid_002:',
-                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002', identifier='vid_002'),
-                        'This is file aud_003:',
-                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003', identifier='aud_003'),
-                        'This is file doc_004:',
-                        DocumentUrl(
-                            url='https://example.com/document.pdf', _identifier='doc_004', identifier='doc_004'
-                        ),
+                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001'),
+                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002'),
+                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003'),
+                        DocumentUrl(url='https://example.com/document.pdf', _identifier='doc_004'),
                     ],
+                    tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
@@ -5571,12 +5560,8 @@ def test_multimodal_tool_response():
 
     result = agent.run_sync('Please analyze the data')
 
-    # Verify final output
     assert result.output == 'Analysis completed'
 
-    # Verify message history contains the expected parts
-
-    # Verify the complete message structure using snapshot
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -5654,12 +5639,8 @@ def test_plain_tool_response():
 
     result = agent.run_sync('Please analyze the data')
 
-    # Verify final output
     assert result.output == 'Analysis completed'
 
-    # Verify message history contains the expected parts
-
-    # Verify the complete message structure using snapshot
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -5743,13 +5724,13 @@ def test_many_multimodal_tool_response():
 
 
 def test_multimodal_tool_response_nested():
-    """Test ToolReturn with custom content and tool return."""
+    """Test ToolReturn with multimodal content directly in `return_value`."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
         else:
-            return ModelResponse(  # pragma: no cover
+            return ModelResponse(
                 parts=[
                     TextPart('Analysis completed'),
                 ]
@@ -5761,19 +5742,74 @@ def test_multimodal_tool_response_nested():
     def analyze_data() -> ToolReturn:
         return ToolReturn(
             return_value=ImageUrl('https://example.com/chart.jpg'),
-            content=[
-                'Here are the analysis results:',
-                ImageUrl('https://example.com/chart.jpg'),
-                'The chart shows positive trends.',
-            ],
             metadata={'foo': 'bar'},
         )
 
-    with pytest.raises(
-        UserError,
-        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContent` objects. Please use `content` instead.",
-    ):
-        agent.run_sync('Please analyze the data')
+    result = agent.run_sync('Please analyze the data')
+    assert result.output == 'Analysis completed'
+    tool_return_part = result.all_messages()[2].parts[0]
+    assert tool_return_part == snapshot(
+        ToolReturnPart(
+            tool_name='analyze_data',
+            content=ImageUrl(url='https://example.com/chart.jpg'),
+            tool_call_id=IsStr(),
+            metadata={'foo': 'bar'},
+            timestamp=IsDatetime(),
+        )
+    )
+
+
+def test_tool_return_mixed_list():
+    """Test that a tool can return a list of mixed data and files (ToolReturnPart.content as list)."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_calls = [ToolCallPart('get_mixed_content', '{}')]
+        if not any(
+            isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in messages
+        ):
+            return ModelResponse(parts=tool_calls)
+        return ModelResponse(parts=[TextPart('Received mixed content')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_mixed_content() -> list[Any]:
+        """Returns a list with mixed data and multimodal content."""
+        png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
+        return [
+            'Here is some analysis text',
+            {'data': 'structured result', 'count': 42},
+            BinaryContent(png_data, media_type='image/png'),
+            ImageUrl('https://example.com/chart.jpg'),
+        ]
+
+    result = agent.run_sync('Get mixed content')
+    assert result.output == 'Received mixed content'
+
+    tool_return_part = result.all_messages()[2].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+    assert tool_return_part == snapshot(
+        ToolReturnPart(
+            tool_name='get_mixed_content',
+            content=[
+                'Here is some analysis text',
+                {'data': 'structured result', 'count': 42},
+                BinaryContent(data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR', media_type='image/png'),
+                ImageUrl(url='https://example.com/chart.jpg'),
+            ],
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+        )
+    )
+    # Verify the new methods correctly separate files from data
+    assert tool_return_part.multimodal_content == [
+        BinaryContent(data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR', media_type='image/png'),
+        ImageUrl(url='https://example.com/chart.jpg'),
+    ]
+    assert tool_return_part.text_or_json_content == [
+        'Here is some analysis text',
+        {'data': 'structured result', 'count': 42},
+    ]
 
 
 def test_deprecated_kwargs_validation_agent_init():
@@ -7160,13 +7196,11 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolCallPart(
                         tool_name='final_result',
                         args={'dice_roll': 4},
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id='output-tool-call-id',
                     )
                 ]
             )
-        return ModelResponse(
-            parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')]
-        )
+        return ModelResponse(parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='roll-dice-call-id')])
 
     class Result(BaseModel):
         dice_roll: int
@@ -7192,7 +7226,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=55, output_tokens=2),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
@@ -7203,7 +7237,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolReturnPart(
                         tool_name='roll_dice',
                         content=4,
-                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7215,7 +7249,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolCallPart(
                         tool_name='final_result',
                         args={'dice_roll': 4},
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id=IsStr(),
                     )
                 ],
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
@@ -7228,7 +7262,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7253,7 +7287,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=66, output_tokens=8),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
@@ -7264,7 +7298,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolReturnPart(
                         tool_name='roll_dice',
                         content=4,
-                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7276,7 +7310,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolCallPart(
                         tool_name='final_result',
                         args={'dice_roll': 4},
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id=IsStr(),
                     )
                 ],
                 usage=RequestUsage(input_tokens=67, output_tokens=12),
@@ -7289,7 +7323,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],

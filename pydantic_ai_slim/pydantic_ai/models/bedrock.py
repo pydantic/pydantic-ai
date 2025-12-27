@@ -578,6 +578,29 @@ class BedrockConverseModel(Model):
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
+                        tool_result_content: list[Any] = []
+
+                        # Add data content (text or JSON based on profile)
+                        data = part.text_or_json_content
+                        if data is not None:
+                            if profile.bedrock_tool_result_format == 'text':
+                                tool_result_content.append({'text': part.model_response_str()})
+                            else:
+                                tool_result_content.append({'json': part.model_response_object()})
+
+                        # Add multimodal files - Bedrock supports all types natively in toolResult
+                        for file in part.multimodal_content:
+                            file_block = await self._map_file_to_content_block(file, document_count)
+                            if file_block is not None:
+                                tool_result_content.append(file_block)
+
+                        # Ensure we have at least some content
+                        if not tool_result_content:
+                            if profile.bedrock_tool_result_format == 'text':
+                                tool_result_content.append({'text': ''})
+                            else:
+                                tool_result_content.append({'json': {}})
+
                         bedrock_messages.append(
                             {
                                 'role': 'user',
@@ -585,11 +608,7 @@ class BedrockConverseModel(Model):
                                     {
                                         'toolResult': {
                                             'toolUseId': part.tool_call_id,
-                                            'content': [
-                                                {'text': part.model_response_str()}
-                                                if profile.bedrock_tool_result_format == 'text'
-                                                else {'json': part.model_response_object()}
-                                            ],
+                                            'content': tool_result_content,
                                             'status': 'success',
                                         }
                                     }
@@ -713,6 +732,54 @@ class BedrockConverseModel(Model):
         if 'cachePoint' in last_block:  # Skip if already has a cache point
             return None
         return content
+
+    @staticmethod
+    async def _map_file_to_content_block(
+        file: ImageUrl | DocumentUrl | VideoUrl | AudioUrl | BinaryContent,
+        document_count: Iterator[int],
+    ) -> ContentBlockUnionTypeDef | None:
+        """Map a multimodal file directly to a Bedrock content block for tool results."""
+        if isinstance(file, BinaryContent):
+            format = file.format
+            if file.is_document:
+                name = f'Document {next(document_count)}'
+                assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+                return {'document': {'name': name, 'format': format, 'source': {'bytes': file.data}}}
+            elif file.is_image:
+                assert format in ('jpeg', 'png', 'gif', 'webp')
+                return {'image': {'format': format, 'source': {'bytes': file.data}}}
+            elif file.is_video:
+                assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+                return {'video': {'format': format, 'source': {'bytes': file.data}}}
+            else:
+                return None
+        elif isinstance(file, (ImageUrl, DocumentUrl, VideoUrl)):
+            source: DocumentSourceTypeDef
+            if file.url.startswith('s3://'):
+                parsed = urlparse(file.url)
+                s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+                if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+                    s3_location['bucketOwner'] = bucket_owner
+                source = {'s3Location': s3_location}
+            else:
+                downloaded_item = await download_item(file, data_format='bytes', type_format='extension')
+                source = {'bytes': downloaded_item['data']}
+
+            if isinstance(file, ImageUrl):
+                format = file.media_type.split('/')[1]
+                assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
+                return {'image': {'format': format, 'source': source}}
+            elif isinstance(file, DocumentUrl):
+                name = f'Document {next(document_count)}'
+                return {'document': {'name': name, 'format': file.format, 'source': source}}
+            elif isinstance(file, VideoUrl):
+                format = file.media_type.split('/')[1]
+                assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+                return {'video': {'format': format, 'source': source}}
+        elif isinstance(file, AudioUrl):  # pragma: no cover
+            # Audio not supported in Bedrock tool results, only in user messages
+            # See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html
+            return None
 
     @staticmethod
     async def _map_user_prompt(  # noqa: C901
