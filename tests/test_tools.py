@@ -2853,18 +2853,6 @@ def test_tool_return_schema():
     def tool_with_return_tool_return() -> ToolReturn:
         return ToolReturn(return_value='hello', content=[ImageUrl(url='https://example.com/image.jpg')])
 
-    # @agent.tool_plain
-    # def tool_with_return_schema_subagent() -> (await subagent.run(...)).result:
-    #     return (await subagent.run(...)).result
-
-    # @agent.tool_plain
-    # def tool_with_return_schema_deferred_tool_requests() -> DeferredToolRequests:
-    #     return DeferredToolRequests(calls=[ToolRequestPart(tool_name='tool_name', args={})])
-
-    # @agent.tool_plain
-    # def tool_with_return_schema_output_spec() -> OutputSpec:
-    #     return OutputSpec(output_schema=OutputSchema(type='object', properties={'x': {'type': 'integer'}}))
-
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
