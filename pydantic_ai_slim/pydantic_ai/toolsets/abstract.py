@@ -114,6 +114,21 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """The tools that are available in this toolset."""
         raise NotImplementedError()
 
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        """Return instructions to inject into the agent's system prompt when this toolset is used.
+
+        Override this method to provide custom instructions that help the agent understand
+        how to use the tools in this toolset effectively.
+
+        Args:
+            ctx: The run context for this agent run.
+
+        Returns:
+            Instructions string to add to the system prompt, or None if no instructions.
+        """
+        del ctx  # unused in base implementation
+        return None
+
     @abstractmethod
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
