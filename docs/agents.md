@@ -1,11 +1,8 @@
 ## Introduction
 
-Agents are Pydantic AI's primary interface for interacting with LLMs.
+Agents are Pydantic AI's primary interface for interacting with LLMs. Think of an agent as a container that brings together everything an LLM needs to do useful work: instructions, tools, and output validation.
 
-In some use cases a single Agent will control an entire application or component,
-but multiple agents can also interact to embody more complex workflows.
-
-The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
+You might use a single agent to power your entire application, or orchestrate several agents for [complex workflows](multi-agent-applications.md). The [`Agent`][pydantic_ai.Agent] class holds:
 
 | **Component**                                             | **Description**                                                                                           |
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -16,7 +13,10 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 | [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
 | [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
 
-In typing terms, agents are generic in their dependency and output types, e.g., an agent which required dependencies of type `#!python Foobar` and produced outputs of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with Pydantic AI.
+??? note "Typing: Agents are generic"
+    Agents are generic in their dependency and output types. For example, an agent requiring `Foobar` dependencies and returning `list[str]` would have type `Agent[Foobar, list[str]]`.
+
+    In practice, you don't need to think about this much - your IDE will catch type mismatches, and [static type checkers](#static-type-checking) work seamlessly with Pydantic AI.
 
 Here's a toy example of an agent that simulates a roulette wheel:
 
@@ -61,13 +61,17 @@ print(result.output)
 
 ## Running Agents
 
-There are five ways to run an agent:
+There are five ways to run an agent, from simple to advanced:
 
-1. [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] — an async function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
-2. [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
-3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable. [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] is a synchronous variation that returns a [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] with synchronous versions of the same methods.
-4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — a function which returns an async iterable of [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
-5. [`agent.iter()`][pydantic_ai.agent.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph.Graph].
+| Method | Returns | Use Case |
+|--------|---------|----------|
+| [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] | [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] | Quick scripts, testing, synchronous code |
+| [`run()`][pydantic_ai.agent.AbstractAgent.run] | [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] | Async applications |
+| [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] | [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] | Stream text/output as it's generated |
+| [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] | `AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]` | Stream all events (tool calls, deltas, results) |
+| [`iter()`][pydantic_ai.agent.Agent.iter] | [`AgentRun`][pydantic_ai.agent.AgentRun] | Full control over the agent's execution graph |
+
+Most applications only need `run_sync()` or `run()`. Use streaming methods when you want to show output as it arrives, and `iter()` when you need to inspect or modify the agent's execution mid-run.
 
 Here's a simple example demonstrating the first four:
 
@@ -116,6 +120,9 @@ async def main():
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
+
+!!! tip "Debugging agent runs"
+    Use [Pydantic Logfire](logfire.md) to see exactly what's happening in your agent runs - every model request, tool call, and response, with timing and token usage. It's invaluable for understanding why an agent behaves a certain way.
 
 ### Streaming Events and Final Output
 
