@@ -162,6 +162,7 @@ nav:
           - api/models/wrapper.md
           - api/output.md
           - api/profiles.md
+          - api/prompt_config.md
           - api/providers.md
           - api/result.md
           - api/retries.md

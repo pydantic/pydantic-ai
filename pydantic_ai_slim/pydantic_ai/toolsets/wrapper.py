@@ -6,6 +6,8 @@ from typing import Any
 
 from typing_extensions import Self
 
+from pydantic_ai.tools import ToolDefinition
+
 from .._run_context import AgentDepsT, RunContext
 from .abstract import AbstractToolset, ToolsetTool
 
@@ -36,6 +38,9 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)
+
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        return await self.wrapped.get_all_tool_definitions(ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

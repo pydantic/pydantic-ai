@@ -551,3 +551,20 @@ distinguish multiple files.\
             },
         }
     )
+
+
+def test_build_instructions_appends_schema_placeholder():
+    """Test that build_instructions appends {schema} when template doesn't contain it."""
+    from pydantic_ai._output import OutputObjectDefinition, PromptedOutputSchema
+
+    object_def = OutputObjectDefinition(
+        json_schema={'type': 'object', 'properties': {'name': {'type': 'string'}}},
+        name='TestOutput',
+        description='A test output',
+    )
+    template_without_schema = 'Please respond with JSON.'
+
+    result = PromptedOutputSchema.build_instructions(template_without_schema, object_def)
+    assert result == snapshot(
+        'Please respond with JSON.\n\n{"type": "object", "properties": {"name": {"type": "string"}}, "title": "TestOutput", "description": "A test output"}'
+    )

@@ -157,6 +157,7 @@ async def test_forecast():
                     content='Sunny with a chance of rain',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='tool-executed',
                 ),
             ],
             timestamp=IsNow(tz=timezone.utc),

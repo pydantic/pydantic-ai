@@ -21,6 +21,7 @@ from .. import (
     exceptions,
     messages as _messages,
     models,
+    prompt_config as _prompt_config,
     result,
     usage as _usage,
 )
@@ -162,6 +163,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -183,6 +185,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -203,6 +206,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -238,6 +242,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -264,6 +270,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_config=prompt_config,
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
@@ -292,6 +299,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -313,6 +321,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -333,6 +342,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -367,6 +377,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -392,6 +404,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 instructions=instructions,
                 deps=deps,
                 model_settings=model_settings,
+                prompt_config=prompt_config,
                 usage_limits=usage_limits,
                 usage=usage,
                 metadata=metadata,
@@ -414,6 +427,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -435,6 +449,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -456,6 +471,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -498,6 +514,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -529,6 +547,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps=deps,
             instructions=instructions,
             model_settings=model_settings,
+            prompt_config=prompt_config,
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
@@ -657,6 +676,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -677,6 +697,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -696,6 +717,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -740,6 +762,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -766,6 +790,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
+                prompt_config=prompt_config,
                 usage_limits=usage_limits,
                 usage=usage,
                 metadata=metadata,
@@ -791,6 +816,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -811,6 +837,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -830,6 +857,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -881,6 +909,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -908,6 +938,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_config=prompt_config,
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
@@ -926,6 +957,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -953,6 +985,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     instructions=instructions,
                     deps=deps,
                     model_settings=model_settings,
+                    prompt_config=prompt_config,
                     usage_limits=usage_limits,
                     usage=usage,
                     metadata=metadata,
@@ -983,6 +1016,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -1003,6 +1037,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -1024,6 +1059,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -1102,6 +1138,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -1127,6 +1165,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        prompt_config: _prompt_config.PromptConfig | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -1140,6 +1179,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            prompt_config: The prompt configuration to use instead of the prompt config registered with the agent.
         """
         raise NotImplementedError
         yield
@@ -1445,3 +1485,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         return _utils.get_event_loop().run_until_complete(
             self.to_cli(deps=deps, prog_name=prog_name, message_history=message_history)
         )
+
+    @abstractmethod
+    async def generate_prompt_config_from_agent(
+        self, *, deps: AgentDepsT, model: models.Model | models.KnownModelName | str | None = None
+    ) -> _prompt_config.PromptConfig:
+        """Generate a PromptConfig instance based on an Agent instance.
+
+        This fills in per-tool metadata and default templates, producing a `PromptConfig` that can be
+        used as a starting point for prompt optimizers.
+
+        If the agent already has a `prompt_config`, it is used to override the defaults.
+        """
+        raise NotImplementedError

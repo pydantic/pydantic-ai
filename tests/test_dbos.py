@@ -371,7 +371,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return","return_kind":"tool-executed"},"content":null,"event_kind":"function_tool_result"}'
                                             )
                                         ),
                                     ],
@@ -386,7 +386,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return","return_kind":"tool-executed"},"content":null,"event_kind":"function_tool_result"}'
                                             )
                                         ),
                                     ],
@@ -450,7 +450,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return","return_kind":"tool-executed"},"content":null,"event_kind":"function_tool_result"}'
                                             )
                                         ),
                                     ],
@@ -672,6 +672,7 @@ async def test_complex_agent_run(allow_model_requests: None) -> None:
                     content='Mexico',
                     tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
                     timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             FunctionToolResultEvent(
@@ -680,6 +681,7 @@ async def test_complex_agent_run(allow_model_requests: None) -> None:
                     content='Pydantic AI',
                     tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
                     timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(
@@ -721,6 +723,7 @@ async def test_complex_agent_run(allow_model_requests: None) -> None:
                     content='sunny',
                     tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
                     timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(
@@ -1450,12 +1453,14 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         content=True,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
                         tool_name='create_file',
                         content='Success',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1591,12 +1596,14 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         content=True,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
                         tool_name='create_file',
                         content='Success',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1744,6 +1751,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         content='sunny',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),

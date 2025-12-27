@@ -350,6 +350,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -433,6 +434,7 @@ async def test_image_as_binary_content_tool_response(
                         content='See file 241a70',
                         tool_call_id='call_KRVWp1xfOSXIGBY4lxDwWyuL',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                 ],
@@ -1501,6 +1503,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         content='Mexico',
                         tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1535,6 +1538,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         content='Final result processed.',
                         tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1601,6 +1605,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         content='Mexico',
                         tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1690,6 +1695,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         content='Mexico',
                         tool_call_id='call_tTAThu8l2S9hNky2krdwijGP',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1781,6 +1787,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         content='Mexico',
                         tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1868,6 +1875,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         content='Mexico',
                         tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1959,6 +1967,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         content='Mexico',
                         tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -2556,6 +2565,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                         content='plan updated',
                         tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -3862,6 +3872,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         content=42,
                         tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -6356,6 +6367,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         content='Final result processed.',
                         tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -6584,6 +6596,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         content='axolotl',
                         tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -6912,6 +6925,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         content='Final result processed.',
                         tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
