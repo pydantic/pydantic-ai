@@ -369,6 +369,29 @@ async def test_openrouter_video_url_no_force_download() -> None:
         mock_download.assert_not_called()
 
 
+async def test_openrouter_video_url_public_api(
+    allow_model_requests: None, openrouter_api_key: str
+) -> None:  # pragma: lax no cover
+    """Test VideoUrl support through the public Agent.run API.
+
+    This test validates the complete end-to-end flow using the public API,
+    ensuring VideoUrl works correctly with OpenRouter models.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run(
+        [
+            'What is in this video?',
+            VideoUrl(url='https://upload.wikimedia.org/wikipedia/commons/8/8f/Panda_at_Smithsonian_zoo.webm'),
+        ]
+    )
+
+    assert isinstance(result.output, str)
+    assert result.output == snapshot()  # Will be populated when run with --record-mode=once
+
+
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
