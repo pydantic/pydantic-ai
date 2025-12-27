@@ -471,6 +471,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
     mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.fixture()
