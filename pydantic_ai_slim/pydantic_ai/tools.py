@@ -443,7 +443,6 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self):
-
         return ToolDefinition(
             name=self.name,
             description=self.description,
