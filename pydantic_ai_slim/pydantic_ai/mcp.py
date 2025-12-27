@@ -33,6 +33,16 @@ try:
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+
+    # Try to import the new streamable_http_client. Fall back to None if not available (older MCP versions < 1.25.0).
+    # See: https://github.com/modelcontextprotocol/python-sdk/pull/1177
+    streamable_http_client: Any = None
+    try:
+        from mcp.client.streamable_http import (
+            streamable_http_client,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
+        )
+    except ImportError:
+        pass
     from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
     from mcp.shared.message import SessionMessage
@@ -1153,22 +1163,33 @@ class _MCPServerHTTP(MCPServer):
         )
 
         if self.http_client is not None:
-            # TODO: Clean up once https://github.com/modelcontextprotocol/python-sdk/pull/1177 lands.
-            @asynccontextmanager
-            async def httpx_client_factory(
-                headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> AsyncIterator[httpx.AsyncClient]:
-                assert self.http_client is not None
-                yield self.http_client
+            # Use the new streamable_http_client directly when http_client is provided and available.
+            # The deprecated streamablehttp_client wrapper would close the client via `async with client:`.
+            # See: https://github.com/modelcontextprotocol/python-sdk/pull/1177
+            if self._transport_client is streamablehttp_client and streamable_http_client is not None:
+                async with streamable_http_client(self.url, http_client=self.http_client) as (
+                    read_stream,
+                    write_stream,
+                    _,
+                ):
+                    yield read_stream, write_stream
+            else:
 
-            async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
-                read_stream,
-                write_stream,
-                *_,
-            ):
-                yield read_stream, write_stream
+                @asynccontextmanager
+                async def httpx_client_factory(
+                    headers: dict[str, str] | None = None,
+                    timeout: httpx.Timeout | None = None,
+                    auth: httpx.Auth | None = None,
+                ) -> AsyncIterator[httpx.AsyncClient]:
+                    assert self.http_client is not None
+                    yield self.http_client
+
+                async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
+                    read_stream,
+                    write_stream,
+                    *_,
+                ):
+                    yield read_stream, write_stream
         else:
             async with transport_client_partial(headers=self.headers) as (read_stream, write_stream, *_):
                 yield read_stream, write_stream
