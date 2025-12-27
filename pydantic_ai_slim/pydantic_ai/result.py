@@ -207,7 +207,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
             result_data = await text_processor.process(
                 text,
-                run_context=self._run_ctx,
+                run_context=replace(self._run_ctx, partial_output=allow_partial),
                 allow_partial=allow_partial,
                 wrap_validation_errors=False,
             )
