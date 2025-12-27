@@ -8,15 +8,21 @@ import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import BaseModel, Field, FileUrl, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    AudioUrl,
+    BinaryContent,
+    BinaryImage,
+    DeferredToolRequests,
+    DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -30,12 +36,13 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
@@ -151,6 +158,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -186,6 +194,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -229,6 +238,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -272,6 +282,7 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -313,6 +324,7 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -360,6 +372,7 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -395,6 +408,7 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -421,6 +435,7 @@ def test_docstring_unknown():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -465,6 +480,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -502,6 +518,7 @@ def test_takes_just_model():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -548,6 +565,7 @@ def test_takes_model_and_int():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -914,6 +932,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -987,6 +1006,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': {'type': 'integer'},
             },
             {
                 'description': None,
@@ -1003,6 +1023,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': {'type': 'integer'},
             },
         ]
     )
@@ -1092,6 +1113,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': None,
             },
             {
                 'description': None,
@@ -1106,6 +1128,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': None,
             },
         ]
     )
@@ -1144,6 +1167,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'integer'},
         }
     )
 
@@ -2776,3 +2800,626 @@ def test_agent_tool_timeout_passed_to_toolset():
 
     # The agent's tool_timeout should be passed to the toolset as timeout
     assert agent._function_toolset.timeout == 30.0
+
+
+def test_tool_return_schema():
+    """Test that the return schema is properly set on ToolDefinition."""
+    agent = Agent(FunctionModel(get_json_schema))
+
+    @agent.tool_plain
+    def tool_with_return_schema() -> FileUrl:
+        return FileUrl('https://example.com/file.txt')
+
+    @agent.tool_plain
+    def tool_with_return_schema_binary_content() -> BinaryContent:
+        return BinaryContent(data=b'hello', media_type='text/plain')
+
+    class MyBaseModel(BaseModel):
+        x: int
+
+    @agent.tool_plain
+    def tool_with_return_schema_base_model() -> MyBaseModel:
+        return MyBaseModel(x=1)
+
+    @dataclass
+    class MyDataclass:
+        x: int
+
+    @agent.tool_plain
+    def tool_with_return_schema_dataclass() -> MyDataclass:
+        return MyDataclass(x=1)
+
+    @agent.tool_plain
+    def tool_with_return_binary_image() -> BinaryImage:
+        return BinaryImage(data=b'hello', media_type='image/jpeg')
+
+    @agent.tool_plain
+    def tool_with_return_document_url() -> DocumentUrl:
+        return DocumentUrl(url='https://example.com/document.pdf')
+
+    @agent.tool_plain
+    def tool_with_return_video_url() -> VideoUrl:
+        return VideoUrl(url='https://example.com/video.mp4')
+
+    @agent.tool_plain
+    def tool_with_return_audio_url() -> AudioUrl:
+        return AudioUrl(url='https://example.com/audio.mp3')
+
+    @agent.tool_plain
+    def tool_with_return_image_url() -> ImageUrl:
+        return ImageUrl(url='https://example.com/image.jpg')
+
+    @agent.tool_plain
+    def tool_with_return_tool_return() -> ToolReturn:
+        return ToolReturn(return_value='hello', content=[ImageUrl(url='https://example.com/image.jpg')])
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema == snapshot(
+        [
+            {
+                'name': 'tool_with_return_schema',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {'format': 'uri', 'minLength': 1, 'type': 'string'},
+            },
+            {
+                'name': 'tool_with_return_schema_binary_content',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'Binary content, e.g. an audio or image file.',
+                    'properties': {
+                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'media_type': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Media Type',
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'identifier': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Identifier',
+                        },
+                        'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                    },
+                    'required': ['data', 'media_type'],
+                    'title': 'BinaryContent',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_schema_base_model',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'properties': {'x': {'title': 'X', 'type': 'integer'}},
+                    'required': ['x'],
+                    'title': 'MyBaseModel',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_schema_dataclass',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'properties': {'x': {'title': 'X', 'type': 'integer'}},
+                    'required': ['x'],
+                    'title': 'MyDataclass',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_binary_image',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'properties': {
+                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'media_type': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Media Type',
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'identifier': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Identifier',
+                        },
+                        'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                    },
+                    'required': ['data', 'media_type'],
+                    'title': 'BinaryImage',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_document_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'The URL of the document.',
+                    'properties': {
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'media_type': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Media Type',
+                        },
+                        'identifier': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Identifier',
+                        },
+                        'kind': {'const': 'document-url', 'default': 'document-url', 'title': 'Kind', 'type': 'string'},
+                    },
+                    'required': ['url'],
+                    'title': 'DocumentUrl',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_video_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'A URL to a video.',
+                    'properties': {
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'media_type': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Media Type',
+                        },
+                        'identifier': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Identifier',
+                        },
+                        'kind': {'const': 'video-url', 'default': 'video-url', 'title': 'Kind', 'type': 'string'},
+                    },
+                    'required': ['url'],
+                    'title': 'VideoUrl',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_audio_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'A URL to an audio file.',
+                    'properties': {
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'media_type': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Media Type',
+                        },
+                        'identifier': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Identifier',
+                        },
+                        'kind': {'const': 'audio-url', 'default': 'audio-url', 'title': 'Kind', 'type': 'string'},
+                    },
+                    'required': ['url'],
+                    'title': 'AudioUrl',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_image_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'A URL to an image.',
+                    'properties': {
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'media_type': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Media Type',
+                        },
+                        'identifier': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Identifier',
+                        },
+                        'kind': {'const': 'image-url', 'default': 'image-url', 'title': 'Kind', 'type': 'string'},
+                    },
+                    'required': ['url'],
+                    'title': 'ImageUrl',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_tool_return',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    '$defs': {
+                        'AudioUrl': {
+                            'description': 'A URL to an audio file.',
+                            'properties': {
+                                'url': {'title': 'Url', 'type': 'string'},
+                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'media_type': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Media Type',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {
+                                    'const': 'audio-url',
+                                    'default': 'audio-url',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                            },
+                            'required': ['url'],
+                            'title': 'AudioUrl',
+                            'type': 'object',
+                        },
+                        'BinaryContent': {
+                            'description': 'Binary content, e.g. an audio or image file.',
+                            'properties': {
+                                'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                                'media_type': {
+                                    'anyOf': [
+                                        {
+                                            'enum': [
+                                                'audio/wav',
+                                                'audio/mpeg',
+                                                'audio/ogg',
+                                                'audio/flac',
+                                                'audio/aiff',
+                                                'audio/aac',
+                                            ],
+                                            'type': 'string',
+                                        },
+                                        {
+                                            'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+                                            'type': 'string',
+                                        },
+                                        {
+                                            'enum': [
+                                                'application/pdf',
+                                                'text/plain',
+                                                'text/csv',
+                                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                                'text/html',
+                                                'text/markdown',
+                                                'application/msword',
+                                                'application/vnd.ms-excel',
+                                            ],
+                                            'type': 'string',
+                                        },
+                                        {'type': 'string'},
+                                    ],
+                                    'title': 'Media Type',
+                                },
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                            },
+                            'required': ['data', 'media_type'],
+                            'title': 'BinaryContent',
+                            'type': 'object',
+                        },
+                        'CachePoint': {
+                            'properties': {
+                                'kind': {
+                                    'const': 'cache-point',
+                                    'default': 'cache-point',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                                'ttl': {'default': '5m', 'enum': ['5m', '1h'], 'title': 'Ttl', 'type': 'string'},
+                            },
+                            'title': 'CachePoint',
+                            'type': 'object',
+                        },
+                        'DocumentUrl': {
+                            'description': 'The URL of the document.',
+                            'properties': {
+                                'url': {'title': 'Url', 'type': 'string'},
+                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'media_type': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Media Type',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {
+                                    'const': 'document-url',
+                                    'default': 'document-url',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                            },
+                            'required': ['url'],
+                            'title': 'DocumentUrl',
+                            'type': 'object',
+                        },
+                        'ImageUrl': {
+                            'description': 'A URL to an image.',
+                            'properties': {
+                                'url': {'title': 'Url', 'type': 'string'},
+                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'media_type': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Media Type',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {
+                                    'const': 'image-url',
+                                    'default': 'image-url',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                            },
+                            'required': ['url'],
+                            'title': 'ImageUrl',
+                            'type': 'object',
+                        },
+                        'VideoUrl': {
+                            'description': 'A URL to a video.',
+                            'properties': {
+                                'url': {'title': 'Url', 'type': 'string'},
+                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Vendor Metadata',
+                                },
+                                'media_type': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Media Type',
+                                },
+                                'identifier': {
+                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                    'default': None,
+                                    'title': 'Identifier',
+                                },
+                                'kind': {
+                                    'const': 'video-url',
+                                    'default': 'video-url',
+                                    'title': 'Kind',
+                                    'type': 'string',
+                                },
+                            },
+                            'required': ['url'],
+                            'title': 'VideoUrl',
+                            'type': 'object',
+                        },
+                    },
+                    'description': """\
+A structured return value for tools that need to provide both a return value and custom content to the model.
+
+This class allows tools to return complex responses that include:
+- A return value for actual tool return
+- Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
+- Optional metadata for application use\
+""",
+                    'properties': {
+                        'return_value': {'title': 'Return Value'},
+                        'content': {
+                            'anyOf': [
+                                {'type': 'string'},
+                                {
+                                    'items': {
+                                        'anyOf': [
+                                            {'type': 'string'},
+                                            {'$ref': '#/$defs/ImageUrl'},
+                                            {'$ref': '#/$defs/AudioUrl'},
+                                            {'$ref': '#/$defs/DocumentUrl'},
+                                            {'$ref': '#/$defs/VideoUrl'},
+                                            {'$ref': '#/$defs/BinaryContent'},
+                                            {'$ref': '#/$defs/CachePoint'},
+                                        ]
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Content',
+                        },
+                        'metadata': {'default': None, 'title': 'Metadata'},
+                        'kind': {'const': 'tool-return', 'default': 'tool-return', 'title': 'Kind', 'type': 'string'},
+                    },
+                    'required': ['return_value'],
+                    'title': 'ToolReturn',
+                    'type': 'object',
+                },
+            },
+        ]
+    )
