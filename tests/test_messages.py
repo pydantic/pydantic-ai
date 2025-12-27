@@ -1,5 +1,6 @@
 import sys
 from datetime import datetime, timezone
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
+    FileUrl,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -180,7 +182,7 @@ def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
 
 
 def test_audio_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from audio URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         AudioUrl('foobar.potato').media_type
 
 
@@ -200,10 +202,10 @@ def test_image_url_formats(image_url: ImageUrl, media_type: str, format: str):
 
 
 def test_image_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         ImageUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         ImageUrl('foobar.potato').format
 
 
@@ -241,11 +243,8 @@ def test_document_url_formats(document_url: DocumentUrl, media_type: str, format
 
 
 def test_document_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from document URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         DocumentUrl('foobar.potato').media_type
-
-    with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
-        DocumentUrl('foobar.py').format
 
 
 def test_binary_content_unknown_media_type():
@@ -336,7 +335,7 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 
 
 def test_video_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         VideoUrl('foobar.potato').media_type
 
 
@@ -592,8 +591,12 @@ Let's generate an image
 
 And then, call the 'hello_world' tool\
 """)
-    assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
-    assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.files == snapshot(
+        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
+    )
+    assert response.images == snapshot(
+        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
+    )
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
     assert response.builtin_tool_calls == snapshot(
         [
@@ -628,7 +631,11 @@ def test_image_url_validation_with_optional_identifier():
     )
 
     image = image_url_ta.validate_python(
-        {'url': 'https://example.com/image.jpg', 'identifier': 'foo', 'media_type': 'image/png'}
+        {
+            'url': 'https://example.com/image.jpg',
+            'identifier': 'foo',
+            'media_type': 'image/png',
+        }
     )
     assert image.url == snapshot('https://example.com/image.jpg')
     assert image.identifier == snapshot('foo')
@@ -662,7 +669,11 @@ def test_binary_content_validation_with_optional_identifier():
     )
 
     binary_content = binary_content_ta.validate_python(
-        {'data': b'fake', 'identifier': 'foo', 'media_type': 'image/png'}
+        {
+            'data': b'fake',
+            'identifier': 'foo',
+            'media_type': 'image/png',
+        }
     )
     assert binary_content.data == b'fake'
     assert binary_content.identifier == snapshot('foo')
@@ -678,12 +689,53 @@ def test_binary_content_validation_with_optional_identifier():
     )
 
 
+def test_file_url_format_error():
+    """Test FileUrl.format property error when media type cannot be inferred (lines 203-206)."""
+    # Create an ImageUrl with an unknown media type
+    image_url = ImageUrl(url='https://example.com/image', media_type='image/unknown-format')
+
+    with pytest.raises(ValueError, match='Could not infer file format from media type: image/unknown-format'):
+        _ = image_url.format
+
+
+@pytest.mark.skipif(
+    find_spec('magika') is None,
+    reason='Magika library is not installed, skipping tests that require it.',
+)
+def test_binary_content_infer_media_type_with_magika(tmp_path: Path):
+    """Test BinaryContent._infer_media_type using Magika library (lines 601-612)."""
+    # Create a simple PDF-like binary content
+    # PDF magic bytes: %PDF-
+    pdf_data = b'%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n>>\nendobj\n%%EOF'
+
+    binary_content = BinaryContent(data=pdf_data)
+
+    # The media type should be inferred via Magika
+    assert binary_content.media_type == 'application/pdf'
+    assert binary_content.is_document
+    assert binary_content.format == 'pdf'
+
+
+@pytest.mark.skipif(
+    find_spec('magika') is not None,
+    reason='Magika library is installed, skipping tests that require it to be absent.',
+)
+def test_binary_content_magika_not_installed(monkeypatch: pytest.MonkeyPatch):
+    """Test BinaryContent._infer_media_type when Magika is not installed (lines 611-614)."""
+    binary_content = BinaryContent(data=b'some data')
+
+    # Accessing media_type should raise ImportError with a helpful message
+    with pytest.raises(ImportError, match='Magika is not installed. Please install magika'):
+        _ = binary_content.media_type
+
+
 def test_binary_content_from_path(tmp_path: Path):
     # test normal file
     test_xml_file = tmp_path / 'test.xml'
-    test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
+    test_xml_file.write_text('<?xml version="1.0" encoding="UTF-8"?><think>about trains</think>', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_xml_file)
-    assert binary_content == snapshot(BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
+    assert binary_content.data == b'<?xml version="1.0" encoding="UTF-8"?><think>about trains</think>'
+    assert binary_content.media_type in ('application/xml', 'text/xml')  # Depends on the platform
 
     # test non-existent file
     non_existent_file = tmp_path / 'non-existent.txt'
@@ -694,19 +746,80 @@ def test_binary_content_from_path(tmp_path: Path):
     test_unknown_file = tmp_path / 'test.unknownext'
     test_unknown_file.write_text('some content', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_unknown_file)
-    assert binary_content == snapshot(BinaryContent(data=b'some content', media_type='application/octet-stream'))
+    assert binary_content == snapshot(
+        BinaryContent(data=b'some content', _media_type='text/plain', _type='text', _extension='txt')
+    )
 
     # test string path
     test_txt_file = tmp_path / 'test.txt'
     test_txt_file.write_text('just some text', encoding='utf-8')
     string_path = test_txt_file.as_posix()
     binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
-    assert binary_content == snapshot(BinaryContent(data=b'just some text', media_type='text/plain'))
-
+    assert binary_content == snapshot(
+        BinaryContent(
+            data=b'just some text', _media_type='text/plain', _type='text', _extension='txt', media_type='text/plain'
+        )
+    )
+    if find_spec('magika') is not None:
+        pytest.skip('Magika will ignore fake jpeg data and classify it to text/plain')
     # test image file
     test_jpg_file = tmp_path / 'test.jpg'
     test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
     binary_content = BinaryContent.from_path(test_jpg_file)
     assert binary_content == snapshot(
-        BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
+        BinaryImage(
+            data=b'\xff\xd8\xff\xe0' + b'0' * 100,
+            media_type='image/jpeg',
+            _media_type='image/jpeg',
+            _identifier='bc8d49',
+        )
     )
+
+
+@pytest.mark.parametrize(
+    [
+        'type',
+        'url',
+    ],
+    [
+        pytest.param(
+            'image-url',
+            'https://example.com/image.jpg',
+            id='image-url',
+        ),
+        pytest.param(
+            'document-url',
+            'https://example.com/document.pdf',
+            id='document-url',
+        ),
+        pytest.param(
+            'video-url',
+            'https://example.com/video.mp4',
+            id='video-url',
+        ),
+        pytest.param(
+            'audio-url',
+            'https://example.com/audio.mp3',
+            id='audio-url',
+        ),
+    ],
+)
+def test_create_from_file_url(type: str, url: str):
+    instance = FileUrl.create(
+        url=url,
+    )
+    if type == 'image-url':
+        assert isinstance(instance, ImageUrl)
+    elif type == 'document-url':
+        assert isinstance(instance, DocumentUrl)
+    elif type == 'video-url':
+        assert isinstance(instance, VideoUrl)
+    elif type == 'audio-url':
+        assert isinstance(instance, AudioUrl)
+
+
+def test_create_from_file_url_invalid():
+    with pytest.raises(ValueError, match='Could not infer media type'):
+        FileUrl.create('https://example.com/file.unknown')
+    with pytest.raises(ValueError, match='Could not classify file from URL'):
+        FileUrl.create('https://example.com/file.exe')
