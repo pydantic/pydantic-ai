@@ -218,7 +218,7 @@ def function_schema(  # noqa: C901
     return_schema = None
     if return_annotation:
         try:
-            return_schema = TypeAdapter(return_annotation).json_schema()
+            return_schema = TypeAdapter(return_annotation).json_schema(schema_generator=schema_generator)
         except PydanticSchemaGenerationError:
             pass
 

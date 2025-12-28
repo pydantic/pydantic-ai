@@ -2883,7 +2883,7 @@ def test_tool_return_schema():
                 'return_schema': {
                     'description': 'Binary content, e.g. an audio or image file.',
                     'properties': {
-                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'data': {'format': 'binary', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
                                 {
@@ -2913,20 +2913,14 @@ def test_tool_return_schema():
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
-                            ],
-                            'title': 'Media Type',
+                            ]
                         },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
-                            'title': 'Vendor Metadata',
                         },
-                        'identifier': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Identifier',
-                        },
-                        'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
                     },
                     'required': ['data', 'media_type'],
                     'title': 'BinaryContent',
@@ -2944,7 +2938,7 @@ def test_tool_return_schema():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': {
-                    'properties': {'x': {'description': 'The x value', 'title': 'X', 'type': 'integer'}},
+                    'properties': {'x': {'description': 'The x value', 'type': 'integer'}},
                     'required': ['x'],
                     'title': 'MyBaseModel',
                     'type': 'object',
@@ -2961,7 +2955,7 @@ def test_tool_return_schema():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': {
-                    'properties': {'x': {'title': 'X', 'type': 'integer'}},
+                    'properties': {'x': {'type': 'integer'}},
                     'required': ['x'],
                     'title': 'MyDataclass',
                     'type': 'object',
@@ -2979,7 +2973,7 @@ def test_tool_return_schema():
                 'timeout': None,
                 'return_schema': {
                     'properties': {
-                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'data': {'format': 'binary', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
                                 {
@@ -3009,20 +3003,14 @@ def test_tool_return_schema():
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
-                            ],
-                            'title': 'Media Type',
+                            ]
                         },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
-                            'title': 'Vendor Metadata',
                         },
-                        'identifier': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Identifier',
-                        },
-                        'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
                     },
                     'required': ['data', 'media_type'],
                     'title': 'BinaryImage',
@@ -3042,24 +3030,15 @@ def test_tool_return_schema():
                 'return_schema': {
                     'description': 'The URL of the document.',
                     'properties': {
-                        'url': {'title': 'Url', 'type': 'string'},
-                        'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                        'url': {'type': 'string'},
+                        'force_download': {'default': False, 'type': 'boolean'},
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
-                            'title': 'Vendor Metadata',
                         },
-                        'media_type': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Media Type',
-                        },
-                        'identifier': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Identifier',
-                        },
-                        'kind': {'const': 'document-url', 'default': 'document-url', 'title': 'Kind', 'type': 'string'},
+                        'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'document-url', 'default': 'document-url', 'type': 'string'},
                     },
                     'required': ['url'],
                     'title': 'DocumentUrl',
@@ -3079,24 +3058,15 @@ def test_tool_return_schema():
                 'return_schema': {
                     'description': 'A URL to a video.',
                     'properties': {
-                        'url': {'title': 'Url', 'type': 'string'},
-                        'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                        'url': {'type': 'string'},
+                        'force_download': {'default': False, 'type': 'boolean'},
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
-                            'title': 'Vendor Metadata',
                         },
-                        'media_type': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Media Type',
-                        },
-                        'identifier': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Identifier',
-                        },
-                        'kind': {'const': 'video-url', 'default': 'video-url', 'title': 'Kind', 'type': 'string'},
+                        'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'video-url', 'default': 'video-url', 'type': 'string'},
                     },
                     'required': ['url'],
                     'title': 'VideoUrl',
@@ -3116,24 +3086,15 @@ def test_tool_return_schema():
                 'return_schema': {
                     'description': 'A URL to an audio file.',
                     'properties': {
-                        'url': {'title': 'Url', 'type': 'string'},
-                        'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                        'url': {'type': 'string'},
+                        'force_download': {'default': False, 'type': 'boolean'},
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
-                            'title': 'Vendor Metadata',
                         },
-                        'media_type': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Media Type',
-                        },
-                        'identifier': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Identifier',
-                        },
-                        'kind': {'const': 'audio-url', 'default': 'audio-url', 'title': 'Kind', 'type': 'string'},
+                        'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'audio-url', 'default': 'audio-url', 'type': 'string'},
                     },
                     'required': ['url'],
                     'title': 'AudioUrl',
@@ -3153,24 +3114,15 @@ def test_tool_return_schema():
                 'return_schema': {
                     'description': 'A URL to an image.',
                     'properties': {
-                        'url': {'title': 'Url', 'type': 'string'},
-                        'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                        'url': {'type': 'string'},
+                        'force_download': {'default': False, 'type': 'boolean'},
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
-                            'title': 'Vendor Metadata',
                         },
-                        'media_type': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Media Type',
-                        },
-                        'identifier': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Identifier',
-                        },
-                        'kind': {'const': 'image-url', 'default': 'image-url', 'title': 'Kind', 'type': 'string'},
+                        'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'image-url', 'default': 'image-url', 'type': 'string'},
                     },
                     'required': ['url'],
                     'title': 'ImageUrl',
@@ -3192,27 +3144,17 @@ def test_tool_return_schema():
                         'AudioUrl': {
                             'description': 'A URL to an audio file.',
                             'properties': {
-                                'url': {'title': 'Url', 'type': 'string'},
-                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'url': {'type': 'string'},
+                                'force_download': {'default': False, 'type': 'boolean'},
                                 'vendor_metadata': {
                                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                                     'default': None,
-                                    'title': 'Vendor Metadata',
                                 },
-                                'media_type': {
-                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                    'default': None,
-                                    'title': 'Media Type',
-                                },
-                                'identifier': {
-                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                    'default': None,
-                                    'title': 'Identifier',
-                                },
+                                'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
                                 'kind': {
                                     'const': 'audio-url',
                                     'default': 'audio-url',
-                                    'title': 'Kind',
                                     'type': 'string',
                                 },
                             },
@@ -3223,7 +3165,7 @@ def test_tool_return_schema():
                         'BinaryContent': {
                             'description': 'Binary content, e.g. an audio or image file.',
                             'properties': {
-                                'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                                'data': {'format': 'binary', 'type': 'string'},
                                 'media_type': {
                                     'anyOf': [
                                         {
@@ -3256,20 +3198,14 @@ def test_tool_return_schema():
                                             'type': 'string',
                                         },
                                         {'type': 'string'},
-                                    ],
-                                    'title': 'Media Type',
+                                    ]
                                 },
                                 'vendor_metadata': {
                                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                                     'default': None,
-                                    'title': 'Vendor Metadata',
                                 },
-                                'identifier': {
-                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                    'default': None,
-                                    'title': 'Identifier',
-                                },
-                                'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
                             },
                             'required': ['data', 'media_type'],
                             'title': 'BinaryContent',
@@ -3280,10 +3216,9 @@ def test_tool_return_schema():
                                 'kind': {
                                     'const': 'cache-point',
                                     'default': 'cache-point',
-                                    'title': 'Kind',
                                     'type': 'string',
                                 },
-                                'ttl': {'default': '5m', 'enum': ['5m', '1h'], 'title': 'Ttl', 'type': 'string'},
+                                'ttl': {'default': '5m', 'enum': ['5m', '1h'], 'type': 'string'},
                             },
                             'title': 'CachePoint',
                             'type': 'object',
@@ -3291,27 +3226,17 @@ def test_tool_return_schema():
                         'DocumentUrl': {
                             'description': 'The URL of the document.',
                             'properties': {
-                                'url': {'title': 'Url', 'type': 'string'},
-                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'url': {'type': 'string'},
+                                'force_download': {'default': False, 'type': 'boolean'},
                                 'vendor_metadata': {
                                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                                     'default': None,
-                                    'title': 'Vendor Metadata',
                                 },
-                                'media_type': {
-                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                    'default': None,
-                                    'title': 'Media Type',
-                                },
-                                'identifier': {
-                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                    'default': None,
-                                    'title': 'Identifier',
-                                },
+                                'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
                                 'kind': {
                                     'const': 'document-url',
                                     'default': 'document-url',
-                                    'title': 'Kind',
                                     'type': 'string',
                                 },
                             },
@@ -3322,27 +3247,17 @@ def test_tool_return_schema():
                         'ImageUrl': {
                             'description': 'A URL to an image.',
                             'properties': {
-                                'url': {'title': 'Url', 'type': 'string'},
-                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'url': {'type': 'string'},
+                                'force_download': {'default': False, 'type': 'boolean'},
                                 'vendor_metadata': {
                                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                                     'default': None,
-                                    'title': 'Vendor Metadata',
                                 },
-                                'media_type': {
-                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                    'default': None,
-                                    'title': 'Media Type',
-                                },
-                                'identifier': {
-                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                    'default': None,
-                                    'title': 'Identifier',
-                                },
+                                'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
                                 'kind': {
                                     'const': 'image-url',
                                     'default': 'image-url',
-                                    'title': 'Kind',
                                     'type': 'string',
                                 },
                             },
@@ -3353,27 +3268,17 @@ def test_tool_return_schema():
                         'VideoUrl': {
                             'description': 'A URL to a video.',
                             'properties': {
-                                'url': {'title': 'Url', 'type': 'string'},
-                                'force_download': {'default': False, 'title': 'Force Download', 'type': 'boolean'},
+                                'url': {'type': 'string'},
+                                'force_download': {'default': False, 'type': 'boolean'},
                                 'vendor_metadata': {
                                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                                     'default': None,
-                                    'title': 'Vendor Metadata',
                                 },
-                                'media_type': {
-                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                    'default': None,
-                                    'title': 'Media Type',
-                                },
-                                'identifier': {
-                                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                    'default': None,
-                                    'title': 'Identifier',
-                                },
+                                'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
                                 'kind': {
                                     'const': 'video-url',
                                     'default': 'video-url',
-                                    'title': 'Kind',
                                     'type': 'string',
                                 },
                             },
@@ -3391,7 +3296,7 @@ This class allows tools to return complex responses that include:
 - Optional metadata for application use\
 """,
                     'properties': {
-                        'return_value': {'title': 'Return Value'},
+                        'return_value': {},
                         'content': {
                             'anyOf': [
                                 {'type': 'string'},
@@ -3412,10 +3317,9 @@ This class allows tools to return complex responses that include:
                                 {'type': 'null'},
                             ],
                             'default': None,
-                            'title': 'Content',
                         },
-                        'metadata': {'default': None, 'title': 'Metadata'},
-                        'kind': {'const': 'tool-return', 'default': 'tool-return', 'title': 'Kind', 'type': 'string'},
+                        'metadata': {'default': None},
+                        'kind': {'const': 'tool-return', 'default': 'tool-return', 'type': 'string'},
                     },
                     'required': ['return_value'],
                     'title': 'ToolReturn',
