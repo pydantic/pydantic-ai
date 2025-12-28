@@ -413,17 +413,10 @@ from pydantic_ai.models.test import TestModel
 
 class UserDetails(BaseModel):
     """Details about a user."""
+
     id: int
     name: str
     email: str
-
-
-class OrderDetails(BaseModel):
-    """Details about an order."""
-    order_id: int
-    user_id: int
-    total: float
-    status: str
 
 
 toolset = FunctionToolset()
@@ -435,86 +428,21 @@ def get_user(user_id: int) -> UserDetails:
     return UserDetails(id=user_id, name='Alice', email='alice@example.com')
 
 
-@toolset.tool
-def get_order(order_id: int) -> OrderDetails:
-    """Get order details by ID."""
-    return OrderDetails(order_id=order_id, user_id=1, total=99.99, status='shipped')
-
-
-# Option 1: Use the convenience method
+# Use the convenience method to include return schemas
 toolset_with_schemas = toolset.with_return_schema()
-
-# Option 2: Use ReturnSchemaToolset directly (include_return_schema=True by default)
-# from pydantic_ai.toolsets import ReturnSchemaToolset
-# toolset_with_schemas = ReturnSchemaToolset(toolset)
 
 test_model = TestModel()  # (1)!
 agent = Agent(test_model, toolsets=[toolset_with_schemas])
 result = agent.run_sync('Get user 1')
 
-# The tool descriptions now include the return schema
-for tool in test_model.last_model_request_parameters.function_tools:
-    print(f'{tool.name}:')
-    print(tool.description)
-    print()
-"""
-get_user:
-Get user details by ID.
-
-Return schema:
-{
-  "properties": {
-    "id": {
-      "type": "integer"
-    },
-    "name": {
-      "type": "string"
-    },
-    "email": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id",
-    "name",
-    "email"
-  ],
-  "title": "UserDetails",
-  "type": "object",
-  "description": "Details about a user."
-}
-
-get_order:
-Get order details by ID.
-
-Return schema:
-{
-  "properties": {
-    "order_id": {
-      "type": "integer"
-    },
-    "user_id": {
-      "type": "integer"
-    },
-    "total": {
-      "type": "number"
-    },
-    "status": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "order_id",
-    "user_id",
-    "total",
-    "status"
-  ],
-  "title": "OrderDetails",
-  "type": "object",
-  "description": "Details about an order."
-}
-
-"""
+# The tool description now includes the return schema
+tool_def = test_model.last_model_request_parameters.function_tools[0]
+print(tool_def.name)
+#> get_user
+print('Return schema' in tool_def.description)
+#> True
+print(tool_def.return_schema is not None)
+#> True
 ```
 
 1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.

@@ -203,21 +203,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         Args:
             include: Whether to include return schemas in tool descriptions. Defaults to True.
 
-        Example:
-            ```python
-            from pydantic_ai import Agent, FunctionToolset
-
-            toolset = FunctionToolset()
-
-            @toolset.tool
-            def get_user(user_id: int) -> UserDetails:
-                '''Get user details by ID.'''
-                ...
-
-            # Enable return schemas for this toolset
-            agent = Agent('openai:gpt-4o', toolsets=[toolset.with_return_schema()])
-            ```
-
         See [toolset docs](../toolsets.md#return-schema-toolset) for more information.
         """
         from .return_schema import ReturnSchemaToolset

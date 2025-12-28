@@ -20,22 +20,6 @@ class ReturnSchemaToolset(WrapperToolset[AgentDepsT]):
     - Toolset-level: Set `include_return_schema=True` when creating this wrapper
     - Tool-level: Individual tools can opt-in via their `include_return_schema` flag
 
-    Example:
-        ```python
-        from pydantic_ai import Agent, FunctionToolset
-        from pydantic_ai.toolsets import ReturnSchemaToolset
-
-        toolset = FunctionToolset()
-
-        @toolset.tool
-        def get_user(user_id: int) -> UserDetails:
-            '''Get user details by ID.'''
-            ...
-
-        # Wrap to include return schemas in descriptions (enabled by default)
-        agent = Agent('openai:gpt-4o', toolsets=[ReturnSchemaToolset(toolset)])
-        ```
-
     See [toolset docs](../toolsets.md#return-schema-toolset) for more information.
     """
 
@@ -49,12 +33,13 @@ class ReturnSchemaToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
 
-        def _build_description(tool: ToolsetTool[AgentDepsT]) -> str:
-            base_desc = tool.tool_def.description or ''
+        def _build_description(tool: ToolsetTool[AgentDepsT]) -> str | None:
             if (self.include_return_schema or tool.include_return_schema) and tool.tool_def.return_schema is not None:
                 # TODO: This should be overrideable by PromptConfig when that lands
+                base_desc = tool.tool_def.description or ''
                 return '\n\n'.join([base_desc, 'Return schema:', json.dumps(tool.tool_def.return_schema, indent=2)])
-            return base_desc
+            # Preserve the original description (including None)
+            return tool.tool_def.description
 
         # All tools pass through, only descriptions are conditionally modified
         return {

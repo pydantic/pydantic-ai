@@ -277,12 +277,7 @@ class Tool(Generic[ToolAgentDepsT]):
     metadata: dict[str, Any] | None
     timeout: float | None
     function_schema: _function_schema.FunctionSchema
-    include_return_schema: bool = False
-    """
-    The base JSON schema for the tool's parameters.
-
-    This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
-    """
+    include_return_schema: bool
 
     def __init__(
         self,
