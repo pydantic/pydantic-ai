@@ -2861,7 +2861,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_schema',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,
@@ -2873,7 +2873,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_schema_binary_content',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,
@@ -2930,7 +2930,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_schema_base_model',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,
@@ -2947,7 +2947,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_schema_dataclass',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,
@@ -2964,7 +2964,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_binary_image',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,
@@ -3020,7 +3020,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_document_url',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,
@@ -3048,7 +3048,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_video_url',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,
@@ -3076,7 +3076,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_audio_url',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,
@@ -3104,7 +3104,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_image_url',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,
@@ -3132,7 +3132,7 @@ def test_tool_return_schema():
             {
                 'name': 'tool_with_return_tool_return',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'description': None,
+                'description': '',
                 'outer_typed_dict_key': None,
                 'strict': None,
                 'sequential': False,

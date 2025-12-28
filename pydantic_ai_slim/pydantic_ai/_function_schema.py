@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
-from pydantic.errors import PydanticSchemaGenerationError
+from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
@@ -223,7 +223,7 @@ def function_schema(  # noqa: C901
             return_schema = TypeAdapter(return_annotation).json_schema(schema_generator=schema_generator)
             if return_description and 'description' not in return_schema:
                 return_schema['description'] = return_description
-        except PydanticSchemaGenerationError:
+        except (PydanticSchemaGenerationError, PydanticUserError):
             pass
 
     return FunctionSchema(
