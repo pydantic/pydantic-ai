@@ -283,7 +283,7 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'return_schema': {'type': 'string'},
+            'return_schema': {'type': 'string', 'description': 'The result as a string.'},
         }
     )
 
@@ -325,7 +325,7 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'return_schema': {'type': 'string'},
+            'return_schema': {'type': 'string', 'description': 'The result as a string with type.'},
         }
     )
 
@@ -373,7 +373,7 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'return_schema': {'type': 'string'},
+            'return_schema': {'type': 'string', 'description': 'The result as a string with type.'},
         }
     )
 
@@ -409,7 +409,7 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'return_schema': {'type': 'string'},
+            'return_schema': {'type': 'string', 'description': 'The result as a string.'},
         }
     )
 
