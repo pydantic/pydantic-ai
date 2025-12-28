@@ -14,6 +14,9 @@ class ReturnSchemaToolset(WrapperToolset[AgentDepsT]):
     See [toolset docs](../toolsets.md#return-schema-toolset) for more information.
     """
 
+    include_return_schema: bool = True
+    """Whether to include the return schema in the tool description."""
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
 
@@ -28,5 +31,5 @@ class ReturnSchemaToolset(WrapperToolset[AgentDepsT]):
                 ),
             )
             for name, tool in original_tools.items()
-            if tool.tool_def.return_schema
+            if self.include_return_schema or tool.tool_def.return_schema # Either the toolset flags it for us or the tool itself does
         }
