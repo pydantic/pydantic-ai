@@ -47,6 +47,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     schema_generator: type[GenerateJsonSchema]
+    include_return_schema: bool = False
 
     def __init__(
         self,
@@ -62,6 +63,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         id: str | None = None,
+        include_return_schema: bool = False,
     ):
         """Build a new function toolset.
 
@@ -90,6 +92,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
+            include_return_schema: Whether to include the return schema in the tool definition. Defaults to False.
+                Applies to all tools, unless overridden when adding a tool.
         """
         self.max_retries = max_retries
         self.timeout = timeout
@@ -101,7 +105,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
-
+        self.include_return_schema = include_return_schema
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
