@@ -72,12 +72,6 @@ def doc_descriptions(
         type_tag = f'<type>{return_type}</type>\n' if return_type else ''
         return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
 
-        # Merging results into the params descriptions dict in the field description
-        if return_type:
-            params = {**params, **{return_type: return_desc}}
-        else:
-            params = {**params, **{'return': return_desc}}
-
         if main_desc:
             main_desc = f'<summary>{main_desc}</summary>\n{return_xml}'
         else:
