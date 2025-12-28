@@ -280,6 +280,30 @@ class AnthropicModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
+    async def to_anthropic_messages(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings | None = None,
+    ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
+        """Convert PydanticAI messages to Anthropic SDK message format.
+
+        This allows users to inspect or use the converted messages directly
+        with the Anthropic SDK.
+
+        Args:
+            messages: List of PydanticAI messages (ModelRequest/ModelResponse).
+            model_settings: Optional Anthropic-specific settings for caching behavior.
+
+        Returns:
+            A tuple of (system_prompt, anthropic_messages) where:
+            - system_prompt: The extracted system prompt as a string or list of text blocks
+            - anthropic_messages: List of Anthropic BetaMessageParam objects
+        """
+        settings = cast(AnthropicModelSettings, model_settings or {})
+        # Use empty model_request_parameters - no tools or output handling needed for conversion
+        model_request_parameters = ModelRequestParameters()
+        return await self._map_message(messages, model_request_parameters, settings)
+
     async def request(
         self,
         messages: list[ModelMessage],

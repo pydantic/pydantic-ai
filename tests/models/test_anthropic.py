@@ -136,6 +136,30 @@ def test_init():
     assert m.base_url == 'https://api.anthropic.com'
 
 
+async def test_to_anthropic_messages():
+    """Test public to_anthropic_messages conversion method."""
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are helpful.'),
+                UserPromptPart(content='Hello'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi there!')]),
+        ModelRequest(parts=[UserPromptPart(content='How are you?')]),
+    ]
+
+    system_prompt, anthropic_messages = await m.to_anthropic_messages(messages)
+
+    assert system_prompt == 'You are helpful.'
+    assert len(anthropic_messages) == 3
+    assert anthropic_messages[0]['role'] == 'user'
+    assert anthropic_messages[1]['role'] == 'assistant'
+    assert anthropic_messages[2]['role'] == 'user'
+
+
 @dataclass
 class MockAnthropic:
     messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage] | None = None
