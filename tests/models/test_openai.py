@@ -3845,3 +3845,33 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     # Expect Data URI with correct MIME type for mp3
     assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'
+
+
+async def test_chat_model_to_openai_messages():
+    """Test OpenAIChatModel.to_openai_messages() converts various message types correctly."""
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args={'location': 'NYC'}, tool_call_id='call_123')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='Sunny, 72°F', tool_call_id='call_123')]),
+        ModelResponse(parts=[TextPart(content='The weather in NYC is sunny and 72°F.')]),
+    ]
+    assert await model.to_openai_messages(messages) == snapshot(
+        [
+            {'role': 'user', 'content': 'What is the weather?'},
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [
+                    {
+                        'id': 'call_123',
+                        'type': 'function',
+                        'function': {'name': 'get_weather', 'arguments': '{"location":"NYC"}'},
+                    }
+                ],
+            },
+            {'role': 'tool', 'tool_call_id': 'call_123', 'content': 'Sunny, 72°F'},
+            {'role': 'assistant', 'content': 'The weather in NYC is sunny and 72°F.'},
+        ]
+    )
