@@ -2802,18 +2802,18 @@ def test_tool_return_schema():
     agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool_plain
-    def tool_with_return_schema() -> FileUrl:
+    def tool_with_return_schema() -> FileUrl:  # pragma: no cover
         return FileUrl('https://example.com/file.txt')
 
     @agent.tool_plain
-    def tool_with_return_schema_binary_content() -> BinaryContent:
+    def tool_with_return_schema_binary_content() -> BinaryContent:  # pragma: no cover
         return BinaryContent(data=b'hello', media_type='text/plain')
 
     class MyBaseModel(BaseModel):
         x: int = pydantic.Field(description='The x value')
 
     @agent.tool_plain
-    def tool_with_return_schema_base_model() -> MyBaseModel:
+    def tool_with_return_schema_base_model() -> MyBaseModel:  # pragma: no cover
         return MyBaseModel(x=1)
 
     @dataclass
@@ -2821,31 +2821,31 @@ def test_tool_return_schema():
         x: int
 
     @agent.tool_plain
-    def tool_with_return_schema_dataclass() -> MyDataclass:
+    def tool_with_return_schema_dataclass() -> MyDataclass:  # pragma: no cover
         return MyDataclass(x=1)
 
     @agent.tool_plain
-    def tool_with_return_binary_image() -> BinaryImage:
+    def tool_with_return_binary_image() -> BinaryImage:  # pragma: no cover
         return BinaryImage(data=b'hello', media_type='image/jpeg')
 
     @agent.tool_plain
-    def tool_with_return_document_url() -> DocumentUrl:
+    def tool_with_return_document_url() -> DocumentUrl:  # pragma: no cover
         return DocumentUrl(url='https://example.com/document.pdf')
 
     @agent.tool_plain
-    def tool_with_return_video_url() -> VideoUrl:
+    def tool_with_return_video_url() -> VideoUrl:  # pragma: no cover
         return VideoUrl(url='https://example.com/video.mp4')
 
     @agent.tool_plain
-    def tool_with_return_audio_url() -> AudioUrl:
+    def tool_with_return_audio_url() -> AudioUrl:  # pragma: no cover
         return AudioUrl(url='https://example.com/audio.mp3')
 
     @agent.tool_plain
-    def tool_with_return_image_url() -> ImageUrl:
+    def tool_with_return_image_url() -> ImageUrl:  # pragma: no cover
         return ImageUrl(url='https://example.com/image.jpg')
 
     @agent.tool_plain
-    def tool_with_return_tool_return() -> ToolReturn:
+    def tool_with_return_tool_return() -> ToolReturn:  # pragma: no cover
         return ToolReturn(return_value='hello', content=[ImageUrl(url='https://example.com/image.jpg')])
 
     result = agent.run_sync('Hello')
