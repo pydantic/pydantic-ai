@@ -114,7 +114,9 @@ def function_schema(  # noqa: C901
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
 
-    description, field_descriptions, return_description = doc_descriptions(function, sig, docstring_format=docstring_format)
+    description, field_descriptions, return_description = doc_descriptions(
+        function, sig, docstring_format=docstring_format
+    )
 
     if require_parameter_descriptions:
         if takes_ctx:
@@ -223,8 +225,6 @@ def function_schema(  # noqa: C901
                 return_schema['description'] = return_description
         except PydanticSchemaGenerationError:
             pass
-
-
 
     return FunctionSchema(
         description=description,

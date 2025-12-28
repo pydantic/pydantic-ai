@@ -4,9 +4,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, Tag, TypeAdapter
-from pydantic._internal import _typing_extra
-from pydantic.errors import PydanticSchemaGenerationError
+from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
