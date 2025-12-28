@@ -460,8 +460,6 @@ class Tool(Generic[ToolAgentDepsT]):
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
         base_tool_def = self.tool_def
-        if self.include_return_schema:
-            base_tool_def.return_schema = self.function_schema.return_schema
 
         if self.prepare is not None:
             return await self.prepare(ctx, base_tool_def)

@@ -12,6 +12,7 @@ class ReturnSchemaToolset(WrapperToolset[AgentDepsT]):
     """A toolset that adds the return schema to the tool description if it is present.
 
     See [toolset docs](../toolsets.md#return-schema-toolset) for more information.
+    # Non existient, will add once the API is approved of
     """
 
     include_return_schema: bool = False
@@ -22,7 +23,7 @@ class ReturnSchemaToolset(WrapperToolset[AgentDepsT]):
 
         def _build_description(tool: ToolsetTool[AgentDepsT]) -> str:
             base_desc = tool.tool_def.description or ''
-            if self.include_return_schema and tool.tool_def.return_schema is not None:
+            if (self.include_return_schema or tool.include_return_schema) and tool.tool_def.return_schema is not None:
                 # TODO: This should be overrideable by PromptConfig when that lands
                 return '\n\n'.join([base_desc, 'Return schema:', str(tool.tool_def.return_schema)])
             return base_desc

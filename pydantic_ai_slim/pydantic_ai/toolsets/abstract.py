@@ -57,6 +57,8 @@ class ToolsetTool(Generic[AgentDepsT]):
 
     For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
     """
+    include_return_schema: bool = False
+    """Whether to include the return schema in the tool description."""
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
