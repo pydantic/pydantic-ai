@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
 
+import pydantic
 import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
@@ -2815,7 +2816,7 @@ def test_tool_return_schema():
         return BinaryContent(data=b'hello', media_type='text/plain')
 
     class MyBaseModel(BaseModel):
-        x: int
+        x: int = pydantic.Field(description='The x value')
 
     @agent.tool_plain
     def tool_with_return_schema_base_model() -> MyBaseModel:
@@ -2943,7 +2944,7 @@ def test_tool_return_schema():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': {
-                    'properties': {'x': {'title': 'X', 'type': 'integer'}},
+                    'properties': {'x': {'description': 'The x value', 'title': 'X', 'type': 'integer'}},
                     'required': ['x'],
                     'title': 'MyBaseModel',
                     'type': 'object',
