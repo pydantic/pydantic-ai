@@ -386,6 +386,141 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+### Including Return Schemas {#return-schema-toolset}
+
+[`ReturnSchemaToolset`][pydantic_ai.toolsets.ReturnSchemaToolset] wraps a toolset and appends each tool's return schema to its description. This helps LLMs understand what data a tool returns, enabling better planning for multi-step operations and tool chaining.
+
+When tools return complex types like Pydantic models or dataclasses, PydanticAI automatically infers the return schema from the function's return type annotation. By including this schema in the tool description, the LLM can:
+
+- Plan sequences of tool calls where one tool's output feeds into another
+- Determine upfront if a requested data point is available
+- Understand the semantic meaning of each field in complex return types
+
+The return schema can be controlled at multiple levels:
+
+- **Toolset-level**: `ReturnSchemaToolset` has `include_return_schema=True` by default
+- **Tool-level**: Individual tools can opt-in via their `include_return_schema` flag on [`Tool`][pydantic_ai.tools.Tool]
+- **Agent-level**: Set `include_tool_return_schema=True` on the [`Agent`][pydantic_ai.agent.Agent] constructor (defaults to `False` to avoid breaking changes)
+
+To easily chain different modifications, you can also call [`with_return_schema()`][pydantic_ai.toolsets.AbstractToolset.with_return_schema] on any toolset instead of directly constructing a `ReturnSchemaToolset`.
+
+```python {title="return_schema_toolset.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+class UserDetails(BaseModel):
+    """Details about a user."""
+    id: int
+    name: str
+    email: str
+
+
+class OrderDetails(BaseModel):
+    """Details about an order."""
+    order_id: int
+    user_id: int
+    total: float
+    status: str
+
+
+toolset = FunctionToolset()
+
+
+@toolset.tool
+def get_user(user_id: int) -> UserDetails:
+    """Get user details by ID."""
+    return UserDetails(id=user_id, name='Alice', email='alice@example.com')
+
+
+@toolset.tool
+def get_order(order_id: int) -> OrderDetails:
+    """Get order details by ID."""
+    return OrderDetails(order_id=order_id, user_id=1, total=99.99, status='shipped')
+
+
+# Option 1: Use the convenience method
+toolset_with_schemas = toolset.with_return_schema()
+
+# Option 2: Use ReturnSchemaToolset directly (include_return_schema=True by default)
+# from pydantic_ai.toolsets import ReturnSchemaToolset
+# toolset_with_schemas = ReturnSchemaToolset(toolset)
+
+test_model = TestModel()  # (1)!
+agent = Agent(test_model, toolsets=[toolset_with_schemas])
+result = agent.run_sync('Get user 1')
+
+# The tool descriptions now include the return schema
+for tool in test_model.last_model_request_parameters.function_tools:
+    print(f'{tool.name}:')
+    print(tool.description)
+    print()
+"""
+get_user:
+Get user details by ID.
+
+Return schema:
+{
+  "properties": {
+    "id": {
+      "type": "integer"
+    },
+    "name": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "email"
+  ],
+  "title": "UserDetails",
+  "type": "object",
+  "description": "Details about a user."
+}
+
+get_order:
+Get order details by ID.
+
+Return schema:
+{
+  "properties": {
+    "order_id": {
+      "type": "integer"
+    },
+    "user_id": {
+      "type": "integer"
+    },
+    "total": {
+      "type": "number"
+    },
+    "status": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "order_id",
+    "user_id",
+    "total",
+    "status"
+  ],
+  "title": "OrderDetails",
+  "type": "object",
+  "description": "Details about an order."
+}
+
+"""
+```
+
+1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
+
+_(This example is complete, it can be run "as is")_
+
 ### Changing Tool Execution
 
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps another toolset and delegates all responsibility to it.

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
+    from .return_schema import ReturnSchemaToolset
 
 
 class SchemaValidatorProt(Protocol):
@@ -191,3 +192,34 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .approval_required import ApprovalRequiredToolset
 
         return ApprovalRequiredToolset(self, approval_required_func)
+
+    def with_return_schema(self, include: bool = True) -> ReturnSchemaToolset[AgentDepsT]:
+        """Returns a new toolset that includes return schemas in tool descriptions.
+
+        When enabled, each tool's return schema (if available) will be appended to its description
+        as a JSON schema. This helps LLMs understand what data a tool returns, enabling better
+        planning for multi-step operations and tool chaining.
+
+        Args:
+            include: Whether to include return schemas in tool descriptions. Defaults to True.
+
+        Example:
+            ```python
+            from pydantic_ai import Agent, FunctionToolset
+
+            toolset = FunctionToolset()
+
+            @toolset.tool
+            def get_user(user_id: int) -> UserDetails:
+                '''Get user details by ID.'''
+                ...
+
+            # Enable return schemas for this toolset
+            agent = Agent('openai:gpt-4o', toolsets=[toolset.with_return_schema()])
+            ```
+
+        See [toolset docs](../toolsets.md#return-schema-toolset) for more information.
+        """
+        from .return_schema import ReturnSchemaToolset
+
+        return ReturnSchemaToolset(self, include_return_schema=include)
