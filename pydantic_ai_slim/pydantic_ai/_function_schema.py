@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
+from pydantic.errors import PydanticSchemaGenerationError
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
@@ -44,6 +45,7 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list)
     var_positional_field: str | None = None
+    return_schema: ObjectJsonSchema | None = None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -212,6 +214,14 @@ def function_schema(  # noqa: C901
         # and set it on the tool
         description = json_schema.pop('description', None)
 
+    return_annotation = type_hints.get('return')
+    return_schema = None
+    if return_annotation:
+        try:
+            return_schema = TypeAdapter(return_annotation).json_schema()
+        except PydanticSchemaGenerationError:
+            pass
+
     return FunctionSchema(
         description=description,
         validator=schema_validator,
@@ -222,6 +232,7 @@ def function_schema(  # noqa: C901
         takes_ctx=takes_ctx,
         is_async=is_async_callable(function),
         function=function,
+        return_schema=return_schema,
     )
 
 
