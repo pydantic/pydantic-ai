@@ -16,14 +16,8 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
-    AudioUrl,
-    BinaryContent,
-    BinaryImage,
-    DeferredToolRequests,
-    DocumentUrl,
     ExternalToolset,
     FunctionToolset,
-    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -37,13 +31,13 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
     UserPromptPart,
-    VideoUrl,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.messages import AudioUrl, BinaryContent, BinaryImage, DocumentUrl, ImageUrl, VideoUrl
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr

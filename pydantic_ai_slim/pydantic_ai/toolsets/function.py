@@ -101,6 +101,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
@@ -300,6 +301,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential = self.sequential
         if requires_approval is None:
             requires_approval = self.requires_approval
+
         tool = Tool[AgentDepsT](
             func,
             takes_ctx=takes_ctx,
