@@ -435,6 +435,9 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self):
+        # TODO: Should I modify the description to include the return schema if it is present here or not?
+        # I added the flag on the tool to make sure we try to respect it
+        # I don't want to modify this to be honest, not very clear way to do it
         return ToolDefinition(
             name=self.name,
             description=self.description,

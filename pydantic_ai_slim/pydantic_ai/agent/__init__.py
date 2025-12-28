@@ -15,6 +15,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
+from pydantic_ai.toolsets.return_schema import ReturnSchemaToolset
 
 from .. import (
     _agent_graph,
@@ -50,6 +51,7 @@ from ..tools import (
     GenerateToolJsonSchema,
     RunContext,
     Tool,
+    ToolDefinition,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -90,6 +92,7 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
+    'ToolDefinition',
 )
 
 
@@ -1514,6 +1517,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
+
+        toolset = ReturnSchemaToolset(toolset)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
