@@ -503,7 +503,7 @@ def test_takes_just_model():
     assert json_schema == snapshot(
         {
             'name': 'takes_just_model',
-            'description': None,
+            'description': '',
             'parameters_json_schema': {
                 'properties': {
                     'x': {'type': 'integer'},
@@ -539,7 +539,7 @@ def test_takes_model_and_int():
     assert json_schema == snapshot(
         {
             'name': 'takes_just_model',
-            'description': None,
+            'description': '',
             'parameters_json_schema': {
                 '$defs': {
                     'Foo': {
@@ -993,7 +993,7 @@ def test_json_schema_required_parameters():
     assert json_schema == snapshot(
         [
             {
-                'description': None,
+                'description': '',
                 'name': 'my_tool',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
@@ -1010,7 +1010,7 @@ def test_json_schema_required_parameters():
                 'return_schema': {'type': 'integer'},
             },
             {
-                'description': None,
+                'description': '',
                 'name': 'my_tool_plain',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
@@ -1101,7 +1101,7 @@ def test_schema_generator():
     assert json_schema == snapshot(
         [
             {
-                'description': None,
+                'description': '',
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
@@ -1117,7 +1117,7 @@ def test_schema_generator():
                 'return_schema': None,
             },
             {
-                'description': None,
+                'description': '',
                 'name': 'my_tool_2',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
@@ -1152,7 +1152,7 @@ def test_tool_parameters_with_attribute_docstrings():
     assert json_schema == snapshot(
         {
             'name': 'get_score',
-            'description': None,
+            'description': '',
             'parameters_json_schema': {
                 'properties': {
                     'a': {'description': 'The first parameter', 'type': 'integer'},
