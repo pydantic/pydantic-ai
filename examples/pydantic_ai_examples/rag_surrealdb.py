@@ -61,8 +61,6 @@ logfire.instrument_pydantic_ai()
 THIS_DIR = Path(__file__).parent
 
 embedder = Embedder('openai:text-embedding-3-small')
-
-
 agent = Agent('openai:gpt-5')
 
 
@@ -73,6 +71,16 @@ async def retrieve(_: RunContext, search_query: str) -> str:
     Args:
         search_query: The search query.
     """
+
+    @dataclass
+    class RetrievalQueryResult:
+        url: str
+        title: str
+        content: str
+        dist: float
+
+    result_ta = TypeAdapter(list[RetrievalQueryResult])
+
     with logfire.span(
         'create embedding for {search_query=}', search_query=search_query
     ):
@@ -98,15 +106,15 @@ async def retrieve(_: RunContext, search_query: str) -> str:
         )
 
     # Process SurrealDB query result
-    rows = []
-    if isinstance(result, list):
-        for record in result:
-            if isinstance(record, dict) and 'url' in record:
-                rows.append(record)
+    try:
+        rows = result_ta.validate_python(result)
+        logfire.info('Retrieved {len} results', len=len(rows))
+    except Exception as e:
+        logfire.error('Failed to validate JSON response: {error}', error=e)
+        raise
 
     return '\n\n'.join(
-        f'# {row["title"]}\nDocumentation URL:{row["url"]}\n\n{row["content"]}\n'
-        for row in rows
+        f'# {row.title}\nDocumentation URL:{row.url}\n\n{row.content}\n' for row in rows
     )
 
 
