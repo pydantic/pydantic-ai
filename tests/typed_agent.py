@@ -41,8 +41,8 @@ def system_prompt_ok2() -> str:
 
 
 # we have overloads for every possible signature of system_prompt, so the type of decorated functions is correct
-assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str]])
-assert_type(system_prompt_ok2, Callable[[], str])
+assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str | None]])
+assert_type(system_prompt_ok2, Callable[[], str | None])
 
 
 @typed_agent.tool
@@ -159,7 +159,7 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[call-overload]
+union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[arg-type]
 assert_type(union_agent, Agent[None, Foo | Bar])
 
 
@@ -193,6 +193,10 @@ async def foobar_plain(x: int, y: int) -> int:
 
 
 def str_to_regex(text: str) -> re.Pattern[str]:
+    return re.compile(text)
+
+
+def str_to_regex_with_ctx(ctx: RunContext[int], text: str) -> re.Pattern[str]:
     return re.compile(text)
 
 
@@ -282,6 +286,16 @@ Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType,reportCa
 Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType,reportCallIssue]
 # since deps are not set, they default to `None`, so can't be `int`
 Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType,reportCallIssue]
+
+# TextOutput with RunContext uses RunContext[Any], so deps_type is not checked.
+# This is intentional: type checking deps in output functions isn't feasible because
+# ToolOutput and plain output functions take arbitrary args, so the type checker
+# treats RunContext as just another arg rather than enforcing deps_type compatibility.
+text_output_with_ctx = TextOutput(str_to_regex_with_ctx)
+assert_type(text_output_with_ctx, TextOutput[re.Pattern[str]])
+Agent('test', output_type=text_output_with_ctx, deps_type=int)
+Agent('test', output_type=text_output_with_ctx, deps_type=str)
+Agent('test', output_type=text_output_with_ctx)
 
 # prepare example from docs:
 

@@ -19,6 +19,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import LatestBedrockModelNames
     from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile, BedrockProvider
 
+if not imports_successful():
+    BEDROCK_GEO_PREFIXES: tuple[str, ...] = ()  # type: ignore[no-redef]
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
 
