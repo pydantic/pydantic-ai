@@ -72,6 +72,7 @@ if TYPE_CHECKING:
         PromptVariableValuesTypeDef,
         ReasoningContentBlockOutputTypeDef,
         S3LocationTypeDef,
+        ServiceTierTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
@@ -229,6 +230,12 @@ class BedrockModelSettings(ModelSettings, total=False):
     Note: Uses 1 of Bedrock's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
     See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
+
+    bedrock_service_tier: ServiceTierTypeDef
+    """Setting for optimizing performance and cost
+
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html>.
     """
 
 
@@ -481,6 +488,8 @@ class BedrockConverseModel(Model):
                 params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
+            if service_tier := model_settings.get('bedrock_service_tier', None):
+                params['serviceTier'] = service_tier
 
         try:
             if stream:

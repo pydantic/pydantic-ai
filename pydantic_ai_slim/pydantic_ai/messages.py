@@ -52,6 +52,8 @@ _mime_types.add_type('video/x-matroska', '.mkv')
 _mime_types.add_type('video/x-ms-wmv', '.wmv')
 
 # Audio types
+# NOTE: aac is platform specific (linux: audio/x-aac, macos: audio/aac) but x-aac is deprecated https://mimetype.io/audio/aac
+_mime_types.add_type('audio/aac', '.aac')
 _mime_types.add_type('audio/aiff', '.aiff')
 _mime_types.add_type('audio/flac', '.flac')
 _mime_types.add_type('audio/ogg', '.oga')
@@ -993,6 +995,11 @@ class ModelRequest:
 
     _: KW_ONLY
 
+    # Default is None for backwards compatibility with old serialized messages that don't have this field.
+    # Using a default_factory would incorrectly fill in the current time for deserialized historical messages.
+    timestamp: datetime | None = None
+    """The timestamp when the request was sent to the model."""
+
     instructions: str | None = None
     """The instructions for the model."""
 
@@ -1234,9 +1241,10 @@ class ModelResponse:
     """The name of the model that generated the response."""
 
     timestamp: datetime = field(default_factory=_now_utc)
-    """The timestamp of the response.
+    """The timestamp when the response was received locally.
 
-    If the model provides a timestamp in the response (as OpenAI does) that will be used.
+    This is always a high-precision local datetime. Provider-specific timestamps
+    (if available) are stored in `provider_details['timestamp']`.
     """
 
     kind: Literal['response'] = 'response'

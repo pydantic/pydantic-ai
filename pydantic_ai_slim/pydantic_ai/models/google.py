@@ -564,12 +564,16 @@ class GoogleModel(Model):
         candidate = response.candidates[0]
 
         vendor_id = response.response_id
-        vendor_details: dict[str, Any] | None = None
         finish_reason: FinishReason | None = None
+        vendor_details: dict[str, Any] = {}
+
         raw_finish_reason = candidate.finish_reason
         if raw_finish_reason:  # pragma: no branch
-            vendor_details = {'finish_reason': raw_finish_reason.value}
+            vendor_details['finish_reason'] = raw_finish_reason.value
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        if response.create_time is not None:  # pragma: no branch
+            vendor_details['timestamp'] = response.create_time
 
         if candidate.content is None or candidate.content.parts is None:
             if finish_reason == 'content_filter' and raw_finish_reason:
@@ -589,7 +593,7 @@ class GoogleModel(Model):
             self._provider.base_url,
             usage,
             vendor_id=vendor_id,
-            vendor_details=vendor_details,
+            vendor_details=vendor_details or None,
             finish_reason=finish_reason,
             url_context_metadata=candidate.url_context_metadata,
         )
@@ -607,9 +611,9 @@ class GoogleModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
-            _timestamp=first_chunk.create_time or _utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=first_chunk.create_time,
         )
 
     async def _map_messages(
@@ -686,10 +690,18 @@ class GoogleModel(Model):
                     if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
-                elif isinstance(item, VideoUrl) and item.is_youtube:
+                elif isinstance(item, VideoUrl) and (
+                    item.is_youtube or (item.url.startswith('gs://') and self.system == 'google-vertex')
+                ):
+                    # YouTube URLs work on both google-gla and google-vertex
+                    # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
+                    # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
+                    # Other URLs fall through to FileUrl handling (download for google-gla)
+                    # Note: force_download is not checked here, mirroring the original YouTube behavior.
+                    # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
                     file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}
-                    if item.vendor_metadata:  # pragma: no branch
+                    if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
                 elif isinstance(item, FileUrl):
@@ -704,10 +716,18 @@ class GoogleModel(Model):
                             'data': downloaded_item['data'],
                             'mime_type': downloaded_item['data_type'],
                         }
-                        content.append({'inline_data': inline_data})
+                        part_dict: PartDict = {'inline_data': inline_data}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                        content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                        part_dict: PartDict = {'file_data': file_data_dict}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)  # pragma: lax no cover
                 elif isinstance(item, CachePoint):
                     # Google Gemini doesn't support prompt caching via CachePoint
                     pass
@@ -731,13 +751,16 @@ class GeminiStreamedResponse(StreamedResponse):
 
     _model_name: GoogleModelName
     _response: AsyncIterator[GenerateContentResponse]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        if self._provider_timestamp is not None:
+            self.provider_details = {'timestamp': self._provider_timestamp}  # pragma: no cover
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
@@ -749,9 +772,8 @@ class GeminiStreamedResponse(StreamedResponse):
             if chunk.response_id:  # pragma: no branch
                 self.provider_response_id = chunk.response_id
 
-            raw_finish_reason = candidate.finish_reason
-            if raw_finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason.value}
+            if raw_finish_reason := candidate.finish_reason:
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Google streams the grounding metadata (including the web search queries and results)

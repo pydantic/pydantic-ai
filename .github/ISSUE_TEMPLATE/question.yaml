@@ -5,7 +5,11 @@ labels: ["question"]
 body:
   - type: markdown
     attributes:
-      value: Thank you for reaching out to the Pydantic AI community! We're here to help! 🤝
+      value: |
+        Thank you for reaching out to the Pydantic AI community! We're here to help! 🤝
+
+        The quickest way to get help or suggestions from our community or team is via our [Slack community](https://logfire.pydantic.dev/docs/join-slack/),
+        but if you have a little more patience or a lot of context or code to share, GitHub is a great place too.
 
   - type: textarea
     id: question

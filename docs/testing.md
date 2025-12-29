@@ -128,6 +128,7 @@ async def test_forecast():
                     timestamp=IsNow(tz=timezone.utc),  # (7)!
                 ),
             ],
+            timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         ),
         ModelResponse(
@@ -158,6 +159,7 @@ async def test_forecast():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
+            timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         ),
         ModelResponse(
