@@ -1813,7 +1813,7 @@ async def test_bedrock_cache_point_adds_cache_control(
     # Different tokens usage depending on a model - could be written or read depending on the cassette read/write
     usage = result.usage()
     assert usage.cache_write_tokens >= 1000 or usage.cache_read_tokens >= 1000
-    assert usage.input_tokens <= 20
+    assert usage.input_tokens >= 1000
 
 
 @pytest.mark.vcr()

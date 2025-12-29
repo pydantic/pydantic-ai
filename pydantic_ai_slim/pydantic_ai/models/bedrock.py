@@ -405,11 +405,14 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
+        cache_read_tokens = response['usage'].get('cacheReadInputTokens', 0)
+        cache_write_tokens = response['usage'].get('cacheWriteInputTokens', 0)
+        input_tokens = response['usage']['inputTokens'] + cache_read_tokens + cache_write_tokens
         u = usage.RequestUsage(
-            input_tokens=response['usage']['inputTokens'],
+            input_tokens=input_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
             output_tokens=response['usage']['outputTokens'],
-            cache_read_tokens=response['usage'].get('cacheReadInputTokens', 0),
-            cache_write_tokens=response['usage'].get('cacheWriteInputTokens', 0),
         )
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
