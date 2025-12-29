@@ -439,7 +439,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     @property
     def label(self) -> str:
         if self.id:
-            return super().label  # pragma: no cover
+            return super().label
         else:
             return repr(self)
 
