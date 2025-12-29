@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Core Development Tasks
 
-- **Install dependencies**: `make install` (requires uv, pre-commit, and deno)
+- **Install dependencies**: `make install` (requires uv and pre-commit)
 - **Run all checks**: `pre-commit run --all-files`
 - **Run tests**: `make test`
 - **Build docs**: `make docs` or `make docs-serve` (local development)

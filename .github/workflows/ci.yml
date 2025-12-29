@@ -102,6 +102,16 @@ jobs:
             command: ""
           - name: all-extras
             command: "--all-extras"
+        exclude:
+          # Skip Python 3.10 standard/all-extras here (too slow ~10min each due to inline-snapshot/executing)
+          - python-version: "3.10"
+            install:
+              name: standard
+              command: ""
+          - python-version: "3.10"
+            install:
+              name: all-extras
+              command: "--all-extras"
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
