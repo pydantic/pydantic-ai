@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
@@ -2287,13 +2288,8 @@ async def test_video_url_input(allow_model_requests: None):
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    mock_client = MockMistralAI.create_mock(
-        SDKError(
-            'test error',
-            status_code=500,
-            body='test error',
-        )
-    )
+    response = httpx.Response(500, content=b'test error')
+    mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -2302,13 +2298,8 @@ def test_model_status_error(allow_model_requests: None) -> None:
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
-    mock_client = MockMistralAI.create_mock(
-        SDKError(
-            'Connection error',
-            status_code=300,
-            body='redirect',
-        )
-    )
+    response = httpx.Response(300, content=b'redirect')
+    mock_client = MockMistralAI.create_mock(SDKError('Connection error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelAPIError) as exc_info:
