@@ -357,9 +357,10 @@ class AnthropicModel(Model):
                         )
                     )
 
-        # If only system prompt was provided with no messages, create a ModelRequest for it
-        if system_parts and not result:
-            result.append(ModelRequest(parts=system_parts, run_id=run_id))
+        # If system_parts wasn't consumed (e.g., no messages or first message was assistant),
+        # prepend a ModelRequest with the system prompt
+        if system_parts:
+            result.insert(0, ModelRequest(parts=system_parts, run_id=run_id))
 
         return result
 
@@ -482,24 +483,34 @@ class AnthropicModel(Model):
         return response_parts
 
     def _parse_assistant_block(self, block: dict[str, Any]) -> ModelResponsePart | None:
-        """Parse a single assistant content block."""
-        block_type = block.get('type')
+        """Parse a single assistant content block.
+
+        Handles both TypedDict-style blocks (with .get() method) and Pydantic model objects
+        (like BetaMCPToolResultBlock) that use attribute access.
+        """
+        # Helper to get attribute from block - works with both dicts and Pydantic models
+        def get_attr(key: str, default: Any = '') -> Any:
+            if hasattr(block, 'get'):
+                return block.get(key, default)
+            return getattr(block, key, default)
+
+        block_type = get_attr('type')
 
         if block_type == 'text':
-            if text := block.get('text', ''):
+            if text := get_attr('text', ''):
                 return TextPart(content=text)
 
         elif block_type == 'tool_use':
             return ToolCallPart(
-                tool_name=block.get('name', ''),
-                args=block.get('input', {}),
-                tool_call_id=block.get('id', ''),
+                tool_name=get_attr('name', ''),
+                args=get_attr('input', {}),
+                tool_call_id=get_attr('id', ''),
             )
 
         elif block_type == 'thinking':
             return ThinkingPart(
-                content=block.get('thinking', ''),
-                signature=block.get('signature'),
+                content=get_attr('thinking', ''),
+                signature=get_attr('signature'),
                 provider_name=self.system,
             )
 
@@ -507,58 +518,58 @@ class AnthropicModel(Model):
             return ThinkingPart(
                 id='redacted_thinking',
                 content='',
-                signature=block.get('data', ''),
+                signature=get_attr('data', ''),
                 provider_name=self.system,
             )
 
         elif block_type == 'server_tool_use':
             return BuiltinToolCallPart(
-                tool_name=block.get('name', ''),
-                args=block.get('input', {}),
-                tool_call_id=block.get('id', ''),
+                tool_name=get_attr('name', ''),
+                args=get_attr('input', {}),
+                tool_call_id=get_attr('id', ''),
                 provider_name=self.system,
             )
 
         elif block_type == 'mcp_tool_use':
-            server_name = block.get('server_name', '')
-            tool_name = block.get('name', '')
+            server_name = get_attr('server_name', '')
+            tool_name = get_attr('name', '')
             return BuiltinToolCallPart(
                 tool_name=f'{MCPServerTool.kind}:{server_name}',
-                args={'tool_name': tool_name, 'tool_args': block.get('input', {})},
-                tool_call_id=block.get('id', ''),
+                args={'action': 'call_tool', 'tool_name': tool_name, 'tool_args': get_attr('input', {})},
+                tool_call_id=get_attr('id', ''),
                 provider_name=self.system,
             )
 
         elif block_type == 'web_search_tool_result':
             return BuiltinToolReturnPart(
                 tool_name=WebSearchTool.kind,
-                content=block.get('content', []),
-                tool_call_id=block.get('tool_use_id', ''),
+                content=get_attr('content', []),
+                tool_call_id=get_attr('tool_use_id', ''),
                 provider_name=self.system,
             )
 
         elif block_type == 'code_execution_tool_result':
             return BuiltinToolReturnPart(
                 tool_name=CodeExecutionTool.kind,
-                content=block.get('content', {}),
-                tool_call_id=block.get('tool_use_id', ''),
+                content=get_attr('content', {}),
+                tool_call_id=get_attr('tool_use_id', ''),
                 provider_name=self.system,
             )
 
         elif block_type == 'web_fetch_tool_result':
             return BuiltinToolReturnPart(
                 tool_name=WebFetchTool.kind,
-                content=block.get('content', {}),
-                tool_call_id=block.get('tool_use_id', ''),
+                content=get_attr('content', {}),
+                tool_call_id=get_attr('tool_use_id', ''),
                 provider_name=self.system,
             )
 
         elif block_type == 'mcp_tool_result':
-            server_name = block.get('server_name', '')
+            server_name = get_attr('server_name', '')
             return BuiltinToolReturnPart(
                 tool_name=f'{MCPServerTool.kind}:{server_name}',
-                content=dict(block),
-                tool_call_id=block.get('tool_use_id', ''),
+                content={'content': get_attr('content'), 'is_error': get_attr('is_error', False)},
+                tool_call_id=get_attr('tool_use_id', ''),
                 provider_name=self.system,
             )
 
