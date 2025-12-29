@@ -299,7 +299,7 @@ class AnthropicModel(Model):
             - system_prompt: The extracted system prompt as a string or list of text blocks
             - anthropic_messages: List of Anthropic BetaMessageParam objects
         """
-        settings = cast(AnthropicModelSettings, model_settings or {})
+        settings = model_settings or AnthropicModelSettings()
         # Use empty model_request_parameters - no tools or output handling needed for conversion
         model_request_parameters = ModelRequestParameters()
         return await self._map_message(messages, model_request_parameters, settings)
