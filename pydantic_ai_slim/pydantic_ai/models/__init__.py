@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, get_args, overload
 
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
@@ -543,6 +543,41 @@ KnownModelName = TypeAliasType(
 
 `KnownModelName` is provided as a concise way to specify a model.
 """
+
+OpenAIChatCompatibleProvider = TypeAliasType(
+    'OpenAIChatCompatibleProvider',
+    Literal[
+        'azure',
+        'deepseek',
+        'cerebras',
+        'fireworks',
+        'github',
+        'grok',
+        'heroku',
+        'moonshotai',
+        'ollama',
+        'openrouter',
+        'together',
+        'vercel',
+        'litellm',
+        'nebius',
+        'ovhcloud',
+        'alibaba',
+    ],
+)
+OpenAIResponsesCompatibleProvider = TypeAliasType(
+    'OpenAIResponsesCompatibleProvider',
+    Literal[
+        'deepseek',
+        'azure',
+        'openrouter',
+        'grok',
+        'fireworks',
+        'together',
+        'nebius',
+        'ovhcloud',
+    ],
+)
 
 
 @dataclass(repr=False, kw_only=True)
@@ -1090,37 +1125,25 @@ def infer_model(  # noqa: C901
         )
         provider_name = 'google-vertex'
 
-    provider: Provider[Any] = provider_factory(provider_name)
+    provider = provider_factory(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider
 
-        model_kind = provider_name.removeprefix('gateway/')
         model_kind = normalize_gateway_provider(model_kind)
-    if model_kind in (
-        'openai',
-        'azure',
-        'deepseek',
-        'fireworks',
-        'github',
-        'grok',
-        'xai',
-        'heroku',
-        'moonshotai',
-        'ollama',
-        'together',
-        'vercel',
-        'litellm',
-        'nebius',
-        'ovhcloud',
-        'alibaba',
-    ):
-        model_kind = 'openai-chat'
-    elif model_kind in ('google-gla', 'google-vertex'):
-        model_kind = 'google'
 
-    if model_kind == 'openai-chat':
+    # OpenRouter and Cerebras need to be checked before OpenAI,
+    # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
+    if model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
+    elif model_kind == 'cerebras':
+        from .cerebras import CerebrasModel
+
+        return CerebrasModel(model_name, provider=provider)
+    elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
@@ -1128,7 +1151,7 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind == 'google':
+    elif model_kind in ('google', 'google-gla', 'google-vertex'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
@@ -1144,10 +1167,6 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
-    elif model_kind == 'openrouter':
-        from .openrouter import OpenRouterModel
-
-        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -1160,10 +1179,10 @@ def infer_model(  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
-    elif model_kind == 'cerebras':
-        from .cerebras import CerebrasModel
+    elif model_kind == 'xai':
+        from .xai import XaiModel
 
-        return CerebrasModel(model_name, provider=provider)
+        return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
@@ -1184,7 +1203,7 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
     client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    if client.is_closed:
+    if client.is_closed:  # pragma: no cover
         # This happens if the context manager is used, so we need to create a new client.
         # Since there is no API from `functools.cache` to clear the cache for a specific
         #  key, clear the entire cache here as a workaround.
