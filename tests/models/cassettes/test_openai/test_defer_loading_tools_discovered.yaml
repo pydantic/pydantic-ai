@@ -1,0 +1,1729 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '625'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1113'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '520'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"regex":"(database|table|user|list|fetch|sql)"}'
+              name: load_tools
+            id: call_zw9OZ3jxffAVqLD5rsKlP9Tj
+            type: function
+      created: 1766259472
+      id: chatcmpl-Cox3wbKXz2mm2x4EzUHmzcFmhRJDb
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_1a2c4a5ede
+      usage:
+        completion_tokens: 26
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 100
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 126
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1327'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=xkjcxChn8kXmLk27BPE_N4vUlUe5hvImUvFnATB7nEk-1766259473-1.0.1.1-6WLIO4IYDI3_TkhRrMCCKKHiRov.wDKWzHm2dV8bG.03e9riypMPNHqBPvPBp.BUn8uS41.TCMjA_eUhK2RhhkNEqs1U_SylH.SOV4mtW1Y;
+        _cfuvid=iI1EG4mTtYkd3g7V6qwB7xhh4EK9h.pxlN26Z8pgWl0-1766259473300-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"regex":"(database|table|user|list|fetch|sql)"}'
+            name: load_tools
+          id: call_zw9OZ3jxffAVqLD5rsKlP9Tj
+          type: function
+      - content: '["list_database_tables","fetch_user_data"]'
+        role: tool
+        tool_call_id: call_zw9OZ3jxffAVqLD5rsKlP9Tj
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: list_database_tables
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: fetch_user_data
+          parameters:
+            additionalProperties: false
+            properties:
+              user_id:
+                type: integer
+            required:
+            - user_id
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1309'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '381'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: list_database_tables
+            id: call_FGY4QPi1GDGInzVYmpGP4brF
+            type: function
+          - function:
+              arguments: '{"user_id": 42}'
+              name: fetch_user_data
+            id: call_67P9aP6g5Yn6RjMJORlsPz3e
+            type: function
+      created: 1766259473
+      id: chatcmpl-Cox3xQLlpJF2U5grFhc98lPpSHsox
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_92419d3fe9
+      usage:
+        completion_tokens: 44
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 168
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 212
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1885'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=xkjcxChn8kXmLk27BPE_N4vUlUe5hvImUvFnATB7nEk-1766259473-1.0.1.1-6WLIO4IYDI3_TkhRrMCCKKHiRov.wDKWzHm2dV8bG.03e9riypMPNHqBPvPBp.BUn8uS41.TCMjA_eUhK2RhhkNEqs1U_SylH.SOV4mtW1Y;
+        _cfuvid=iI1EG4mTtYkd3g7V6qwB7xhh4EK9h.pxlN26Z8pgWl0-1766259473300-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"regex":"(database|table|user|list|fetch|sql)"}'
+            name: load_tools
+          id: call_zw9OZ3jxffAVqLD5rsKlP9Tj
+          type: function
+      - content: '["list_database_tables","fetch_user_data"]'
+        role: tool
+        tool_call_id: call_zw9OZ3jxffAVqLD5rsKlP9Tj
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: list_database_tables
+          id: call_FGY4QPi1GDGInzVYmpGP4brF
+          type: function
+        - function:
+            arguments: '{"user_id": 42}'
+            name: fetch_user_data
+          id: call_67P9aP6g5Yn6RjMJORlsPz3e
+          type: function
+      - content: '["users","orders","products","reviews"]'
+        role: tool
+        tool_call_id: call_FGY4QPi1GDGInzVYmpGP4brF
+      - content: '{"id":42,"name":"John Doe","email":"john@example.com"}'
+        role: tool
+        tool_call_id: call_67P9aP6g5Yn6RjMJORlsPz3e
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: list_database_tables
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: fetch_user_data
+          parameters:
+            additionalProperties: false
+            properties:
+              user_id:
+                type: integer
+            required:
+            - user_id
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1017'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '591'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: "Here are the results of your requests:\n\n1. Database tables: users, orders, products, reviews\n2. User
+            42 details: \n   - Name: John Doe\n   - Email: john@example.com\n\nLet me know if you need more information!"
+          refusal: null
+          role: assistant
+      created: 1766259474
+      id: chatcmpl-Cox3yafiGkDvUL4rJjWeP5fZ0kW3S
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_92419d3fe9
+      usage:
+        completion_tokens: 54
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 257
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 311
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '625'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1099'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '491'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"regex":"database|db|table|user"}'
+              name: load_tools
+            id: call_XVG4kzuOatP5xIv4Lg2Pk8xN
+            type: function
+      created: 1766259501
+      id: chatcmpl-Cox4PfMeFZHKphWdQ9WXzGJQTl8LZ
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_1a2c4a5ede
+      usage:
+        completion_tokens: 20
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 100
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 120
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1313'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=BwUEZBb0kU4zLVHSSz5.SZFjSw2SG_5rr5diqfB.OEs-1766259502-1.0.1.1-3dFUtI_WZwvfKiEA1AxrLjDst5VfZJmoKFBWOd29vzwJwad.jWxzrQoG0XcJMJC_Hle0bBZ.PVbRcl9w6nTjkjpB1HWkGoNQxINQXCW_FCM;
+        _cfuvid=GJ3Vw0j8n4mTJ0lJs0w35FR7q64Bd0AO.deixHFuDA8-1766259502142-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"regex":"database|db|table|user"}'
+            name: load_tools
+          id: call_XVG4kzuOatP5xIv4Lg2Pk8xN
+          type: function
+      - content: '["list_database_tables","fetch_user_data"]'
+        role: tool
+        tool_call_id: call_XVG4kzuOatP5xIv4Lg2Pk8xN
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: list_database_tables
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: fetch_user_data
+          parameters:
+            additionalProperties: false
+            properties:
+              user_id:
+                type: integer
+            required:
+            - user_id
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1309'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '379'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: list_database_tables
+            id: call_9F8XbOeSesqiqPIAqTDipX8J
+            type: function
+          - function:
+              arguments: '{"user_id": 42}'
+              name: fetch_user_data
+            id: call_fpK9yYhISY4By0wRjveEgmGr
+            type: function
+      created: 1766259502
+      id: chatcmpl-Cox4QUbdprMQ9MoPxKyGn1tZKFdcl
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_92419d3fe9
+      usage:
+        completion_tokens: 44
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 162
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 206
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1871'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=BwUEZBb0kU4zLVHSSz5.SZFjSw2SG_5rr5diqfB.OEs-1766259502-1.0.1.1-3dFUtI_WZwvfKiEA1AxrLjDst5VfZJmoKFBWOd29vzwJwad.jWxzrQoG0XcJMJC_Hle0bBZ.PVbRcl9w6nTjkjpB1HWkGoNQxINQXCW_FCM;
+        _cfuvid=GJ3Vw0j8n4mTJ0lJs0w35FR7q64Bd0AO.deixHFuDA8-1766259502142-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"regex":"database|db|table|user"}'
+            name: load_tools
+          id: call_XVG4kzuOatP5xIv4Lg2Pk8xN
+          type: function
+      - content: '["list_database_tables","fetch_user_data"]'
+        role: tool
+        tool_call_id: call_XVG4kzuOatP5xIv4Lg2Pk8xN
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: list_database_tables
+          id: call_9F8XbOeSesqiqPIAqTDipX8J
+          type: function
+        - function:
+            arguments: '{"user_id": 42}'
+            name: fetch_user_data
+          id: call_fpK9yYhISY4By0wRjveEgmGr
+          type: function
+      - content: '["users","orders","products","reviews"]'
+        role: tool
+        tool_call_id: call_9F8XbOeSesqiqPIAqTDipX8J
+      - content: '{"id":42,"name":"John Doe","email":"john@example.com"}'
+        role: tool
+        tool_call_id: call_fpK9yYhISY4By0wRjveEgmGr
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: list_database_tables
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: fetch_user_data
+          parameters:
+            additionalProperties: false
+            properties:
+              user_id:
+                type: integer
+            required:
+            - user_id
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1051'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '1016'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: |-
+            Here are the database tables:
+
+            - users
+            - orders
+            - products
+            - reviews
+
+            For user with ID 42, the fetched data is:
+            - Name: John Doe
+            - Email: john@example.com
+
+            Let me know if you need details from any specific table or further information!
+          refusal: null
+          role: assistant
+      created: 1766259502
+      id: chatcmpl-Cox4QSIvoeyqJ2D6F6j3NSkwtBYso
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_92419d3fe9
+      usage:
+        completion_tokens: 59
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 251
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 310
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '625'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1092'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '923'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"regex":"database|db|sql"}'
+              name: load_tools
+            id: call_vWF3qeOUYWjviZbMFRwpWIh4
+            type: function
+      created: 1766259539
+      id: chatcmpl-Cox51B75we0ajJEc7L0JZVZ1lGfeA
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_1a2c4a5ede
+      usage:
+        completion_tokens: 18
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 100
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 118
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '625'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1103'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '513'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"regex":"database|db|sql|table|user"}'
+              name: load_tools
+            id: call_9NYLCxFwDMsvumrObZAhSGHS
+            type: function
+      created: 1766259554
+      id: chatcmpl-Cox5GzWsxp51pWKjHUjOYAuIzh1r9
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_1a2c4a5ede
+      usage:
+        completion_tokens: 22
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 100
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 122
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1317'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=HXgJg5XBduINJvODi2fsuE4WamKjWbgroyuM6sPA6FQ-1766259554-1.0.1.1-tG3ZYUjmITdov89ftBwBZl3GPCwLWRUDtZeG4UpzDZ3DyBbWiW3uAjZG4vt1QEy1ZndUoqYyzyxd_E3H2.9kgBMjPhhrr6E7K5xmOKOmEtE;
+        _cfuvid=4VJAkLqZi7.pNBhpUfBnNR2ArOiD7__tEQPb.c8LKLs-1766259554710-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"regex":"database|db|sql|table|user"}'
+            name: load_tools
+          id: call_9NYLCxFwDMsvumrObZAhSGHS
+          type: function
+      - content: '["list_database_tables","fetch_user_data"]'
+        role: tool
+        tool_call_id: call_9NYLCxFwDMsvumrObZAhSGHS
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: list_database_tables
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: fetch_user_data
+          parameters:
+            additionalProperties: false
+            properties:
+              user_id:
+                type: integer
+            required:
+            - user_id
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1309'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '595'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: list_database_tables
+            id: call_AND0NX4K1I5mDzxOlEYsIDuh
+            type: function
+          - function:
+              arguments: '{"user_id": 42}'
+              name: fetch_user_data
+            id: call_iGOV6JaA8UA2rXEnFH5ypETA
+            type: function
+      created: 1766259555
+      id: chatcmpl-Cox5HdhcCP4jUsRe62p0I8BitbqoO
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_92419d3fe9
+      usage:
+        completion_tokens: 44
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 164
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 208
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1875'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=HXgJg5XBduINJvODi2fsuE4WamKjWbgroyuM6sPA6FQ-1766259554-1.0.1.1-tG3ZYUjmITdov89ftBwBZl3GPCwLWRUDtZeG4UpzDZ3DyBbWiW3uAjZG4vt1QEy1ZndUoqYyzyxd_E3H2.9kgBMjPhhrr6E7K5xmOKOmEtE;
+        _cfuvid=4VJAkLqZi7.pNBhpUfBnNR2ArOiD7__tEQPb.c8LKLs-1766259554710-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"regex":"database|db|sql|table|user"}'
+            name: load_tools
+          id: call_9NYLCxFwDMsvumrObZAhSGHS
+          type: function
+      - content: '["list_database_tables","fetch_user_data"]'
+        role: tool
+        tool_call_id: call_9NYLCxFwDMsvumrObZAhSGHS
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: list_database_tables
+          id: call_AND0NX4K1I5mDzxOlEYsIDuh
+          type: function
+        - function:
+            arguments: '{"user_id": 42}'
+            name: fetch_user_data
+          id: call_iGOV6JaA8UA2rXEnFH5ypETA
+          type: function
+      - content: '["users","orders","products","reviews"]'
+        role: tool
+        tool_call_id: call_AND0NX4K1I5mDzxOlEYsIDuh
+      - content: '{"id":42,"name":"John Doe","email":"john@example.com"}'
+        role: tool
+        tool_call_id: call_iGOV6JaA8UA2rXEnFH5ypETA
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: list_database_tables
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: fetch_user_data
+          parameters:
+            additionalProperties: false
+            properties:
+              user_id:
+                type: integer
+            required:
+            - user_id
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '1250'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: |-
+            Here are the results:
+
+            1. Database Tables:
+               - users
+               - orders
+               - products
+               - reviews
+
+            2. User 42 Data:
+               - ID: 42
+               - Name: John Doe
+               - Email: john@example.com
+
+            If you need more details about any table or user, let me know!
+          refusal: null
+          role: assistant
+      created: 1766259555
+      id: chatcmpl-Cox5HxshW1RFL8MjMzxG6kLIavLbE
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_92419d3fe9
+      usage:
+        completion_tokens: 71
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 253
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 324
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '625'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1100'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '419'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"regex":"database|sql|table|user"}'
+              name: load_tools
+            id: call_9RAN1SyxlvxkoLFhztHB4BEa
+            type: function
+      created: 1766259580
+      id: chatcmpl-Cox5gnsKOrkT4e8glAs38zYVojOt4
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_1a2c4a5ede
+      usage:
+        completion_tokens: 20
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 100
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 120
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1314'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=7MsSIV1SRHkNFMpeD5.yQqsGCqO6GpYA54x1HBDfzrw-1766259580-1.0.1.1-9cFDRD9JHM1HsYzUVKHdDFSM6uu5setz640cMtrhmAa0emwdwjvTl2DipPNsEQKC.eam.FBAlkW9ezzJpjYFCM6ZERSU5j30XfvatlIzo5Y;
+        _cfuvid=Z1atjG.m6bg2u9WA6XpWGf62OQ0dWIr98unPxh3IaZ0-1766259580810-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"regex":"database|sql|table|user"}'
+            name: load_tools
+          id: call_9RAN1SyxlvxkoLFhztHB4BEa
+          type: function
+      - content: '["list_database_tables","fetch_user_data"]'
+        role: tool
+        tool_call_id: call_9RAN1SyxlvxkoLFhztHB4BEa
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: list_database_tables
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: fetch_user_data
+          parameters:
+            additionalProperties: false
+            properties:
+              user_id:
+                type: integer
+            required:
+            - user_id
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1309'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '451'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: list_database_tables
+            id: call_mpMgQALr7k1scdZvnBm5gjFl
+            type: function
+          - function:
+              arguments: '{"user_id": 42}'
+              name: fetch_user_data
+            id: call_zhOTeSDPaYQIPzHwik6psbkV
+            type: function
+      created: 1766259581
+      id: chatcmpl-Cox5hMG881rr4RcatZ2EzF3bM5lol
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_92419d3fe9
+      usage:
+        completion_tokens: 44
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 162
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 206
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1872'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=7MsSIV1SRHkNFMpeD5.yQqsGCqO6GpYA54x1HBDfzrw-1766259580-1.0.1.1-9cFDRD9JHM1HsYzUVKHdDFSM6uu5setz640cMtrhmAa0emwdwjvTl2DipPNsEQKC.eam.FBAlkW9ezzJpjYFCM6ZERSU5j30XfvatlIzo5Y;
+        _cfuvid=Z1atjG.m6bg2u9WA6XpWGf62OQ0dWIr98unPxh3IaZ0-1766259580810-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you list the database tables and then fetch user 42?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"regex":"database|sql|table|user"}'
+            name: load_tools
+          id: call_9RAN1SyxlvxkoLFhztHB4BEa
+          type: function
+      - content: '["list_database_tables","fetch_user_data"]'
+        role: tool
+        tool_call_id: call_9RAN1SyxlvxkoLFhztHB4BEa
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: list_database_tables
+          id: call_mpMgQALr7k1scdZvnBm5gjFl
+          type: function
+        - function:
+            arguments: '{"user_id": 42}'
+            name: fetch_user_data
+          id: call_zhOTeSDPaYQIPzHwik6psbkV
+          type: function
+      - content: '["users","orders","products","reviews"]'
+        role: tool
+        tool_call_id: call_mpMgQALr7k1scdZvnBm5gjFl
+      - content: '{"id":42,"name":"John Doe","email":"john@example.com"}'
+        role: tool
+        tool_call_id: call_zhOTeSDPaYQIPzHwik6psbkV
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |
+            Search and load additional tools to make them available to the agent.
+
+            DO call this to find and load more tools needed for a task.
+            NEVER ask the user if you should try loading tools, just try.
+          name: load_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              regex:
+                description: Regex pattern to search for relevant tools
+                type: string
+            required:
+            - regex
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: list_database_tables
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: fetch_user_data
+          parameters:
+            additionalProperties: false
+            properties:
+              user_id:
+                type: integer
+            required:
+            - user_id
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1024'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-4z7tjjxbejohlqyhcx6t1sa8
+      openai-processing-ms:
+      - '769'
+      openai-project:
+      - proj_gPKlfU5nsnxFiyoFmTOeGzw0
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: |-
+            Here are the results:
+
+            - The database tables are: users, orders, products, and reviews.
+            - User 42:
+              - ID: 42
+              - Name: John Doe
+              - Email: john@example.com
+
+            If you need more details from any table, let me know!
+          refusal: null
+          role: assistant
+      created: 1766259582
+      id: chatcmpl-Cox5iaa5PoeKd9TTDKZgIAPs1GeYv
+      model: gpt-4.1-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_92419d3fe9
+      usage:
+        completion_tokens: 61
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 251
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 312
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -162,6 +162,67 @@ print(result.output)
 
 Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
 
+## Deferred Tool Loading {#deferred-tool-loading}
+
+When you expose many tools to an agent, tool schemas consume valuable context space. Even tools that do not end up used in a particular run can potentially distract the model. Deferred tool loading lets you mark some of the tools with `defer_loading=True` to avoid loading them into context until the model explicitly searches for them and finds them.
+
+### Basic Usage
+
+You can mark individual tools for deferred loading using the `defer_loading` parameter on the [`@agent.tool`][pydantic_ai.agent.Agent.tool] or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorators:
+
+```python {title="deferred_tools_basic.py"}
+from pydantic_ai import Agent
+
+agent = Agent('test')
+
+@agent.tool_plain
+def get_current_time() -> datetime:
+    return datetime.now()
+
+@agent.tool_plain(defer_loading=True)
+def specialized_database_tool(table: str, query: str) -> str:
+    """Search a specialized database table."""
+    return f'Database result from {table}: {query}'
+
+result1 = await await agent.run('What time is it now?')
+print(result1.output)
+
+result2 = await await agent.run('Query the database to count records in the USERS table.')
+print(result2.output)
+```
+
+_(This example is complete, it can be run "as is")_
+
+In this example, `specialized_database_tool` is not initially loaded for the first run. When the model looks for tools to answer the question about databases, it will issue a search that should find and load the `specialized_database_tool` and then execute it.
+
+### Setting Default for All Tools
+
+You can set `defer_loading=True` as the default for all tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]:
+
+```python {title="deferred_function_toolset.py"}
+
+# All tools in this toolset will have defer_loading=True by default
+FunctionToolset(
+    tools=[tool_one, tool_two, tool_three],
+    defer_loading=True,
+)
+```
+
+You can opt individual tools out by setting marking them as `defer_loading=False`.
+
+### How Tool Search Works
+
+When any tools have `defer_loading=True`, a special `load_tools` function becomes available to the model. The model can call this function with a search query, and Pydantic AI will:
+
+1. Search tool names and descriptions for matches
+2. Activate matching tools
+3. Return a list of activated tool names
+4. Make those tools available for subsequent calls in the same run
+
+The model can search multiple times during a run, activating different tools as needed. Once activated, tools remain available for the rest of the run.
+
+Currently only regex search over tool names and tool descriptions is supported.
+
 ## Dynamic Tools {#tool-prepare}
 
 Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to

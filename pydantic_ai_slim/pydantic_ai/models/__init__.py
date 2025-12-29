@@ -50,6 +50,7 @@ from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
+from ..toolsets._searchable import is_active
 from ..usage import RequestUsage
 
 KnownModelName = TypeAliasType(
@@ -735,6 +736,11 @@ class Model(ABC):
                 raise UserError(
                     f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
                 )
+
+        # Filter out defer_loading=True definitions that have not yet been activated by tool search.
+        active_function_tools = [t for t in params.function_tools if is_active(t)]
+        active_output_tools = [t for t in params.output_tools if is_active(t)]
+        params = replace(params, function_tools=active_function_tools, output_tools=active_output_tools)
 
         return model_settings, params
 
