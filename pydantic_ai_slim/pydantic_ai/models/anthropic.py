@@ -304,6 +304,266 @@ class AnthropicModel(Model):
         model_request_parameters = ModelRequestParameters()
         return await self._map_message(messages, model_request_parameters, settings)
 
+    def from_anthropic_messages(
+        self,
+        anthropic_messages: list[BetaMessageParam],
+        *,
+        system_prompt: str | list[BetaTextBlockParam] | None = None,
+        run_id: str | None = None,
+    ) -> list[ModelMessage]:
+        """Convert Anthropic SDK messages to PydanticAI message format.
+
+        This is the inverse of [`to_anthropic_messages`][pydantic_ai.models.anthropic.AnthropicModel.to_anthropic_messages]
+        and allows importing existing Anthropic conversations into PydanticAI's vendor-agnostic format.
+
+        Args:
+            anthropic_messages: List of Anthropic BetaMessageParam objects.
+            system_prompt: Optional system prompt (str or list of text blocks).
+            run_id: Optional run ID to assign to all messages. If None, generates UUID.
+
+        Returns:
+            List of PydanticAI ModelMessage objects (ModelRequest/ModelResponse).
+
+        Note:
+            Some information is lost or generated during conversion:
+
+            - `cache_control`: Dropped (no PydanticAI equivalent, re-add via model settings)
+            - `timestamps`: Generated using current time
+            - `provider_name`: Set to 'anthropic' for provider-specific parts
+        """
+        from uuid import uuid4
+
+        run_id = run_id or str(uuid4())
+        result: list[ModelMessage] = []
+
+        # Handle system prompt - inject into first ModelRequest
+        system_parts: list[SystemPromptPart] = self._parse_system_prompt(system_prompt)
+
+        for msg in anthropic_messages:
+            role = msg['role']
+            content = msg['content']
+
+            if role == 'user':
+                parts, system_parts = self._parse_user_message(content, system_parts)
+                if parts:
+                    result.append(ModelRequest(parts=parts, run_id=run_id))
+
+            elif role == 'assistant':
+                response_parts = self._parse_assistant_message(content)
+                if response_parts:
+                    result.append(
+                        ModelResponse(
+                            parts=response_parts, provider_name=self.system, run_id=run_id, model_name=self._model_name
+                        )
+                    )
+
+        # If only system prompt was provided with no messages, create a ModelRequest for it
+        if system_parts and not result:
+            result.append(ModelRequest(parts=system_parts, run_id=run_id))
+
+        return result
+
+    @staticmethod
+    def _parse_system_prompt(system_prompt: str | list[BetaTextBlockParam] | None) -> list[SystemPromptPart]:
+        """Parse system prompt into SystemPromptPart list."""
+        if not system_prompt:
+            return []
+        if isinstance(system_prompt, str):
+            return [SystemPromptPart(content=system_prompt)]
+        # List of text blocks - concatenate their text
+        combined_text = '\n\n'.join(block['text'] for block in system_prompt)
+        return [SystemPromptPart(content=combined_text)]
+
+    def _parse_user_message(
+        self,
+        content: str | list[BetaContentBlockParam],
+        system_parts: list[SystemPromptPart],
+    ) -> tuple[list[SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart], list[SystemPromptPart]]:
+        """Parse user message content into request parts."""
+        parts: list[SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart] = []
+
+        # Inject system prompt into first user message
+        if system_parts:
+            parts.extend(system_parts)
+            system_parts = []
+
+        if isinstance(content, str):
+            parts.append(UserPromptPart(content=content))
+            return parts, system_parts
+
+        user_content: list[str | BinaryContent | ImageUrl | DocumentUrl] = []
+        for block in content:
+            block_type = block.get('type')
+
+            if block_type == 'text':
+                if text := block.get('text', ''):
+                    user_content.append(text)
+            elif block_type == 'image':
+                if img := self._parse_image_block(block):
+                    user_content.append(img)
+            elif block_type == 'document':
+                if doc := self._parse_document_block(block):
+                    user_content.append(doc)
+            elif block_type == 'tool_result':
+                parts.append(self._parse_tool_result_block(block))
+
+        # Add collected user content as a single UserPromptPart
+        if user_content:
+            if len(user_content) == 1 and isinstance(user_content[0], str):
+                parts.append(UserPromptPart(content=user_content[0]))
+            else:
+                parts.append(UserPromptPart(content=user_content))
+
+        return parts, system_parts
+
+    @staticmethod
+    def _parse_image_block(block: dict[str, Any]) -> BinaryContent | ImageUrl | None:
+        """Parse image block to BinaryContent or ImageUrl."""
+        import base64
+
+        source = block.get('source', {})
+        source_type = source.get('type')
+        if source_type == 'base64':
+            data = source.get('data', '')
+            if hasattr(data, 'read'):
+                data = data.read()
+            if isinstance(data, str):
+                data = base64.b64decode(data)
+            return BinaryContent(data=data, media_type=source.get('media_type', 'image/png'))
+        elif source_type == 'url':
+            return ImageUrl(url=source.get('url', ''))
+        return None
+
+    @staticmethod
+    def _parse_document_block(block: dict[str, Any]) -> BinaryContent | DocumentUrl | None:
+        """Parse document block to BinaryContent or DocumentUrl."""
+        import base64
+
+        source = block.get('source', {})
+        source_type = source.get('type')
+        if source_type == 'base64':
+            data = source.get('data', '')
+            if hasattr(data, 'read'):
+                data = data.read()
+            if isinstance(data, str):
+                data = base64.b64decode(data)
+            return BinaryContent(data=data, media_type=source.get('media_type', 'application/pdf'))
+        elif source_type == 'url':
+            return DocumentUrl(url=source.get('url', ''))
+        elif source_type == 'text':
+            text_data = source.get('data', '')
+            return BinaryContent(data=text_data.encode('utf-8'), media_type=source.get('media_type', 'text/plain'))
+        return None
+
+    @staticmethod
+    def _parse_tool_result_block(block: dict[str, Any]) -> ToolReturnPart | RetryPromptPart:
+        """Parse tool result block to ToolReturnPart or RetryPromptPart."""
+        tool_use_id = block.get('tool_use_id', '')
+        is_error = block.get('is_error', False)
+        tool_content = block.get('content', '')
+
+        # Extract text content from tool result if it's a list of blocks
+        if isinstance(tool_content, list):
+            tool_content = ' '.join(b.get('text', '') for b in tool_content if b.get('type') == 'text')
+
+        if is_error:
+            return RetryPromptPart(content=tool_content, tool_call_id=tool_use_id, tool_name='unknown')
+        return ToolReturnPart(tool_name='unknown', content=tool_content, tool_call_id=tool_use_id)
+
+    def _parse_assistant_message(self, content: str | list[Any]) -> list[ModelResponsePart]:
+        """Parse assistant message content into response parts."""
+        if isinstance(content, str):
+            return [TextPart(content=content)]
+
+        response_parts: list[ModelResponsePart] = []
+        for block in content:
+            if part := self._parse_assistant_block(block):
+                response_parts.append(part)
+        return response_parts
+
+    def _parse_assistant_block(self, block: dict[str, Any]) -> ModelResponsePart | None:
+        """Parse a single assistant content block."""
+        block_type = block.get('type')
+
+        if block_type == 'text':
+            if text := block.get('text', ''):
+                return TextPart(content=text)
+
+        elif block_type == 'tool_use':
+            return ToolCallPart(
+                tool_name=block.get('name', ''),
+                args=block.get('input', {}),
+                tool_call_id=block.get('id', ''),
+            )
+
+        elif block_type == 'thinking':
+            return ThinkingPart(
+                content=block.get('thinking', ''),
+                signature=block.get('signature'),
+                provider_name=self.system,
+            )
+
+        elif block_type == 'redacted_thinking':
+            return ThinkingPart(
+                id='redacted_thinking',
+                content='',
+                signature=block.get('data', ''),
+                provider_name=self.system,
+            )
+
+        elif block_type == 'server_tool_use':
+            return BuiltinToolCallPart(
+                tool_name=block.get('name', ''),
+                args=block.get('input', {}),
+                tool_call_id=block.get('id', ''),
+                provider_name=self.system,
+            )
+
+        elif block_type == 'mcp_tool_use':
+            server_name = block.get('server_name', '')
+            tool_name = block.get('name', '')
+            return BuiltinToolCallPart(
+                tool_name=f'{MCPServerTool.kind}:{server_name}',
+                args={'tool_name': tool_name, 'tool_args': block.get('input', {})},
+                tool_call_id=block.get('id', ''),
+                provider_name=self.system,
+            )
+
+        elif block_type == 'web_search_tool_result':
+            return BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                content=block.get('content', []),
+                tool_call_id=block.get('tool_use_id', ''),
+                provider_name=self.system,
+            )
+
+        elif block_type == 'code_execution_tool_result':
+            return BuiltinToolReturnPart(
+                tool_name=CodeExecutionTool.kind,
+                content=block.get('content', {}),
+                tool_call_id=block.get('tool_use_id', ''),
+                provider_name=self.system,
+            )
+
+        elif block_type == 'web_fetch_tool_result':
+            return BuiltinToolReturnPart(
+                tool_name=WebFetchTool.kind,
+                content=block.get('content', {}),
+                tool_call_id=block.get('tool_use_id', ''),
+                provider_name=self.system,
+            )
+
+        elif block_type == 'mcp_tool_result':
+            server_name = block.get('server_name', '')
+            return BuiltinToolReturnPart(
+                tool_name=f'{MCPServerTool.kind}:{server_name}',
+                content=dict(block),
+                tool_call_id=block.get('tool_use_id', ''),
+                provider_name=self.system,
+            )
+
+        return None
+
     async def request(
         self,
         messages: list[ModelMessage],

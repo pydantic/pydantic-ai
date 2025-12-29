@@ -160,6 +160,408 @@ async def test_to_anthropic_messages():
     assert anthropic_messages[2]['role'] == 'user'
 
 
+def test_from_anthropic_messages_comprehensive():
+    """Comprehensive test for from_anthropic_messages covering all block types and edge cases.
+
+    This test validates the reverse conversion from Anthropic SDK format to PydanticAI format,
+    ensuring roundtrip fidelity for all supported content types.
+    """
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
+    fixed_run_id = 'test-run-id-123'
+
+    # Build comprehensive Anthropic messages covering all supported block types
+    anthropic_messages: list[dict[str, Any]] = [
+        # 1. User message with text content (simple string shorthand)
+        {'role': 'user', 'content': 'Hello, this is a simple text message'},
+        # 2. Assistant response with text
+        {
+            'role': 'assistant',
+            'content': [{'type': 'text', 'text': 'Hello! How can I help you today?'}],
+        },
+        # 3. User message with mixed content: text + base64 image + URL image
+        {
+            'role': 'user',
+            'content': [
+                {'type': 'text', 'text': 'Analyze these images:'},
+                {
+                    'type': 'image',
+                    'source': {
+                        'type': 'base64',
+                        'media_type': 'image/png',
+                        'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',  # 1x1 red PNG
+                    },
+                },
+                {'type': 'image', 'source': {'type': 'url', 'url': 'https://example.com/cat.jpg'}},
+            ],
+        },
+        # 4. Assistant response with tool call
+        {
+            'role': 'assistant',
+            'content': [
+                {'type': 'text', 'text': 'Let me search for that.'},
+                {
+                    'type': 'tool_use',
+                    'id': 'tool_call_001',
+                    'name': 'search_database',
+                    'input': {'query': 'important data', 'limit': 10},
+                },
+            ],
+        },
+        # 5. User message with tool result (success)
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'tool_result',
+                    'tool_use_id': 'tool_call_001',
+                    'content': 'Found 5 matching records',
+                    'is_error': False,
+                },
+            ],
+        },
+        # 6. Assistant response with thinking block (extended thinking)
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'type': 'thinking',
+                    'thinking': 'I need to analyze the search results carefully...',
+                    'signature': 'sig_abc123',
+                },
+                {'type': 'text', 'text': 'Based on the results, here is my analysis.'},
+            ],
+        },
+        # 7. User message with document (PDF via URL)
+        {
+            'role': 'user',
+            'content': [
+                {'type': 'text', 'text': 'Please review this document:'},
+                {'type': 'document', 'source': {'type': 'url', 'url': 'https://example.com/report.pdf'}},
+            ],
+        },
+        # 8. Assistant response with redacted thinking block
+        {
+            'role': 'assistant',
+            'content': [
+                {'type': 'redacted_thinking', 'data': 'encrypted_signature_xyz'},
+                {'type': 'text', 'text': 'I have processed your request.'},
+            ],
+        },
+        # 9. User message with tool result (error case -> RetryPromptPart)
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'tool_result',
+                    'tool_use_id': 'tool_call_002',
+                    'content': 'Connection timeout: database unreachable',
+                    'is_error': True,
+                },
+            ],
+        },
+        # 10. Assistant response with server tool use (web_search builtin)
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'type': 'server_tool_use',
+                    'id': 'server_tool_001',
+                    'name': 'web_search',
+                    'input': {'query': 'latest AI news'},
+                },
+            ],
+        },
+        # 11. User message with plain text document (text/plain type)
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'document',
+                    'source': {'type': 'text', 'media_type': 'text/plain', 'data': 'This is plain text content.'},
+                },
+            ],
+        },
+        # 12. Assistant with MCP tool use
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'type': 'mcp_tool_use',
+                    'id': 'mcp_tool_001',
+                    'server_name': 'my_mcp_server',
+                    'name': 'fetch_data',
+                    'input': {'resource_id': '12345'},
+                },
+            ],
+        },
+        # 13. Assistant with builtin tool results (web_search_tool_result)
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'type': 'web_search_tool_result',
+                    'tool_use_id': 'server_tool_001',
+                    'content': [{'type': 'web_search_result', 'title': 'AI News', 'url': 'https://example.com/ai'}],
+                },
+            ],
+        },
+        # 14. User message with tool result containing list of text blocks
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'tool_result',
+                    'tool_use_id': 'tool_call_003',
+                    'content': [{'type': 'text', 'text': 'First part.'}, {'type': 'text', 'text': 'Second part.'}],
+                },
+            ],
+        },
+    ]
+
+    # System prompt as list of text blocks (tests concatenation)
+    system_prompt_blocks: list[dict[str, Any]] = [
+        {'type': 'text', 'text': 'You are a helpful assistant.'},
+        {'type': 'text', 'text': 'Always be concise.'},
+    ]
+
+    # Perform the conversion
+    result = m.from_anthropic_messages(
+        cast(list[Any], anthropic_messages),
+        system_prompt=cast(list[Any], system_prompt_blocks),
+        run_id=fixed_run_id,
+    )
+
+    # Verify structure and content using snapshot
+    assert len(result) == snapshot(14)
+
+    # Extract parts for detailed verification (strip timestamps for deterministic comparison)
+    def extract_parts(msg: ModelMessage) -> list[dict[str, Any]]:
+        """Extract part info without volatile fields like timestamp."""
+        if isinstance(msg, ModelRequest):
+            return [
+                {
+                    'kind': p.part_kind,
+                    **({'content': p.content} if hasattr(p, 'content') else {}),
+                    **({'tool_name': p.tool_name} if hasattr(p, 'tool_name') else {}),
+                    **({'tool_call_id': p.tool_call_id} if hasattr(p, 'tool_call_id') else {}),
+                }
+                for p in msg.parts
+            ]
+        else:
+            return [
+                {
+                    'kind': p.part_kind,
+                    **({'content': p.content} if hasattr(p, 'content') else {}),
+                    **({'tool_name': p.tool_name} if hasattr(p, 'tool_name') else {}),
+                    **({'tool_call_id': p.tool_call_id} if hasattr(p, 'tool_call_id') else {}),
+                    **({'signature': p.signature} if hasattr(p, 'signature') else {}),
+                    **({'args': p.args} if hasattr(p, 'args') else {}),
+                    **({'id': p.id} if hasattr(p, 'id') and p.id else {}),
+                }
+                for p in msg.parts
+            ]
+
+    # Message 0: First user message should have system prompt injected
+    assert result[0].run_id == fixed_run_id
+    assert extract_parts(result[0]) == snapshot(
+        [
+            {'kind': 'system-prompt', 'content': 'You are a helpful assistant.\n\nAlways be concise.'},
+            {'kind': 'user-prompt', 'content': 'Hello, this is a simple text message'},
+        ]
+    )
+
+    # Message 1: Assistant text response
+    assert extract_parts(result[1]) == snapshot([{'kind': 'text', 'content': 'Hello! How can I help you today?'}])
+
+    # Message 2: User with mixed content (text + images)
+    msg2_parts = extract_parts(result[2])
+    assert msg2_parts[0]['kind'] == 'user-prompt'
+    # Content should be a list with text string, BinaryContent, and ImageUrl
+    assert isinstance(result[2], ModelRequest)
+    user_part = result[2].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    assert len(user_part.content) == 3
+    assert user_part.content[0] == 'Analyze these images:'
+    assert isinstance(user_part.content[1], BinaryContent)
+    assert user_part.content[1].media_type == 'image/png'
+    assert isinstance(user_part.content[2], ImageUrl)
+    assert user_part.content[2].url == 'https://example.com/cat.jpg'
+
+    # Message 3: Assistant with text + tool call
+    assert extract_parts(result[3]) == snapshot(
+        [
+            {'kind': 'text', 'content': 'Let me search for that.'},
+            {
+                'kind': 'tool-call',
+                'tool_name': 'search_database',
+                'tool_call_id': 'tool_call_001',
+                'args': {'query': 'important data', 'limit': 10},
+            },
+        ]
+    )
+
+    # Message 4: User with successful tool result
+    assert extract_parts(result[4]) == snapshot(
+        [
+            {
+                'kind': 'tool-return',
+                'content': 'Found 5 matching records',
+                'tool_name': 'unknown',
+                'tool_call_id': 'tool_call_001',
+            }
+        ]
+    )
+
+    # Message 5: Assistant with thinking block (preserves signature)
+    assert extract_parts(result[5]) == snapshot(
+        [
+            {
+                'kind': 'thinking',
+                'content': 'I need to analyze the search results carefully...',
+                'signature': 'sig_abc123',
+            },
+            {'kind': 'text', 'content': 'Based on the results, here is my analysis.'},
+        ]
+    )
+
+    # Message 6: User with document URL
+    assert isinstance(result[6], ModelRequest)
+    doc_user_part = result[6].parts[0]
+    assert isinstance(doc_user_part, UserPromptPart)
+    assert isinstance(doc_user_part.content, list)
+    assert doc_user_part.content[0] == 'Please review this document:'
+    assert isinstance(doc_user_part.content[1], DocumentUrl)
+    assert doc_user_part.content[1].url == 'https://example.com/report.pdf'
+
+    # Message 7: Assistant with redacted thinking (id='redacted_thinking', signature=data)
+    assert extract_parts(result[7]) == snapshot(
+        [
+            {'kind': 'thinking', 'content': '', 'signature': 'encrypted_signature_xyz', 'id': 'redacted_thinking'},
+            {'kind': 'text', 'content': 'I have processed your request.'},
+        ]
+    )
+
+    # Message 8: User with error tool result -> RetryPromptPart
+    assert extract_parts(result[8]) == snapshot(
+        [
+            {
+                'kind': 'retry-prompt',
+                'content': 'Connection timeout: database unreachable',
+                'tool_name': 'unknown',
+                'tool_call_id': 'tool_call_002',
+            }
+        ]
+    )
+
+    # Message 9: Assistant with server_tool_use (builtin)
+    assert extract_parts(result[9]) == snapshot(
+        [
+            {
+                'kind': 'builtin-tool-call',
+                'tool_name': 'web_search',
+                'tool_call_id': 'server_tool_001',
+                'args': {'query': 'latest AI news'},
+            }
+        ]
+    )
+
+    # Message 10: User with plain text document
+    assert isinstance(result[10], ModelRequest)
+    text_doc_part = result[10].parts[0]
+    assert isinstance(text_doc_part, UserPromptPart)
+    assert isinstance(text_doc_part.content, list)
+    assert isinstance(text_doc_part.content[0], BinaryContent)
+    assert text_doc_part.content[0].media_type == 'text/plain'
+    assert text_doc_part.content[0].data == b'This is plain text content.'
+
+    # Message 11: Assistant with MCP tool use
+    assert extract_parts(result[11]) == snapshot(
+        [
+            {
+                'kind': 'builtin-tool-call',
+                'tool_name': 'mcp_server:my_mcp_server',
+                'tool_call_id': 'mcp_tool_001',
+                'args': {'tool_name': 'fetch_data', 'tool_args': {'resource_id': '12345'}},
+            }
+        ]
+    )
+
+    # Message 12: Assistant with web_search_tool_result (builtin return)
+    assert extract_parts(result[12]) == snapshot(
+        [
+            {
+                'kind': 'builtin-tool-return',
+                'tool_name': 'web_search',
+                'tool_call_id': 'server_tool_001',
+                'content': [{'type': 'web_search_result', 'title': 'AI News', 'url': 'https://example.com/ai'}],
+            }
+        ]
+    )
+
+    # Message 13: User with tool result containing list of text blocks (concatenated)
+    assert extract_parts(result[13]) == snapshot(
+        [
+            {
+                'kind': 'tool-return',
+                'content': 'First part. Second part.',
+                'tool_name': 'unknown',
+                'tool_call_id': 'tool_call_003',
+            }
+        ]
+    )
+
+    # Verify all messages have correct run_id
+    for msg in result:
+        assert msg.run_id == fixed_run_id
+
+    # Verify provider_name is set correctly on ModelResponse objects
+    for msg in result:
+        if isinstance(msg, ModelResponse):
+            assert msg.provider_name == 'anthropic'
+            assert msg.model_name == 'claude-haiku-4-5'
+
+
+def test_from_anthropic_messages_edge_cases():
+    """Test edge cases for from_anthropic_messages."""
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
+
+    # Edge case 1: Empty messages list with system prompt only
+    result = m.from_anthropic_messages([], system_prompt='You are helpful.', run_id='run-1')
+    assert len(result) == 1
+    assert isinstance(result[0], ModelRequest)
+    assert result[0].parts[0].part_kind == 'system-prompt'
+
+    # Edge case 2: Empty messages list without system prompt
+    result = m.from_anthropic_messages([], run_id='run-2')
+    assert result == []
+
+    # Edge case 3: String content shorthand for assistant message
+    result = m.from_anthropic_messages([{'role': 'assistant', 'content': 'Simple string response'}], run_id='run-3')
+    assert len(result) == 1
+    assert isinstance(result[0], ModelResponse)
+    assert result[0].parts[0].content == 'Simple string response'
+
+    # Edge case 4: System prompt as simple string (not list)
+    result = m.from_anthropic_messages([{'role': 'user', 'content': 'Hi'}], system_prompt='Be helpful.', run_id='run-4')
+    assert len(result) == 1
+    assert result[0].parts[0].part_kind == 'system-prompt'
+    assert result[0].parts[0].content == 'Be helpful.'
+
+    # Edge case 5: Empty text blocks are skipped
+    result = m.from_anthropic_messages(
+        [{'role': 'assistant', 'content': [{'type': 'text', 'text': ''}, {'type': 'text', 'text': 'Valid'}]}],
+        run_id='run-5',
+    )
+    assert len(result[0].parts) == 1
+    assert result[0].parts[0].content == 'Valid'
+
+    # Edge case 6: Run ID is auto-generated when not provided
+    result = m.from_anthropic_messages([{'role': 'user', 'content': 'Test'}])
+    assert result[0].run_id is not None
+    assert len(result[0].run_id) == 36  # UUID format
+
+
 @dataclass
 class MockAnthropic:
     messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage] | None = None
