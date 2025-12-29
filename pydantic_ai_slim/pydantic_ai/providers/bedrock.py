@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -47,11 +48,18 @@ class BedrockModelProfile(ModelProfile):
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
     profile = amazon_model_profile(model_name)
+    assert profile is not None
+    profile.supported_builtin_tools = frozenset()
     if 'nova' in model_name:
-        return BedrockModelProfile(
+        profile = BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_prompt_caching=True,
         ).update(profile)
+
+        if 'nova-2' in model_name:
+            profile.supported_builtin_tools = frozenset({CodeExecutionTool})
+            # TODO: Add support for web grounding tool
+
     return profile
 
 
@@ -89,14 +97,20 @@ class BedrockProvider(Provider[BaseClient]):
                 bedrock_send_back_thinking_parts=True,
                 bedrock_supports_prompt_caching=True,
                 bedrock_supports_tool_caching=True,
-            ).update(anthropic_model_profile(model_name)),
-            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
-                mistral_model_profile(model_name)
-            ),
+            )
+            .update(anthropic_model_profile(model_name))
+            .update(ModelProfile(supported_builtin_tools=frozenset())),
+            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json')
+            .update(mistral_model_profile(model_name))
+            .update(ModelProfile(supported_builtin_tools=frozenset())),
             'cohere': cohere_model_profile,
             'amazon': bedrock_amazon_model_profile,
-            'meta': meta_model_profile,
-            'deepseek': bedrock_deepseek_model_profile,
+            'meta': lambda model_name: BedrockModelProfile()
+            .update(meta_model_profile(model_name))
+            .update(ModelProfile(supported_builtin_tools=frozenset())),
+            'deepseek': lambda model_name: BedrockModelProfile()
+            .update(bedrock_deepseek_model_profile(model_name))
+            .update(ModelProfile(supported_builtin_tools=frozenset())),
         }
 
         # Split the model name into parts

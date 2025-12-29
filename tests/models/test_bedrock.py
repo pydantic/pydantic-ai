@@ -10,6 +10,8 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FinalResultEvent,
@@ -35,6 +37,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
+from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestParameters
@@ -59,6 +62,12 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 
@@ -2302,5 +2311,379 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
     assert bedrock_messages == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},
+        ]
+    )
+
+
+async def test_bedrock_map_tool_config_with_only_builtin_code_execution_tool(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(builtin_tools=[CodeExecutionTool()])
+    tool_config = model._map_tool_config(params, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {'systemTool': {'name': 'nova_code_interpreter'}},
+            ],
+            'toolChoice': {'auto': {}},
+        }
+    )
+
+
+async def test_bedrock_map_tool_config_with_unsupported_builtin_tool(bedrock_provider: BedrockProvider):
+    from pydantic_ai.builtin_tools import MCPServerTool
+
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(builtin_tools=[MCPServerTool(id='test', url='http://test')])
+
+    with pytest.raises(
+        UserError,
+        match='`MCPServerTool` is not supported by `BedrockConverseModel`. If it should be, please file an issue.',
+    ):
+        model._map_tool_config(params, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+
+async def test_bedrock_map_tool_config_with_builtin_code_execution_and_structured_output_tool(
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='This is my tool',
+        parameters_json_schema={'type': 'object', 'properties': {'spam': {'type': 'number'}}},
+    )
+    output_tool = ToolDefinition(
+        name='output_tool',
+        description='This is the output tool',
+        parameters_json_schema={'type': 'object', 'properties': {'result': {'type': 'string'}}},
+    )
+    params = ModelRequestParameters(
+        output_mode='tool',
+        function_tools=[my_tool],
+        output_tools=[output_tool],
+        allow_text_output=False,
+        builtin_tools=[CodeExecutionTool()],
+    )
+    tool_config = model._map_tool_config(params, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'my_tool',
+                        'description': 'This is my tool',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {'spam': {'type': 'number'}}}},
+                    }
+                },
+                {
+                    'toolSpec': {
+                        'name': 'output_tool',
+                        'description': 'This is the output tool',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {'result': {'type': 'string'}}}},
+                    }
+                },
+                {'systemTool': {'name': 'nova_code_interpreter'}},
+            ],
+            'toolChoice': {'any': {}},
+        }
+    )
+
+
+async def test_bedrock_map_messages_builtin_tool_provider_filtering():
+    client = _StubBedrockClient(ClientError({}, ''))
+    provider = _StubBedrockProvider(client)
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                # 1. BuiltinToolCallPart for the system provider (should be included)
+                BuiltinToolCallPart(
+                    provider_name='bedrock-stub',
+                    tool_name=CodeExecutionTool.kind,
+                    args={'code': 'print("hello")'},
+                    tool_call_id='call_1',
+                ),
+                # 2. BuiltinToolReturnPart for the system provider with empty provider_details (should be included)
+                BuiltinToolReturnPart(
+                    provider_name='bedrock-stub',
+                    tool_name=CodeExecutionTool.kind,
+                    content=[{'text': 'hello\n'}],
+                    tool_call_id='call_1',
+                    provider_details={},
+                ),
+                # 3. BuiltinToolCallPart for the other provider (should NOT be included)
+                BuiltinToolCallPart(
+                    provider_name='anthropic',
+                    tool_name=CodeExecutionTool.kind,
+                    args={'code': 'print("other")'},
+                    tool_call_id='call_2',
+                ),
+                # 4. BuiltinToolReturnPart for the other provider (should NOT be included)
+                BuiltinToolReturnPart(
+                    provider_name='anthropic',
+                    tool_name=CodeExecutionTool.kind,
+                    content=[{'text': 'other\n'}],
+                    tool_call_id='call_2',
+                ),
+                # 5. BuiltinToolReturnPart for the system provider with status (should be included)
+                BuiltinToolReturnPart(
+                    provider_name='bedrock-stub',
+                    tool_name=CodeExecutionTool.kind,
+                    content=[{'text': 'success\n'}],
+                    tool_call_id='call_3',
+                    provider_details={'status': 'success'},
+                ),
+            ]
+        )
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            builtin_tools=[CodeExecutionTool()],
+        ),
+        None,
+    )
+
+    assert len(bedrock_messages) == 1
+    assert bedrock_messages[0]['role'] == 'assistant'
+    content = bedrock_messages[0]['content']
+
+    # Should only have 3 items (the ones with provider_name='bedrock-stub')
+    assert len(content) == 3
+
+    # Check first item (call)
+    assert 'toolUse' in content[0]
+    assert content[0]['toolUse']['toolUseId'] == 'call_1'
+    assert content[0]['toolUse']['name'] == 'nova_code_interpreter'
+
+    # Check second item (return without status)
+    assert 'toolResult' in content[1]
+    assert content[1]['toolResult']['toolUseId'] == 'call_1'
+    assert 'type' in content[1]['toolResult']
+    assert content[1]['toolResult']['type'] == 'nova_code_interpreter_result'
+    assert 'status' not in content[1]['toolResult']
+
+    # Check third item (return with status)
+    assert 'toolResult' in content[2]
+    assert content[2]['toolResult']['toolUseId'] == 'call_3'
+    assert 'status' in content[2]['toolResult']
+    assert content[2]['toolResult']['status'] == 'success'
+
+
+async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+
+    class Response(TypedDict):
+        result: float
+
+    result = await agent.run('What is 1234 * 5678?', output_type=Response)
+    assert result.output == snapshot({'result': 7006652.0})
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1002, output_tokens=59))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful chatbot.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='What is 1234 * 5678?',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'snippet': '1234 * 5678'},
+                        tool_call_id='tooluse_STF3ouy6vJ3qPvDgwnauKw',
+                        provider_name='bedrock',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=[
+                            {
+                                'json': {
+                                    'exitCode': 0,
+                                    'isError': False,
+                                    'stdErr': '',
+                                    'stdOut': '7006652',
+                                }
+                            }
+                        ],
+                        tool_call_id='tooluse_STF3ouy6vJ3qPvDgwnauKw',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'success'},
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'result': 7006652.0},
+                        tool_call_id='tooluse_BShtb_jBRi2qXx0i-zCcFQ',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1002, output_tokens=59),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='tooluse_BShtb_jBRi2qXx0i-zCcFQ',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.filterwarnings('ignore::pytest.PytestUnraisableExceptionWarning')
+async def test_bedrock_model_multi_turn_code_execution(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+
+    class Response(TypedDict):
+        result: float
+
+    # First turn
+    result1 = await agent.run('What is 1234 * 5678?', output_type=Response)
+    assert result1.output == snapshot({'result': 7006652.0})
+
+    # Second turn
+    result2 = await agent.run('Now multiply that by 2', message_history=result1.new_messages(), output_type=Response)
+    assert result2.output == snapshot({'result': 14013304.0})
+
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful chatbot.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='What is 1234 * 5678?',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'snippet': '1234 * 5678'},
+                        tool_call_id='tooluse_8lxQ0XeXGB6DC4_uWi_MoQ',
+                        provider_name='bedrock',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=[{'json': {'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False}}],
+                        tool_call_id='tooluse_8lxQ0XeXGB6DC4_uWi_MoQ',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'success'},
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'result': 7006652.0},
+                        tool_call_id='tooluse_oQTX17XXR3yf4lXBUSqRxA',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1002, output_tokens=59),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='tooluse_oQTX17XXR3yf4lXBUSqRxA',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Now multiply that by 2',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'snippet': '7006652 * 2'},
+                        tool_call_id='tooluse_ajDt2g928L56dpjs6eF6eA',
+                        provider_name='bedrock',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=[{'json': {'stdOut': '14013304', 'stdErr': '', 'exitCode': 0, 'isError': False}}],
+                        tool_call_id='tooluse_ajDt2g928L56dpjs6eF6eA',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'success'},
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'result': 14013304.0},
+                        tool_call_id='tooluse_qcotmh4QRwOyxSmrX6hYJA',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1148, output_tokens=59),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='tooluse_qcotmh4QRwOyxSmrX6hYJA',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
         ]
     )

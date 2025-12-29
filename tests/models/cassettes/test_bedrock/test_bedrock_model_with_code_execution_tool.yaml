@@ -1,0 +1,70 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 1234 * 5678?"}]}], "system": [{"text": "You are a
+      helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema":
+      {"json": {"properties": {"result": {"type": "number"}}, "required": ["result"], "title": "Response", "type": "object"}},
+      "description": "The final response which ends this conversation"}}, {"systemTool": {"name": "nova_code_interpreter"}}],
+      "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NmFhNjBhNzctMjg3ZS00NzJmLTg3OTItMjkxMmM4Zjk3ZTA0
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '501'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '674'
+      content-type:
+      - application/json
+      server-timing:
+      - cfReqDur;dur=1908.363
+    parsed_body:
+      metrics:
+        latencyMs: 1730
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                snippet: 1234 * 5678
+              name: nova_code_interpreter
+              toolUseId: tooluse_STF3ouy6vJ3qPvDgwnauKw
+              type: server_tool_use
+          - toolResult:
+              content:
+              - json:
+                  exitCode: 0
+                  isError: false
+                  stdErr: ''
+                  stdOut: '7006652'
+              status: success
+              toolUseId: tooluse_STF3ouy6vJ3qPvDgwnauKw
+              type: nova_code_interpreter_result
+          - toolUse:
+              input:
+                result: 7006652.0
+              name: final_result
+              toolUseId: tooluse_BShtb_jBRi2qXx0i-zCcFQ
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 1002
+        outputTokens: 59
+        serverToolUsage: {}
+        totalTokens: 1061
+    status:
+      code: 200
+      message: OK
+version: 1

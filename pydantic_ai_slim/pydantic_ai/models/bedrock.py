@@ -41,6 +41,7 @@ from pydantic_ai import (
     usage,
 )
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
@@ -76,15 +77,19 @@ if TYPE_CHECKING:
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
+        ToolResultBlockOutputTypeDef,
         ToolSpecificationTypeDef,
         ToolTypeDef,
+        ToolUseBlockOutputTypeDef,
         VideoBlockTypeDef,
     )
+
 
 LatestBedrockModelNames = Literal[
     'amazon.titan-tg1-large',
     'amazon.titan-text-lite-v1',
     'amazon.titan-text-express-v1',
+    'us.amazon.nova-2-lite-v1:0',
     'us.amazon.nova-pro-v1:0',
     'us.amazon.nova-lite-v1:0',
     'us.amazon.nova-micro-v1:0',
@@ -291,6 +296,12 @@ class BedrockConverseModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """The set of builtin tool types this model can handle."""
+        # TODO: Implement web grounding tool?
+        return frozenset({CodeExecutionTool})
+
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
@@ -372,6 +383,35 @@ class BedrockConverseModel(Model):
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
 
+    @staticmethod
+    def _map_server_tool_use_block(tool_use: ToolUseBlockOutputTypeDef, provider_name: str) -> BuiltinToolCallPart:
+        if tool_use.get('name') == 'nova_code_interpreter':
+            return BuiltinToolCallPart(
+                provider_name=provider_name,
+                tool_name=CodeExecutionTool.kind,
+                args=tool_use.get('input'),
+                tool_call_id=tool_use.get('toolUseId'),
+            )
+        # TODO: Implement web grounding tool?
+        raise NotImplementedError('Bedrock server tool use other than nova_code_interpreter is not supported yet.')
+
+    def _map_server_tool_result_block(
+        self, tool_result: ToolResultBlockOutputTypeDef, provider_name: str
+    ) -> BuiltinToolReturnPart:
+        tool_type = tool_result.get('type')
+
+        if tool_type == 'nova_code_interpreter_result':
+            return BuiltinToolReturnPart(
+                provider_name=provider_name,
+                tool_name=CodeExecutionTool.kind,
+                content=tool_result.get('content'),
+                tool_call_id=tool_result.get('toolUseId'),
+                provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
+            )
+        # TODO: Implement web grounding tool?
+
+        raise NotImplementedError(f"Bedrock server tool type='{tool_type}' is not supported yet.")
+
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
         if message := response['output'].get('message'):  # pragma: no branch
@@ -398,13 +438,20 @@ class BedrockConverseModel(Model):
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
-                    items.append(
-                        ToolCallPart(
-                            tool_name=tool_use['name'],
-                            args=tool_use['input'],
-                            tool_call_id=tool_use['toolUseId'],
-                        ),
-                    )
+                    if tool_use.get('type') == 'server_tool_use':
+                        # Bedrock server tool use response handling can be added here in the future
+                        items.append(self._map_server_tool_use_block(tool_use, self.system))
+                    else:
+                        items.append(
+                            ToolCallPart(
+                                tool_name=tool_use['name'],
+                                args=tool_use['input'],
+                                tool_call_id=tool_use['toolUseId'],
+                            ),
+                        )
+                elif tool_result := item.get('toolResult'):
+                    items.append(self._map_server_tool_result_block(tool_result, self.system))
+
         input_tokens = response['usage']['inputTokens']
         output_tokens = response['usage']['outputTokens']
         cache_read_tokens = response['usage'].get('cacheReadInputTokens', 0)
@@ -527,12 +574,24 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
+    def _add_builtin_tools(self, tools: list[ToolTypeDef], model_request_parameters: ModelRequestParameters) -> None:
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, CodeExecutionTool):
+                tools.append({'systemTool': {'name': 'nova_code_interpreter'}})
+            else:
+                raise UserError(
+                    f'`{tool.__class__.__name__}` is not supported by `BedrockConverseModel`. '
+                    f'If it should be, please file an issue.'
+                )
+
     def _map_tool_config(
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
         tools = self._get_tools(model_request_parameters)
+        self._add_builtin_tools(tools, model_request_parameters)
+
         if not tools:
             return None
 
@@ -646,8 +705,31 @@ class BedrockConverseModel(Model):
                         else:
                             start_tag, end_tag = self.profile.thinking_tags
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
-                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
-                        pass
+                    elif isinstance(item, BuiltinToolCallPart):
+                        if item.provider_name == self.system:
+                            tool_use_id = _utils.guard_tool_call_id(t=item)
+                            if item.tool_name == CodeExecutionTool.kind:  # pragma: no branch
+                                server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
+                                    'toolUseId': tool_use_id,
+                                    'name': 'nova_code_interpreter',
+                                    'input': item.args_as_dict(),
+                                    'type': 'server_tool_use',
+                                }
+                                content.append({'toolUse': server_tool_use_block_param})
+                            # TODO: Implement web grounding tool?
+                    elif isinstance(item, BuiltinToolReturnPart):
+                        if item.provider_name == self.system:
+                            tool_use_id = _utils.guard_tool_call_id(t=item)
+                            if item.tool_name == CodeExecutionTool.kind:  # pragma: no branch
+                                server_tool_result_block_param: ToolResultBlockOutputTypeDef = {
+                                    'toolUseId': tool_use_id,
+                                    'content': item.content,
+                                    'type': 'nova_code_interpreter_result',
+                                }
+                                if item.provider_details and 'status' in item.provider_details:
+                                    server_tool_result_block_param['status'] = item.provider_details['status']
+                                content.append({'toolResult': server_tool_result_block_param})
+                            # TODO: Implement web grounding tool?
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
