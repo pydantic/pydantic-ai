@@ -16,6 +16,10 @@ Ask the agent a question with:
 
     uv run -m pydantic_ai_examples.rag_surrealdb search "How do I configure logfire to work with FastAPI?"
 
+Or use the web UI:
+
+    uv run uvicorn pydantic_ai_examples.rag_surrealdb:app --host 127.0.0.1 --port 7932
+
 This example runs SurrealDB embedded. If you want to run it in a separate process (useful to explore the db using Surrealist) you can start it with (or with docker):
 
     surreal start -u root -p root rocksdb:database
@@ -46,7 +50,7 @@ from surrealdb import (
 )
 from typing_extensions import AsyncGenerator
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, Embedder, RunContext
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -56,48 +60,42 @@ logfire.instrument_pydantic_ai()
 
 THIS_DIR = Path(__file__).parent
 
-
-@dataclass
-class Deps:
-    openai: AsyncOpenAI
-    db: AsyncWsSurrealConnection | AsyncHttpSurrealConnection
+embedder = Embedder('openai:text-embedding-3-small')
 
 
-agent = Agent('openai:gpt-5', deps_type=Deps)
+agent = Agent('openai:gpt-5')
 
 
 @agent.tool
-async def retrieve(context: RunContext[Deps], search_query: str) -> str:
+async def retrieve(_: RunContext, search_query: str) -> str:
     """Retrieve documentation sections based on a search query.
 
     Args:
-        context: The call context.
         search_query: The search query.
     """
     with logfire.span(
         'create embedding for {search_query=}', search_query=search_query
     ):
-        embedding = await context.deps.openai.embeddings.create(
-            input=search_query,
-            model='text-embedding-3-small',
-        )
+        result = await embedder.embed_query(search_query)
+        embedding = result.embeddings
 
-    assert len(embedding.data) == 1, (
-        f'Expected 1 embedding, got {len(embedding.data)}, doc query: {search_query!r}'
+    assert len(embedding) == 1, (
+        f'Expected 1 embedding, got {len(embedding)}, doc query: {search_query!r}'
     )
-    embedding_vector = embedding.data[0].embedding
+    embedding_vector = list(embedding[0])
 
     # SurrealDB vector search using HNSW index
-    result = await context.deps.db.query(
-        """
-        SELECT url, title, content, vector::distance::knn() AS dist
-        FROM doc_sections
-        WHERE embedding <|8, 40|> $vector
-        ORDER BY dist ASC
-        LIMIT 8;
-        """,
-        {'vector': cast(Value, embedding_vector)},
-    )
+    async with database_connect(False) as db:
+        result = await db.query(
+            """
+            SELECT url, title, content, vector::distance::knn() AS dist
+            FROM doc_sections
+            WHERE embedding <|8, 40|> $vector
+            ORDER BY dist ASC
+            LIMIT 8;
+            """,
+            {'vector': cast(Value, embedding_vector)},
+        )
 
     # Process SurrealDB query result
     rows = []
@@ -119,11 +117,14 @@ async def run_agent(question: str):
 
     logfire.info('Asking "{question}"', question=question)
 
-    async with database_connect(False) as db:
-        deps = Deps(openai=openai, db=db)
-        answer = await agent.run(question, deps=deps)
+    # deps = Deps(openai=openai)
+    answer = await agent.run(question)
+
     print(answer.output)
 
+
+openai = AsyncOpenAI()
+app = agent.to_web()
 
 #######################################################
 # The rest of this file is dedicated to preparing the #
@@ -146,30 +147,27 @@ async def build_search_db():
         response.raise_for_status()
     sections = sections_ta.validate_json(response.content)
 
-    openai = AsyncOpenAI()
-    logfire.instrument_openai(openai)
-
     async with database_connect(True) as db:
         with logfire.span('create schema'):
             await db.query(DB_SCHEMA)
 
-        sem = asyncio.Semaphore(10)
+        embedding_sem = asyncio.Semaphore(10)
+        db_sem = asyncio.Semaphore(1)
         async with create_task_group() as tg:
             for section in sections:
-                tg.start_soon(insert_doc_section, sem, openai, db, section)
+                tg.start_soon(insert_doc_section, embedding_sem, db_sem, db, section)
 
 
 async def insert_doc_section(
-    sem: asyncio.Semaphore,
-    openai: AsyncOpenAI,
+    embedding_sem: asyncio.Semaphore,
+    db_sem: asyncio.Semaphore,
     db: AsyncWsSurrealConnection | AsyncHttpSurrealConnection,
     section: DocsSection,
 ) -> None:
-    async with sem:
+    async with embedding_sem:
         url = section.url()
         # Create a URL-safe record ID
         url_slug = slugify(url, '_')
-        # record_id = f'doc_sections:{url_slug}'
         record_id = RecordID('doc_sections', url_slug)
 
         # Check if record exists
@@ -179,18 +177,16 @@ async def insert_doc_section(
             return
 
         with logfire.span('create embedding for {url=}', url=url):
-            embedding = await openai.embeddings.create(
-                input=section.embedding_content(),
-                model='text-embedding-3-small',
-            )
-        assert len(embedding.data) == 1, (
-            f'Expected 1 embedding, got {len(embedding.data)}, doc section: {section}'
+            result = await embedder.embed_documents([section.embedding_content()])
+            embedding = result.embeddings
+        assert len(embedding) == 1, (
+            f'Expected 1 embedding, got {len(embedding)}, doc section: {section}'
         )
-        embedding_vector = embedding.data[0].embedding
-        # embedding_json = pydantic_core.to_json(embedding).decode()
+        embedding_vector = embedding[0]
 
+    async with db_sem:
         # Create record with embedding as array, using record ID directly
-        _res = await db.create(
+        res = await db.create(
             record_id,
             {
                 'url': url,
@@ -199,6 +195,8 @@ async def insert_doc_section(
                 'embedding': list(embedding_vector),
             },
         )
+        if not isinstance(res, dict):
+            raise ValueError(f'Unexpected response from database: {res}')
 
 
 @dataclass
@@ -223,19 +221,8 @@ class DocsSection:
 sections_ta = TypeAdapter(list[DocsSection])
 
 
-# pyright: reportUnknownMemberType=false
-# pyright: reportUnknownVariableType=false
 @asynccontextmanager
-async def database_connect(
-    create_db: bool = False,
-) -> AsyncGenerator[
-    Any, None
-]:  # Returns AsyncWsSurrealConnection | AsyncHttpSurrealConnection
-    """Connect to SurrealDB local instance.
-
-    Connects to a local SurrealDB server running on localhost:8000.
-    Make sure to start SurrealDB with: surreal start -u root -p root rocksdb:database
-    """
+async def database_connect(create_db: bool = False) -> AsyncGenerator[Any, None]:
     namespace = 'pydantic_ai_examples'
     database = 'rag_surrealdb'
     username = 'root'
@@ -275,7 +262,7 @@ DEFINE FIELD embedding ON doc_sections TYPE array<float>;
 
 DEFINE INDEX hnsw_idx_doc_sections ON doc_sections
     FIELDS embedding
-    HNSW DIMENSION 384
+    HNSW DIMENSION 1536
     DIST COSINE
     TYPE F32;
 """
