@@ -93,7 +93,7 @@ interactions:
         - functionCall:
             args: {}
             name: get_image
-          thoughtSignature: context_engineering_is_the_way_to_go
+          thoughtSignature: skip_thought_signature_validator
         role: model
       - parts:
         - functionResponse:

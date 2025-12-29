@@ -1045,7 +1045,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 },
                 {'text': 'xxx'},
             ],
@@ -1062,7 +1062,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 }
             ],
         }

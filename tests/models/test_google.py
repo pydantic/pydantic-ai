@@ -5146,7 +5146,7 @@ def test_google_missing_tool_call_thought_signature():
             'parts': [
                 {
                     'function_call': {'name': 'tool', 'args': {}, 'id': 'tool_call_id'},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 },
                 {'function_call': {'name': 'tool2', 'args': {}, 'id': 'tool_call_id2'}},
             ],

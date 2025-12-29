@@ -99,7 +99,7 @@ interactions:
             args:
               age: 20
             name: get_chinese_zodiac
-          thoughtSignature: context_engineering_is_the_way_to_go
+          thoughtSignature: skip_thought_signature_validator
         role: model
       - parts:
         - functionResponse:
@@ -260,7 +260,7 @@ interactions:
             args:
               age: 17
             name: get_chinese_zodiac
-          thoughtSignature: context_engineering_is_the_way_to_go
+          thoughtSignature: skip_thought_signature_validator
         role: model
       - parts:
         - functionResponse:
