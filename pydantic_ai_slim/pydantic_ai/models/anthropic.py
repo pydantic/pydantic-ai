@@ -488,6 +488,7 @@ class AnthropicModel(Model):
         Handles both TypedDict-style blocks (with .get() method) and Pydantic model objects
         (like BetaMCPToolResultBlock) that use attribute access.
         """
+
         # Helper to get attribute from block - works with both dicts and Pydantic models
         def get_attr(key: str, default: Any = '') -> Any:
             if hasattr(block, 'get'):
