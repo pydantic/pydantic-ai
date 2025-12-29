@@ -39,7 +39,6 @@ from typing import Any, cast
 import httpx
 import logfire
 from anyio import create_task_group
-from openai import AsyncOpenAI
 from pydantic import TypeAdapter
 from surrealdb import (
     AsyncHttpSurrealConnection,
@@ -55,6 +54,7 @@ from pydantic_ai import Agent, Embedder
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
+logfire.instrument_openai()
 # TODO: enable this once https://github.com/pydantic/logfire/pull/1573 is released
 # logfire.instrument_surrealdb()
 
