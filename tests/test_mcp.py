@@ -2125,6 +2125,18 @@ def test_load_mcp_servers_with_mixed_syntax(tmp_path: Path, monkeypatch: pytest.
     assert server.args == ['default_arg']
 
 
+def test_load_mcp_servers_from_json_string_config_broken_config():
+    config = '{"foo": }'
+    with pytest.raises(ValueError):
+        load_mcp_servers(config)
+
+
+def test_load_mcp_servers_from_json_string_config_valid_config():
+    config = '{"mcpServers": {"mcp0": {"url": "https://example.com/mcp"}}}'
+    server = load_mcp_servers(config)[0]
+    assert server == MCPServerStreamableHTTP(url='https://example.com/mcp', id='mcp0', tool_prefix='mcp0')
+
+
 async def test_server_info(mcp_server: MCPServerStdio) -> None:
     with pytest.raises(
         AttributeError, match='The `MCPServerStdio.server_info` is only instantiated after initialization.'

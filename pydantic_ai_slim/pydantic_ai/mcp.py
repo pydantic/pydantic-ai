@@ -1387,7 +1387,7 @@ def _expand_env_vars(value: Any) -> Any:
         return value
 
 
-def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE]:
+def load_mcp_servers(config_or_path: str | Path) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE]:
     """Load MCP servers from a configuration file.
 
     Environment variables can be referenced in the configuration file using:
@@ -1395,7 +1395,7 @@ def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServer
     - `${VAR_NAME:-default}` syntax - expands to VAR_NAME if set, otherwise uses the default value
 
     Args:
-        config_path: The path to the configuration file.
+        config_or_path: The path to the configuration file or JSON string representing config.
 
     Returns:
         A list of MCP servers.
@@ -1405,12 +1405,18 @@ def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServer
         ValidationError: If the configuration file does not match the schema.
         ValueError: If an environment variable referenced in the configuration is not defined and no default value is provided.
     """
-    config_path = Path(config_path)
+    if isinstance(config_or_path, Path):
+        if not config_or_path.exists():
+            raise FileNotFoundError(f'Config file {config_or_path} not found')
+        config_json = config_or_path.read_text(encoding='utf-8')
+    else:
+        path_obj = Path(config_or_path)
+        if path_obj.exists():
+            config_json = path_obj.read_text(encoding='utf-8')
+        else:
+            config_json = config_or_path
 
-    if not config_path.exists():
-        raise FileNotFoundError(f'Config file {config_path} not found')
-
-    config_data = pydantic_core.from_json(config_path.read_bytes())
+    config_data = pydantic_core.from_json(config_json)
     expanded_config_data = _expand_env_vars(config_data)
     config = MCPServerConfig.model_validate(expanded_config_data)
 
