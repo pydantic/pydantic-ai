@@ -50,7 +50,7 @@ from surrealdb import (
 )
 from typing_extensions import AsyncGenerator
 
-from pydantic_ai import Agent, Embedder, RunContext
+from pydantic_ai import Agent, Embedder
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -64,8 +64,8 @@ embedder = Embedder('openai:text-embedding-3-small')
 agent = Agent('openai:gpt-5')
 
 
-@agent.tool
-async def retrieve(_: RunContext, search_query: str) -> str:
+@agent.tool_plain
+async def retrieve(search_query: str) -> str:
     """Retrieve documentation sections based on a search query.
 
     Args:
@@ -100,7 +100,6 @@ async def retrieve(_: RunContext, search_query: str) -> str:
             FROM doc_sections
             WHERE embedding <|8, 40|> $vector
             ORDER BY dist ASC
-            LIMIT 8;
             """,
             {'vector': cast(Value, embedding_vector)},
         )
@@ -120,13 +119,8 @@ async def retrieve(_: RunContext, search_query: str) -> str:
 
 async def run_agent(question: str):
     """Entry point to run the agent and perform RAG based question answering."""
-    openai = AsyncOpenAI()
-    logfire.instrument_openai(openai)
-
     logfire.info('Asking "{question}"', question=question)
-
     answer = await agent.run(question)
-
     print(answer.output)
 
 
