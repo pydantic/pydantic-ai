@@ -125,13 +125,12 @@ async def run_agent(question: str):
 
     logfire.info('Asking "{question}"', question=question)
 
-    # deps = Deps(openai=openai)
     answer = await agent.run(question)
 
     print(answer.output)
 
 
-openai = AsyncOpenAI()
+# Web chat UI
 app = agent.to_web()
 
 #######################################################
