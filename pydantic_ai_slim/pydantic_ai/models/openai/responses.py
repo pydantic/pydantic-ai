@@ -1346,9 +1346,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-# Responses API-specific helper functions
-
-
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
     # When reasoning, the Responses API requires the `ResponseFunctionToolCall` to be returned with both the `call_id` and `id` fields.
     # Before our `ToolCallPart` gained the `id` field alongside `tool_call_id` field, we combined the two fields into a single string stored on `tool_call_id`.
