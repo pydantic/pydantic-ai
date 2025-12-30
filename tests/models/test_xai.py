@@ -3,17 +3,12 @@
 Note on builtin tools testing:
 ------------------------------
 xAI's builtin tools (code_execution, web_search, mcp_server) are executed server-side via gRPC.
-Since VCR doesn't support gRPC, we cannot record/replay these interactions like we do with HTTP-based
-APIs (OpenAI, Anthropic, etc.).
+Since VCR doesn't support gRPC, we cannot record/replay these interactions like we do with HTTP APIs.
 
 For builtin tool tests, we use simplified mocks that verify:
 1. Tools are properly registered with the xAI SDK
 2. The agent can process responses when builtin tools are enabled
 3. Builtin tools can coexist with custom (client-side) tools
-
-We DO NOT mock the actual server-side tool execution (tool calls and results from xAI's infrastructure)
-because that would require complex protobuf mocking that doesn't add significant test value. Instead,
-we verify the wiring and keep a few live integration tests for smoke testing.
 """
 
 from __future__ import annotations as _annotations
@@ -131,7 +126,7 @@ def test_xai_init():
 
     provider = XaiProvider(api_key='foobar')
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=provider)
-    # Check model properties without accessing private attributes
+
     assert m.model_name == XAI_NON_REASONING_MODEL
     assert m.system == 'xai'
 
@@ -184,16 +179,13 @@ def test_create_tool_call_part_failed_status(allow_model_requests: None):
 
 async def test_xai_request_simple_success(allow_model_requests: None):
     response = create_response(content='world')
-    mock_client = MockXai.create_mock([response])
+    mock_client = MockXai.create_mock([response, response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
     assert result.output == 'world'
     assert result.usage() == snapshot(RunUsage(requests=1))
-
-    # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
@@ -265,7 +257,6 @@ async def test_xai_image_input(allow_model_requests: None):
     result = await agent.run(['Describe these inputs.', image_url, binary_image])
     assert result.output == 'done'
 
-    # Verify the generated API payload contains the image parts
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
