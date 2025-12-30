@@ -72,6 +72,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_responses,
+    create_failed_builtin_tool_response,
     create_logprob,
     create_mcp_server_responses,
     create_mixed_tools_response,
@@ -133,6 +134,52 @@ def test_xai_init():
     # Check model properties without accessing private attributes
     assert m.model_name == XAI_NON_REASONING_MODEL
     assert m.system == 'xai'
+
+
+def test_create_tool_call_part_failed_status(allow_model_requests: None):
+    """Ensure failed server-side tool calls carry provider status/error into return parts."""
+
+    response = create_failed_builtin_tool_response(
+        tool_name=CodeExecutionTool.kind,
+        tool_type=chat_pb2.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
+        tool_call_id='code_exec_1',
+        error_message='sandbox error',
+        content='tool failed',
+    )
+
+    mock_client = MockXai.create_mock(response)
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(model)
+
+    result = agent.run_sync('hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='tool failed'),
+                    BuiltinToolReturnPart(
+                        tool_name=CodeExecutionTool.kind,
+                        content='tool failed',
+                        tool_call_id='code_exec_1',
+                        provider_name='xai',
+                        provider_details={'status': 'failed', 'error': 'sandbox error'},
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_xai_request_simple_success(allow_model_requests: None):
