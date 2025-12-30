@@ -88,9 +88,7 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
                 break
 
         # Wrap into OpenAIModelProfile since SambaNova is OpenAI-compatible
-        return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer
-        ).update(profile)
+        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
     def __init__(
         self,
