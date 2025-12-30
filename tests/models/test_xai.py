@@ -2999,10 +2999,8 @@ async def test_mock_xai_index_error(allow_model_requests: None) -> None:
     model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(model)
 
-    # First call succeeds
     await agent.run('Hello')
 
-    # Second call should raise IndexError (covers mock_xai.py line 130)
     with pytest.raises(IndexError, match='Mock response index 1 out of range'):
         await agent.run('Hello again')
 
@@ -3057,8 +3055,6 @@ async def test_xai_logprobs(allow_model_requests: None) -> None:
 
 async def test_xai_code_execution_default_output(allow_model_requests: None) -> None:
     """Test code execution with default example output."""
-    # Covers mock_xai.py lines 338-339 (_get_example_tool_output for code execution)
-    # No explicit content passed, uses default example output
     response = create_code_execution_responses(code='print(2+2)')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
@@ -3104,7 +3100,6 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
 
 async def test_xai_web_search_default_output(allow_model_requests: None) -> None:
     """Test web search with default example output."""
-    # Covers mock_xai.py lines 340-341 (_get_example_tool_output for web search)
     response = create_web_search_responses(query='test query')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
@@ -3150,7 +3145,6 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
 
 async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None:
     """Test MCP server tool with default example output."""
-    # Covers mock_xai.py lines 342-353 (_get_example_tool_output for MCP tool)
     response = create_mcp_server_responses(server_id='linear', tool_name='list_issues')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
