@@ -545,7 +545,7 @@ class XaiModel(Model):
                 )
 
             # Add text content before tool calls
-            if message.content and message.role != chat_types.chat_pb2.MessageRole.ROLE_TOOL:
+            if message.content and message.role == chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT:
                 part_provider_details: dict[str, Any] | None = None
                 if output.logprobs and output.logprobs.content:
                     part_provider_details = {'logprobs': _map_logprobs(output.logprobs)}
@@ -600,7 +600,7 @@ class XaiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for xAI SDK."""
 
     _model_name: str
-    _response: _utils.PeekableAsyncStream[tuple[chat_types.Response, Any]]
+    _response: _utils.PeekableAsyncStream[tuple[chat_types.Response, chat_types.Chunk]]
     _timestamp: datetime
     _provider: Provider[AsyncClient]
 
@@ -656,7 +656,7 @@ class XaiStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id='encrypted_reasoning', part=thinking_part)
                     reasoning_handled = True
 
-            # Handle text content delta
+            # Handle text content (property filters for ROLE_ASSISTANT)
             if chunk.content:
                 for event in self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
