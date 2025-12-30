@@ -66,6 +66,7 @@ from .. import (
 )
 from ._shared import (
     MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME,
+    OMIT,
     OpenAIModelName,
     OpenAIResponsesModelSettings,
     _make_raw_content_updater,  # pyright: ignore[reportPrivateUsage]
@@ -75,7 +76,7 @@ from ._shared import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, omit
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
     from openai._types import Omit
     from openai.types import responses
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
@@ -84,8 +85,6 @@ try:
         Summary as ReasoningSummary,
     )
     from openai.types.shared_params import Reasoning
-
-    OMIT: Omit = omit
 
 except ImportError as _import_error:
     raise ImportError(

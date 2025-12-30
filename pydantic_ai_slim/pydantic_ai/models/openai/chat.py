@@ -61,6 +61,7 @@ from .. import (
     get_user_agent,
 )
 from ._shared import (
+    OMIT,
     OpenAIChatModelSettings,
     OpenAIModelName,
     _map_provider_details,  # pyright: ignore[reportPrivateUsage]
@@ -101,12 +102,6 @@ try:
         WebSearchOptionsUserLocation,
         WebSearchOptionsUserLocationApproximate,
     )
-
-    def OMIT() -> Any:
-        """Get the omit sentinel value from openai."""
-        from openai import omit
-
-        return omit
 
 except ImportError as _import_error:
     raise ImportError(
@@ -348,34 +343,33 @@ class OpenAIChatModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
-            omit = OMIT()
             return await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=openai_messages,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', omit),
-                tools=tools or omit,
-                tool_choice=tool_choice or omit,
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
                 stream=stream,
-                stream_options={'include_usage': True} if stream else omit,
-                stop=model_settings.get('stop_sequences', omit),
-                max_completion_tokens=model_settings.get('max_tokens', omit),
+                stream_options={'include_usage': True} if stream else OMIT,
+                stop=model_settings.get('stop_sequences', OMIT),
+                max_completion_tokens=model_settings.get('max_tokens', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                response_format=response_format or omit,
-                seed=model_settings.get('seed', omit),
-                reasoning_effort=model_settings.get('openai_reasoning_effort', omit),
-                user=model_settings.get('openai_user', omit),
-                web_search_options=web_search_options or omit,
-                service_tier=model_settings.get('openai_service_tier', omit),
-                prediction=model_settings.get('openai_prediction', omit),
-                temperature=model_settings.get('temperature', omit),
-                top_p=model_settings.get('top_p', omit),
-                presence_penalty=model_settings.get('presence_penalty', omit),
-                frequency_penalty=model_settings.get('frequency_penalty', omit),
-                logit_bias=model_settings.get('logit_bias', omit),
-                logprobs=model_settings.get('openai_logprobs', omit),
-                top_logprobs=model_settings.get('openai_top_logprobs', omit),
-                prompt_cache_key=model_settings.get('openai_prompt_cache_key', omit),
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', omit),
+                response_format=response_format or OMIT,
+                seed=model_settings.get('seed', OMIT),
+                reasoning_effort=model_settings.get('openai_reasoning_effort', OMIT),
+                user=model_settings.get('openai_user', OMIT),
+                web_search_options=web_search_options or OMIT,
+                service_tier=model_settings.get('openai_service_tier', OMIT),
+                prediction=model_settings.get('openai_prediction', OMIT),
+                temperature=model_settings.get('temperature', OMIT),
+                top_p=model_settings.get('top_p', OMIT),
+                presence_penalty=model_settings.get('presence_penalty', OMIT),
+                frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                logit_bias=model_settings.get('logit_bias', OMIT),
+                logprobs=model_settings.get('openai_logprobs', OMIT),
+                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )

@@ -10,6 +10,7 @@ from ...exceptions import UserError
 from ...settings import ModelSettings
 
 try:
+    from openai import omit as OMIT  # pyright: ignore[reportUnusedImport] # noqa: F401
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,

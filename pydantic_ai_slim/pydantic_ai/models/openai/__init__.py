@@ -5,6 +5,7 @@ This package provides support for both the Chat Completions API and the Response
 
 from ...profiles.openai import OpenAISystemPromptRole
 from ._shared import (
+    OMIT,
     OpenAIChatModelSettings,
     OpenAIModelName,
     OpenAIModelSettings,  # pyright: ignore[reportDeprecated]
@@ -21,9 +22,7 @@ from .responses import (
 )
 
 try:
-    from openai import NOT_GIVEN, omit
-
-    OMIT = omit
+    from openai import NOT_GIVEN
 except ImportError:
     pass
 
