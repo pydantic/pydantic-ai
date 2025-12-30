@@ -739,3 +739,62 @@ result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
 ```
+
+### SambaNova
+
+To use [SambaNova Cloud](https://cloud.sambanova.ai/), you need to obtain an API key from the [SambaNova Cloud dashboard](https://cloud.sambanova.ai/dashboard).
+
+SambaNova provides access to multiple model families including Meta Llama, DeepSeek, Qwen, and Mistral models with fast inference speeds.
+
+You can set the `SAMBANOVA_API_KEY` environment variable and use [`SambaNovaProvider`][pydantic_ai.providers.sambanova.SambaNovaProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('sambanova:Meta-Llama-3.1-8B-Instruct')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.sambanova import SambaNovaProvider
+
+model = OpenAIChatModel(
+    'Meta-Llama-3.1-8B-Instruct',
+    provider=SambaNovaProvider(api_key='your-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+SambaNova supports multiple model families:
+
+- **Meta Llama**: `Meta-Llama-3.1-8B-Instruct`, `Meta-Llama-3.3-70B-Instruct`, `Llama-4-Maverick-17B-128E-Instruct`
+- **DeepSeek**: `DeepSeek-R1-0528`, `DeepSeek-V3-0324`, `DeepSeek-R1-Distill-Llama-70B`
+- **Qwen**: `Qwen3-32B`
+- **Other**: `E5-Mistral-7B-Instruct` (embeddings), `Whisper-Large-v3` (audio), `gpt-oss-120b`
+
+You can customize the base URL if needed:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.sambanova import SambaNovaProvider
+
+model = OpenAIChatModel(
+    'DeepSeek-R1-0528',
+    provider=SambaNovaProvider(
+        api_key='your-api-key',
+        base_url='https://custom.endpoint.com/v1',
+    ),
+)
+agent = Agent(model)
+...
+```
