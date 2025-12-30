@@ -326,7 +326,8 @@ class XaiModel(Model):
         if not isinstance(item.content, dict):
             return
 
-        content = cast(dict[str, Any], item.content)
+        # xAI builtin tool returns come back as provider-specific dicts; narrow for type-checker
+        content: dict[str, object] = cast(dict[str, object], item.content)
         status = content.get('status')
 
         # Update status if it failed or has an error
