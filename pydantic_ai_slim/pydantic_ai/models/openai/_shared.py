@@ -5,10 +5,7 @@ from typing import Any, Literal
 from typing_extensions import deprecated
 
 from ... import _utils, usage
-from ...builtin_tools import (
-    ImageAspectRatio,
-    ImageGenerationTool,
-)
+from ...builtin_tools import ImageAspectRatio, ImageGenerationTool
 from ...exceptions import UserError
 from ...settings import ModelSettings
 
@@ -28,22 +25,6 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
-
-__all__ = (
-    'OpenAIModelName',
-    'OpenAIChatModelSettings',
-    'OpenAIModelSettings',
-    'OpenAIResponsesModelSettings',
-    'MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME',
-    '_OPENAI_ASPECT_RATIO_TO_SIZE',
-    '_OPENAI_IMAGE_SIZE',
-    '_OPENAI_IMAGE_SIZES',
-    '_resolve_openai_image_generation_size',
-    '_make_raw_content_updater',
-    '_map_logprobs',
-    '_map_usage',
-    '_map_provider_details',
-)
 
 OpenAIModelName = str | AllModels
 """
@@ -73,7 +54,7 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
 
 
-def _resolve_openai_image_generation_size(
+def _resolve_openai_image_generation_size(  # pyright: ignore[reportUnusedFunction]
     tool: ImageGenerationTool,
 ) -> _OPENAI_IMAGE_SIZE:
     """Map `ImageGenerationTool.aspect_ratio` to an OpenAI size string when provided."""
@@ -248,7 +229,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 # Helper functions used by both completions and responses modules
 
 
-def _make_raw_content_updater(
+def _make_raw_content_updater(  # pyright: ignore[reportUnusedFunction]
     delta: str, index: int
 ) -> Any:  # Returns Callable[[dict[str, Any] | None], dict[str, Any]]
     """Create a callback that updates `provider_details['raw_content']`.
@@ -287,7 +268,7 @@ def _map_logprobs(
     ]
 
 
-def _map_usage(
+def _map_usage(  # pyright: ignore[reportUnusedFunction]
     response: chat.ChatCompletion | ChatCompletionChunk | responses.Response,
     provider: str,
     provider_url: str,
@@ -328,7 +309,7 @@ def _map_usage(
     )
 
 
-def _map_provider_details(
+def _map_provider_details(  # pyright: ignore[reportUnusedFunction]
     choice: chat_completion_chunk.Choice | chat_completion.Choice,
 ) -> dict[str, Any] | None:
     """Map provider details from a chat completion choice."""

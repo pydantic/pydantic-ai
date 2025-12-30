@@ -75,7 +75,7 @@ from ._shared import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, omit
     from openai._types import Omit
     from openai.types import responses
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
@@ -85,11 +85,7 @@ try:
     )
     from openai.types.shared_params import Reasoning
 
-    def OMIT() -> Omit:
-        """Get the omit sentinel value from openai."""
-        from openai import omit
-
-        return omit
+    OMIT: Omit = omit
 
 except ImportError as _import_error:
     raise ImportError(
@@ -393,7 +389,6 @@ class OpenAIResponsesModel(Model):
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings)
 
-        omit = OMIT()
         text: responses.ResponseTextConfigParam | None = None
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
@@ -412,7 +407,7 @@ class OpenAIResponsesModel(Model):
             openai_messages.insert(
                 system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
             )
-            instructions = omit
+            instructions = OMIT
 
         if verbosity := model_settings.get('openai_text_verbosity'):
             text = text or {}
@@ -453,24 +448,24 @@ class OpenAIResponsesModel(Model):
                 input=openai_messages,
                 model=self.model_name,
                 instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', omit),
-                tools=tools or omit,
-                tool_choice=tool_choice or omit,
-                max_output_tokens=model_settings.get('max_tokens', omit),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
+                max_output_tokens=model_settings.get('max_tokens', OMIT),
                 stream=stream,
-                temperature=model_settings.get('temperature', omit),
-                top_p=model_settings.get('top_p', omit),
-                truncation=model_settings.get('openai_truncation', omit),
+                temperature=model_settings.get('temperature', OMIT),
+                top_p=model_settings.get('top_p', OMIT),
+                truncation=model_settings.get('openai_truncation', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                service_tier=model_settings.get('openai_service_tier', omit),
-                previous_response_id=previous_response_id or omit,
-                top_logprobs=model_settings.get('openai_top_logprobs', omit),
+                service_tier=model_settings.get('openai_service_tier', OMIT),
+                previous_response_id=previous_response_id or OMIT,
+                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                 reasoning=reasoning,
-                user=model_settings.get('openai_user', omit),
-                text=text or omit,
-                include=include or omit,
-                prompt_cache_key=model_settings.get('openai_prompt_cache_key', omit),
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', omit),
+                user=model_settings.get('openai_user', OMIT),
+                text=text or OMIT,
+                include=include or OMIT,
+                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -496,13 +491,12 @@ class OpenAIResponsesModel(Model):
             )
             reasoning_summary = reasoning_generate_summary
 
-        omit = OMIT()
         reasoning: Reasoning = {}
         if reasoning_effort:
             reasoning['effort'] = reasoning_effort
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
-        return reasoning or omit
+        return reasoning or OMIT
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -629,7 +623,6 @@ class OpenAIResponsesModel(Model):
 
         Raw CoT is sent back to improve model performance in multi-turn conversations.
         """
-        omit = OMIT()
         profile = OpenAIModelProfile.from_profile(self.profile)
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
@@ -890,7 +883,7 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-        instructions = self._get_instructions(messages, model_request_parameters) or omit
+        instructions = self._get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:

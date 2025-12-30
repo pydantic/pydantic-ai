@@ -1019,7 +1019,7 @@ async def test_image_url_force_download_chat() -> None:
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.completions.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai.chat.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {
             'data': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
             'content_type': 'image/png',
@@ -1054,7 +1054,7 @@ async def test_image_url_no_force_download_chat() -> None:
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.completions.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai.chat.download_item', new_callable=AsyncMock) as mock_download:
         messages = [
             ModelRequest(
                 parts=[
@@ -3800,7 +3800,7 @@ async def test_openai_chat_audio_url_default_base64(allow_model_requests: None):
     # Mock download_item to return base64 data
     fake_base64_data = base64.b64encode(b'fake_downloaded_audio').decode('utf-8')
 
-    with patch('pydantic_ai.models.openai.completions.download_item') as mock_download:
+    with patch('pydantic_ai.models.openai.chat.download_item') as mock_download:
         mock_download.return_value = {'data': fake_base64_data, 'data_type': 'mp3'}
 
         await agent.run(['Process this audio url', audio_url])
@@ -3832,7 +3832,7 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     fake_base64_data = base64.b64encode(b'fake_downloaded_audio').decode('utf-8')
     data_uri = f'data:audio/mpeg;base64,{fake_base64_data}'
 
-    with patch('pydantic_ai.models.openai.completions.download_item') as mock_download:
+    with patch('pydantic_ai.models.openai.chat.download_item') as mock_download:
         mock_download.return_value = {'data': data_uri, 'data_type': 'mp3'}
 
         await agent.run(['Process this audio url', audio_url])

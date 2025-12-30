@@ -10,7 +10,7 @@ from ._shared import (
     OpenAIModelSettings,  # pyright: ignore[reportDeprecated]
     OpenAIResponsesModelSettings,
 )
-from .completions import (
+from .chat import (
     OpenAIChatModel,
     OpenAIModel,  # pyright: ignore[reportDeprecated]
     OpenAIStreamedResponse,
