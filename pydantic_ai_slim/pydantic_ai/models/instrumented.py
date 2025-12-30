@@ -556,11 +556,8 @@ class InstrumentedModel(WrapperModel):
             else:
                 if parsed.hostname:  # pragma: no branch
                     attributes['server.address'] = parsed.hostname
-                if parsed.port:
+                if parsed.port:  # pragma: no branch
                     attributes['server.port'] = parsed.port
-                elif parsed.scheme in ('https', 'http'):
-                    # Default port based on scheme (per OTel semconv)
-                    attributes['server.port'] = 443 if parsed.scheme == 'https' else 80
 
         return attributes
 
