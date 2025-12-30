@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -428,9 +428,9 @@ class XaiModel(Model):
         # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
         tools: list[chat_types.chat_pb2.Tool] = []
         if model_request_parameters.builtin_tools:
-            tools.extend(self._get_builtin_tools(model_request_parameters))
+            tools.extend(_get_builtin_tools(model_request_parameters))
         if model_request_parameters.tool_defs:
-            tools.extend(self._map_tools(model_request_parameters))
+            tools.extend(_map_tools(model_request_parameters))
         tools_param = tools if tools else None
 
         # Set tool_choice based on whether tools are available and text output is allowed
@@ -447,14 +447,14 @@ class XaiModel(Model):
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
             assert output_object is not None
-            response_format = self._map_json_schema(output_object)
+            response_format = _map_json_schema(output_object)
         elif (
             model_request_parameters.output_mode == 'prompted' and not tools and profile.supports_json_object_output
         ):  # pragma: no branch
-            response_format = self._map_json_object()
+            response_format = _map_json_object()
 
         # Map model settings to xAI SDK parameters
-        xai_settings = self._map_model_settings(model_settings)
+        xai_settings = _map_model_settings(model_settings)
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
@@ -548,7 +548,7 @@ class XaiModel(Model):
             if message.content and message.role != chat_types.chat_pb2.MessageRole.ROLE_TOOL:
                 part_provider_details: dict[str, Any] | None = None
                 if output.logprobs and output.logprobs.content:
-                    part_provider_details = {'logprobs': self._map_logprobs(output.logprobs)}
+                    part_provider_details = {'logprobs': _map_logprobs(output.logprobs)}
                 parts.append(TextPart(content=message.content, provider_details=part_provider_details))
 
             # Process tool calls in this output
@@ -558,7 +558,7 @@ class XaiModel(Model):
                 parts.append(part)
 
         # Convert usage with detailed token information
-        usage = self.extract_usage(response)
+        usage = _extract_usage(response)
 
         # Map finish reason
         finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
@@ -594,220 +594,6 @@ class XaiModel(Model):
             _provider=self._provider,
         )
 
-    @staticmethod
-    def extract_usage(response: chat_types.Response) -> RequestUsage:
-        """Extract usage information from xAI SDK response.
-
-        Extracts token counts and additional usage details including:
-        - reasoning_tokens: Tokens used for model reasoning/thinking
-        - cache_read_tokens: Tokens read from prompt cache
-        - server_side_tools_used: Count of server-side (built-in) tools executed
-        """
-        if not response.usage:
-            return RequestUsage()
-
-        usage_obj = response.usage
-
-        prompt_tokens = usage_obj.prompt_tokens or 0
-        completion_tokens = usage_obj.completion_tokens or 0
-
-        # Build details dict for additional usage metrics
-        details: dict[str, int] = {}
-
-        # Add reasoning tokens if available (optional attribute)
-        if usage_obj.reasoning_tokens:
-            details['reasoning_tokens'] = usage_obj.reasoning_tokens
-
-        # Add cached prompt tokens if available (optional attribute)
-        if usage_obj.cached_prompt_text_tokens:
-            details['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
-
-        # Aggregate server-side tools used by PydanticAI builtin tool name
-        if usage_obj.server_side_tools_used:
-            tool_counts: dict[str, int] = defaultdict(int)
-            for server_side_tool in usage_obj.server_side_tools_used:
-                tool_name = XaiModel._map_server_side_tool_to_builtin_name(server_side_tool)
-                tool_counts[tool_name] += 1
-            # Add each tool as a separate details entry (server_side_tools must be flattened to comply with details being dict[str, int])
-            for tool_name, count in tool_counts.items():
-                details[f'server_side_tools_{tool_name}'] = count
-
-        if details:
-            return RequestUsage(
-                input_tokens=prompt_tokens,
-                output_tokens=completion_tokens,
-                details=details,
-            )
-        else:
-            return RequestUsage(
-                input_tokens=prompt_tokens,
-                output_tokens=completion_tokens,
-            )
-
-    @staticmethod
-    def get_builtin_tool_name(tool_call: chat_types.chat_pb2.ToolCall) -> str:
-        """Get the PydanticAI tool name for an xAI builtin tool call.
-
-        Maps xAI SDK tool call types to PydanticAI builtin tool names.
-
-        Args:
-            tool_call: The xAI SDK tool call.
-
-        Returns:
-            The PydanticAI tool name (e.g., 'web_search', 'code_execution').
-        """
-        tool_type = get_tool_call_type(tool_call)
-
-        if tool_type == 'web_search_tool':
-            return WebSearchTool.kind
-        elif tool_type == 'code_execution_tool':
-            return CodeExecutionTool.kind
-        elif tool_type == 'mcp_tool':
-            # Extract server label from "server_label.tool_name" format
-            function_name = tool_call.function.name
-            server_label = function_name.split('.', 1)[0] if '.' in function_name else function_name
-            return f'{MCPServerTool.kind}:{server_label}'
-        else:
-            # x_search, collections_search, or unknown - use function name
-            return tool_call.function.name
-
-    @staticmethod
-    def _map_server_side_tool_to_builtin_name(server_side_tool: usage_pb2.ServerSideTool) -> str:
-        """Map xAI SDK ServerSideTool enum to PydanticAI builtin tool name.
-
-        Args:
-            server_side_tool: The ServerSideTool enum value.
-
-        Returns:
-            The PydanticAI tool name (e.g., 'web_search', 'code_execution').
-        """
-        mapping = {
-            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH: WebSearchTool.kind,
-            usage_pb2.SERVER_SIDE_TOOL_CODE_EXECUTION: CodeExecutionTool.kind,
-            usage_pb2.SERVER_SIDE_TOOL_MCP: MCPServerTool.kind,
-            usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: 'x_search',
-            usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: 'collections_search',
-            usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE: 'view_image',
-            usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO: 'view_x_video',
-        }
-        return mapping.get(server_side_tool, 'unknown')
-
-    @staticmethod
-    def _map_json_schema(o: OutputObjectDefinition) -> chat_pb2.ResponseFormat:
-        """Convert OutputObjectDefinition to xAI ResponseFormat protobuf object."""
-        return chat_pb2.ResponseFormat(
-            format_type=chat_pb2.FORMAT_TYPE_JSON_SCHEMA,
-            schema=json.dumps(o.json_schema),
-        )
-
-    @staticmethod
-    def _map_json_object() -> chat_pb2.ResponseFormat:
-        """Create a ResponseFormat for JSON object mode (prompted output)."""
-        return chat_pb2.ResponseFormat(format_type=chat_pb2.FORMAT_TYPE_JSON_OBJECT)
-
-    @staticmethod
-    def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
-        """Map pydantic_ai ModelSettings to xAI SDK parameters."""
-        # Mapping of pydantic_ai setting keys to xAI SDK parameter names
-        # Most default keys are the same, but 'stop' maps to 'stop_sequences'
-        # Xai specific keys are prefixed with 'xai_'
-        setting_mapping = {
-            'temperature': 'temperature',
-            'top_p': 'top_p',
-            'max_tokens': 'max_tokens',
-            'stop_sequences': 'stop',
-            'parallel_tool_calls': 'parallel_tool_calls',
-            'presence_penalty': 'presence_penalty',
-            'frequency_penalty': 'frequency_penalty',
-            'logprobs': 'xai_logprobs',
-            'top_logprobs': 'xai_top_logprobs',
-            'user': 'xai_user',
-            'store_messages': 'xai_store_messages',
-            'previous_response_id': 'xai_previous_response_id',
-        }
-
-        # Build the settings dict, only including keys that are present in the input
-        # TypedDict is just a dict at runtime, so we can iterate over it directly
-        return {setting_mapping[key]: value for key, value in model_settings.items() if key in setting_mapping}
-
-    @staticmethod
-    def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
-        """Convert pydantic_ai tool definitions to xAI SDK tools."""
-        tools: list[chat_types.chat_pb2.Tool] = []
-        for tool_def in model_request_parameters.tool_defs.values():
-            xai_tool = tool(
-                name=tool_def.name,
-                description=tool_def.description or '',
-                parameters=tool_def.parameters_json_schema,
-            )
-            tools.append(xai_tool)
-        return tools
-
-    @staticmethod
-    def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
-        """Convert pydantic_ai built-in tools to xAI SDK server-side tools."""
-        tools: list[chat_types.chat_pb2.Tool] = []
-        for builtin_tool in model_request_parameters.builtin_tools:
-            if isinstance(builtin_tool, WebSearchTool):
-                # xAI web_search supports:
-                # - excluded_domains (from blocked_domains)
-                # - allowed_domains
-                # Note: user_location and search_context_size are not supported by xAI SDK
-                tools.append(
-                    web_search(
-                        excluded_domains=builtin_tool.blocked_domains,
-                        allowed_domains=builtin_tool.allowed_domains,
-                        enable_image_understanding=False,  # Not supported by PydanticAI
-                    )
-                )
-            elif isinstance(builtin_tool, CodeExecutionTool):
-                # xAI code_execution takes no parameters
-                tools.append(code_execution())
-            elif isinstance(builtin_tool, MCPServerTool):
-                # xAI mcp supports:
-                # - server_url, server_label, server_description
-                # - allowed_tool_names, authorization, extra_headers
-                tools.append(
-                    mcp(
-                        server_url=builtin_tool.url,
-                        server_label=builtin_tool.id,
-                        server_description=builtin_tool.description,
-                        allowed_tool_names=builtin_tool.allowed_tools,
-                        authorization=builtin_tool.authorization_token,
-                        extra_headers=builtin_tool.headers,
-                    )
-                )
-            else:
-                raise UserError(
-                    f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
-                    f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool. '
-                    f'If XSearchTool should be supported, please file an issue.'
-                )
-        return tools
-
-    @staticmethod
-    def _map_logprobs(
-        logprobs: chat_types.chat_pb2.LogProbs,
-    ) -> dict[str, Any]:
-        return {
-            'content': [
-                {
-                    'token': lp.token,
-                    'bytes': list(lp.bytes) if lp.bytes else None,
-                    'logprob': lp.logprob,
-                    'top_logprobs': [
-                        {
-                            'token': tlp.token,
-                            'bytes': list(tlp.bytes) if tlp.bytes else None,
-                            'logprob': tlp.logprob,
-                        }
-                        for tlp in lp.top_logprobs
-                    ],
-                }
-                for lp in logprobs.content
-            ]
-        }
-
 
 @dataclass
 class XaiStreamedResponse(StreamedResponse):
@@ -832,7 +618,7 @@ class XaiStreamedResponse(StreamedResponse):
         """Update response state including usage, response ID, and finish reason."""
         # Update usage
         if response.usage:
-            self._usage = XaiModel.extract_usage(response)
+            self._usage = _extract_usage(response)
 
         # Set provider response ID
         if response.id and self.provider_response_id is None:
@@ -842,87 +628,49 @@ class XaiStreamedResponse(StreamedResponse):
         if response.finish_reason:
             self.finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
 
-    def _handle_reasoning_content(
-        self, response: chat_types.Response, reasoning_handled: bool
-    ) -> Iterator[ModelResponseStreamEvent]:
-        """Handle reasoning content (both readable and encrypted)."""
-        if reasoning_handled:
-            return
-
-        if response.reasoning_content:
-            # reasoning_content is the human-readable summary
-            thinking_part = ThinkingPart(
-                content=response.reasoning_content,
-                signature=None,
-                provider_name=None,
-            )
-            yield self._parts_manager.handle_part(vendor_part_id='reasoning', part=thinking_part)
-        elif response.encrypted_content:
-            # encrypted_content is a signature that can be sent back for reasoning continuity
-            thinking_part = ThinkingPart(
-                content='',  # No readable content for encrypted-only reasoning
-                signature=response.encrypted_content,
-                provider_name=self.system,
-            )
-            yield self._parts_manager.handle_part(vendor_part_id='encrypted_reasoning', part=thinking_part)
-
-    def _handle_text_delta(self, chunk: Any) -> Iterator[ModelResponseStreamEvent]:
-        """Handle text content delta from chunk."""
-        if chunk.content:
-            yield from self._parts_manager.handle_text_delta(
-                vendor_part_id='content',
-                content=chunk.content,
-            )
-
-    def _handle_single_tool_call(
-        self, tool_call: chat_types.chat_pb2.ToolCall, response: chat_types.Response
-    ) -> Iterator[ModelResponseStreamEvent]:
-        """Handle a single tool call, routing to server-side or client-side handler."""
-        if not tool_call.function.name:
-            return
-
-        tool_result_content = _get_tool_result_content(response.content)
-        vendor_part_id, part = _create_tool_call_part(tool_call, tool_result_content, self.system)
-        if isinstance(part, ToolCallPart):
-            # Client-side tools use the standard handler for streaming
-            yield self._parts_manager.handle_tool_call_part(
-                vendor_part_id=vendor_part_id,
-                tool_name=part.tool_name,
-                args=part.args,
-                tool_call_id=part.tool_call_id,
-            )
-        else:
-            yield self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=part)
-
-    def _handle_tool_calls(self, response: chat_types.Response) -> Iterator[ModelResponseStreamEvent]:
-        """Handle tool calls (both client-side and server-side)."""
-        if not response.tool_calls:
-            return
-
-        for tool_call in response.tool_calls:
-            yield from self._handle_single_tool_call(tool_call, response)
-
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Iterate over streaming events from xAI SDK."""
-        reasoning_handled = False  # Track if we've already handled reasoning content
+        reasoning_handled = False
 
         async for response, chunk in self._response:
             self._update_response_state(response)
 
             # Handle reasoning content (only emit once)
-            reasoning_events = list(self._handle_reasoning_content(response, reasoning_handled))
-            if reasoning_events:
-                reasoning_handled = True
-                for event in reasoning_events:
-                    yield event
+            if not reasoning_handled:
+                if response.reasoning_content:
+                    # reasoning_content is the human-readable summary
+                    thinking_part = ThinkingPart(
+                        content=response.reasoning_content,
+                        signature=None,
+                        provider_name=None,
+                    )
+                    yield self._parts_manager.handle_part(vendor_part_id='reasoning', part=thinking_part)
+                    reasoning_handled = True
+                elif response.encrypted_content:
+                    # encrypted_content is a signature that can be sent back for reasoning continuity
+                    thinking_part = ThinkingPart(
+                        content='',  # No readable content for encrypted-only reasoning
+                        signature=response.encrypted_content,
+                        provider_name=self.system,
+                    )
+                    yield self._parts_manager.handle_part(vendor_part_id='encrypted_reasoning', part=thinking_part)
+                    reasoning_handled = True
 
             # Handle text content delta
-            for event in self._handle_text_delta(chunk):
-                yield event
+            if chunk.content:
+                for event in self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
+                    content=chunk.content,
+                ):
+                    yield event
 
             # Handle tool calls
-            for event in self._handle_tool_calls(response):
-                yield event
+            for tool_call in response.tool_calls:
+                if not tool_call.function.name:
+                    continue
+                tool_result_content = _get_tool_result_content(response.content)
+                vendor_part_id, part = _create_tool_call_part(tool_call, tool_result_content, self.system)
+                yield self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=part)
 
     @property
     def model_name(self) -> str:
@@ -938,6 +686,197 @@ class XaiStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _map_json_schema(o: OutputObjectDefinition) -> chat_pb2.ResponseFormat:
+    """Convert OutputObjectDefinition to xAI ResponseFormat protobuf object."""
+    return chat_pb2.ResponseFormat(
+        format_type=chat_pb2.FORMAT_TYPE_JSON_SCHEMA,
+        schema=json.dumps(o.json_schema),
+    )
+
+
+def _map_json_object() -> chat_pb2.ResponseFormat:
+    """Create a ResponseFormat for JSON object mode (prompted output)."""
+    return chat_pb2.ResponseFormat(format_type=chat_pb2.FORMAT_TYPE_JSON_OBJECT)
+
+
+def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
+    """Map pydantic_ai ModelSettings to xAI SDK parameters."""
+    # Mapping of pydantic_ai setting keys to xAI SDK parameter names
+    # Most default keys are the same, but 'stop' maps to 'stop_sequences'
+    # Xai specific keys are prefixed with 'xai_'
+    setting_mapping = {
+        'temperature': 'temperature',
+        'top_p': 'top_p',
+        'max_tokens': 'max_tokens',
+        'stop_sequences': 'stop',
+        'parallel_tool_calls': 'parallel_tool_calls',
+        'presence_penalty': 'presence_penalty',
+        'frequency_penalty': 'frequency_penalty',
+        'logprobs': 'xai_logprobs',
+        'top_logprobs': 'xai_top_logprobs',
+        'user': 'xai_user',
+        'store_messages': 'xai_store_messages',
+        'previous_response_id': 'xai_previous_response_id',
+    }
+
+    # Build the settings dict, only including keys that are present in the input
+    # TypedDict is just a dict at runtime, so we can iterate over it directly
+    return {setting_mapping[key]: value for key, value in model_settings.items() if key in setting_mapping}
+
+
+def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
+    """Convert pydantic_ai tool definitions to xAI SDK tools."""
+    tools: list[chat_types.chat_pb2.Tool] = []
+    for tool_def in model_request_parameters.tool_defs.values():
+        xai_tool = tool(
+            name=tool_def.name,
+            description=tool_def.description or '',
+            parameters=tool_def.parameters_json_schema,
+        )
+        tools.append(xai_tool)
+    return tools
+
+
+def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
+    """Convert pydantic_ai built-in tools to xAI SDK server-side tools."""
+    tools: list[chat_types.chat_pb2.Tool] = []
+    for builtin_tool in model_request_parameters.builtin_tools:
+        if isinstance(builtin_tool, WebSearchTool):
+            # xAI web_search supports:
+            # - excluded_domains (from blocked_domains)
+            # - allowed_domains
+            # Note: user_location and search_context_size are not supported by xAI SDK
+            tools.append(
+                web_search(
+                    excluded_domains=builtin_tool.blocked_domains,
+                    allowed_domains=builtin_tool.allowed_domains,
+                    enable_image_understanding=False,  # Not supported by PydanticAI
+                )
+            )
+        elif isinstance(builtin_tool, CodeExecutionTool):
+            # xAI code_execution takes no parameters
+            tools.append(code_execution())
+        elif isinstance(builtin_tool, MCPServerTool):
+            # xAI mcp supports:
+            # - server_url, server_label, server_description
+            # - allowed_tool_names, authorization, extra_headers
+            tools.append(
+                mcp(
+                    server_url=builtin_tool.url,
+                    server_label=builtin_tool.id,
+                    server_description=builtin_tool.description,
+                    allowed_tool_names=builtin_tool.allowed_tools,
+                    authorization=builtin_tool.authorization_token,
+                    extra_headers=builtin_tool.headers,
+                )
+            )
+        else:
+            raise UserError(
+                f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
+                f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool. '
+                f'If XSearchTool should be supported, please file an issue.'
+            )
+    return tools
+
+
+def _get_builtin_tool_name(tool_call: chat_types.chat_pb2.ToolCall) -> str:
+    """Get the PydanticAI tool name for an xAI builtin tool call.
+
+    Maps xAI SDK tool call types to PydanticAI builtin tool names.
+
+    Args:
+        tool_call: The xAI SDK tool call.
+
+    Returns:
+        The PydanticAI tool name (e.g., 'web_search', 'code_execution').
+    """
+    tool_type = get_tool_call_type(tool_call)
+
+    if tool_type == 'web_search_tool':
+        return WebSearchTool.kind
+    elif tool_type == 'code_execution_tool':
+        return CodeExecutionTool.kind
+    elif tool_type == 'mcp_tool':
+        # Extract server label from "server_label.tool_name" format
+        function_name = tool_call.function.name
+        server_label = function_name.split('.', 1)[0] if '.' in function_name else function_name
+        return f'{MCPServerTool.kind}:{server_label}'
+    else:
+        # x_search, collections_search, or unknown - use function name
+        return tool_call.function.name
+
+
+def _map_server_side_tool_to_builtin_name(server_side_tool: usage_pb2.ServerSideTool) -> str:
+    """Map xAI SDK ServerSideTool enum to PydanticAI builtin tool name.
+
+    Args:
+        server_side_tool: The ServerSideTool enum value.
+
+    Returns:
+        The PydanticAI tool name (e.g., 'web_search', 'code_execution').
+    """
+    mapping = {
+        usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH: WebSearchTool.kind,
+        usage_pb2.SERVER_SIDE_TOOL_CODE_EXECUTION: CodeExecutionTool.kind,
+        usage_pb2.SERVER_SIDE_TOOL_MCP: MCPServerTool.kind,
+        usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: 'x_search',
+        usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: 'collections_search',
+        usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE: 'view_image',
+        usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO: 'view_x_video',
+    }
+    return mapping.get(server_side_tool, 'unknown')
+
+
+def _extract_usage(response: chat_types.Response) -> RequestUsage:
+    """Extract usage information from xAI SDK response.
+
+    Extracts token counts and additional usage details including:
+    - reasoning_tokens: Tokens used for model reasoning/thinking
+    - cache_read_tokens: Tokens read from prompt cache
+    - server_side_tools_used: Count of server-side (built-in) tools executed
+    """
+    if not response.usage:
+        return RequestUsage()
+
+    usage_obj = response.usage
+
+    prompt_tokens = usage_obj.prompt_tokens or 0
+    completion_tokens = usage_obj.completion_tokens or 0
+
+    # Build details dict for additional usage metrics
+    details: dict[str, int] = {}
+
+    # Add reasoning tokens if available (optional attribute)
+    if usage_obj.reasoning_tokens:
+        details['reasoning_tokens'] = usage_obj.reasoning_tokens
+
+    # Add cached prompt tokens if available (optional attribute)
+    if usage_obj.cached_prompt_text_tokens:
+        details['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
+
+    # Aggregate server-side tools used by PydanticAI builtin tool name
+    if usage_obj.server_side_tools_used:
+        tool_counts: dict[str, int] = defaultdict(int)
+        for server_side_tool in usage_obj.server_side_tools_used:
+            tool_name = _map_server_side_tool_to_builtin_name(server_side_tool)
+            tool_counts[tool_name] += 1
+        # Add each tool as a separate details entry (server_side_tools must be flattened to comply with details being dict[str, int])
+        for tool_name, count in tool_counts.items():
+            details[f'server_side_tools_{tool_name}'] = count
+
+    if details:
+        return RequestUsage(
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            details=details,
+        )
+    else:
+        return RequestUsage(
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+        )
 
 
 def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:
@@ -992,7 +931,7 @@ def _create_tool_call_part(
     is_server_side_tool = tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
 
     if is_server_side_tool:
-        builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
+        builtin_tool_name = _get_builtin_tool_name(tool_call)
 
         if tool_call.status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
             # Tool completed - return part with result
@@ -1026,3 +965,25 @@ def _create_tool_call_part(
                 tool_call_id=tool_call.id,
             ),
         )
+
+
+def _map_logprobs(logprobs: chat_types.chat_pb2.LogProbs) -> dict[str, Any]:
+    """Map xAI logprobs to a dictionary format."""
+    return {
+        'content': [
+            {
+                'token': lp.token,
+                'bytes': list(lp.bytes) if lp.bytes else None,
+                'logprob': lp.logprob,
+                'top_logprobs': [
+                    {
+                        'token': tlp.token,
+                        'bytes': list(tlp.bytes) if tlp.bytes else None,
+                        'logprob': tlp.logprob,
+                    }
+                    for tlp in lp.top_logprobs
+                ],
+            }
+            for lp in logprobs.content
+        ]
+    }
