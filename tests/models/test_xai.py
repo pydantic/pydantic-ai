@@ -56,6 +56,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
 )
@@ -1834,6 +1835,107 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                     tool_name='code_execution',
                     content={'output': 'Code execution result for: ', 'return_code': 0, 'stderr': ''},
                     tool_call_id='code_stream_001',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                )
+            ),
+        ]
+    )
+
+
+async def test_xai_builtin_x_search_tool_stream_with_in_progress(allow_model_requests: None):
+    """Test streaming x_search tool with IN_PROGRESS then COMPLETED status.
+
+    This test covers:
+    1. grok_builtin_tool_chunk with IN_PROGRESS status (no content generated)
+    2. grok_builtin_tool_chunk with COMPLETED status
+    3. _generate_tool_result_content for unknown tool types (x_search)
+
+    Note: x_search is a valid xAI tool type but not explicitly mapped in our helpers,
+    so it exercises the 'else' branch returning default status.
+    """
+    # First chunk: IN_PROGRESS status (simulates tool starting)
+    x_search_in_progress = chat_pb2.ToolCall(
+        id='xs_001',
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_IN_PROGRESS,
+        function=chat_pb2.FunctionCall(name='x_search', arguments='{"query": "test"}'),
+    )
+    # Second chunk: COMPLETED status (tool finished)
+    x_search_completed = chat_pb2.ToolCall(
+        id='xs_001',
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+        function=chat_pb2.FunctionCall(name='x_search', arguments='{"query": "test"}'),
+    )
+
+    stream = [
+        # First chunk: IN_PROGRESS - no content generated
+        grok_builtin_tool_chunk(x_search_in_progress, response_id='grok-xs_001'),
+        # Second chunk: COMPLETED - content generated with default status
+        grok_builtin_tool_chunk(x_search_completed, response_id='grok-xs_001'),
+        # Final text response
+        grok_text_chunk('Here are the x search results.', finish_reason='stop'),
+    ]
+
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    # Note: No builtin_tools needed since x_search is server-side only
+    agent = Agent(m)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Search x for test') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    # Verify we got the expected events - the IN_PROGRESS chunk should be processed
+    # but the BuiltinToolReturnPart only appears when COMPLETED
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='x_search', args={'query': 'test'}, tool_call_id='xs_001', provider_name='xai'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='x_search', args={'query': 'test'}, tool_call_id='xs_001', provider_name='xai'
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='x_search',
+                    content={'status': 'completed'},
+                    tool_call_id='xs_001',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=TextPart(content='Here are the x search results.'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=2, part=TextPart(content='Here are the x search results.')),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='x_search', args={'query': 'test'}, tool_call_id='xs_001', provider_name='xai'
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='x_search',
+                    content={'status': 'completed'},
+                    tool_call_id='xs_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 )
@@ -4601,43 +4703,6 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
             ),
         ]
     )
-
-
-def test_grok_builtin_tool_chunk_not_completed():
-    """Test grok_builtin_tool_chunk when status is not COMPLETED."""
-    # Create a tool call with IN_PROGRESS status
-    tool_call = chat_pb2.ToolCall(
-        id='in_progress_001',
-        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
-        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_IN_PROGRESS,  # Not completed
-        function=chat_pb2.FunctionCall(name='code_execution', arguments='{}'),
-    )
-
-    response, chunk = grok_builtin_tool_chunk(tool_call)
-
-    # When status is not COMPLETED, content should be empty
-    # The response should still have the tool call but without generated content
-    assert chunk.tool_calls == [tool_call]
-    # Verify response has the tool call but empty content (status is in progress)
-    assert response.content == ''
-    # Verify the tool call status is preserved
-    assert response.tool_calls[0].status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_IN_PROGRESS
-
-
-def test_generate_tool_result_content_unknown_type():
-    """Test _generate_tool_result_content for unknown tool types."""
-    # Create a tool call with an unknown/other type (like x_search)
-    unknown_tool_call = chat_pb2.ToolCall(
-        id='unknown_001',
-        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL,
-        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
-        function=chat_pb2.FunctionCall(name='x_search', arguments='{}'),
-    )
-
-    content = _generate_tool_result_content(unknown_tool_call)
-
-    # For unknown types, should return default status
-    assert content == snapshot('{"status": "completed"}')
 
 
 async def test_xai_thinking_part_content_only_with_provider_in_history(allow_model_requests: None):

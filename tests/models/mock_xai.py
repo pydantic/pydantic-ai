@@ -534,7 +534,9 @@ def create_response_without_usage(
     """Create a Response without usage data for testing edge cases."""
     output = chat_pb2.CompletionOutput(
         index=0,
-        finish_reason=_get_proto_finish_reason(finish_reason) if finish_reason else 0,  # 0 = unspecified
+        finish_reason=_get_proto_finish_reason(finish_reason)
+        if finish_reason
+        else sample_pb2.FinishReason.REASON_INVALID,
         message=chat_pb2.CompletionMessage(
             content=content,
             role=chat_pb2.MessageRole.ROLE_ASSISTANT,
