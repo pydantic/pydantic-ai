@@ -175,12 +175,8 @@ class XaiModel(Model):
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[str | None, list[chat_types.chat_pb2.Message]]:
-        """Convert pydantic_ai messages to xAI SDK messages.
-
-        Returns:
-            A tuple of (instructions, xai_messages) where instructions may be None.
-        """
+    ) -> list[chat_types.chat_pb2.Message]:
+        """Convert pydantic_ai messages to xAI SDK messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
 
         for message in messages:
@@ -191,8 +187,12 @@ class XaiModel(Model):
             else:
                 assert_never(message)
 
-        instructions = self._get_instructions(messages, model_request_parameters)
-        return instructions, xai_messages
+        # Insert instructions as a system message after existing system messages if present
+        if instructions := self._get_instructions(messages, model_request_parameters):
+            system_prompt_count = sum(1 for m in xai_messages if m.role == chat_types.chat_pb2.MessageRole.ROLE_SYSTEM)
+            xai_messages.insert(system_prompt_count, system(instructions))
+
+        return xai_messages
 
     async def _map_request_parts(self, parts: Sequence[ModelRequestPart]) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
@@ -423,11 +423,7 @@ class XaiModel(Model):
             The xAI SDK chat object, ready to call .sample() or .stream() on.
         """
         # Convert messages to xAI format
-        instructions, xai_messages = await self._map_messages(messages, model_request_parameters)
-
-        # Insert instructions as a system message at the beginning if present
-        if instructions:
-            xai_messages.insert(0, system(instructions))
+        xai_messages = await self._map_messages(messages, model_request_parameters)
 
         # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
         tools: list[chat_types.chat_pb2.Tool] = []
