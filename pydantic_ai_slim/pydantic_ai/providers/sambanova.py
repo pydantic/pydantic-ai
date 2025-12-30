@@ -30,23 +30,6 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
     """Provider for SambaNova AI models.
 
     SambaNova uses an OpenAI-compatible API.
-
-    Example usage:
-        ```python
-        from pydantic_ai import Agent
-        from pydantic_ai.providers import SambaNovaProvider
-
-        # Using model string shorthand
-        agent = Agent('sambanova:Meta-Llama-3.1-8B-Instruct')
-
-        # Or explicit provider
-        provider = SambaNovaProvider(api_key='your-key-here')
-        agent = Agent(provider, model_name='Meta-Llama-3.1-8B-Instruct')
-        ```
-
-    Environment Variables:
-        - SAMBANOVA_API_KEY: Your SambaNova API key
-        - SAMBANOVA_BASE_URL: Optional custom base URL (defaults to https://api.sambanova.ai/v1)
     """
 
     @property
