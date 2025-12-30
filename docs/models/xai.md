@@ -61,6 +61,7 @@ Or with a custom `xai_sdk.AsyncClient`:
 
 ```python
 from xai_sdk import AsyncClient
+
 from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 from pydantic_ai.providers.xai import XaiProvider
