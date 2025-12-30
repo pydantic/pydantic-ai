@@ -215,7 +215,10 @@ venvPath = '.'
 venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
+# Relax strict unknown-type rules for specific test files due to pytest.raises(ExceptionGroup) typing limitations
 executionEnvironments = [
+    { root = "tests/evals", reportUnusedFunction = false, reportPrivateImportUsage = false, reportUnknownVariableType = false, reportUnknownMemberType = false },
+    { root = "tests/models/test_fallback.py", reportUnusedFunction = false, reportPrivateImportUsage = false, reportUnknownVariableType = false, reportUnknownMemberType = false, reportUnknownArgumentType = false },
     { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
