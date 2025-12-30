@@ -427,11 +427,6 @@ def cerebras_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
-def sambanova_api_key() -> str:
-    return os.getenv('SAMBANOVA_API_KEY', 'mock-api-key')
-
-
-@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
