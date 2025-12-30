@@ -82,9 +82,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
     )
-    from pydantic_ai.models.openai._shared import (
-        _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.models.openai._shared import resolve_openai_image_generation_size
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.google import GoogleProvider
@@ -135,14 +133,14 @@ def test_openai_image_generation_size_valid_combinations(
 ) -> None:
     """Test valid combinations of aspect_ratio and size for OpenAI image generation."""
     tool = ImageGenerationTool(aspect_ratio=aspect_ratio, size=size)
-    assert _resolve_openai_image_generation_size(tool) == expected
+    assert resolve_openai_image_generation_size(tool) == expected
 
 
 def test_openai_image_generation_tool_aspect_ratio_invalid() -> None:
     """Test that invalid aspect_ratio raises UserError."""
     tool = ImageGenerationTool(aspect_ratio='16:9')
     with pytest.raises(UserError, match='OpenAI image generation only supports `aspect_ratio` values'):
-        _resolve_openai_image_generation_size(tool)
+        resolve_openai_image_generation_size(tool)
 
 
 async def test_request_simple_success(allow_model_requests: None):

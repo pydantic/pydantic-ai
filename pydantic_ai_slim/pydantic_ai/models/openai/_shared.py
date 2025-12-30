@@ -55,7 +55,7 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
 
 
-def _resolve_openai_image_generation_size(  # pyright: ignore[reportUnusedFunction]
+def resolve_openai_image_generation_size(
     tool: ImageGenerationTool,
 ) -> _OPENAI_IMAGE_SIZE:
     """Map `ImageGenerationTool.aspect_ratio` to an OpenAI size string when provided."""
@@ -227,7 +227,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
 
-# Helper functions used by both completions and responses modules
+# Helper functions used by both chat (completions) and responses modules
 
 
 def _make_raw_content_updater(  # pyright: ignore[reportUnusedFunction]

@@ -71,9 +71,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
     )
-    from pydantic_ai.models.openai._shared import (
-        _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.models.openai._shared import resolve_openai_image_generation_size
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -163,27 +161,27 @@ def test_openai_responses_image_generation_tool_aspect_ratio_mapping(
     expected_size: Literal['1024x1024', '1024x1536', '1536x1024'],
 ) -> None:
     tool = ImageGenerationTool(aspect_ratio=aspect_ratio, size=explicit_size)
-    assert _resolve_openai_image_generation_size(tool) == expected_size
+    assert resolve_openai_image_generation_size(tool) == expected_size
 
 
 def test_openai_responses_image_generation_tool_aspect_ratio_invalid() -> None:
     tool = ImageGenerationTool(aspect_ratio='16:9')
 
     with pytest.raises(UserError, match='OpenAI image generation only supports `aspect_ratio` values'):
-        _resolve_openai_image_generation_size(tool)
+        resolve_openai_image_generation_size(tool)
 
 
 def test_openai_responses_image_generation_tool_aspect_ratio_conflicts_with_size() -> None:
     tool = ImageGenerationTool(aspect_ratio='1:1', size='1536x1024')
 
     with pytest.raises(UserError, match='cannot combine `aspect_ratio` with a conflicting `size`'):
-        _resolve_openai_image_generation_size(tool)
+        resolve_openai_image_generation_size(tool)
 
 
 def test_openai_responses_image_generation_tool_unsupported_size_raises_error() -> None:
     tool = ImageGenerationTool(size='2K')
     with pytest.raises(UserError, match='OpenAI image generation only supports `size` values'):
-        _resolve_openai_image_generation_size(tool)
+        resolve_openai_image_generation_size(tool)
 
 
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):

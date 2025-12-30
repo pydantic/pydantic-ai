@@ -72,7 +72,7 @@ from ._shared import (
     _make_raw_content_updater,  # pyright: ignore[reportPrivateUsage]
     _map_logprobs,  # pyright: ignore[reportPrivateUsage]
     _map_usage,  # pyright: ignore[reportPrivateUsage]
-    _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
+    resolve_openai_image_generation_size as _resolve_openai_image_generation_size,
 )
 
 try:
