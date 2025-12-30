@@ -518,94 +518,6 @@ class XaiModel(Model):
         response_stream = chat.stream()
         yield await self._process_streamed_response(response_stream, model_request_parameters)
 
-    @staticmethod
-    def get_tool_result_content(content: str) -> dict[str, Any] | str | None:
-        """Extract tool result content from a content string.
-
-        Args:
-            content: The content string (may be JSON or plain text)
-
-        Returns:
-            Tool result content as dict (if JSON), string, or None if no content
-        """
-        if content:
-            try:
-                return json.loads(content)
-            except (json.JSONDecodeError, TypeError):
-                return content
-        return None
-
-    @staticmethod
-    def parse_tool_args(arguments: str) -> dict[str, Any]:
-        """Parse tool call arguments from JSON string to dict.
-
-        Args:
-            arguments: JSON string of tool arguments
-
-        Returns:
-            Parsed arguments as dict, or empty dict if parsing fails
-        """
-        try:
-            return json.loads(arguments)
-        except (json.JSONDecodeError, TypeError):
-            return {}
-
-    @staticmethod
-    def create_tool_call_part(
-        tool_call: chat_pb2.ToolCall,
-        tool_result_content: dict[str, Any] | str | None,
-        provider_name: str,
-    ) -> tuple[str, ModelResponsePart]:
-        """Create a part for a tool call, returning (vendor_part_id, part).
-
-        Handles both server-side (builtin) and client-side tool calls.
-
-        Args:
-            tool_call: The tool call from the xAI response.
-            tool_result_content: The content for the tool result (extracted by caller).
-            provider_name: The provider name for builtin tools.
-
-        Returns:
-            Tuple of (vendor_part_id, part).
-        """
-        is_server_side_tool = tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
-
-        if is_server_side_tool:
-            builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
-
-            if tool_call.status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
-                # Tool completed - return part with result
-                return (
-                    f'{tool_call.id}_return',
-                    BuiltinToolReturnPart(
-                        tool_name=builtin_tool_name,
-                        content=tool_result_content,
-                        tool_call_id=tool_call.id,
-                        provider_name=provider_name,
-                    ),
-                )
-            else:
-                # Tool in progress - call part
-                return (
-                    tool_call.id,
-                    BuiltinToolCallPart(
-                        tool_name=builtin_tool_name,
-                        args=XaiModel.parse_tool_args(tool_call.function.arguments),
-                        tool_call_id=tool_call.id,
-                        provider_name=provider_name,
-                    ),
-                )
-        else:
-            # Client-side tool call
-            return (
-                tool_call.id,
-                ToolCallPart(
-                    tool_name=tool_call.function.name,
-                    args=tool_call.function.arguments,
-                    tool_call_id=tool_call.id,
-                ),
-            )
-
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse.
 
@@ -641,8 +553,8 @@ class XaiModel(Model):
 
             # Process tool calls in this output
             for tool_call in message.tool_calls:
-                tool_result_content = self.get_tool_result_content(message.content)
-                _, part = self.create_tool_call_part(tool_call, tool_result_content, self.system)
+                tool_result_content = _get_tool_result_content(message.content)
+                _, part = _create_tool_call_part(tool_call, tool_result_content, self.system)
                 parts.append(part)
 
         # Convert usage with detailed token information
@@ -969,8 +881,8 @@ class XaiStreamedResponse(StreamedResponse):
         if not tool_call.function.name:
             return
 
-        tool_result_content = XaiModel.get_tool_result_content(response.content)
-        vendor_part_id, part = XaiModel.create_tool_call_part(tool_call, tool_result_content, self.system)
+        tool_result_content = _get_tool_result_content(response.content)
+        vendor_part_id, part = _create_tool_call_part(tool_call, tool_result_content, self.system)
         if isinstance(part, ToolCallPart):
             # Client-side tools use the standard handler for streaming
             yield self._parts_manager.handle_tool_call_part(
@@ -1026,3 +938,91 @@ class XaiStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:
+    """Extract tool result content from a content string.
+
+    Args:
+        content: The content string (may be JSON or plain text)
+
+    Returns:
+        Tool result content as dict (if JSON), string, or None if no content
+    """
+    if content:
+        try:
+            return json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            return content
+    return None
+
+
+def _parse_tool_args(arguments: str) -> dict[str, Any]:
+    """Parse tool call arguments from JSON string to dict.
+
+    Args:
+        arguments: JSON string of tool arguments
+
+    Returns:
+        Parsed arguments as dict, or empty dict if parsing fails
+    """
+    try:
+        return json.loads(arguments)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def _create_tool_call_part(
+    tool_call: chat_pb2.ToolCall,
+    tool_result_content: dict[str, Any] | str | None,
+    provider_name: str,
+) -> tuple[str, ModelResponsePart]:
+    """Create a part for a tool call, returning (vendor_part_id, part).
+
+    Handles both server-side (builtin) and client-side tool calls.
+
+    Args:
+        tool_call: The tool call from the xAI response.
+        tool_result_content: The content for the tool result (extracted by caller).
+        provider_name: The provider name for builtin tools.
+
+    Returns:
+        Tuple of (vendor_part_id, part).
+    """
+    is_server_side_tool = tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+
+    if is_server_side_tool:
+        builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
+
+        if tool_call.status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
+            # Tool completed - return part with result
+            return (
+                f'{tool_call.id}_return',
+                BuiltinToolReturnPart(
+                    tool_name=builtin_tool_name,
+                    content=tool_result_content,
+                    tool_call_id=tool_call.id,
+                    provider_name=provider_name,
+                ),
+            )
+        else:
+            # Tool in progress - call part
+            return (
+                tool_call.id,
+                BuiltinToolCallPart(
+                    tool_name=builtin_tool_name,
+                    args=_parse_tool_args(tool_call.function.arguments),
+                    tool_call_id=tool_call.id,
+                    provider_name=provider_name,
+                ),
+            )
+    else:
+        # Client-side tool call
+        return (
+            tool_call.id,
+            ToolCallPart(
+                tool_name=tool_call.function.name,
+                args=tool_call.function.arguments,
+                tool_call_id=tool_call.id,
+            ),
+        )
