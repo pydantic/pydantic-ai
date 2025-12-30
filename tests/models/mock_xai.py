@@ -58,10 +58,8 @@ def _build_response_with_outputs(
 class MockXai:
     """Mock xAI SDK AsyncClient."""
 
-    responses: chat_types.Response | Sequence[chat_types.Response] | Exception | Sequence[Exception] | None = None
-    stream_data: (
-        Sequence[tuple[chat_types.Response, Any]] | Sequence[Sequence[tuple[chat_types.Response, Any]]] | None
-    ) = None
+    responses: Sequence[chat_types.Response | Exception] | None = None
+    stream_data: Sequence[Sequence[tuple[chat_types.Response, Any]]] | None = None
     index: int = 0
     chat_create_kwargs: list[dict[str, Any]] = field(default_factory=list)
     api_key: str = 'test-api-key'
@@ -79,7 +77,7 @@ class MockXai:
     @classmethod
     def create_mock(
         cls,
-        responses: chat_types.Response | Sequence[chat_types.Response] | Exception | Sequence[Exception],
+        responses: Sequence[chat_types.Response | Exception],
         api_key: str = 'test-api-key',
     ) -> AsyncClient:
         """Create a mock AsyncClient for non-streaming responses."""
@@ -88,7 +86,7 @@ class MockXai:
     @classmethod
     def create_mock_stream(
         cls,
-        stream: (Sequence[tuple[chat_types.Response, Any]] | Sequence[Sequence[tuple[chat_types.Response, Any]]]),
+        stream: Sequence[Sequence[tuple[chat_types.Response, Any]]],
         api_key: str = 'test-api-key',
     ) -> AsyncClient:
         """Create a mock AsyncClient for streaming responses."""
@@ -114,29 +112,22 @@ class MockXai:
 class MockChatInstance:
     """Mock for the chat instance returned by client.chat.create()."""
 
-    responses: chat_types.Response | Sequence[chat_types.Response] | Exception | Sequence[Exception] | None = None
-    stream_data: (
-        Sequence[tuple[chat_types.Response, Any]] | Sequence[Sequence[tuple[chat_types.Response, Any]]] | None
-    ) = None
+    responses: Sequence[chat_types.Response | Exception] | None = None
+    stream_data: Sequence[Sequence[tuple[chat_types.Response, Any]]] | None = None
     index: int = 0
-    parent: MockXai | None = None
+    parent: MockXai = field(default_factory=lambda: MockXai())
 
     async def sample(self) -> chat_types.Response:
         """Mock the sample() method for non-streaming responses."""
         assert self.responses is not None, 'you can only use sample() if responses are provided'
 
-        if isinstance(self.responses, Sequence):
-            if self.index >= len(self.responses):
-                raise IndexError(f'Mock response index {self.index} out of range (length: {len(self.responses)})')
-            raise_if_exception(self.responses[self.index])
-            response = cast(chat_types.Response, self.responses[self.index])
-            # Increment index for next call
-            self.index += 1
-            if self.parent:
-                self.parent.index = self.index
-        else:
-            raise_if_exception(self.responses)
-            response = cast(chat_types.Response, self.responses)
+        if self.index >= len(self.responses):
+            raise IndexError(f'Mock response index {self.index} out of range (length: {len(self.responses)})')
+        raise_if_exception(self.responses[self.index])
+        response = cast(chat_types.Response, self.responses[self.index])
+        # Increment index for next call
+        self.index += 1
+        self.parent.index = self.index
 
         return response
 
@@ -144,21 +135,8 @@ class MockChatInstance:
         """Mock the stream() method for streaming responses."""
         assert self.stream_data is not None, 'you can only use stream() if stream_data is provided'
 
-        # Check if we have nested sequences (multiple streams) vs single stream
-        # We need to check if it's a list of tuples (single stream) vs list of lists (multiple streams)
-        if isinstance(self.stream_data, list) and len(self.stream_data) > 0:
-            first_item = self.stream_data[0]
-            # If first item is a list (not a tuple), we have multiple streams
-            if isinstance(first_item, list):
-                data = cast(list[tuple[chat_types.Response, Any]], self.stream_data[self.index])
-            else:
-                # Single stream - use the data as is
-                data = cast(list[tuple[chat_types.Response, Any]], self.stream_data)
-        else:
-            data = cast(list[tuple[chat_types.Response, Any]], self.stream_data)
-
-        if self.parent:
-            self.parent.index += 1
+        data = list(self.stream_data[self.index])
+        self.parent.index += 1
 
         return MockAsyncStream(iter(data))
 
@@ -172,7 +150,7 @@ def get_mock_chat_create_kwargs(async_client: AsyncClient) -> list[dict[str, Any
         result: list[dict[str, Any]] = []
         for kwargs in async_client.chat_create_kwargs:
             kwargs_copy: dict[str, Any] = dict(kwargs)
-            if 'messages' in kwargs_copy:
+            if 'messages' in kwargs_copy:  # pragma: no branch
                 kwargs_copy['messages'] = [
                     MessageToDict(msg, preserving_proto_field_name=True) for msg in kwargs_copy['messages']
                 ]
@@ -198,7 +176,6 @@ def get_mock_chat_create_kwargs(async_client: AsyncClient) -> list[dict[str, Any
 def create_logprob(
     token: str,
     logprob: float,
-    token_bytes: bytes | list[int] | None = None,
     top_logprobs: list[chat_pb2.TopLogProb] | None = None,
 ) -> chat_pb2.LogProb:
     """Create a LogProb proto.
@@ -206,21 +183,15 @@ def create_logprob(
     Args:
         token: The token string.
         logprob: The log probability value.
-        token_bytes: The bytes representation of the token. Can be bytes or list of ints.
         top_logprobs: Optional list of top log probabilities.
 
     Example:
-        >>> logprob = create_logprob('Hello', -0.5, b'Hello')
+        >>> logprob = create_logprob('Hello', -0.5)
     """
-    if token_bytes is None:
-        token_bytes = token.encode('utf-8')
-    elif isinstance(token_bytes, list):
-        token_bytes = bytes(token_bytes)
-
     return chat_pb2.LogProb(
         token=token,
         logprob=logprob,
-        bytes=token_bytes,
+        bytes=token.encode('utf-8'),
         top_logprobs=top_logprobs or [],
     )
 
@@ -274,15 +245,11 @@ def create_server_tool_call(
     arguments: ToolCallArgumentsType,
     *,
     tool_call_id: str = 'server_tool_001',
-    tool_type: chat_pb2.ToolCallType | None = None,
-    status: chat_pb2.ToolCallStatus | None = None,
+    tool_type: chat_pb2.ToolCallType = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
+    status: chat_pb2.ToolCallStatus = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     error_message: str = '',
 ) -> chat_pb2.ToolCall:
     """Create a server-side (builtin) ToolCall proto."""
-    if tool_type is None:
-        tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL
-    if status is None:
-        status = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
     return chat_pb2.ToolCall(
         id=tool_call_id,
         type=tool_type,
@@ -351,7 +318,8 @@ def _get_example_tool_output(
                 'url': 'https://linear.app/team/issue/PROJ-123/example-issue',
             }
         ]
-    else:
+    else:  # pragma: no cover
+        # Unknown tool type - return empty dict as fallback
         return {}
 
 

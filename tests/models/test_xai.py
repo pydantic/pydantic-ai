@@ -147,7 +147,7 @@ def test_create_tool_call_part_failed_status(allow_model_requests: None):
         content='tool failed',
     )
 
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(model)
 
@@ -184,7 +184,7 @@ def test_create_tool_call_part_failed_status(allow_model_requests: None):
 
 async def test_xai_request_simple_success(allow_model_requests: None):
     response = create_response(content='world')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -237,7 +237,7 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
         content='world',
         usage=create_usage(prompt_tokens=2, completion_tokens=1),
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -255,7 +255,7 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
 async def test_xai_image_input(allow_model_requests: None):
     """Test that xAI model handles image inputs (text is extracted from content)."""
     response = create_response(content='done')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(model)
 
@@ -912,7 +912,7 @@ def grok_builtin_tool_chunk(
 
 async def test_xai_stream_text(allow_model_requests: None):
     stream = [grok_text_chunk('hello '), grok_text_chunk('world')]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -930,7 +930,7 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
         grok_text_chunk('world', ''),
         grok_text_chunk('.', 'stop'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1031,7 +1031,7 @@ async def test_xai_stream_structured(allow_model_requests: None):
         grok_tool_chunk(None, '", "second": "Two"', accumulated_args='{"first": "One", "second": "Two"'),
         grok_tool_chunk(None, '}', finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=MyTypedDict)
 
@@ -1052,7 +1052,7 @@ async def test_xai_stream_structured_finish_reason(allow_model_requests: None):
         grok_tool_chunk(None, '}', accumulated_args='{"first": "One", "second": "Two"}'),
         grok_tool_chunk(None, None, finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=MyTypedDict)
 
@@ -1070,7 +1070,7 @@ async def test_xai_stream_native_output(allow_model_requests: None):
         grok_text_chunk('", "second": "Two"'),
         grok_text_chunk('}'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=NativeOutput(MyTypedDict))
 
@@ -1089,7 +1089,7 @@ async def test_xai_stream_tool_call_with_empty_text(allow_model_requests: None):
         grok_tool_chunk(None, '", "second": "Two"', accumulated_args='{"first": "One", "second": "Two"'),
         grok_tool_chunk(None, '}', finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=[str, MyTypedDict])
 
@@ -1106,7 +1106,7 @@ async def test_xai_no_delta(allow_model_requests: None):
         grok_text_chunk('hello '),
         grok_text_chunk('world'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1123,7 +1123,7 @@ async def test_xai_none_delta(allow_model_requests: None):
         grok_text_chunk('hello '),
         grok_text_chunk('world'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1142,7 +1142,7 @@ async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool
         arguments={'response': [1, 2, 3]},
     )
     response = create_response(content='', tool_calls=[tool_call], finish_reason='tool_call')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
 
@@ -1152,7 +1152,7 @@ async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool
 
 async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     response = create_response(content='test response')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
 
     settings = ModelSettings(
@@ -1177,7 +1177,7 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
 async def test_xai_instructions(allow_model_requests: None):
     """Test that instructions are passed through to xAI SDK as a system message."""
     response = create_response(content='The capital of France is Paris.')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, instructions='You are a helpful assistant.')
 
@@ -1225,7 +1225,7 @@ async def test_xai_instructions(allow_model_requests: None):
 
 async def test_xai_image_url_input(allow_model_requests: None):
     response = create_response(content='world')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1269,7 +1269,7 @@ async def test_xai_image_url_input(allow_model_requests: None):
 async def test_xai_image_detail_vendor_metadata(allow_model_requests: None):
     """Test that xAI model handles image detail setting from vendor_metadata for ImageUrl."""
     response = create_response(content='done')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(model)
 
@@ -1458,7 +1458,7 @@ async def test_xai_image_as_binary_content_input(allow_model_requests: None, ima
     """Test passing binary image content directly as input (not from a tool)."""
     response = create_response(content='The image shows a kiwi fruit.')
 
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1481,7 +1481,7 @@ async def test_xai_document_url_input(allow_model_requests: None):
     """Test passing a document URL to the xAI model."""
     response = create_response(content='This document is a dummy PDF file.')
 
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1497,7 +1497,7 @@ async def test_xai_document_url_input(allow_model_requests: None):
 async def test_xai_binary_content_document_input(allow_model_requests: None):
     """Test passing a document as BinaryContent to the xAI model."""
     response = create_response(content='The document discusses testing.')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1536,7 +1536,7 @@ async def test_xai_binary_content_document_input(allow_model_requests: None):
 async def test_xai_audio_url_not_supported(allow_model_requests: None):
     """Test that AudioUrl raises NotImplementedError."""
     response = create_response(content='This should not be reached')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1549,7 +1549,7 @@ async def test_xai_audio_url_not_supported(allow_model_requests: None):
 async def test_xai_video_url_not_supported(allow_model_requests: None):
     """Test that VideoUrl raises NotImplementedError."""
     response = create_response(content='This should not be reached')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1562,7 +1562,7 @@ async def test_xai_video_url_not_supported(allow_model_requests: None):
 async def test_xai_binary_content_audio_not_supported(allow_model_requests: None):
     """Test that BinaryContent with audio raises NotImplementedError."""
     response = create_response(content='This should not be reached')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1580,12 +1580,12 @@ async def test_xai_response_with_logprobs(allow_model_requests: None):
     response = create_response(
         content='Belo Horizonte.',
         logprobs=[
-            create_logprob('Belo', -0.5, b'Belo'),
-            create_logprob(' Horizonte', -0.25, b' Horizonte'),
-            create_logprob('.', -0.0, b'.'),
+            create_logprob('Belo', -0.5),
+            create_logprob(' Horizonte', -0.25),
+            create_logprob('.', -0.0),
         ],
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -1626,7 +1626,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
         content='Thursday',
         tool_call_id='ws_001',
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
@@ -1695,7 +1695,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None):
         grok_text_chunk('is sunny.', finish_reason='stop'),
     ]
 
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
@@ -1771,7 +1771,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
         content='The result is -428,050,955.97745',
         tool_call_id='code_001',
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
@@ -1837,7 +1837,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
         grok_text_chunk('is 4', finish_reason='stop'),
     ]
 
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
@@ -1900,7 +1900,7 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
         text_content='Bitcoin has increased by 30.0% from last week.',
     )
 
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
@@ -1963,7 +1963,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
         content='The weather in Tokyo is sunny with a temperature of 72°F.',
         tool_call_id='ws_003',
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
@@ -2024,7 +2024,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
         content='No issues found.',
         tool_call_id='mcp_linear_001',
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
@@ -2102,7 +2102,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None):
         grok_text_chunk('found.', finish_reason='stop'),
     ]
 
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
@@ -2168,7 +2168,7 @@ async def test_xai_model_retries(allow_model_requests: None):
     # Create error response then success
     success_response = create_response(content='Success after retry')
 
-    mock_client = MockXai.create_mock(success_response)
+    mock_client = MockXai.create_mock([success_response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
     result = await agent.run('hello')
@@ -2178,7 +2178,7 @@ async def test_xai_model_retries(allow_model_requests: None):
 async def test_xai_model_settings(allow_model_requests: None):
     """Test xAI model with various settings."""
     response = create_response(content='response with settings')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
@@ -2202,7 +2202,7 @@ async def test_xai_model_settings(allow_model_requests: None):
 async def test_xai_specific_model_settings(allow_model_requests: None):
     """Test xAI-specific model settings are correctly mapped to SDK parameters."""
     response = create_response(content='response with xai settings')
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
@@ -2342,7 +2342,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
         reasoning_content='Let me think: 2+2 equals 4',
         usage=create_usage(prompt_tokens=10, completion_tokens=20),
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -2379,7 +2379,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
         encrypted_content='abc123signature',
         usage=create_usage(prompt_tokens=10, completion_tokens=5),
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -2415,7 +2415,7 @@ async def test_xai_reasoning_without_summary(allow_model_requests: None):
         content='4',
         encrypted_content='encrypted123',
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     model = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
 
     agent = Agent(model=model)
@@ -2603,7 +2603,7 @@ async def test_xai_stream_with_reasoning(allow_model_requests: None):
         grok_reasoning_text_chunk('The answer', reasoning_content='Let me think about this...', finish_reason=''),
         grok_reasoning_text_chunk(' is 4', reasoning_content='Let me think about this...', finish_reason='stop'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -2647,7 +2647,7 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
         grok_reasoning_text_chunk('The weather', encrypted_content='encrypted_abc123', finish_reason=''),
         grok_reasoning_text_chunk(' is sunny', encrypted_content='encrypted_abc123', finish_reason='stop'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -2694,7 +2694,7 @@ async def test_xai_stream_events_with_reasoning(allow_model_requests: None):
         grok_reasoning_text_chunk('The answer', reasoning_content='Let me think about this...', finish_reason=''),
         grok_reasoning_text_chunk(' is 4', reasoning_content='Let me think about this...', finish_reason='stop'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -2720,7 +2720,7 @@ async def test_xai_stream_events_with_encrypted_reasoning(allow_model_requests: 
         grok_reasoning_text_chunk('The weather', encrypted_content='encrypted_abc123', finish_reason=''),
         grok_reasoning_text_chunk(' is sunny', encrypted_content='encrypted_abc123', finish_reason='stop'),
     ]
-    mock_client = MockXai.create_mock_stream(stream)
+    mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -2758,7 +2758,7 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
         reasoning_content='Let me think deeply about this...',
         usage=mock_usage,
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -2766,11 +2766,11 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     assert result.output == 'The answer is 42'
 
     # Verify usage includes details
-    usage = result.usage()
-    assert usage.input_tokens == 100
-    assert usage.output_tokens == 50
-    assert usage.total_tokens == 150
-    assert usage.details == snapshot({'reasoning_tokens': 25, 'cache_read_tokens': 30})
+    assert result.usage() == snapshot(
+        RunUsage(
+            input_tokens=100, output_tokens=50, details={'reasoning_tokens': 25, 'cache_read_tokens': 30}, requests=1
+        )
+    )
 
 
 async def test_xai_usage_without_details(allow_model_requests: None):
@@ -2780,20 +2780,15 @@ async def test_xai_usage_without_details(allow_model_requests: None):
         content='Simple answer',
         usage=mock_usage,
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Simple question')
     assert result.output == 'Simple answer'
 
-    # Verify usage without details
-    usage = result.usage()
-    assert usage.input_tokens == 20
-    assert usage.output_tokens == 10
-    assert usage.total_tokens == 30
-    # details should be empty dict when no additional usage info is provided
-    assert usage.details == snapshot({})
+    # Verify usage without details (empty dict when no additional usage info)
+    assert result.usage() == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1))
 
 
 async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
@@ -2809,7 +2804,7 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
         content='The answer based on web search',
         usage=mock_usage,
     )
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -2817,11 +2812,9 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     assert result.output == 'The answer based on web search'
 
     # Verify usage includes server_side_tools_used in details
-    usage = result.usage()
-    assert usage.input_tokens == 50
-    assert usage.output_tokens == 30
-    assert usage.total_tokens == 80
-    assert usage.details == snapshot({'server_side_tools_web_search': 2})
+    assert result.usage() == snapshot(
+        RunUsage(input_tokens=50, output_tokens=30, details={'server_side_tools_web_search': 2}, requests=1)
+    )
 
 
 async def test_xai_native_output_with_tools(allow_model_requests: None):
@@ -2902,17 +2895,67 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
         ]
     )
 
-    # Verify response_format was passed correctly to the API
+    # Verify response_format was passed correctly to the API (both requests should have the JSON schema)
     kwargs = get_mock_chat_create_kwargs(mock_client)
-    # Both requests should have response_format with the JSON schema (xAI always includes it for native output)
-    expected_response_format = snapshot(
-        {
-            'format_type': 'FORMAT_TYPE_JSON_SCHEMA',
-            'schema': '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}',
-        }
+    assert kwargs == snapshot(
+        [
+            {
+                'model': 'grok-4-1-fast-non-reasoning',
+                'messages': [
+                    {'content': [{'text': 'What is the largest city in the user country?'}], 'role': 'ROLE_USER'}
+                ],
+                'tools': [
+                    {
+                        'function': {
+                            'name': 'get_user_country',
+                            'parameters': '{"additionalProperties": false, "properties": {}, "type": "object"}',
+                        }
+                    }
+                ],
+                'tool_choice': 'auto',
+                'response_format': {
+                    'format_type': 'FORMAT_TYPE_JSON_SCHEMA',
+                    'schema': '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}',
+                },
+                'use_encrypted_content': False,
+                'include': [],
+            },
+            {
+                'model': 'grok-4-1-fast-non-reasoning',
+                'messages': [
+                    {'content': [{'text': 'What is the largest city in the user country?'}], 'role': 'ROLE_USER'},
+                    {
+                        'content': [{'text': ''}],
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {
+                                'id': 'call_get_country',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'get_user_country', 'arguments': '{}'},
+                            }
+                        ],
+                    },
+                    {'content': [{'text': 'Mexico'}], 'role': 'ROLE_TOOL'},
+                ],
+                'tools': [
+                    {
+                        'function': {
+                            'name': 'get_user_country',
+                            'parameters': '{"additionalProperties": false, "properties": {}, "type": "object"}',
+                        }
+                    }
+                ],
+                'tool_choice': 'auto',
+                'response_format': {
+                    'format_type': 'FORMAT_TYPE_JSON_SCHEMA',
+                    'schema': '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}',
+                },
+                'use_encrypted_content': False,
+                'include': [],
+            },
+        ]
     )
-    assert kwargs[0]['response_format'] == expected_response_format
-    assert kwargs[1]['response_format'] == expected_response_format
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
@@ -2921,7 +2964,7 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     profile = GrokModelProfile(grok_supports_tool_choice_required=False)
 
     response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
-    mock_client = MockXai.create_mock(response)
+    mock_client = MockXai.create_mock([response])
     model = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client), profile=profile)
 
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
@@ -2933,8 +2976,234 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     )
 
     # Verify tool_choice was set to 'auto' (not 'required')
-    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
-    assert kwargs['tool_choice'] == 'auto'
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs == snapshot(
+        [
+            {
+                'model': XAI_REASONING_MODEL,
+                'messages': [],
+                'tools': [{'function': {'name': 'x', 'parameters': '{"type": "object", "properties": {}}'}}],
+                'tool_choice': 'auto',
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
+        ]
+    )
+
+
+async def test_mock_xai_index_error(allow_model_requests: None) -> None:
+    """Test that MockChatInstance raises IndexError when responses are exhausted."""
+    responses = [create_response(content='first')]
+    mock_client = MockXai.create_mock(responses)
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(model)
+
+    # First call succeeds
+    await agent.run('Hello')
+
+    # Second call should raise IndexError (covers mock_xai.py line 130)
+    with pytest.raises(IndexError, match='Mock response index 1 out of range'):
+        await agent.run('Hello again')
+
+
+async def test_xai_logprobs(allow_model_requests: None) -> None:
+    """Test logprobs in response."""
+    response = create_response(
+        content='Test',
+        logprobs=[create_logprob('Test', -0.1)],
+    )
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Say test')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Say test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Test',
+                        provider_details={
+                            'logprobs': {
+                                'content': [
+                                    {
+                                        'token': 'Test',
+                                        'logprob': -0.10000000149011612,
+                                        'bytes': [84, 101, 115, 116],
+                                        'top_logprobs': [],
+                                    }
+                                ]
+                            }
+                        },
+                    )
+                ],
+                usage=RequestUsage(),
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_xai_code_execution_default_output(allow_model_requests: None) -> None:
+    """Test code execution with default example output."""
+    # Covers mock_xai.py lines 338-339 (_get_example_tool_output for code execution)
+    # No explicit content passed, uses default example output
+    response = create_code_execution_responses(code='print(2+2)')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('Calculate 2+2')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Calculate 2+2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'code': 'print(2+2)'},
+                        tool_call_id='code_exec_001',
+                        provider_name='xai',
+                    ),
+                    TextPart(content='{"stdout": "4\\n", "stderr": "", "output_files": {}, "error": "", "ret": ""}'),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
+                        tool_call_id='code_exec_001',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                ],
+                usage=RequestUsage(),
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_xai_web_search_default_output(allow_model_requests: None) -> None:
+    """Test web search with default example output."""
+    # Covers mock_xai.py lines 340-341 (_get_example_tool_output for web search)
+    response = create_web_search_responses(query='test query')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('Search for test')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Search for test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'test query'},
+                        tool_call_id='web_search_001',
+                        provider_name='xai',
+                    ),
+                    TextPart(content='{}'),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={},
+                        tool_call_id='web_search_001',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                ],
+                usage=RequestUsage(),
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None:
+    """Test MCP server tool with default example output."""
+    # Covers mock_xai.py lines 342-353 (_get_example_tool_output for MCP tool)
+    response = create_mcp_server_responses(server_id='linear', tool_name='list_issues')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[MCPServerTool(id='linear', url='https://mcp.linear.app/mcp', description='Linear MCP server')],
+    )
+
+    result = await agent.run('List issues')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='List issues', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:linear', args={}, tool_call_id='mcp_001', provider_name='xai'
+                    ),
+                    TextPart(
+                        content='[{"id": "issue_001", "identifier": "PROJ-123", "title": "example-issue", "description": "example-issue description", "status": "Todo", "priority": {"value": 3, "name": "Medium"}, "url": "https://linear.app/team/issue/PROJ-123/example-issue"}]'
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:linear',
+                        content=[
+                            {
+                                'id': 'issue_001',
+                                'identifier': 'PROJ-123',
+                                'title': 'example-issue',
+                                'description': 'example-issue description',
+                                'status': 'Todo',
+                                'priority': {'value': 3, 'name': 'Medium'},
+                                'url': 'https://linear.app/team/issue/PROJ-123/example-issue',
+                            }
+                        ],
+                        tool_call_id='mcp_001',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                ],
+                usage=RequestUsage(),
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 # End of tests
