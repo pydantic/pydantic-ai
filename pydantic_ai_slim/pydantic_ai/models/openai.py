@@ -1837,18 +1837,13 @@ class OpenAIResponsesModel(Model):
                         if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             content_is_dict = isinstance(item.content, dict)
                             status = item.content.get('status') if content_is_dict else None
-                            if (
-                                item.tool_name == CodeExecutionTool.kind
-                                and code_interpreter_item is not None
-                                and status
-                            ):
-                                code_interpreter_item['status'] = status
-                            elif item.tool_name == WebSearchTool.kind and web_search_item is not None and status:
-                                web_search_item['status'] = status
-                            elif (  # pragma: no cover
-                                item.tool_name == FileSearchTool.kind and file_search_item is not None and status
-                            ):
-                                file_search_item['status'] = status
+                            kind_to_item = {
+                                CodeExecutionTool.kind: code_interpreter_item,
+                                WebSearchTool.kind: web_search_item,
+                                FileSearchTool.kind: file_search_item,
+                            }
+                            if status and (_item := kind_to_item.get(item.tool_name)) is not None:
+                                _item['status'] = status
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
