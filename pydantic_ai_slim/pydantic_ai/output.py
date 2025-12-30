@@ -30,6 +30,7 @@ __all__ = (
     'OutputSpec',
     'OutputTypeOrFunction',
     'TextOutputFunc',
+    'JsonPreprocessor',
 )
 
 T = TypeVar('T')
@@ -69,6 +70,30 @@ TextOutputFunc = TypeAliasType(
 You should not need to import or use this type directly.
 
 See [text output docs](../output.md#text-output) for more information.
+"""
+
+JsonPreprocessor = TypeAliasType(
+    'JsonPreprocessor',
+    Callable[[str], Awaitable[str] | str],
+)
+"""A function that preprocesses JSON strings before validation.
+
+This is useful for fixing common model output issues like trailing commas,
+unquoted keys, or other malformed JSON that can be repaired before parsing.
+
+The function takes a JSON string and returns a (potentially modified) JSON string.
+It can be either sync or async.
+
+Example using `fast-json-repair`:
+```python {test="skip" lint="skip"}
+from fast_json_repair import repair_json
+from pydantic_ai import Agent, ToolOutput
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=ToolOutput(MyModel, preprocess_json=repair_json),
+)
+```
 """
 
 
@@ -116,6 +141,12 @@ class ToolOutput(Generic[OutputDataT]):
     """The maximum number of retries for the tool."""
     strict: bool | None
     """Whether to use strict mode for the tool."""
+    preprocess_json: JsonPreprocessor | None
+    """A function to preprocess JSON strings before validation.
+
+    This is useful for fixing common model output issues like trailing commas,
+    unquoted keys, or other malformed JSON. See [`JsonPreprocessor`][pydantic_ai.output.JsonPreprocessor].
+    """
 
     def __init__(
         self,
@@ -125,12 +156,14 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ):
         self.output = type_
         self.name = name
         self.description = description
         self.max_retries = max_retries
         self.strict = strict
+        self.preprocess_json = preprocess_json
 
 
 @dataclass(init=False)
@@ -170,6 +203,12 @@ class NativeOutput(Generic[OutputDataT]):
     The '{schema}' placeholder will be replaced with the output JSON schema.
     If no template is specified but the model's profile indicates that it requires the schema to be sent as a prompt, the default template specified on the profile will be used.
     """
+    preprocess_json: JsonPreprocessor | None
+    """A function to preprocess JSON strings before validation.
+
+    This is useful for fixing common model output issues like trailing commas,
+    unquoted keys, or other malformed JSON. See [`JsonPreprocessor`][pydantic_ai.output.JsonPreprocessor].
+    """
 
     def __init__(
         self,
@@ -179,12 +218,14 @@ class NativeOutput(Generic[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
         template: str | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ):
         self.outputs = outputs
         self.name = name
         self.description = description
         self.strict = strict
         self.template = template
+        self.preprocess_json = preprocess_json
 
 
 @dataclass(init=False)
@@ -241,6 +282,12 @@ class PromptedOutput(Generic[OutputDataT]):
     The '{schema}' placeholder will be replaced with the output JSON schema.
     If not specified, the default template specified on the model's profile will be used.
     """
+    preprocess_json: JsonPreprocessor | None
+    """A function to preprocess JSON strings before validation.
+
+    This is useful for fixing common model output issues like trailing commas,
+    unquoted keys, or other malformed JSON. See [`JsonPreprocessor`][pydantic_ai.output.JsonPreprocessor].
+    """
 
     def __init__(
         self,
@@ -249,11 +296,13 @@ class PromptedOutput(Generic[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         template: str | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ):
         self.outputs = outputs
         self.name = name
         self.description = description
         self.template = template
+        self.preprocess_json = preprocess_json
 
 
 @dataclass

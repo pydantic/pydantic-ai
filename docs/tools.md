@@ -359,6 +359,9 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
+## Preprocessing Tool Arguments {#preprocess-tool-arguments}
+
+Tools support the same [`preprocess_json`](output.md#preprocess-json) parameter as output types, allowing you to fix malformed JSON before validation.
 
 ## See Also
 

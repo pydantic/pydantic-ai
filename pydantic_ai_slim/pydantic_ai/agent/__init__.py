@@ -75,6 +75,7 @@ if TYPE_CHECKING:
 
     from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
+    from ..output import JsonPreprocessor
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -1148,6 +1149,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1167,6 +1169,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1218,6 +1221,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            preprocess_json: A function to preprocess JSON strings before validation.
+                This is useful for fixing common model output issues like trailing commas,
+                unquoted keys, or other malformed JSON.
+                See [`JsonPreprocessor`][pydantic_ai.output.JsonPreprocessor].
         """
 
         def tool_decorator(
@@ -1239,6 +1246,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                preprocess_json=preprocess_json,
             )
             return func_
 
@@ -1264,6 +1272,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1283,6 +1292,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1334,6 +1344,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            preprocess_json: A function to preprocess JSON strings before validation.
+                This is useful for fixing common model output issues like trailing commas,
+                unquoted keys, or other malformed JSON.
+                See [`JsonPreprocessor`][pydantic_ai.output.JsonPreprocessor].
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1353,6 +1367,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                preprocess_json=preprocess_json,
             )
             return func_
 

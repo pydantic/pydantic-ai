@@ -1,23 +1,25 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import Any, Generic
+from typing import Any, Generic, cast
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
-from . import messages as _messages
+from . import _utils, messages as _messages
 from ._instrumentation import InstrumentationNames
+from ._output import OutputToolsetTool
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
+from .toolsets.function import FunctionToolsetTool
 from .usage import RunUsage
 
 _sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
@@ -87,6 +89,27 @@ class ToolManager(Generic[AgentDepsT]):
             return self.tools[name].tool_def
         except KeyError:
             return None
+
+    async def _preprocess_args(self, args_str: str, tool: ToolsetTool[AgentDepsT]) -> str:
+        """Preprocess tool arguments using the tool's preprocessor if available."""
+        # Unwrap CombinedToolset wrapper to get the actual tool (using duck typing to avoid private import)
+        source_tool = getattr(tool, 'source_tool', tool)
+        preprocess_json = None
+        if isinstance(source_tool, FunctionToolsetTool):
+            preprocess_json = source_tool.preprocess_json
+        elif isinstance(source_tool, OutputToolsetTool):
+            preprocess_json = source_tool.preprocess_json
+        if preprocess_json is not None:
+            try:
+                if _utils.is_async_callable(preprocess_json):
+                    preprocess_func = cast(Callable[[str], Awaitable[str]], preprocess_json)
+                    args_str = await preprocess_func(args_str)
+                else:
+                    preprocess_func = cast(Callable[[str], str], preprocess_json)
+                    args_str = await _utils.run_in_executor(preprocess_func, args_str)
+            except Exception as e:
+                raise ModelRetry(f'Error preprocessing tool arguments: {e}') from e
+        return args_str
 
     async def handle_call(
         self,
@@ -164,8 +187,9 @@ class ToolManager(Generic[AgentDepsT]):
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
             if isinstance(call.args, str):
+                args_str = await self._preprocess_args(call.args or '{}', tool)
                 args_dict = validator.validate_json(
-                    call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
+                    args_str, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
             else:
                 args_dict = validator.validate_python(
