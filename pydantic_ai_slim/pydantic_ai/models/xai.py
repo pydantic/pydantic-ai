@@ -187,8 +187,7 @@ class XaiModel(Model):
             if isinstance(message, ModelRequest):
                 xai_messages.extend(await self._map_request_parts(message.parts))
             elif isinstance(message, ModelResponse):
-                if response_msg := self._map_response_parts(message.parts):
-                    xai_messages.append(response_msg)
+                xai_messages.extend(self._map_response_parts(message.parts))
             else:
                 assert_never(message)
 
@@ -219,13 +218,9 @@ class XaiModel(Model):
 
         return xai_messages
 
-    def _map_response_parts(self, parts: Sequence[ModelResponsePart]) -> chat_types.chat_pb2.Message | None:
-        """Map ModelResponse parts to an xAI assistant message."""
-        # Collect content from response parts
-        texts: list[str] = []
-        reasoning_contents: list[str] = []
-        encrypted_contents: list[str] = []
-        tool_calls: list[chat_types.chat_pb2.ToolCall] = []
+    def _map_response_parts(self, parts: Sequence[ModelResponsePart]) -> list[chat_types.chat_pb2.Message]:
+        """Map ModelResponse parts to xAI assistant messages (one message per part)."""
+        messages: list[chat_types.chat_pb2.Message] = []
 
         # Track builtin tool calls to update their status with corresponding return parts
         code_execution_tool_call: chat_types.chat_pb2.ToolCall | None = None
@@ -234,20 +229,27 @@ class XaiModel(Model):
 
         for item in parts:
             if isinstance(item, TextPart):
-                texts.append(item.content)
+                messages.append(assistant(item.content))
             elif isinstance(item, ThinkingPart):
                 # xAI models (grok) support reasoning_content directly
-                if item.content and item.provider_name == self.system:
-                    reasoning_contents.append(item.content)
-                if item.signature and item.provider_name == self.system:
-                    encrypted_contents.append(item.signature)
+                if item.provider_name == self.system and (item.content or item.signature):
+                    msg = assistant('')
+                    if item.content:
+                        msg.reasoning_content = item.content
+                    if item.signature:
+                        msg.encrypted_content = item.signature
+                    messages.append(msg)
             elif isinstance(item, ToolCallPart):
-                tool_calls.append(self._map_tool_call(item))
+                msg = assistant('')
+                msg.tool_calls.append(self._map_tool_call(item))
+                messages.append(msg)
             elif isinstance(item, BuiltinToolCallPart):
                 # Map builtin tool calls with appropriate status
                 builtin_call = self._map_builtin_tool_call_part(item)
                 if builtin_call and item.provider_name == self.system:
-                    tool_calls.append(builtin_call)
+                    msg = assistant('')
+                    msg.tool_calls.append(builtin_call)
+                    messages.append(msg)
                     # Track specific tool calls for status updates
                     if item.tool_name == CodeExecutionTool.kind:
                         code_execution_tool_call = builtin_call
@@ -255,7 +257,6 @@ class XaiModel(Model):
                         web_search_tool_call = builtin_call
                     elif item.tool_name.startswith(MCPServerTool.kind):
                         mcp_tool_call = builtin_call
-
             elif isinstance(item, BuiltinToolReturnPart):
                 # Update tool call status based on return part
                 self._update_builtin_tool_status(item, code_execution_tool_call, web_search_tool_call, mcp_tool_call)
@@ -265,8 +266,7 @@ class XaiModel(Model):
             else:
                 assert_never(item)
 
-        # Create assistant message with content, reasoning_contents, encrypted_contents and tool_calls
-        return self._build_assistant_message(texts, reasoning_contents, encrypted_contents, tool_calls)
+        return messages
 
     def _map_tool_call(self, tool_call_part: ToolCallPart) -> chat_types.chat_pb2.ToolCall:
         """Map a ToolCallPart to an xAI SDK ToolCall."""
@@ -328,7 +328,7 @@ class XaiModel(Model):
         if not isinstance(item.content, dict):
             return
 
-        content = cast(dict[str, Any], item.content)  # pyright: ignore[reportUnknownMemberType]
+        content = cast(dict[str, Any], item.content)
         status = content.get('status')
 
         # Update status if it failed or has an error
@@ -345,28 +345,6 @@ class XaiModel(Model):
                 mcp_tool_call.status = chat_types.chat_pb2.TOOL_CALL_STATUS_FAILED
                 if error_msg := content.get('error'):
                     mcp_tool_call.error_message = str(error_msg)
-
-    def _build_assistant_message(
-        self,
-        texts: list[str],
-        reasoning_contents: list[str],
-        encrypted_contents: list[str],
-        tool_calls: list[chat_types.chat_pb2.ToolCall],
-    ) -> chat_types.chat_pb2.Message | None:
-        """Build an assistant message from collected parts."""
-        if not (texts or reasoning_contents or encrypted_contents or tool_calls):
-            return None
-
-        # Use assistant() helper to properly construct content, then add other fields
-        msg = assistant(''.join(texts))
-        if reasoning_contents:
-            msg.reasoning_content = ''.join(reasoning_contents)
-        if encrypted_contents:
-            # TODO: validate that we can concat contents
-            msg.encrypted_content = '\n'.join(encrypted_contents)
-        if tool_calls:
-            msg.tool_calls.extend(tool_calls)
-        return msg
 
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
         """Upload a file to xAI files API and return the file ID.
