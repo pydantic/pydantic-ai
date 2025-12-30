@@ -506,3 +506,39 @@ def create_mixed_tools_response(
         response_id='grok-multi-tool',
         outputs=[tool_call_output, tool_result_output],
     )
+
+
+def create_response_with_tool_calls(
+    content: str = '',
+    tool_calls: list[chat_pb2.ToolCall] | None = None,
+    finish_reason: FinishReason = 'stop',
+    usage: Any | None = None,
+) -> chat_types.Response:
+    """Create a Response with specific tool calls for testing edge cases."""
+    output = chat_pb2.CompletionOutput(
+        index=0,
+        finish_reason=_get_proto_finish_reason(finish_reason),
+        message=chat_pb2.CompletionMessage(
+            content=content,
+            role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+            tool_calls=tool_calls or [],
+        ),
+    )
+    return _build_response_with_outputs('grok-123', [output], usage)
+
+
+def create_response_without_usage(
+    content: str = '',
+    finish_reason: FinishReason | None = 'stop',
+) -> chat_types.Response:
+    """Create a Response without usage data for testing edge cases."""
+    output = chat_pb2.CompletionOutput(
+        index=0,
+        finish_reason=_get_proto_finish_reason(finish_reason) if finish_reason else 0,  # 0 = unspecified
+        message=chat_pb2.CompletionMessage(
+            content=content,
+            role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+        ),
+    )
+    # Pass None for usage explicitly to get response without usage
+    return _build_response_with_outputs('grok-123', [output], None)

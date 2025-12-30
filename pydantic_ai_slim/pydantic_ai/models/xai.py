@@ -247,7 +247,9 @@ class XaiModel(Model):
                     msg.tool_calls.append(builtin_call)
                     messages.append(msg)
                     # Track specific tool calls for status updates
-                    if item.tool_call_id:
+                    # Note: tool_call_id is always truthy here since _map_builtin_tool_call_part
+                    # returns None when tool_call_id is empty
+                    if item.tool_call_id:  # pragma: no branch
                         builtin_calls[item.tool_call_id] = builtin_call
             elif isinstance(item, BuiltinToolReturnPart):
                 if (
@@ -315,7 +317,7 @@ class XaiModel(Model):
                     arguments=item.args_as_json_str(),
                 ),
             )
-        return None
+        return None  # pragma: no cover
 
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
         """Upload a file to xAI files API and return the file ID.
@@ -366,6 +368,7 @@ class XaiModel(Model):
                 # Download and upload to xAI files API
                 downloaded = await download_item(item, data_format='bytes')
                 filename = item.identifier or 'document'
+                # Add extension if data_type is available from download
                 if 'data_type' in downloaded and downloaded['data_type']:
                     filename = f'{filename}.{downloaded["data_type"]}'
 
@@ -589,17 +592,15 @@ class XaiStreamedResponse(StreamedResponse):
 
     def _update_response_state(self, response: chat_types.Response) -> None:
         """Update response state including usage, response ID, and finish reason."""
-        # Update usage
-        if response.usage:
-            self._usage = _extract_usage(response)
+        # Update usage (SDK Response always provides a usage object)
+        self._usage = _extract_usage(response)
 
-        # Set provider response ID
+        # Set provider response ID (only set once)
         if response.id and self.provider_response_id is None:
             self.provider_response_id = response.id
 
-        # Handle finish reason
-        if response.finish_reason:
-            self.finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
+        # Handle finish reason (SDK Response always provides a finish_reason)
+        self.finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Iterate over streaming events from xAI SDK."""
@@ -745,7 +746,8 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
                     extra_headers=builtin_tool.headers,
                 )
             )
-        else:
+        else:  # pragma: no cover
+            # Defensive fallback - validation in models/__init__.py catches unsupported tools earlier
             raise UserError(
                 f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
                 f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool. '
@@ -810,7 +812,7 @@ def _extract_usage(response: chat_types.Response) -> RequestUsage:
     - cache_read_tokens: Tokens read from prompt cache
     - server_side_tools_used: Count of server-side (built-in) tools executed
     """
-    if not response.usage:
+    if not response.usage:  # pragma: no cover
         return RequestUsage()
 
     usage_obj = response.usage
