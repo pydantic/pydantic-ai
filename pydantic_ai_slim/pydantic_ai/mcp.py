@@ -335,6 +335,14 @@ class MCPServer(AbstractToolset[Any], ABC):
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""
 
+    cache_prompts: bool
+    """Whether to cache the list of prompts.
+
+    When enabled (default), prompts are fetched once and cached until either:
+    - The server sends a `notifications/prompts/list_changed` notification
+    - The connection is closed
+    """
+
     cache_tools: bool
     """Whether to cache the list of tools.
 
@@ -368,6 +376,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _server_capabilities: ServerCapabilities
     _instructions: str | None
 
+    _cached_prompts: list[mcp_types.Prompt] | None
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
 
@@ -383,6 +392,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        cache_prompts: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
         *,
@@ -399,6 +409,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.sampling_model = sampling_model
         self.max_retries = max_retries
         self.elicitation_callback = elicitation_callback
+        self.cache_prompts = cache_prompts
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
         self.client_info = client_info
@@ -411,6 +422,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self._enter_lock = Lock()
         self._running_count = 0
         self._exit_stack = None
+        self._cached_prompts = None
         self._cached_tools = None
         self._cached_resources = None
 
@@ -473,6 +485,45 @@ class MCPServer(AbstractToolset[Any], ABC):
                 f'The `{self.__class__.__name__}.instructions` is only available after initialization.'
             )
         return self._instructions
+
+    async def list_prompts(self) -> list[mcp_types.Prompt]:
+        """Retrieve prompts that are currently active on the server.
+
+        Prompts are cached by default, with cache invalidation on:
+        - `notifications/prompts/list_changed` notifications from the server
+        - Connection close (cache is cleared in `__aexit__`)
+
+        Set `cache_prompts=False` for servers that change prompts without sending notifications.
+        """
+        async with self:
+            if not self.capabilities.prompts:
+                return []
+            if self.cache_prompts:
+                if self._cached_prompts is not None:
+                    return self._cached_prompts
+                result = await self._client.list_prompts()
+                self._cached_prompts = result.prompts
+                return result.prompts
+            else:
+                result = await self._client.list_prompts()
+                return result.prompts
+
+    async def get_prompt(self, name: str) -> mcp_types.GetPromptResult:
+        """Retrieve a specific prompt by name.
+
+        Args:
+            name: The name of the prompt to retrieve.
+
+        Returns:
+            The prompt with the specified name.
+        """
+        async with self:
+            try:
+                result = await self._client.get_prompt(name)
+            except mcp_exceptions.McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+
+        return result
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
