@@ -34,12 +34,12 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
     Example usage:
         ```python
         from pydantic_ai import Agent
+        from pydantic_ai.providers import SambaNovaProvider
 
         # Using model string shorthand
         agent = Agent('sambanova:Meta-Llama-3.1-8B-Instruct')
 
         # Or explicit provider
-        from pydantic_ai.providers import SambaNovaProvider
         provider = SambaNovaProvider(api_key='your-key-here')
         agent = Agent(provider, model_name='Meta-Llama-3.1-8B-Instruct')
         ```
