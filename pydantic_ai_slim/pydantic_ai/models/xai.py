@@ -231,7 +231,6 @@ class XaiModel(Model):
             if isinstance(item, TextPart):
                 messages.append(assistant(item.content))
             elif isinstance(item, ThinkingPart):
-                # xAI models (grok) support reasoning_content directly
                 if item.provider_name == self.system and (item.content or item.signature):
                     msg = assistant('')
                     if item.content:
@@ -244,9 +243,8 @@ class XaiModel(Model):
                 msg.tool_calls.append(self._map_tool_call(item))
                 messages.append(msg)
             elif isinstance(item, BuiltinToolCallPart):
-                # Map builtin tool calls with appropriate status
                 builtin_call = self._map_builtin_tool_call_part(item)
-                if builtin_call and item.provider_name == self.system:
+                if item.provider_name == self.system and builtin_call:
                     msg = assistant('')
                     msg.tool_calls.append(builtin_call)
                     messages.append(msg)
