@@ -87,7 +87,7 @@ with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.proto.v6 import chat_pb2, usage_pb2
 
-    from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
 
 
@@ -2150,6 +2150,60 @@ async def test_xai_model_settings(allow_model_requests: None):
     assert kwargs['temperature'] == 0.5
     assert kwargs['max_tokens'] == 100
     assert kwargs['top_p'] == 0.9
+
+
+async def test_xai_specific_model_settings(allow_model_requests: None):
+    """Test xAI-specific model settings are correctly mapped to SDK parameters."""
+    response = create_response(content='response with xai settings')
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=XaiModelSettings(
+            # Standard settings
+            temperature=0.7,
+            max_tokens=200,
+            top_p=0.95,
+            presence_penalty=0.1,
+            frequency_penalty=0.2,
+            # xAI-specific settings
+            xai_logprobs=True,
+            xai_top_logprobs=5,
+            xai_user='test-user-123',
+            xai_store_messages=True,
+            xai_previous_response_id='prev-resp-456',
+        ),
+    )
+
+    result = await agent.run('hello')
+    assert result.output == 'response with xai settings'
+
+    # Verify all settings were correctly mapped and passed to the mock
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': 'grok-4-1-fast-non-reasoning',
+                'messages': [{'content': [{'text': 'hello'}], 'role': 'ROLE_USER'}],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+                # Standard settings
+                'temperature': 0.7,
+                'max_tokens': 200,
+                'top_p': 0.95,
+                'presence_penalty': 0.1,
+                'frequency_penalty': 0.2,
+                # xAI-specific settings (mapped from xai_* to SDK parameter names)
+                'logprobs': True,
+                'top_logprobs': 5,
+                'user': 'test-user-123',
+                'store_messages': True,
+                'previous_response_id': 'prev-resp-456',
+            }
+        ]
+    )
 
 
 async def test_xai_model_multiple_tool_calls(allow_model_requests: None):

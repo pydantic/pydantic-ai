@@ -714,11 +714,11 @@ def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
         'parallel_tool_calls': 'parallel_tool_calls',
         'presence_penalty': 'presence_penalty',
         'frequency_penalty': 'frequency_penalty',
-        'logprobs': 'xai_logprobs',
-        'top_logprobs': 'xai_top_logprobs',
-        'user': 'xai_user',
-        'store_messages': 'xai_store_messages',
-        'previous_response_id': 'xai_previous_response_id',
+        'xai_logprobs': 'logprobs',
+        'xai_top_logprobs': 'top_logprobs',
+        'xai_user': 'user',
+        'xai_store_messages': 'store_messages',
+        'xai_previous_response_id': 'previous_response_id',
     }
 
     # Build the settings dict, only including keys that are present in the input
@@ -808,14 +808,14 @@ def _get_builtin_tool_name(tool_call: chat_types.chat_pb2.ToolCall) -> str:
         return tool_call.function.name
 
 
-def _map_server_side_tool_to_builtin_name(server_side_tool: usage_pb2.ServerSideTool) -> str:
-    """Map xAI SDK ServerSideTool enum to PydanticAI builtin tool name.
+def _map_server_side_tools_used_to_name(server_side_tool: usage_pb2.ServerSideTool) -> str:
+    """Map xAI SDK ServerSideTool enum from usage.server_side_tools_used to a tool name.
 
     Args:
-        server_side_tool: The ServerSideTool enum value.
+        server_side_tool: The ServerSideTool enum value from usage.server_side_tools_used.
 
     Returns:
-        The PydanticAI tool name (e.g., 'web_search', 'code_execution').
+        The tool name (e.g., 'web_search', 'code_execution').
     """
     mapping = {
         usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH: WebSearchTool.kind,
@@ -860,7 +860,7 @@ def _extract_usage(response: chat_types.Response) -> RequestUsage:
     if usage_obj.server_side_tools_used:
         tool_counts: dict[str, int] = defaultdict(int)
         for server_side_tool in usage_obj.server_side_tools_used:
-            tool_name = _map_server_side_tool_to_builtin_name(server_side_tool)
+            tool_name = _map_server_side_tools_used_to_name(server_side_tool)
             tool_counts[tool_name] += 1
         # Add each tool as a separate details entry (server_side_tools must be flattened to comply with details being dict[str, int])
         for tool_name, count in tool_counts.items():
