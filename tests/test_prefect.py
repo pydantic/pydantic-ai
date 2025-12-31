@@ -1169,7 +1169,6 @@ async def test_cache_policy_empty_inputs():
 async def test_repeated_run_hits_cache():
     """Test that running the same prompt twice hits the cache on the second run.
 
-    This catches regressions where new per-run fields (like run_id) break caching.
     If caching is broken, the model will be called twice instead of once.
     """
     call_count = 0
