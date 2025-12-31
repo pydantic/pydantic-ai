@@ -74,8 +74,6 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
-    # TODO(Marcelo): We are temporarily disabling it. We should enable them again.
-    pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -1166,6 +1164,29 @@ async def test_cache_policy_empty_inputs():
     )
 
     assert result is None
+
+
+async def test_repeated_run_hits_cache():
+    """Test that running the same prompt twice hits the cache on the second run.
+
+    If caching is broken, the model will be called twice instead of once.
+    """
+    call_count = 0
+
+    def counting_model(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('4')])
+
+    agent = Agent(FunctionModel(counting_model), name='cache_test_agent')
+    prefect_agent = PrefectAgent(agent)
+
+    prefect_agent.run_sync('What is 2+2?')
+    assert call_count == 1
+
+    # Cache hit here, should not call the model again
+    prefect_agent.run_sync('What is 2+2?')
+    assert call_count == 1
 
 
 # Test custom model settings
