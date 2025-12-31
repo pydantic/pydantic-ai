@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, overload
 
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
@@ -19,6 +19,10 @@ from ..tools import (
 )
 from .abstract import AbstractToolset, ToolsetTool
 
+if TYPE_CHECKING:
+    # avoids circular import
+    from ..output import JsonPreprocessor
+
 
 @dataclass(kw_only=True)
 class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
@@ -32,6 +36,8 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
     """
+    preprocess_json: JsonPreprocessor | None = None
+    """A function to preprocess JSON strings before validation."""
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):
@@ -133,6 +139,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -152,6 +159,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -210,6 +218,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            preprocess_json: A function to preprocess JSON strings before validation.
+                This is useful for fixing common model output issues like trailing commas,
+                unquoted keys, or other malformed JSON.
+                See [`JsonPreprocessor`][pydantic_ai.output.JsonPreprocessor].
         """
 
         def tool_decorator(
@@ -231,6 +243,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                preprocess_json=preprocess_json,
             )
             return func_
 
@@ -252,6 +265,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -288,6 +302,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            preprocess_json: A function to preprocess JSON strings before validation.
+                This is useful for fixing common model output issues like trailing commas,
+                unquoted keys, or other malformed JSON.
+                See [`JsonPreprocessor`][pydantic_ai.output.JsonPreprocessor].
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -317,6 +335,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval=requires_approval,
             metadata=metadata,
             timeout=timeout,
+            preprocess_json=preprocess_json,
         )
         self.add_tool(tool)
 
@@ -363,6 +382,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,
                 timeout=tool_def.timeout,
+                preprocess_json=tool.preprocess_json,
             )
         return tools
 

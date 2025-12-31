@@ -20,6 +20,7 @@ from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
     DeferredToolRequests,
+    JsonPreprocessor,
     NativeOutput,
     OutputDataT,
     OutputMode,
@@ -271,6 +272,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                     name=output.name,
                     description=output.description,
                     strict=output.strict,
+                    preprocess_json=output.preprocess_json,
                 ),
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
@@ -296,6 +298,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                     flattened_outputs,
                     name=output.name,
                     description=output.description,
+                    preprocess_json=output.preprocess_json,
                 ),
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
@@ -372,12 +375,25 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ) -> BaseObjectOutputProcessor[OutputDataT]:
         outputs = _flatten_output_spec(outputs)
         if len(outputs) == 1:
-            return ObjectOutputProcessor(output=outputs[0], name=name, description=description, strict=strict)
+            return ObjectOutputProcessor(
+                output=outputs[0],
+                name=name,
+                description=description,
+                strict=strict,
+                preprocess_json=preprocess_json,
+            )
 
-        return UnionOutputProcessor(outputs=outputs, strict=strict, name=name, description=description)
+        return UnionOutputProcessor(
+            outputs=outputs,
+            strict=strict,
+            name=name,
+            description=description,
+            preprocess_json=preprocess_json,
+        )
 
 
 @dataclass(init=False)
@@ -533,6 +549,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     outer_typed_dict_key: str | None = None
     validator: SchemaValidator
     _function_schema: _function_schema.FunctionSchema | None = None
+    preprocess_json: JsonPreprocessor | None = None
 
     def __init__(
         self,
@@ -541,6 +558,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ):
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
@@ -598,6 +616,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 strict=strict,
             )
         )
+        self.preprocess_json = preprocess_json
 
     async def process(
         self,
@@ -620,6 +639,20 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         """
         if isinstance(data, str):
             data = _utils.strip_markdown_fences(data)
+            if self.preprocess_json is not None:
+                try:
+                    if _utils.is_async_callable(self.preprocess_json):
+                        preprocess_func = cast(Callable[[str], Awaitable[str]], self.preprocess_json)
+                        data = await preprocess_func(data)
+                    else:
+                        preprocess_func = cast(Callable[[str], str], self.preprocess_json)
+                        data = await _utils.run_in_executor(preprocess_func, data)
+                except Exception as e:
+                    if wrap_validation_errors:
+                        m = _messages.RetryPromptPart(content=f'Error preprocessing response: {e}')
+                        raise ToolRetryError(m) from e
+                    else:
+                        raise ModelRetry(f'Error preprocessing response: {e}') from e
 
         try:
             output = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
@@ -693,8 +726,9 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
     ):
-        self._union_processor = ObjectOutputProcessor(output=UnionOutputModel)
+        self._union_processor = ObjectOutputProcessor(output=UnionOutputModel, preprocess_json=preprocess_json)
 
         json_schemas: list[ObjectJsonSchema] = []
         self._processors = {}
@@ -857,6 +891,14 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
         )
 
 
+@dataclass(kw_only=True)
+class OutputToolsetTool(ToolsetTool[AgentDepsT]):
+    """A tool definition for an output toolset tool that keeps track of the preprocessor."""
+
+    preprocess_json: JsonPreprocessor | None = None
+    """A function to preprocess JSON strings before validation."""
+
+
 @dataclass(init=False)
 class OutputToolset(AbstractToolset[AgentDepsT]):
     """A toolset that contains contains output tools for agent output types."""
@@ -891,11 +933,12 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            preprocess_json = None
             if isinstance(output, ToolOutput):
-                # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
+                preprocess_json = output.preprocess_json
 
                 output = output.output
 
@@ -903,7 +946,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             if strict is None:
                 strict = default_strict
 
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
+            processor = ObjectOutputProcessor(
+                output=output, description=description, strict=strict, preprocess_json=preprocess_json
+            )
             object_def = processor.object_def
 
             if name is None:
@@ -960,11 +1005,12 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return {
-            tool_def.name: ToolsetTool(
+            tool_def.name: OutputToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
                 max_retries=self.max_retries,
                 args_validator=self.processors[tool_def.name].validator,
+                preprocess_json=self.processors[tool_def.name].preprocess_json,
             )
             for tool_def in self._tool_defs
         }

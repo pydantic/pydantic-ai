@@ -449,6 +449,37 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
+#### Preprocessing JSON {#preprocess-json}
+
+Some models may produce malformed JSON (trailing commas, unquoted keys, etc.). Use `preprocess_json` to fix it before validation. These examples require `pip install fast-json-repair` and your own output type definition:
+
+=== "Output types"
+
+    ```python {test="skip" lint="skip"}
+    from fast_json_repair import repair_json
+    from pydantic_ai import Agent, ToolOutput
+
+    agent = Agent(
+        'openai:gpt-5',
+        output_type=ToolOutput(MyModel, preprocess_json=repair_json),
+    )
+    ```
+
+=== "Tools"
+
+    ```python {test="skip" lint="skip"}
+    from fast_json_repair import repair_json
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5')
+
+    @agent.tool_plain(preprocess_json=repair_json)
+    def my_tool(name: str) -> str:
+        return f'Hello {name}'
+    ```
+
+The parameter accepts a [`JsonPreprocessor`][pydantic_ai.output.JsonPreprocessor] (sync or async). Exceptions trigger a retry. Only applies to string data—dict data bypasses preprocessing.
+
 ### Custom JSON schema {#structured-dict}
 
 If it's not feasible to define your desired structured output object using a Pydantic `BaseModel`, dataclass, or `TypedDict`, for example when you get a JSON schema from an external source or generate it dynamically, you can use the [`StructuredDict()`][pydantic_ai.output.StructuredDict] helper function to generate a `dict[str, Any]` subclass with a JSON schema attached that Pydantic AI will pass to the model.

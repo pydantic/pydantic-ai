@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -14,6 +14,10 @@ from ._run_context import AgentDepsT, RunContext
 from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+
+if TYPE_CHECKING:
+    # avoid circular import
+    from .output import JsonPreprocessor
 
 __all__ = (
     'AgentDepsT',
@@ -276,6 +280,7 @@ class Tool(Generic[ToolAgentDepsT]):
     requires_approval: bool
     metadata: dict[str, Any] | None
     timeout: float | None
+    preprocess_json: JsonPreprocessor | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -300,6 +305,7 @@ class Tool(Generic[ToolAgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        preprocess_json: JsonPreprocessor | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -358,6 +364,10 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            preprocess_json: A function to preprocess JSON strings before validation.
+                This is useful for fixing common model output issues like trailing commas,
+                unquoted keys, or other malformed JSON.
+                See [`JsonPreprocessor`][pydantic_ai.output.JsonPreprocessor].
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -380,6 +390,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
+        self.preprocess_json = preprocess_json
 
     @classmethod
     def from_schema(
