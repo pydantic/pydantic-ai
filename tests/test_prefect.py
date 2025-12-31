@@ -75,7 +75,7 @@ pytestmark = [
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
     # TODO(Marcelo): We are temporarily disabling it. We should enable them again.
-    pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
+    # pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -1166,6 +1166,23 @@ async def test_cache_policy_empty_inputs():
     )
 
     assert result is None
+
+
+async def test_cache_policy_excludes_run_id():
+    """Test that run_id is excluded from cache key computation."""
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    time = datetime.now()
+
+    assert cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'messages': [ModelRequest(parts=[], timestamp=time, run_id='run-1')]},
+        flow_parameters={},
+    ) == cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'messages': [ModelRequest(parts=[], timestamp=time, run_id='run-2')]},
+        flow_parameters={},
+    )
 
 
 # Test custom model settings
