@@ -243,6 +243,31 @@ print(result.output)
 - Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
+## Built-in tools
+
+Nova 2.0 models support built-in tools; see the [Nova 2.0 documentation](https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-tools.html#builtin-tools) for details.
+
+| Tool | Pydantic-AI | Bedrock | Notes |
+|------|-------------------|----------|-------|
+| [Code Interpreter](https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-tools.html#builtin-tools) | `CodeExecutionTool` | `nova_code_interpreter` | Execute Python code in isolated sandbox environments |
+| [Web Grounding](https://docs.aws.amazon.com/nova/latest/nova2-userguide/web-grounding.html) | N/A | `nova_grounding` | **Not implemented**: Access real-time information from the internet |
+
+### Example
+
+```python {title="bedrock_nova2_code_execution.py"}
+from pydantic_ai import Agent, CodeExecutionTool
+
+agent = Agent(
+    'bedrock:us.amazon.nova-2-lite-v1:0',
+    builtin_tools=[CodeExecutionTool()],
+)
+
+result = agent.run_sync('What is 42 * 1983?')
+print(result.output)
+
+# > 42 × 1983 = **83,286**.
+```
+
 ## `provider` argument
 
 You can provide a custom `BedrockProvider` via the `provider` argument. This is useful when you want to specify credentials directly or use a custom boto3 client:
