@@ -48,11 +48,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from botocore.exceptions import ClientError
-    from mypy_boto3_bedrock_runtime.type_defs import (
-        MessageUnionTypeDef,
-        SystemContentBlockTypeDef,
-        ToolTypeDef,
-    )
+    from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
 
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
