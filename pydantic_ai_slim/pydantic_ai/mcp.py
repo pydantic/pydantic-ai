@@ -508,18 +508,19 @@ class MCPServer(AbstractToolset[Any], ABC):
                 result = await self._client.list_prompts()
                 return result.prompts
 
-    async def get_prompt(self, name: str) -> mcp_types.GetPromptResult:
+    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> mcp_types.GetPromptResult:
         """Retrieve a specific prompt by name.
 
         Args:
             name: The name of the prompt to retrieve.
+            arguments: Arguments to parameterize the prompt, if applicable.
 
         Returns:
             The prompt with the specified name.
         """
         async with self:
             try:
-                result = await self._client.get_prompt(name)
+                result = await self._client.get_prompt(name, arguments)
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
@@ -771,6 +772,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if self._running_count == 0 and self._exit_stack is not None:
                 await self._exit_stack.aclose()
                 self._exit_stack = None
+                self._cached_prompts = None
                 self._cached_tools = None
                 self._cached_resources = None
 
@@ -814,6 +816,8 @@ class MCPServer(AbstractToolset[Any], ABC):
                 self._cached_tools = None
             elif isinstance(message.root, mcp_types.ResourceListChangedNotification):
                 self._cached_resources = None
+            elif isinstance(message.root, mcp_types.PromptListChangedNotification):
+                self._cached_prompts = None
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
