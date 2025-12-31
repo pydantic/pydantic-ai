@@ -1174,7 +1174,7 @@ async def test_repeated_run_hits_cache():
     """
     call_count = 0
 
-    def counting_model(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    def counting_model(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         return ModelResponse(parts=[TextPart('4')])
