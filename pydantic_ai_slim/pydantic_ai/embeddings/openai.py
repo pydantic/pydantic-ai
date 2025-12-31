@@ -14,11 +14,10 @@ from .settings import EmbeddingSettings
 
 try:
     import tiktoken
-    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI, omit as OMIT
     from openai.types import EmbeddingModel as LatestOpenAIEmbeddingModelNames
     from openai.types.create_embedding_response import Usage
 
-    from pydantic_ai.models.openai import OMIT
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI embeddings model, '

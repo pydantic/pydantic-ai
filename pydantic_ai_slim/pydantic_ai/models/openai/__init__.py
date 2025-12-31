@@ -1,0 +1,34 @@
+"""OpenAI model implementations.
+
+This package provides support for both the Chat Completions API and the Responses API.
+"""
+
+from ...profiles.openai import OpenAISystemPromptRole
+from ._shared import (
+    OpenAIChatModelSettings,
+    OpenAIModelName,
+    OpenAIModelSettings,  # pyright: ignore[reportDeprecated]
+    OpenAIResponsesModelSettings,
+)
+from .chat import (
+    OpenAIChatModel,
+    OpenAIModel,  # pyright: ignore[reportDeprecated]
+    OpenAIStreamedResponse,
+)
+from .responses import (
+    OpenAIResponsesModel,
+    OpenAIResponsesStreamedResponse,
+)
+
+__all__ = (
+    'OpenAIModel',
+    'OpenAIChatModel',
+    'OpenAIResponsesModel',
+    'OpenAIModelSettings',
+    'OpenAIChatModelSettings',
+    'OpenAIResponsesModelSettings',
+    'OpenAIModelName',
+    'OpenAIStreamedResponse',
+    'OpenAIResponsesStreamedResponse',
+    'OpenAISystemPromptRole',
+)

@@ -9,15 +9,13 @@ from ..conftest import raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import NOT_GIVEN, AsyncOpenAI, omit as OMIT
     from openai.types import chat, responses
     from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.completion_usage import CompletionUsage
     from openai.types.responses.response import ResponseUsage
     from openai.types.responses.response_output_item import ResponseOutputItem
-
-    from pydantic_ai.models.openai import NOT_GIVEN, OMIT
 
     MockChatCompletion = chat.ChatCompletion | Exception
     MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
