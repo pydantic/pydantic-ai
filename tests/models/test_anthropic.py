@@ -1714,16 +1714,16 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='Let me get the image and check what fruit is shown.'),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01WALUz3dC75yywrmL6dF3Bc'),
+                    TextPart(content="I'll get the image and identify the fruit in it."),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=372,
+                    input_tokens=555,
                     output_tokens=49,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 372,
+                        'input_tokens': 555,
                         'output_tokens': 49,
                     },
                 ),
@@ -1732,7 +1732,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01Kwjzggomz7bv9og51qGFuH',
+                provider_response_id='msg_01HQ5juE8oecrwBkoYMJi5fp',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1740,17 +1740,11 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
-                        tool_call_id='toolu_01WALUz3dC75yywrmL6dF3Bc',
+                        content='See file 241a70',
+                        tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj',
                         timestamp=IsDatetime(),
                     ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 1c8566:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1758,17 +1752,17 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's flesh has the typical fuzzy brown skin visible around the edges. The image is a clean, well-lit close-up shot of the kiwi slice against a white background."
+                        content='The fruit in the image is a **kiwi** (also known as kiwifruit). The image shows a cross-section of the kiwi, revealing its distinctive bright green flesh, small black seeds arranged in a radial pattern around the pale center, and the brown fuzzy skin around the edge.'
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=2025,
-                    output_tokens=81,
+                    input_tokens=1100,
+                    output_tokens=68,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2025,
-                        'output_tokens': 81,
+                        'input_tokens': 1100,
+                        'output_tokens': 68,
                     },
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -1776,7 +1770,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_015btMBYLTuDnMP7zAeuHQGi',
+                provider_response_id='msg_015Cd8nysLLEjXi7JEm7A9DF',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

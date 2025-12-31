@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import base64
 import datetime
 import os
@@ -3874,7 +3873,9 @@ async def test_google_vertexai_image_generation(allow_model_requests: None, vert
     agent = Agent(model, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/png', identifier='b037a4'))
+    assert result.output == snapshot(
+        BinaryImage(data=IsBytes(), media_type='image/png', _identifier='b037a4', identifier='b037a4')
+    )
 
 
 async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
@@ -4344,8 +4345,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
             )
 
-        await asyncio.sleep(3)
-
         m = GoogleModel('gemini-2.5-pro', provider=google_provider)
         agent = Agent(
             m,
@@ -4507,8 +4506,6 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
             await client.aio.file_search_stores.upload_to_file_search_store(
                 file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
             )
-
-        await asyncio.sleep(3)
 
         m = GoogleModel('gemini-2.5-pro', provider=google_provider)
         agent = Agent(

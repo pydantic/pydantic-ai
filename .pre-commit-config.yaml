@@ -12,13 +12,11 @@ repos:
         args:
           - --maxkb=1024 # 1MB
           - --enforce-all # Allow to run in the whole source code, instead of only the changed files.
-        # TODO(Marcelo): We should replace the kiwi.png file with a smaller one.
         exclude: |
           (?x)^(
               tests/models/cassettes/.*|
               tests/cassettes/.*|
-              uv.lock|
-              tests/assets/kiwi.png
+              uv.lock
           )$
 
   - repo: https://github.com/sirosen/texthooks
