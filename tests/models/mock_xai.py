@@ -252,7 +252,7 @@ def create_server_tool_call(
     """Create a server-side (builtin) ToolCall proto."""
     if tool_type is None:  # pragma: no cover
         tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL
-    if status is None:  # pragma: no cover
+    if status is None:
         status = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
     return chat_pb2.ToolCall(
         id=tool_call_id,
