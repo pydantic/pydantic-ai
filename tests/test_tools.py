@@ -2867,3 +2867,27 @@ def test_tool_examples_flattening():
     # Expect flattened examples
     assert tool.examples == [{'x': 1}, {'x': 2}]
     assert tool.tool_def.examples == [{'x': 1}, {'x': 2}]
+
+
+def test_tool_docstring_examples():
+    def my_tool(x: int) -> int:
+        """
+        My tool description.
+
+        Examples:
+            >>> my_tool(1)
+            1
+        """
+        return x
+
+    tool = Tool(my_tool)
+    assert tool.description == snapshot(
+        """\
+My tool description.
+
+Examples:
+DocstringSectionKind.examples
+>>> my_tool(1)
+1\
+"""
+    )
