@@ -1166,21 +1166,28 @@ async def test_cache_policy_empty_inputs():
     assert result is None
 
 
-async def test_cache_policy_excludes_run_id():
-    """Test that run_id is excluded from cache key computation."""
-    cache_policy = PrefectAgentInputs()
-    mock_task_ctx = MagicMock()
-    time = datetime.now()
+async def test_repeated_run_hits_cache():
+    """Test that running the same prompt twice hits the cache on the second run.
 
-    assert cache_policy.compute_key(
-        task_ctx=mock_task_ctx,
-        inputs={'messages': [ModelRequest(parts=[], timestamp=time, run_id='run-1')]},
-        flow_parameters={},
-    ) == cache_policy.compute_key(
-        task_ctx=mock_task_ctx,
-        inputs={'messages': [ModelRequest(parts=[], timestamp=time, run_id='run-2')]},
-        flow_parameters={},
-    )
+    This catches regressions where new per-run fields (like run_id) break caching.
+    If caching is broken, the model will be called twice instead of once.
+    """
+    call_count = 0
+
+    def counting_model(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('4')])
+
+    agent = Agent(FunctionModel(counting_model), name='cache_test_agent')
+    prefect_agent = PrefectAgent(agent)
+
+    prefect_agent.run_sync('What is 2+2?')
+    assert call_count == 1
+
+    # Cache hit here, should not call the model again
+    prefect_agent.run_sync('What is 2+2?')
+    assert call_count == 1
 
 
 # Test custom model settings
