@@ -913,6 +913,7 @@ class MCPServerStdio(MCPServer):
     sampling_model: models.Model | None
     max_retries: int
     elicitation_callback: ElicitationFnT | None = None
+    cache_prompts: bool
     cache_tools: bool
     cache_resources: bool
 
@@ -933,6 +934,7 @@ class MCPServerStdio(MCPServer):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        cache_prompts: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
         id: str | None = None,
@@ -955,6 +957,8 @@ class MCPServerStdio(MCPServer):
             sampling_model: The model to use for sampling.
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
+            cache_prompts: Whether to cache the list of prompts.
+                See [`MCPServer.cache_prompts`][pydantic_ai.mcp.MCPServer.cache_prompts].
             cache_tools: Whether to cache the list of tools.
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
@@ -978,6 +982,7 @@ class MCPServerStdio(MCPServer):
             sampling_model,
             max_retries,
             elicitation_callback,
+            cache_prompts,
             cache_tools,
             cache_resources,
             id=id,
@@ -1080,6 +1085,7 @@ class _MCPServerHTTP(MCPServer):
     sampling_model: models.Model | None
     max_retries: int
     elicitation_callback: ElicitationFnT | None = None
+    cache_prompts: bool
     cache_tools: bool
     cache_resources: bool
 
@@ -1100,6 +1106,7 @@ class _MCPServerHTTP(MCPServer):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        cache_prompts: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
         client_info: mcp_types.Implementation | None = None,
@@ -1122,6 +1129,8 @@ class _MCPServerHTTP(MCPServer):
             sampling_model: The model to use for sampling.
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
+            cache_prompts: Whether to cache the list of prompts.
+                See [`MCPServer.cache_prompts`][pydantic_ai.mcp.MCPServer.cache_prompts].
             cache_tools: Whether to cache the list of tools.
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
@@ -1157,6 +1166,7 @@ class _MCPServerHTTP(MCPServer):
             sampling_model,
             max_retries,
             elicitation_callback,
+            cache_prompts,
             cache_tools,
             cache_resources,
             id=id,
