@@ -55,6 +55,10 @@ nav:
           - mcp/fastmcp-client.md
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
+      - Skills:
+          - Overview: skills/overview.md
+          - Creating Skills: skills/creating-skills.md
+          - Using Skills: skills/using-skills.md
       - Web Chat UI: web.md
       - Embeddings: embeddings.md
       - Testing: testing.md
@@ -141,6 +145,7 @@ nav:
           - api/ext.md
           - api/format_prompt.md
           - api/mcp.md
+          - api/skills.md
           - api/messages.md
           - api/models/anthropic.md
           - api/models/base.md

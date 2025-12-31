@@ -8,6 +8,18 @@ from .function import FunctionToolset
 from .prefixed import PrefixedToolset
 from .prepared import PreparedToolset
 from .renamed import RenamedToolset
+from .skills import (
+    Skill,
+    SkillException,
+    SkillMetadata,
+    SkillNotFoundError,
+    SkillResource,
+    SkillResourceLoadError,
+    SkillScript,
+    SkillScriptExecutionError,
+    SkillsToolset,
+    SkillValidationError,
+)
 from .wrapper import WrapperToolset
 
 __all__ = (
@@ -24,4 +36,15 @@ __all__ = (
     'PreparedToolset',
     'WrapperToolset',
     'ApprovalRequiredToolset',
+    # Skills toolset
+    'SkillsToolset',
+    'Skill',
+    'SkillMetadata',
+    'SkillResource',
+    'SkillScript',
+    'SkillException',
+    'SkillNotFoundError',
+    'SkillResourceLoadError',
+    'SkillScriptExecutionError',
+    'SkillValidationError',
 )
