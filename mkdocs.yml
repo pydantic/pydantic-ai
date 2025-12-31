@@ -116,7 +116,9 @@ nav:
       - Data & Analytics:
           - examples/sql-gen.md
           - examples/data-analyst.md
+      - RAG:
           - examples/rag.md
+          - examples/rag-surrealdb.md
       - Streaming:
           - examples/stream-markdown.md
           - examples/stream-whales.md
