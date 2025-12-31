@@ -1,0 +1,84 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 1234 * 5678?"}]}], "system": [{"text": "You are a
+      helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema":
+      {"json": {"properties": {"result": {"type": "number"}}, "required": ["result"], "title": "Response", "type": "object"}},
+      "description": "The final response which ends this conversation"}}, {"systemTool": {"name": "nova_code_interpreter"}}],
+      "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NGQ4N2E1MGUtMGNlNS00MGYwLWFhZWEtY2E0ZWJmMzcxNzdl
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '501'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse-stream
+  response:
+    body:
+      string: !!binary |
+        AAAAkgAAAFJLgZvBCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTpjb250ZW50LXR5cGUHABBh
+        cHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsicCI6ImFiY2RlZmdoaWprbG1u
+        b3BxcnN0dSIsInJvbGUiOiJhc3Npc3RhbnQifVMJx7gAAAEyAAAAV4CQI30LOmV2ZW50LXR5cGUH
+        ABFjb250ZW50QmxvY2tTdGFydA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVz
+        c2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjowLCJwIjoiYWJjZGVmZ2hpamts
+        bW5vcHFyc3R1dnd4eXpBQkNERUZHSElKS0xNTk9QUVJTVFVWV1giLCJzdGFydCI6eyJ0b29sVXNl
+        Ijp7Im5hbWUiOiJub3ZhX2NvZGVfaW50ZXJwcmV0ZXIiLCJ0b29sVXNlSWQiOiJ0b29sdXNlX1Vz
+        Rld0dER3bngtaFFSM3gzZFhURFEiLCJ0eXBlIjoic2VydmVyX3Rvb2xfdXNlIn19fTog7F4AAADs
+        AAAAV30JMeALOmV2ZW50LXR5cGUHABFjb250ZW50QmxvY2tEZWx0YQ06Y29udGVudC10eXBlBwAQ
+        YXBwbGljYXRpb24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4
+        IjowLCJkZWx0YSI6eyJ0b29sVXNlIjp7ImlucHV0Ijoie1wic25pcHBldFwiOlwiMTIzNCAqIDU2
+        NzhcIn0ifX0sInAiOiJhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ekFCQ0RFRkdISUpLTE1OTyJ9
+        K+LKUAAAAJAAAABWNiwMuAs6ZXZlbnQtdHlwZQcAEGNvbnRlbnRCbG9ja1N0b3ANOmNvbnRlbnQt
+        dHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50Qmxv
+        Y2tJbmRleCI6MCwicCI6ImFiY2RlZmdoaWprbCJ9wtmmXgAAAUEAAABXPuK5Ygs6ZXZlbnQtdHlw
+        ZQcAEWNvbnRlbnRCbG9ja1N0YXJ0DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTpt
+        ZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjEsInAiOiJhYmNkZWZnaGlq
+        a2xtbm9wcXJzdHV2d3h5ekFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaMDEyMzQ1Njc4Iiwic3Rh
+        cnQiOnsidG9vbFJlc3VsdCI6eyJzdGF0dXMiOiJzdWNjZXNzIiwidG9vbFVzZUlkIjoidG9vbHVz
+        ZV9Vc0ZXdHREd254LWhRUjN4M2RYVERRIiwidHlwZSI6Im5vdmFfY29kZV9pbnRlcnByZXRlcl9y
+        ZXN1bHQifX19nve4HgAAAP0AAABXIImP0gs6ZXZlbnQtdHlwZQcAEWNvbnRlbnRCbG9ja0RlbHRh
+        DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsi
+        Y29udGVudEJsb2NrSW5kZXgiOjEsImRlbHRhIjp7InRvb2xSZXN1bHQiOlt7Impzb24iOnsic3Rk
+        T3V0IjoiNzAwNjY1MiIsInN0ZEVyciI6IiIsImV4aXRDb2RlIjowLCJpc0Vycm9yIjpmYWxzZX19
+        XX0sInAiOiJhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3giff/MFjgAAACwAAAAVvftI7wLOmV2ZW50
+        LXR5cGUHABBjb250ZW50QmxvY2tTdG9wDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29u
+        DTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjEsInAiOiJhYmNkZWZn
+        aGlqa2xtbm9wcXJzdHV2d3h5ekFCQ0RFRkdISUpLTE1OT1BRUiJ9wckiOgAAASUAAABXUlBo7ws6
+        ZXZlbnQtdHlwZQcAEWNvbnRlbnRCbG9ja1N0YXJ0DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlv
+        bi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjIsInAiOiJh
+        YmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ekFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaMCIsInN0
+        YXJ0Ijp7InRvb2xVc2UiOnsibmFtZSI6ImZpbmFsX3Jlc3VsdCIsInRvb2xVc2VJZCI6InRvb2x1
+        c2VfOFdDYVNpM2VRakdYMkdEVF9GNV8tdyIsInR5cGUiOiJ0b29sX3VzZSJ9fX1+CgbjAAAAwAAA
+        AFd5OPPlCzpldmVudC10eXBlBwARY29udGVudEJsb2NrRGVsdGENOmNvbnRlbnQtdHlwZQcAEGFw
+        cGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6
+        MiwiZGVsdGEiOnsidG9vbFVzZSI6eyJpbnB1dCI6IntcInJlc3VsdFwiOjcwMDY2NTIuMH0ifX0s
+        InAiOiJhYmNkIn0pi2tLAAAAkwAAAFZxjHZoCzpldmVudC10eXBlBwAQY29udGVudEJsb2NrU3Rv
+        cA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7
+        ImNvbnRlbnRCbG9ja0luZGV4IjoyLCJwIjoiYWJjZGVmZ2hpamtsbW5vIn1h3gsXAAAAtQAAAFGh
+        aTlvCzpldmVudC10eXBlBwALbWVzc2FnZVN0b3ANOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9u
+        L2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJwIjoiYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4
+        eXpBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWiIsInN0b3BSZWFzb24iOiJ0b29sX3VzZSJ9F5rL
+        nAAAAPcAAABODlI/sws6ZXZlbnQtdHlwZQcACG1ldGFkYXRhDTpjb250ZW50LXR5cGUHABBhcHBs
+        aWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsibWV0cmljcyI6eyJsYXRlbmN5TXMi
+        OjIwMTh9LCJwIjoiYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXpBQkMiLCJ1c2FnZSI6eyJpbnB1
+        dFRva2VucyI6MTAwMiwib3V0cHV0VG9rZW5zIjo1OSwic2VydmVyVG9vbFVzYWdlIjp7fSwidG90
+        YWxUb2tlbnMiOjEwNjF9fVZeYiU=
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      server-timing:
+      - cfReqDur;dur=388.728
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
