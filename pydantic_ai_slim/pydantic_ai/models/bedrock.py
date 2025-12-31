@@ -41,6 +41,7 @@ from pydantic_ai import (
     usage,
 )
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
@@ -76,15 +77,19 @@ if TYPE_CHECKING:
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
+        ToolResultBlockOutputTypeDef,
         ToolSpecificationTypeDef,
         ToolTypeDef,
+        ToolUseBlockOutputTypeDef,
         VideoBlockTypeDef,
     )
+
 
 LatestBedrockModelNames = Literal[
     'amazon.titan-tg1-large',
     'amazon.titan-text-lite-v1',
     'amazon.titan-text-express-v1',
+    'us.amazon.nova-2-lite-v1:0',
     'us.amazon.nova-pro-v1:0',
     'us.amazon.nova-lite-v1:0',
     'us.amazon.nova-micro-v1:0',
@@ -158,6 +163,59 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
+
+_BEDROCK_TO_PYDANTIC_BUILTIN_TOOL_MAP: dict[str, str] = {
+    'nova_code_interpreter': CodeExecutionTool.kind,
+}
+_BEDROCK_TO_PYDANTIC_TOOL_RESULT_TYPE_MAP: dict[str, str] = {
+    'nova_code_interpreter_result': CodeExecutionTool.kind,
+}
+
+
+def map_pydantic_builtin_tool_name(bedrock_tool_name: str) -> str:
+    """Maps Bedrock "system" tool names to Pydantic AI builtin tool names."""
+    if pydantic_tool_name := _BEDROCK_TO_PYDANTIC_BUILTIN_TOOL_MAP.get(bedrock_tool_name):
+        return pydantic_tool_name
+    raise NotImplementedError(
+        f"Bedrock system tool '{bedrock_tool_name}' is not supported yet. If it should be, please file an issue."
+    )
+
+
+def map_bedrock_builtin_tool_name(pydantic_tool_name: str) -> str:
+    """Maps Pydantic AI builtin tool names to Bedrock "system" tool names."""
+    if bedrock_tool_name := next(
+        (br for br, pd in _BEDROCK_TO_PYDANTIC_BUILTIN_TOOL_MAP.items() if pd == pydantic_tool_name),
+        None,
+    ):
+        return bedrock_tool_name
+
+    raise NotImplementedError(
+        f"Pydantic AI builtin tool '{pydantic_tool_name}' is not supported yet. If it should be, please file an issue."
+    )
+
+
+def map_pydantic_builtin_tool_name_by_result_type(bedrock_tool_result_type: str | None) -> str:
+    """Gets pydantic tool name given a Bedrock toolResult.type."""
+    bedrock_tool_result_type = bedrock_tool_result_type or 'missing_type'
+    if pydantic_tool_name := _BEDROCK_TO_PYDANTIC_TOOL_RESULT_TYPE_MAP.get(bedrock_tool_result_type):
+        return pydantic_tool_name
+    raise NotImplementedError(
+        f"Bedrock tool result type '{bedrock_tool_result_type}' is not supported yet. "
+        f'If it should be, please file an issue.'
+    )
+
+
+def map_bedrock_tool_result_type(pydantic_tool_name: str) -> str:
+    """Gets Bedrock toolResult.type given a Pydantic AI builtin tool name."""
+    if bedrock_tool_result_type := next(
+        (bd for bd, pd in _BEDROCK_TO_PYDANTIC_TOOL_RESULT_TYPE_MAP.items() if pd == pydantic_tool_name),
+        None,
+    ):
+        return bedrock_tool_result_type
+
+    raise NotImplementedError(
+        f"Pydantic AI builtin tool '{pydantic_tool_name}' is not supported yet. If it should be, please file an issue."
+    )
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -291,6 +349,11 @@ class BedrockConverseModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """The set of builtin tool types this model can handle."""
+        return frozenset({CodeExecutionTool})
+
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
@@ -398,13 +461,34 @@ class BedrockConverseModel(Model):
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
+                    if tool_use.get('type') == 'server_tool_use':
+                        items.append(
+                            BuiltinToolCallPart(
+                                provider_name=self.system,
+                                tool_name=map_pydantic_builtin_tool_name(tool_use['name']),
+                                args=tool_use.get('input'),
+                                tool_call_id=tool_use.get('toolUseId'),
+                            )
+                        )
+                    else:
+                        items.append(
+                            ToolCallPart(
+                                tool_name=tool_use['name'],
+                                args=tool_use['input'],
+                                tool_call_id=tool_use['toolUseId'],
+                            ),
+                        )
+                elif tool_result := item.get('toolResult'):
                     items.append(
-                        ToolCallPart(
-                            tool_name=tool_use['name'],
-                            args=tool_use['input'],
-                            tool_call_id=tool_use['toolUseId'],
-                        ),
+                        BuiltinToolReturnPart(
+                            provider_name=self.system,
+                            tool_name=map_pydantic_builtin_tool_name_by_result_type(tool_result.get('type')),
+                            content=tool_result.get('content'),
+                            tool_call_id=tool_result.get('toolUseId'),
+                            provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
+                        )
                     )
+
         input_tokens = response['usage']['inputTokens']
         output_tokens = response['usage']['outputTokens']
         cache_read_tokens = response['usage'].get('cacheReadInputTokens', 0)
@@ -527,12 +611,18 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
+    def _add_builtin_tools(self, tools: list[ToolTypeDef], model_request_parameters: ModelRequestParameters) -> None:
+        for tool in model_request_parameters.builtin_tools:
+            tools.append({'systemTool': {'name': map_bedrock_builtin_tool_name(tool.kind)}})
+
     def _map_tool_config(
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
         tools = self._get_tools(model_request_parameters)
+        self._add_builtin_tools(tools, model_request_parameters)
+
         if not tools:
             return None
 
@@ -646,8 +736,25 @@ class BedrockConverseModel(Model):
                         else:
                             start_tag, end_tag = self.profile.thinking_tags
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
-                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
-                        pass
+                    elif isinstance(item, BuiltinToolCallPart):
+                        if item.provider_name == self.system:
+                            server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
+                                'toolUseId': _utils.guard_tool_call_id(t=item),
+                                'name': map_bedrock_builtin_tool_name(item.tool_name),
+                                'input': item.args_as_dict(),
+                                'type': 'server_tool_use',
+                            }
+                            content.append({'toolUse': server_tool_use_block_param})
+                    elif isinstance(item, BuiltinToolReturnPart):
+                        if item.provider_name == self.system:
+                            tool_result: ToolResultBlockOutputTypeDef = {
+                                'toolUseId': _utils.guard_tool_call_id(t=item),
+                                'content': item.content,
+                                'type': map_bedrock_tool_result_type(item.tool_name),
+                            }
+                            if item.provider_details and 'status' in item.provider_details:
+                                tool_result['status'] = item.provider_details['status']
+                            content.append({'toolResult': tool_result})
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
@@ -910,7 +1017,12 @@ class BedrockStreamedResponse(StreamedResponse):
             self.provider_response_id = self._provider_response_id
 
         chunk: ConverseStreamOutputTypeDef
-        tool_id: str | None = None
+        tool_ids: dict[int, str] = {}
+
+        # Bedrock has deltas for built-in tool returns, which aren't supported by parts manager.
+        # We accumulate the deltas here and yield the complete return part once the content block ends
+        builtin_tool_returns: dict[int, BuiltinToolReturnPart] = {}
+
         async for chunk in _AsyncIteratorWrapper(self._event_stream):
             match chunk:
                 case {'messageStart': _}:
@@ -925,18 +1037,44 @@ class BedrockStreamedResponse(StreamedResponse):
                 case {'contentBlockStart': content_block_start}:
                     index = content_block_start['contentBlockIndex']
                     start = content_block_start['start']
-                    if 'toolUse' in start:  # pragma: no branch
+                    if 'toolUse' in start:
                         tool_use_start = start['toolUse']
                         tool_id = tool_use_start['toolUseId']
+                        tool_ids[index] = tool_id
                         tool_name = tool_use_start['name']
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=index,
-                            tool_name=tool_name,
-                            args=None,
+                        if tool_use_start.get('type') == 'server_tool_use':
+                            part = BuiltinToolCallPart(
+                                tool_name=map_pydantic_builtin_tool_name(tool_name),
+                                tool_call_id=tool_id,
+                                provider_name=self.provider_name,
+                            )
+                            yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
+                        else:
+                            maybe_event = self._parts_manager.handle_tool_call_delta(
+                                vendor_part_id=index,
+                                tool_name=tool_name,
+                                args=None,
+                                tool_call_id=tool_id,
+                            )
+                            if maybe_event:  # pragma: no branch
+                                yield maybe_event
+                    elif 'toolResult' in start:  # pragma: no branch
+                        tool_result_start = start['toolResult']
+                        tool_id = tool_result_start['toolUseId']
+
+                        return_part = BuiltinToolReturnPart(
+                            provider_name=self.provider_name,
+                            tool_name=map_pydantic_builtin_tool_name_by_result_type(tool_result_start.get('type')),
+                            content=[],
                             tool_call_id=tool_id,
+                            provider_details={'status': tool_result_start['status']}
+                            if 'status' in tool_result_start
+                            else {},
                         )
-                        if maybe_event:  # pragma: no branch
-                            yield maybe_event
+                        builtin_tool_returns[index] = return_part
+
+                        # Don't emit/yield the event until block is complete.
+                        self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
                 case {'contentBlockDelta': content_block_delta}:
                     index = content_block_delta['contentBlockIndex']
                     delta = content_block_delta['delta']
@@ -967,11 +1105,25 @@ class BedrockStreamedResponse(StreamedResponse):
                             vendor_part_id=index,
                             tool_name=tool_use.get('name'),
                             args=tool_use.get('input'),
-                            tool_call_id=tool_id,
+                            tool_call_id=tool_ids.get(index),
                         )
                         if maybe_event:  # pragma: no branch
                             yield maybe_event
-                case _:
+                    if 'toolResult' in delta:  # pragma: no branch
+                        if return_part := builtin_tool_returns.get(index):  # pragma: no branch
+                            return_part.content.extend(delta['toolResult'])
+
+                            # Update state without emitting; we only emit once on contentBlockStop.
+                            self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
+                case {'contentBlockStop': content_block_stop}:
+                    index = content_block_stop['contentBlockIndex']
+                    if return_part := builtin_tool_returns.get(index):
+                        # Emit the complete built-in tool return only once when the block closes.
+                        yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
+                    tool_ids.pop(index, None)
+                    builtin_tool_returns.pop(index, None)
+
+                case _:  # pragma: no cover
                     pass  # pyright wants match statements to be exhaustive
 
     @property

@@ -1,0 +1,144 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 1234 * 5678?"}]}], "system": [{"text": "You are a
+      helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema":
+      {"json": {"properties": {"result": {"type": "number"}}, "required": ["result"], "title": "Response", "type": "object"}},
+      "description": "The final response which ends this conversation"}}, {"systemTool": {"name": "nova_code_interpreter"}}],
+      "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NTQ1NDc2NjYtMmQwYS00YWQ1LWEzOTAtNjQ5YTZjZDFjNzZh
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '501'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '674'
+      content-type:
+      - application/json
+      server-timing:
+      - cfReqDur;dur=2042.11
+    parsed_body:
+      metrics:
+        latencyMs: 1752
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                snippet: 1234 * 5678
+              name: nova_code_interpreter
+              toolUseId: tooluse_8lxQ0XeXGB6DC4_uWi_MoQ
+              type: server_tool_use
+          - toolResult:
+              content:
+              - json:
+                  exitCode: 0
+                  isError: false
+                  stdErr: ''
+                  stdOut: '7006652'
+              status: success
+              toolUseId: tooluse_8lxQ0XeXGB6DC4_uWi_MoQ
+              type: nova_code_interpreter_result
+          - toolUse:
+              input:
+                result: 7006652.0
+              name: final_result
+              toolUseId: tooluse_oQTX17XXR3yf4lXBUSqRxA
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 1002
+        outputTokens: 59
+        serverToolUsage: {}
+        totalTokens: 1061
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 1234 * 5678?"}]}, {"role": "assistant", "content":
+      [{"toolUse": {"toolUseId": "tooluse_8lxQ0XeXGB6DC4_uWi_MoQ", "name": "nova_code_interpreter", "input": {"snippet": "1234
+      * 5678"}, "type": "server_tool_use"}}, {"toolResult": {"toolUseId": "tooluse_8lxQ0XeXGB6DC4_uWi_MoQ", "content": [{"json":
+      {"stdOut": "7006652", "stdErr": "", "exitCode": 0, "isError": false}}], "type": "nova_code_interpreter_result", "status":
+      "success"}}, {"toolUse": {"toolUseId": "tooluse_oQTX17XXR3yf4lXBUSqRxA", "name": "final_result", "input": {"result":
+      7006652.0}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_oQTX17XXR3yf4lXBUSqRxA", "content":
+      [{"text": "Final result processed."}], "status": "success"}}, {"text": "Now multiply that by 2"}]}], "system": [{"text":
+      "You are a helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result",
+      "inputSchema": {"json": {"properties": {"result": {"type": "number"}}, "required": ["result"], "title": "Response",
+      "type": "object"}}, "description": "The final response which ends this conversation"}}, {"systemTool": {"name": "nova_code_interpreter"}}],
+      "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MzM1ODJjZjEtMTFkNS00NGZjLWI0NzItOGY3OGYzZjYyNjZk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1236'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '677'
+      content-type:
+      - application/json
+      server-timing:
+      - cfReqDur;dur=1940.917
+    parsed_body:
+      metrics:
+        latencyMs: 1741
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                snippet: 7006652 * 2
+              name: nova_code_interpreter
+              toolUseId: tooluse_ajDt2g928L56dpjs6eF6eA
+              type: server_tool_use
+          - toolResult:
+              content:
+              - json:
+                  exitCode: 0
+                  isError: false
+                  stdErr: ''
+                  stdOut: '14013304'
+              status: success
+              toolUseId: tooluse_ajDt2g928L56dpjs6eF6eA
+              type: nova_code_interpreter_result
+          - toolUse:
+              input:
+                result: 14013304.0
+              name: final_result
+              toolUseId: tooluse_qcotmh4QRwOyxSmrX6hYJA
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 1148
+        outputTokens: 59
+        serverToolUsage: {}
+        totalTokens: 1207
+    status:
+      code: 200
+      message: OK
+version: 1
