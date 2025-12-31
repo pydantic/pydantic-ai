@@ -8964,3 +8964,31 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+async def test_responses_model_to_openai_messages():
+    """Test OpenAIResponsesModel.to_openai_messages() converts various message types correctly."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Test conversation with model response and tool calls
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args={'location': 'NYC'}, tool_call_id='call_123')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='Sunny, 72°F', tool_call_id='call_123')]),
+        ModelResponse(parts=[TextPart(content='The weather in NYC is sunny and 72°F.')]),
+    ]
+    instructions, openai_messages = await model.to_openai_messages(messages)
+    assert instructions is None
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is the weather?'},
+            {
+                'call_id': 'call_123',
+                'name': 'get_weather',
+                'arguments': '{"location":"NYC"}',
+                'type': 'function_call',
+            },
+            {'call_id': 'call_123', 'output': 'Sunny, 72°F', 'type': 'function_call_output'},
+            {'role': 'assistant', 'content': 'The weather in NYC is sunny and 72°F.'},
+        ]
+    )

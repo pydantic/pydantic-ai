@@ -916,6 +916,28 @@ class OpenAIChatModel(Model):
             )
         return openai_messages
 
+    async def to_openai_messages(
+        self,
+        messages: Sequence[ModelMessage],
+    ) -> list[chat.ChatCompletionMessageParam]:
+        """Convert PydanticAI messages to OpenAI Chat Completions API format.
+
+        This method provides a public interface to convert PydanticAI message history
+        to the format expected by the OpenAI Chat Completions API. This is useful for
+        debugging, logging, or building custom integrations.
+
+        Instructions from [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions]
+        will be included as a system message in the returned list.
+
+        Args:
+            messages: The PydanticAI message history to convert.
+
+        Returns:
+            List of OpenAI `ChatCompletionMessageParam` objects ready to be sent
+            to the OpenAI Chat Completions API.
+        """
+        return await self._map_messages(messages, ModelRequestParameters())
+
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ChatCompletionMessageFunctionToolCallParam:
         return ChatCompletionMessageFunctionToolCallParam(
@@ -1883,6 +1905,41 @@ class OpenAIResponsesModel(Model):
                 assert_never(message)
         instructions = self._get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
+
+    async def to_openai_messages(
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings | None = None,
+    ) -> tuple[str | None, list[responses.ResponseInputItemParam]]:
+        """Convert PydanticAI messages to OpenAI Responses API format.
+
+        This method provides a public interface to convert PydanticAI message history
+        to the format expected by the OpenAI Responses API. This is useful for
+        debugging, logging, or building custom integrations.
+
+        Instructions from [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions]
+        will be extracted and returned separately (as the first element of the tuple),
+        since the Responses API accepts instructions as a separate parameter.
+
+        Args:
+            messages: The PydanticAI message history to convert.
+            model_settings: Optional model settings that affect conversion behavior
+                (e.g., `openai_send_reasoning_ids` for reasoning content handling).
+
+        Returns:
+            A tuple of `(instructions, openai_messages)` where:
+            - `instructions` is the extracted instructions string (or `None` if not present).
+            - `openai_messages` is a list of OpenAI `ResponseInputItemParam` objects
+              ready to be sent to the OpenAI Responses API.
+        """
+        settings: OpenAIResponsesModelSettings = model_settings or {}
+        result_instructions, openai_messages = await self._map_messages(messages, settings, ModelRequestParameters())
+
+        # Convert OMIT to None for public API
+        if isinstance(result_instructions, Omit):
+            return None, openai_messages
+
+        return result_instructions, openai_messages
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
         response_format_param: responses.ResponseFormatTextJSONSchemaConfigParam = {
