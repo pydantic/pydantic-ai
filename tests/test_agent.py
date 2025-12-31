@@ -3006,6 +3006,7 @@ def test_unknown_tool_multiple_retries():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3024,6 +3025,7 @@ def test_unknown_tool_multiple_retries():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3042,6 +3044,7 @@ def test_unknown_tool_multiple_retries():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
