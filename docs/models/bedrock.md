@@ -254,7 +254,7 @@ Nova 2.0 models support built-in tools; see the [Nova 2.0 documentation](https:/
 
 ### Example
 
-```python {title="bedrock_nova2_code_execution.py"}
+```python {title="bedrock_nova2_code_execution.py" test="skip"}
 from pydantic_ai import Agent, CodeExecutionTool
 
 agent = Agent(
