@@ -36,6 +36,11 @@ def failing_preprocessor(json_str: str) -> str:
     raise ValueError('Preprocessing failed!')
 
 
+async def failing_preprocessor_async(json_str: str) -> str:
+    """Async preprocessor that always raises an error."""
+    raise ValueError('Async preprocessing failed!')
+
+
 # =============================================================================
 # ToolOutput Tests
 # =============================================================================
@@ -114,6 +119,62 @@ async def test_native_output_preprocess_response():
 
     result = await agent.run('Test')
     assert result.output == snapshot(MyModel(name='native_test', value=42))
+
+
+async def test_native_output_preprocess_response_async():
+    """Test that async preprocess_json works with NativeOutput."""
+
+    def return_malformed_json(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        malformed_json = '{name: "native_async", value: 99,}'
+        return ModelResponse(parts=[TextPart(content=malformed_json)])
+
+    agent = Agent(
+        FunctionModel(return_malformed_json),
+        output_type=NativeOutput(MyModel, preprocess_json=fix_json_async),
+    )
+
+    result = await agent.run('Test')
+    assert result.output == snapshot(MyModel(name='native_async', value=99))
+
+
+async def test_native_output_preprocess_error_triggers_retry():
+    """Test that async preprocessing errors in NativeOutput trigger retry."""
+    from pydantic_ai import UnexpectedModelBehavior
+
+    def return_malformed_json(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        malformed_json = '{name: "test", value: 1}'
+        return ModelResponse(parts=[TextPart(content=malformed_json)])
+
+    agent = Agent(
+        FunctionModel(return_malformed_json),
+        output_type=NativeOutput(MyModel, preprocess_json=failing_preprocessor_async),
+    )
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        await agent.run('Test')
+
+    assert 'Exceeded maximum retries' in str(exc_info.value)
+
+
+async def test_native_output_preprocess_error_in_stream():
+    """Test that preprocessing errors in streaming raise ModelRetry (wrap_validation_errors=False)."""
+    from collections.abc import AsyncIterator
+
+    from pydantic_ai.exceptions import ModelRetry
+
+    async def stream_malformed_json(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield '{name: "test", value: 1}'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_malformed_json),
+        output_type=NativeOutput(MyModel, preprocess_json=failing_preprocessor_async),
+    )
+
+    with pytest.raises(ModelRetry) as exc_info:
+        async with agent.run_stream('Test') as stream:
+            await stream.get_output()
+
+    assert 'Error preprocessing response' in str(exc_info.value)
 
 
 # =============================================================================
@@ -204,11 +265,40 @@ async def test_preprocess_response_error_triggers_retry():
         # For BaseModel types, the JSON should NOT have a "response" wrapper
         if call_count <= 2:
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"name": "first", "value": 1}')])
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"name": "retry", "value": 1}')])
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, '{"name": "retry", "value": 1}')]
+        )  # pragma: no cover
 
     agent = Agent(
         FunctionModel(return_json_with_fallback),
         output_type=ToolOutput(MyModel, preprocess_json=failing_preprocessor),
+    )
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        await agent.run('Test')
+
+    assert 'Exceeded maximum retries' in str(exc_info.value)
+
+
+async def test_preprocess_response_error_triggers_retry_async():
+    """Test that async preprocessing errors trigger retry with proper error message."""
+    from pydantic_ai import UnexpectedModelBehavior
+
+    call_count = 0
+
+    def return_json_with_fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        if call_count <= 2:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"name": "first", "value": 1}')])
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, '{"name": "retry", "value": 1}')]
+        )  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(return_json_with_fallback),
+        output_type=ToolOutput(MyModel, preprocess_json=failing_preprocessor_async),
     )
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
@@ -228,13 +318,13 @@ async def test_tool_preprocess_error_triggers_retry():
         call_count += 1
         if call_count <= 2 and info.function_tools:
             return ModelResponse(parts=[ToolCallPart('get_data', '{"name": "test"}')])
-        return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[TextPart(content='done')])  # pragma: no cover
 
     agent: Agent[None, str] = Agent(FunctionModel(call_tool))
 
     @agent.tool_plain(preprocess_json=failing_preprocessor)
     def get_data(name: str) -> str:
-        return name
+        return name  # pragma: no cover
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('Test')
@@ -257,7 +347,7 @@ async def test_dict_data_bypasses_preprocessing():
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, dict_args)])
 
     def should_not_be_called(json_str: str) -> str:
-        raise AssertionError('Preprocessor should not be called for dict data')
+        raise AssertionError('Preprocessor should not be called for dict data')  # pragma: no cover
 
     agent = Agent(
         FunctionModel(return_dict_args),
