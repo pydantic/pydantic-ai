@@ -855,7 +855,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ),
         }
 
-    # TODO: Consider adding include_tool_return_schema to override() for testing scenarios
     @contextmanager
     def override(
         self,

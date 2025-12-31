@@ -431,7 +431,7 @@ def get_user(user_id: int) -> UserDetails:
 # Use the convenience method to include return schemas
 toolset_with_schemas = toolset.with_return_schema()
 
-test_model = TestModel()  # (1)!
+test_model = TestModel()
 agent = Agent(test_model, toolsets=[toolset_with_schemas])
 result = agent.run_sync('Get user 1')
 
@@ -463,8 +463,6 @@ print(test_model.last_model_request_parameters.function_tools)
 ]
 """
 ```
-
-1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
 
 _(This example is complete, it can be run "as is")_
 
