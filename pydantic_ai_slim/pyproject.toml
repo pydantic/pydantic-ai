@@ -125,6 +125,8 @@ dbos = ["dbos>=1.14.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
 
+magika = ["magika>=1.0.1"]
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
