@@ -58,7 +58,6 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
 
         if 'nova-2' in model_name:
             profile.supported_builtin_tools = frozenset({CodeExecutionTool})
-            # TODO: Add support for web grounding tool
 
     return profile
 

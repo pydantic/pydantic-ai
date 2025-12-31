@@ -352,7 +352,6 @@ class BedrockConverseModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """The set of builtin tool types this model can handle."""
-        # TODO: Implement web grounding tool?
         return frozenset({CodeExecutionTool})
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
@@ -463,7 +462,6 @@ class BedrockConverseModel(Model):
                     items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
-                        # Bedrock server tool use response handling can be added here in the future
                         items.append(
                             BuiltinToolCallPart(
                                 provider_name=self.system,
