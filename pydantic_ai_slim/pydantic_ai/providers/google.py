@@ -100,6 +100,9 @@ class GoogleProvider(Provider[Client]):
             base_url: The base URL for the Google API.
         """
         if client is None:
+            # Track if api_key was explicitly passed (for Vertex AI express mode)
+            api_key_explicitly_passed = api_key is not None
+
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
             api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
 
@@ -123,7 +126,8 @@ class GoogleProvider(Provider[Client]):
                     )
                 self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
             else:
-                if vertex_ai_args_used:
+                if vertex_ai_args_used or not api_key_explicitly_passed:
+                    # Use ADC for Vertex AI unless api_key was explicitly passed (express mode)
                     api_key = None
 
                 if api_key is None:
