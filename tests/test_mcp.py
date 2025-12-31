@@ -2368,3 +2368,89 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
+
+
+async def test_list_prompts() -> None:
+    """Test that list_prompts() returns available prompts."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        assert server.capabilities.prompts
+
+        prompts = await server.list_prompts()
+        assert len(prompts) == 2
+
+        # Check simple prompt
+        simple = next(p for p in prompts if p.name == 'simple_prompt')
+        assert simple.description == 'A simple prompt template.'
+        assert simple.arguments is None or len(simple.arguments) == 0
+
+        # Check parameterized prompt
+        param = next(p for p in prompts if p.name == 'parameterized_prompt')
+        assert param.description == 'A prompt template with parameters.'
+        assert param.arguments is not None
+        assert len(param.arguments) == 2
+
+
+async def test_list_prompts_without_capability() -> None:
+    """Test that list_prompts() returns empty list when prompts capability is not available."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # Mock the capabilities to not support prompts
+        mock_capabilities = ServerCapabilities(prompts=False)
+        with patch.object(server, '_server_capabilities', mock_capabilities):
+            result = await server.list_prompts()
+            assert result == []
+
+
+async def test_list_prompts_caching() -> None:
+    """Test that list_prompts() caches results by default."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        assert server.capabilities.prompts
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+        # First call - should populate cache
+        prompts1 = await server.list_prompts()
+        assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+        assert len(prompts1) == 2
+
+        # Second call - should return cached value
+        prompts2 = await server.list_prompts()
+        assert prompts2 == prompts1
+        assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_prompts_no_caching_when_disabled() -> None:
+    """Test that list_prompts() does not cache when cache_prompts=False."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_prompts=False)
+    async with server:
+        assert server.capabilities.prompts
+
+        # First call - should not populate cache
+        prompts1 = await server.list_prompts()
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+        # Second call - cache should still be None
+        prompts2 = await server.list_prompts()
+        assert prompts2 == prompts1
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_get_prompt() -> None:
+    """Test that get_prompt() retrieves a specific prompt."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        result = await server.get_prompt('simple_prompt')
+        assert result.messages is not None
+        assert len(result.messages) > 0
+
+
+async def test_get_prompt_with_error() -> None:
+    """Test that get_prompt() raises MCPError when prompt is not found."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        with pytest.raises(MCPError) as exc_info:
+            await server.get_prompt('nonexistent_prompt')
+
+        # Verify the error is properly wrapped
+        assert 'not found' in str(exc_info.value).lower() or 'unknown' in str(exc_info.value).lower()
