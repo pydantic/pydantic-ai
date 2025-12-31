@@ -4,10 +4,9 @@ import functools
 import sys
 from collections.abc import Callable
 from functools import partial
-from typing import Any, cast
+from typing import Any
 
 import pytest
-from _pytest.python_api import RaisesContext
 from dirty_equals import HasRepr
 
 from ..conftest import try_import
@@ -144,7 +143,7 @@ async def test_task_group_gather_with_error():
         return 3
 
     tasks = [task1, task2, task3]
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         await task_group_gather(tasks)
 
     assert exc_info.value == HasRepr(
