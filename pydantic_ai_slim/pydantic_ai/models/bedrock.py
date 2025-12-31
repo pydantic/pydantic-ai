@@ -405,8 +405,8 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
-        input_tokens = response['usage'].get('inputTokens', 0)
-        output_tokens = response['usage'].get('outputTokens', 0)
+        input_tokens = response['usage']['inputTokens']
+        output_tokens = response['usage']['outputTokens']
         cache_read_tokens = response['usage'].get('cacheReadInputTokens', 0)
         cache_write_tokens = response['usage'].get('cacheWriteInputTokens', 0)
         u = usage.RequestUsage(
@@ -994,8 +994,8 @@ class BedrockStreamedResponse(StreamedResponse):
         return self._timestamp
 
     def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
-        input_tokens = metadata['usage'].get('inputTokens', 0)
-        output_tokens = metadata['usage'].get('outputTokens', 0)
+        input_tokens = metadata['usage']['inputTokens']
+        output_tokens = metadata['usage']['outputTokens']
         cache_read_tokens = metadata['usage'].get('cacheReadInputTokens', 0)
         cache_write_tokens = metadata['usage'].get('cacheWriteInputTokens', 0)
         return usage.RequestUsage(
