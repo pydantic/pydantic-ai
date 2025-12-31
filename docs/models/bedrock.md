@@ -262,10 +262,10 @@ agent = Agent(
     builtin_tools=[CodeExecutionTool()],
 )
 
-result = agent.run_sync('What is 42 * 1983?')
+result = agent.run_sync('What is 42 * 1984?')
 print(result.output)
 
-# > 42 × 1983 = **83,286**.
+# > 42 × 1984 = **83,328**.
 ```
 
 ## `provider` argument
