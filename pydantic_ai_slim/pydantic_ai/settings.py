@@ -1,7 +1,57 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from httpx import Timeout
 from typing_extensions import TypedDict
+
+
+class ThinkingConfig(TypedDict, total=False):
+    """Unified configuration for model thinking/reasoning.
+
+    This provides a provider-agnostic way to configure thinking features across
+    different LLM providers. The settings are mapped to provider-specific
+    configurations automatically.
+    """
+
+    enabled: bool
+    """Whether thinking is enabled. Defaults to True if ThinkingConfig is provided."""
+
+    budget_tokens: int
+    """Maximum tokens allocated for thinking.
+
+    Mapped to:
+    - Anthropic: budget_tokens
+    - Google: thinking_budget
+    - OpenAI: (not directly supported, use effort instead)
+    - Bedrock (Claude): budget_tokens
+    """
+
+    effort: Literal['low', 'medium', 'high']
+    """Thinking effort level. Alternative to budget_tokens.
+
+    Mapped to:
+    - OpenAI: reasoning_effort ('low', 'medium', 'high')
+    - Anthropic: budget_tokens (low=1024, medium=4096, high=16384)
+    - Google: thinking_budget (low=1024, medium=8192, high=32768)
+    """
+
+    include_in_response: bool
+    """Whether to include thinking content in the response. Defaults to True.
+
+    Mapped to:
+    - Google: include_thoughts
+    - Groq: reasoning_format ('parsed' vs 'hidden')
+    - Others: Always included when thinking is enabled
+    """
+
+    summary: Literal['none', 'concise', 'detailed', 'auto'] | bool
+    """Request a summary of the thinking process.
+
+    Mapped to:
+    - OpenAI: reasoning_summary
+    - Others: Not directly supported (thinking content is returned)
+    """
 
 
 class ModelSettings(TypedDict, total=False):
@@ -170,6 +220,26 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Groq
     * Outlines (all providers)
+    """
+
+    thinking: bool | ThinkingConfig
+    """Enable or configure thinking/reasoning for the model.
+
+    Basic usage:
+    - `thinking=True`: Enable thinking with provider defaults
+    - `thinking=False`: Disable thinking (if provider enables by default)
+    - `thinking={'budget_tokens': 2048}`: Enable with specific budget
+    - `thinking={'effort': 'high'}`: Enable with effort level
+
+    Provider-specific settings (e.g., `anthropic_thinking`) take precedence
+    when specified alongside this unified setting.
+
+    Supported by:
+
+    * Anthropic
+    * Google (Gemini)
+    * OpenAI (reasoning models)
+    * Bedrock (Claude models)
     """
 
 
