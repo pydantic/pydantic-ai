@@ -49,7 +49,7 @@ class FallbackModel(Model):
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
 
         if isinstance(fallback_on, tuple):
-            self._fallback_on = _default_fallback_condition_factory(fallback_on)
+            self._fallback_on = _default_fallback_condition_factory(fallback_on)  # pyright: ignore[reportUnknownArgumentType]
         else:
             self._fallback_on = fallback_on
 

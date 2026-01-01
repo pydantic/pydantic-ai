@@ -787,9 +787,11 @@ class OpenAIChatModel(Model):
 
         _model: OpenAIChatModel
 
-        texts: list[str] = field(default_factory=list)
-        thinkings: list[str] = field(default_factory=list)
-        tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
+        texts: list[str] = field(default_factory=list[str])
+        thinkings: list[str] = field(default_factory=list[str])
+        tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
+            default_factory=list[ChatCompletionMessageFunctionToolCallParam]
+        )
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
             for item in message.parts:
@@ -1230,7 +1232,7 @@ class OpenAIResponsesModel(Model):
                         )
                         # We only need to store the signature and raw_content once.
                         signature = None
-                        provider_details = None
+                        provider_details = {}
                 elif signature or provider_details:
                     items.append(
                         ThinkingPart(
@@ -1799,7 +1801,7 @@ class OpenAIResponsesModel(Model):
                                 item.tool_name == CodeExecutionTool.kind
                                 and code_interpreter_item is not None
                                 and isinstance(item.content, dict)
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
+                                and (content := cast(dict[str, Any], item.content))
                                 and (status := content.get('status'))
                             ):
                                 code_interpreter_item['status'] = status
@@ -1807,7 +1809,7 @@ class OpenAIResponsesModel(Model):
                                 item.tool_name == WebSearchTool.kind
                                 and web_search_item is not None
                                 and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
+                                and (content := cast(dict[str, Any], item.content))
                                 and (status := content.get('status'))
                             ):
                                 web_search_item['status'] = status
@@ -1815,7 +1817,7 @@ class OpenAIResponsesModel(Model):
                                 item.tool_name == FileSearchTool.kind
                                 and file_search_item is not None
                                 and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
+                                and (content := cast(dict[str, Any], item.content))
                                 and (status := content.get('status'))
                             ):
                                 file_search_item['status'] = status
