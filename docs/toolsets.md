@@ -390,7 +390,7 @@ _(This example is complete, it can be run "as is")_
 
 [`ReturnSchemaToolset`][pydantic_ai.toolsets.ReturnSchemaToolset] wraps a toolset and appends each tool's return schema to its description. This helps LLMs understand what data a tool returns, enabling better planning for multi-step operations and tool chaining.
 
-When tools return complex types like Pydantic models or dataclasses, PydanticAI automatically infers the return schema from the function's return type annotation. By including this schema in the tool description, the LLM can:
+When tools return complex types like Pydantic models or dataclasses, Pydantic AI automatically infers the return schema from the function's return type annotation. By including this schema in the tool description, the LLM can:
 
 - Plan sequences of tool calls where one tool's output feeds into another
 - Determine upfront if a requested data point is available
