@@ -1526,6 +1526,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
+        # Agent by default has _include_tool_return_schema set to False, so we maintain backward compatibility here.
+
         toolset = ReturnSchemaToolset(toolset, include_return_schema=self._include_tool_return_schema)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
