@@ -1,0 +1,98 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '371'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      response_format:
+        json_schema:
+          name: CityLocation
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+        type: json_schema
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1167'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '{"city":"Paris","country":"France"}'
+          reasoning: |-
+            The user asks: "What is the capital of France?" The system wants a JSON output according to schema "CityLocation": object with required fields city and country, both strings, no additional properties.
+
+            We need to answer the question, presumably providing the capital city and country. The capital of France is Paris, country is France.
+
+            Thus JSON: {"city":"Paris","country":"France"}
+
+            Must be compact, no extra whitespace. Ensure it's valid JSON. Output only the JSON.
+          role: assistant
+      created: 1766760192
+      id: chatcmpl-9f047b77-e11b-4db6-99ff-5fc12ff23058
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_60e4b492db
+      usage:
+        completion_time: 0.26343426
+        completion_tokens: 119
+        completion_tokens_details:
+          reasoning_tokens: 97
+        prompt_time: 0.006484831
+        prompt_tokens: 170
+        queue_time: 0.038676481
+        total_time: 0.269919091
+        total_tokens: 289
+      usage_breakdown: null
+      x_groq:
+        id: req_01kddht6e3e27a2x8qbt9arbnt
+        seed: 639709488
+    status:
+      code: 200
+      message: OK
+version: 1
