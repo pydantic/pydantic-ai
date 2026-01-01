@@ -100,8 +100,10 @@ class TestEmbeddingModel(EmbeddingModel):
         inputs, settings = self.prepare_embed(inputs, settings)
         self.last_settings = settings
 
+        dimensions = (settings.get('dimensions') if settings else None) or self._dimensions
+
         return EmbeddingResult(
-            embeddings=[[1.0] * self._dimensions] * len(inputs),
+            embeddings=[[1.0] * dimensions] * len(inputs),
             inputs=inputs,
             input_type=input_type,
             usage=RequestUsage(input_tokens=sum(_estimate_tokens(text) for text in inputs)),
