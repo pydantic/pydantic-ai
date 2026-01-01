@@ -13,10 +13,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     ThinkingPart,
 )
+from ..exceptions import UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingConfig
 from . import ModelRequestParameters
 
 try:
@@ -544,8 +545,82 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
+        merged_settings = cast(OpenRouterModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'openrouter_reasoning' not in merged_settings:
+            reasoning_config = self._resolve_reasoning_config(merged_settings)
+            if reasoning_config is not None:
+                merged_settings['openrouter_reasoning'] = reasoning_config
+
+        new_settings = _openrouter_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
+
+    def _resolve_reasoning_config(
+        self, model_settings: OpenRouterModelSettings
+    ) -> OpenRouterReasoning | None:
+        """Resolve unified thinking settings to OpenRouter reasoning config.
+
+        Args:
+            model_settings: The model settings to check.
+
+        Returns:
+            OpenRouter reasoning config dict, or None if not specified.
+
+        Raises:
+            UserError: If thinking is requested but the model doesn't support it.
+        """
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        # Check model support
+        if not self.profile.supports_thinking:
+            raise UserError(
+                f'Model {self._model_name!r} does not support reasoning. '
+                'Use a reasoning model (e.g., o3, deepseek-r1) or remove the thinking setting.'
+            )
+
+        # Handle boolean shorthand
+        if thinking is True:
+            return {'enabled': True}
+        elif thinking is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
+                )
+            return {'enabled': False}
+
+        # Handle ThinkingConfig dict
+        config: ThinkingConfig = thinking
+
+        # Check enabled=False
+        if config.get('enabled') is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
+                )
+            return {'enabled': False}
+
+        result: OpenRouterReasoning = {}
+
+        # Map effort level directly (OpenRouter uses same values)
+        if effort := config.get('effort'):
+            result['effort'] = effort
+
+        # Map budget_tokens to max_tokens (Anthropic-style)
+        if budget_tokens := config.get('budget_tokens'):
+            result['max_tokens'] = budget_tokens
+
+        # Map include_in_response=False to exclude=True
+        if config.get('include_in_response') is False:
+            result['exclude'] = True
+
+        # If no specific settings, just enable
+        if not result:
+            result['enabled'] = True
+
+        return result
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:

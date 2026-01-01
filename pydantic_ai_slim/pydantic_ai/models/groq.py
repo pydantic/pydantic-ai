@@ -41,7 +41,7 @@ from ..messages import (
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingConfig
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -157,6 +157,77 @@ class GroqModel(Model):
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(GroqModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'groq_reasoning_format' not in merged_settings:
+            reasoning_format = self._resolve_reasoning_format(merged_settings)
+            if reasoning_format is not None:
+                merged_settings['groq_reasoning_format'] = reasoning_format
+
+        return merged_settings, customized_parameters
+
+    def _resolve_reasoning_format(
+        self, model_settings: GroqModelSettings
+    ) -> Literal['hidden', 'raw', 'parsed'] | None:
+        """Resolve unified thinking settings to Groq reasoning format.
+
+        Args:
+            model_settings: The model settings to check.
+
+        Returns:
+            Groq reasoning format string, or None if not specified.
+
+        Raises:
+            UserError: If thinking is requested but the model doesn't support it.
+        """
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        # Check model support
+        if not self.profile.supports_thinking:
+            raise UserError(
+                f'Model {self._model_name!r} does not support reasoning. '
+                'Use a reasoning model or remove the thinking setting.'
+            )
+
+        # Handle boolean shorthand
+        if thinking is True:
+            # Enable thinking with parsed output (structured)
+            return 'parsed'
+        elif thinking is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
+                )
+            # Disable thinking by not setting reasoning_format (return None)
+            return None
+
+        # Handle ThinkingConfig dict
+        config: ThinkingConfig = thinking
+
+        # Check enabled=False
+        if config.get('enabled') is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
+                )
+            return None
+
+        # Map include_in_response to reasoning format
+        include_in_response = config.get('include_in_response', True)
+        if include_in_response is False:
+            return 'hidden'
+        else:
+            return 'parsed'
 
     @property
     def base_url(self) -> str:

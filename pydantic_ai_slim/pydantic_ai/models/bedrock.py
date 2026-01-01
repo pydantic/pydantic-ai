@@ -43,9 +43,10 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.profiles.anthropic import ANTHROPIC_EFFORT_TO_BUDGET
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingConfig
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -303,6 +304,54 @@ class BedrockConverseModel(Model):
 
         return {'toolSpec': tool_spec}
 
+    def _resolve_thinking_config(
+        self, model_settings: BedrockModelSettings
+    ) -> dict[str, Any] | None:
+        """Resolve thinking configuration from unified settings for Bedrock.
+
+        For Claude models on Bedrock, thinking is passed via additionalModelRequestFields.
+        Returns the thinking config dict in Anthropic format, or None if not enabled.
+        """
+        # Check for unified thinking setting
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        # Validate that the model supports thinking
+        if not self.profile.supports_thinking:
+            raise UserError(
+                f'Model {self.model_name!r} does not support thinking/reasoning. '
+                f'Remove the `thinking` setting or use a model that supports extended thinking.'
+            )
+
+        # Handle thinking=False (disable thinking)
+        if thinking is False:
+            return {'type': 'disabled'}
+
+        # Handle thinking=True (enable with default budget)
+        if thinking is True:
+            budget = self.profile.default_thinking_budget or 4096
+            return {'type': 'enabled', 'budget_tokens': budget}
+
+        # Handle ThinkingConfig dict
+        config: ThinkingConfig = thinking
+
+        # Check if explicitly disabled
+        if config.get('enabled') is False:
+            return {'type': 'disabled'}
+
+        # Get budget - either explicit or from effort level
+        budget_tokens: int | None = config.get('budget_tokens')
+        if budget_tokens is None and (effort := config.get('effort')):
+            effort_map = self.profile.effort_to_budget_map or ANTHROPIC_EFFORT_TO_BUDGET
+            budget_tokens = effort_map.get(effort)
+
+        # Default budget if still not set
+        if budget_tokens is None:
+            budget_tokens = self.profile.default_thinking_budget or 4096
+
+        return {'type': 'enabled', 'budget_tokens': budget_tokens}
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -473,23 +522,31 @@ class BedrockConverseModel(Model):
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
 
         # Bedrock supports a set of specific extra parameters
-        if model_settings:
-            if guardrail_config := model_settings.get('bedrock_guardrail_config', None):
-                params['guardrailConfig'] = guardrail_config
-            if performance_configuration := model_settings.get('bedrock_performance_configuration', None):
-                params['performanceConfig'] = performance_configuration
-            if request_metadata := model_settings.get('bedrock_request_metadata', None):
-                params['requestMetadata'] = request_metadata
-            if additional_model_response_fields_paths := model_settings.get(
-                'bedrock_additional_model_response_fields_paths', None
-            ):
-                params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-            if additional_model_requests_fields := model_settings.get('bedrock_additional_model_requests_fields', None):
-                params['additionalModelRequestFields'] = additional_model_requests_fields
-            if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
-                params['promptVariables'] = prompt_variables
-            if service_tier := model_settings.get('bedrock_service_tier', None):
-                params['serviceTier'] = service_tier
+        if guardrail_config := settings.get('bedrock_guardrail_config', None):
+            params['guardrailConfig'] = guardrail_config
+        if performance_configuration := settings.get('bedrock_performance_configuration', None):
+            params['performanceConfig'] = performance_configuration
+        if request_metadata := settings.get('bedrock_request_metadata', None):
+            params['requestMetadata'] = request_metadata
+        if additional_model_response_fields_paths := settings.get(
+            'bedrock_additional_model_response_fields_paths', None
+        ):
+            params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
+        # Handle additionalModelRequestFields with unified thinking support
+        additional_model_requests_fields = dict(
+            settings.get('bedrock_additional_model_requests_fields', None) or {}
+        )
+        # Add thinking config from unified settings if not already set via additional_model_requests_fields
+        if 'thinking' not in additional_model_requests_fields:
+            thinking_config = self._resolve_thinking_config(settings)
+            if thinking_config is not None:
+                additional_model_requests_fields['thinking'] = thinking_config
+        if additional_model_requests_fields:
+            params['additionalModelRequestFields'] = additional_model_requests_fields
+        if prompt_variables := settings.get('bedrock_prompt_variables', None):
+            params['promptVariables'] = prompt_variables
+        if service_tier := settings.get('bedrock_service_tier', None):
+            params['serviceTier'] = service_tier
 
         try:
             if stream:

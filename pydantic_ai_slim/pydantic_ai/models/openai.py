@@ -59,7 +59,7 @@ from ..messages import (
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingConfig
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -469,6 +469,63 @@ class OpenAIChatModel(Model):
     def system_prompt_role(self) -> OpenAISystemPromptRole | None:
         return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
+    def _resolve_reasoning_effort(
+        self, model_settings: OpenAIChatModelSettings
+    ) -> ReasoningEffort | None:
+        """Resolve reasoning effort from unified or provider-specific settings.
+
+        Provider-specific `openai_reasoning_effort` takes precedence over unified `thinking`.
+        """
+        # Provider-specific setting takes precedence
+        if 'openai_reasoning_effort' in model_settings:
+            return model_settings['openai_reasoning_effort']
+
+        # Check for unified thinking setting
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        # Validate that the model supports thinking
+        if not self.profile.supports_thinking:
+            raise UserError(
+                f'Model {self.model_name!r} does not support reasoning. '
+                f'Remove the `thinking` setting or use an OpenAI reasoning model (o-series or GPT-5).'
+            )
+
+        # Handle thinking=False (cannot disable for OpenAI reasoning models)
+        if thinking is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self.model_name!r} has reasoning always enabled and cannot be disabled. '
+                    f'Remove the `thinking=False` setting.'
+                )
+            return None
+
+        # Handle thinking=True (use provider default)
+        if thinking is True:
+            # OpenAI reasoning models use 'medium' as default
+            return 'medium'
+
+        # Handle ThinkingConfig dict
+        config: ThinkingConfig = thinking
+
+        # Check if explicitly disabled
+        if config.get('enabled') is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self.model_name!r} has reasoning always enabled and cannot be disabled. '
+                    f"Remove the `thinking={{'enabled': False}}` setting."
+                )
+            return None
+
+        # Get effort level directly from config
+        effort = config.get('effort')
+        if effort is not None:
+            return effort
+
+        # Default to medium effort
+        return 'medium'
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -591,7 +648,7 @@ class OpenAIChatModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 response_format=response_format or OMIT,
                 seed=model_settings.get('seed', OMIT),
-                reasoning_effort=model_settings.get('openai_reasoning_effort', OMIT),
+                reasoning_effort=self._resolve_reasoning_effort(model_settings) or OMIT,
                 user=model_settings.get('openai_user', OMIT),
                 web_search_options=web_search_options or OMIT,
                 service_tier=model_settings.get('openai_service_tier', OMIT),
@@ -1489,12 +1546,79 @@ class OpenAIResponsesModel(Model):
             )
             reasoning_summary = reasoning_generate_summary
 
+        # Check for unified thinking setting if provider-specific is not set
+        if reasoning_effort is None or reasoning_summary is None:
+            reasoning_effort, reasoning_summary = self._apply_unified_thinking(
+                model_settings, reasoning_effort, reasoning_summary
+            )
+
         reasoning: Reasoning = {}
         if reasoning_effort:
             reasoning['effort'] = reasoning_effort
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
+
+    def _apply_unified_thinking(
+        self,
+        model_settings: OpenAIResponsesModelSettings,
+        reasoning_effort: ReasoningEffort | None,
+        reasoning_summary: Literal['detailed', 'concise', 'auto'] | None,
+    ) -> tuple[ReasoningEffort | None, Literal['detailed', 'concise', 'auto'] | None]:
+        """Apply unified thinking settings to reasoning effort and summary."""
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return reasoning_effort, reasoning_summary
+
+        # Validate that the model supports thinking
+        if not self.profile.supports_thinking:
+            raise UserError(
+                f'Model {self.model_name!r} does not support reasoning. '
+                f'Remove the `thinking` setting or use an OpenAI reasoning model.'
+            )
+
+        if thinking is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self.model_name!r} has reasoning always enabled and cannot be disabled. '
+                    f'Remove the `thinking=False` setting.'
+                )
+            return reasoning_effort, reasoning_summary
+
+        if thinking is True:
+            return reasoning_effort or 'medium', reasoning_summary
+
+        # Handle ThinkingConfig dict
+        config: ThinkingConfig = thinking
+        if config.get('enabled') is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self.model_name!r} has reasoning always enabled and cannot be disabled. '
+                    f"Remove the `thinking={{'enabled': False}}` setting."
+                )
+            return reasoning_effort, reasoning_summary
+
+        # Apply effort and summary from config
+        if reasoning_effort is None:
+            reasoning_effort = config.get('effort', 'medium')
+        if reasoning_summary is None:
+            summary = config.get('summary')
+            reasoning_summary = self._map_summary_to_openai(summary)
+
+        return reasoning_effort, reasoning_summary
+
+    @staticmethod
+    def _map_summary_to_openai(
+        summary: Literal['none', 'concise', 'detailed', 'auto'] | bool | None,
+    ) -> Literal['detailed', 'concise', 'auto'] | None:
+        """Map unified summary values to OpenAI values."""
+        if summary is None or summary is False or summary == 'none':
+            return None
+        if summary is True:
+            return 'auto'
+        if summary in ('concise', 'detailed', 'auto'):
+            return summary
+        return None
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]

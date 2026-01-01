@@ -46,9 +46,9 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
-from ..profiles.google import GoogleModelProfile
+from ..profiles.google import GOOGLE_EFFORT_TO_BUDGET, GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingConfig
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -254,6 +254,67 @@ class GoogleModel(Model):
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
+
+    def _resolve_thinking_config(
+        self, model_settings: GoogleModelSettings
+    ) -> ThinkingConfigDict | None:
+        """Resolve thinking configuration from unified or provider-specific settings.
+
+        Provider-specific `google_thinking_config` takes precedence over unified `thinking`.
+        """
+        # Provider-specific setting takes precedence
+        if 'google_thinking_config' in model_settings:
+            return model_settings['google_thinking_config']
+
+        # Check for unified thinking setting
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        # Validate that the model supports thinking
+        if not self.profile.supports_thinking:
+            raise UserError(
+                f'Model {self.model_name!r} does not support thinking/reasoning. '
+                f'Remove the `thinking` setting or use a Gemini 2.5+ model.'
+            )
+
+        # Handle thinking=False (disable thinking)
+        if thinking is False:
+            return {'thinking_budget': 0}
+
+        # Handle thinking=True (enable with dynamic thinking - no explicit budget)
+        if thinking is True:
+            # For Gemini, dynamic thinking is on by default for 2.5+ models
+            # Return config that includes thoughts in response (default True per design)
+            return {'include_thoughts': True}
+
+        # Handle ThinkingConfig dict
+        config: ThinkingConfig = thinking
+
+        # Check if explicitly disabled
+        if config.get('enabled') is False:
+            return {'thinking_budget': 0}
+
+        result: ThinkingConfigDict = {}
+
+        # Get budget - either explicit or from effort level
+        budget_tokens: int | None = config.get('budget_tokens')
+        if budget_tokens is None and (effort := config.get('effort')):
+            effort_map = self.profile.effort_to_budget_map or GOOGLE_EFFORT_TO_BUDGET
+            budget_tokens = effort_map.get(effort)
+
+        if budget_tokens is not None:
+            result['thinking_budget'] = budget_tokens
+
+        # Handle include_in_response (maps to include_thoughts)
+        include_in_response = config.get('include_in_response')
+        if include_in_response is not None:
+            result['include_thoughts'] = include_in_response
+        else:
+            # Default to True per design decision
+            result['include_thoughts'] = True
+
+        return result if result else None
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -543,7 +604,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
-            thinking_config=model_settings.get('google_thinking_config'),
+            thinking_config=self._resolve_thinking_config(model_settings),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),

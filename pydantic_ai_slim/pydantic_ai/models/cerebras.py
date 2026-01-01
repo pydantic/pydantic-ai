@@ -7,9 +7,10 @@ from typing import Any, Literal, cast
 
 from typing_extensions import override
 
+from ..exceptions import UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingConfig
 from . import ModelRequestParameters
 
 try:
@@ -92,8 +93,67 @@ class CerebrasModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _cerebras_settings_to_openai_settings(cast(CerebrasModelSettings, merged_settings or {}))
+        merged_settings = cast(CerebrasModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'cerebras_disable_reasoning' not in merged_settings:
+            disable_reasoning = self._resolve_reasoning_config(merged_settings)
+            if disable_reasoning is not None:
+                merged_settings['cerebras_disable_reasoning'] = disable_reasoning
+
+        new_settings = _cerebras_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
+
+    def _resolve_reasoning_config(
+        self, model_settings: CerebrasModelSettings
+    ) -> bool | None:
+        """Resolve unified thinking settings to Cerebras disable_reasoning config.
+
+        Args:
+            model_settings: The model settings to check.
+
+        Returns:
+            True to disable reasoning, None to leave default behavior.
+
+        Raises:
+            UserError: If thinking is requested but the model doesn't support it.
+        """
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        # Check model support
+        if not self.profile.supports_thinking:
+            raise UserError(
+                f'Model {self._model_name!r} does not support reasoning. '
+                'Use a reasoning model (e.g., zai-glm-4.6, gpt-oss-120b) or remove the thinking setting.'
+            )
+
+        # Handle boolean shorthand
+        if thinking is True:
+            # Enable thinking (default behavior, no need to set disable_reasoning)
+            return None
+        elif thinking is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
+                )
+            # Disable reasoning
+            return True
+
+        # Handle ThinkingConfig dict
+        config: ThinkingConfig = thinking
+
+        # Check enabled=False
+        if config.get('enabled') is False:
+            if self.profile.thinking_always_enabled:
+                raise UserError(
+                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
+                )
+            return True
+
+        # Any other config enables thinking (no need to disable)
+        return None
 
 
 def _cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:

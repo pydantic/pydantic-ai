@@ -133,6 +133,10 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=is_reasoning_model,
+        # Thinking capabilities for reasoning models
+        supports_thinking=is_reasoning_model,
+        thinking_always_enabled=is_reasoning_model,  # OpenAI reasoning models always have thinking enabled
+        supports_thinking_effort=is_reasoning_model,  # OpenAI uses effort levels (low/medium/high)
     )
 
 

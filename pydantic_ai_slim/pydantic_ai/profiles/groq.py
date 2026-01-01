@@ -16,8 +16,23 @@ class GroqModelProfile(ModelProfile):
     """Whether the model always has the web search built-in tool available."""
 
 
+# Models that support reasoning on Groq
+_GROQ_REASONING_MODELS = (
+    'deepseek-r1',
+    'qwen-qwq',
+    'qwq',
+)
+
+
 def groq_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for a Groq model."""
+    model_lower = model_name.lower()
+
+    # Check for reasoning model support
+    is_reasoning = any(name in model_lower for name in _GROQ_REASONING_MODELS)
+
     return GroqModelProfile(
         groq_always_has_web_search_builtin_tool=model_name.startswith('compound-'),
+        supports_thinking=is_reasoning,
+        thinking_always_enabled=is_reasoning,  # DeepSeek R1 always thinks
     )
