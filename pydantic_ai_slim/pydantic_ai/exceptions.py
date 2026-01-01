@@ -26,6 +26,7 @@ __all__ = (
     'UsageLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'ContentFilterError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
 )
@@ -152,6 +153,10 @@ class UnexpectedModelBehavior(AgentRunError):
             return f'{self.message}, body:\n{self.body}'
         else:
             return self.message
+
+
+class ContentFilterError(UnexpectedModelBehavior):
+    """Raised when content filtering is triggered by the model provider resulting in an empty response."""
 
 
 class ModelAPIError(AgentRunError):
