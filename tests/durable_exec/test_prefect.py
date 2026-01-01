@@ -68,7 +68,7 @@ except ImportError:  # pragma: lax no cover
 
 from inline_snapshot import snapshot
 
-from .conftest import IsDatetime, IsStr
+from ..conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,

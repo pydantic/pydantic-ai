@@ -12,7 +12,7 @@ class OutlinesProvider(Provider[Any]):
     @property
     def name(self) -> str:
         """The provider name."""
-        return 'outlines'
+        return 'outlines'  # pragma: lax no cover
 
     @property
     def base_url(self) -> str:
