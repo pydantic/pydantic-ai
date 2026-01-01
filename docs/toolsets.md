@@ -434,34 +434,6 @@ toolset_with_schemas = toolset.with_return_schema()
 test_model = TestModel()
 agent = Agent(test_model, toolsets=[toolset_with_schemas])
 result = agent.run_sync('Get user 1')
-
-# The tool description now includes the return schema
-print(test_model.last_model_request_parameters.function_tools)
-"""
-[
-    ToolDefinition(
-        name='get_user',
-        parameters_json_schema={
-            'additionalProperties': False,
-            'properties': {'user_id': {'type': 'integer'}},
-            'required': ['user_id'],
-            'type': 'object',
-        },
-        description='Get user details by ID.\n\nReturn schema:\n\n{\n  "description": "Details about a user.",\n  "properties": {\n    "id": {\n      "type": "integer"\n    },\n    "name": {\n      "type": "string"\n    },\n    "email": {\n      "type": "string"\n    }\n  },\n  "required": [\n    "id",\n    "name",\n    "email"\n  ],\n  "title": "UserDetails",\n  "type": "object"\n}',
-        return_schema={
-            'description': 'Details about a user.',
-            'properties': {
-                'id': {'type': 'integer'},
-                'name': {'type': 'string'},
-                'email': {'type': 'string'},
-            },
-            'required': ['id', 'name', 'email'],
-            'title': 'UserDetails',
-            'type': 'object',
-        },
-    )
-]
-"""
 ```
 
 _(This example is complete, it can be run "as is")_
