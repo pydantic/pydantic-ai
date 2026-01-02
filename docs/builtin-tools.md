@@ -245,6 +245,7 @@ The [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] enabl
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Only supported by models newer than `gpt-5`. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. |
 | Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-2.5-flash-image` and `gemini-3-pro-image-preview`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this built-in tool is not explicitly specified. |
+| OpenRouter | ✅ | Full feature support. Only supported by models models that have "image" in their output_modalities. Visit the [Models](https://openrouter.ai/models) page and filter by output modalities to find models capable of image generation. |
 | Anthropic | ❌ | |
 | Groq | ❌ | |
 | Bedrock | ❌ | |

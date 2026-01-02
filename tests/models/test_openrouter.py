@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BinaryImage,
+    ImageGenerationTool,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -25,7 +27,7 @@ from pydantic_ai import (
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 
-from ..conftest import try_import
+from ..conftest import IsBytes, IsStr, try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
@@ -457,6 +459,70 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     )
 
 
+async def test_openrouter_image_generation(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel(
+        model_name='google/gemini-2.5-flash-image-preview',
+        provider=provider,
+    )
+    agent = Agent(model=model, output_type=str | BinaryImage)
+
+    result = await agent.run('A cat')
+
+    assert result.response.text == snapshot('Here is a cat for you! ')
+    assert isinstance(result.output, BinaryImage)
+
+
+async def test_openrouter_builtin_image_message_history(allow_model_requests: None, openrouter_api_key: str):
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel(
+        model_name='google/gemini-2.5-flash-image-preview',
+        provider=provider,
+    )
+    agent = Agent(model=model, output_type=str | BinaryImage)
+
+    result = await agent.run('A cat')
+
+    message_history = result.all_messages()
+
+    result_2 = await agent.run('What is in this image?', message_history=message_history)
+
+    assert result_2.output == snapshot(
+        'It looks like a fluffy cat, sitting and possibly looking around with its ears perked up. The lighting seems soft, highlighting its fur.'
+    )
+
+
+async def test_openrouter_image_generation_streaming(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel(
+        model_name='google/gemini-2.5-flash-image-preview',
+        provider=provider,
+    )
+
+    agent = Agent(model=model, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool(aspect_ratio='3:2')])
+
+    async with agent.run_stream('A dog') as result:
+        output = await result.get_output()
+
+        assert isinstance(output, BinaryImage)
+        assert output.media_type == snapshot('image/png')
+
+
+async def test_openrouter_image_generation_builtin_tool(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel(
+        model_name='google/gemini-2.5-flash-image-preview',
+        provider=provider,
+    )
+
+    agent = Agent(model=model, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool()])
+
+    result = await agent.run('A cat')
+
+    assert result.response.text == snapshot('Sounds good! Here is ')
+    assert isinstance(result.output, BinaryImage)
+
+
 async def test_openrouter_streaming_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
@@ -648,3 +714,16 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
     result = model._process_response(response)  # type: ignore[reportPrivateUsage]
     text_part = cast(TextPart, result.parts[0])
     assert text_part.content == 'According to the source, this is the answer.'
+
+
+async def test_openrouter_image_and_text_output(allow_model_requests: None, openrouter_api_key: str):
+    model = OpenRouterModel(
+        'google/gemini-2.5-flash-image-preview', provider=OpenRouterProvider(api_key=openrouter_api_key)
+    )
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+
+    result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
+    assert result.output == snapshot(IsStr())
+    assert result.response.files == snapshot(
+        [BinaryImage(data=IsBytes(), media_type='image/png', _identifier='976e9d')]
+    )
