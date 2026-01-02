@@ -1450,11 +1450,11 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
                 parts=[
                     UserPromptPart(
                         content='What is 2+2?',
-                        timestamp=datetime.datetime(2026, 1, 2, 18, 8, 11, 689505, tzinfo=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
-                timestamp=datetime.datetime(2026, 1, 2, 18, 8, 11, 689599, tzinfo=datetime.timezone.utc),
-                run_id='942f4fd0-9240-4cbc-836a-9d1952c25ef4',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1471,11 +1471,11 @@ Okay, here we go. Someone's asking a pretty straightforward arithmetic question.
                     input_tokens=8, output_tokens=24, details={'thoughts_tokens': 16, 'text_prompt_tokens': 8}
                 ),
                 model_name='gemini-2.5-flash',
-                timestamp=datetime.datetime(2026, 1, 2, 18, 8, 11, 697251, tzinfo=datetime.timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='lghYaaSmK7eomtkP_KDT6A0',
-                run_id='942f4fd0-9240-4cbc-836a-9d1952c25ef4',
+                run_id=IsStr(),
             ),
         ]
     )
