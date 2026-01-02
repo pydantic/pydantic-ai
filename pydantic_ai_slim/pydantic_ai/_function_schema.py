@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, cast, get_args, get_origin
 
 from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -19,6 +19,8 @@ from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeIs, TypeVar
+
+from pydantic_ai.messages import ToolReturn
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -218,7 +220,17 @@ def function_schema(  # noqa: C901
 
     return_annotation = type_hints.get('return')
     return_schema = None
-    if return_annotation:
+    # Check if origin of return annotation is ToolReturn which needs special handling
+    if get_origin(return_annotation) is ToolReturn or return_annotation is ToolReturn:
+        type_args = get_args(return_annotation)
+        inner_type = type_args[0] if type_args else Any
+        try:
+            return_schema = TypeAdapter(inner_type).json_schema(schema_generator=schema_generator)
+            if return_description and 'description' not in return_schema:
+                return_schema['description'] = return_description
+        except (PydanticSchemaGenerationError, PydanticUserError):
+            pass
+    elif return_annotation:  # ELIF!
         try:
             return_schema = TypeAdapter(return_annotation).json_schema(schema_generator=schema_generator)
             if return_description and 'description' not in return_schema:
