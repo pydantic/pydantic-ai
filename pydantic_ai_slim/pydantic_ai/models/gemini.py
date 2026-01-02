@@ -77,10 +77,7 @@ class GeminiModelSettings(ModelSettings, total=False):
     """Thinking is "on" by default in both the API and AI Studio.
 
     Being on by default doesn't mean the model will send back thoughts. For that, you would need to set `include_thoughts`
-    to `True`, but since end of January 2025, `thoughts` are not returned anymore, and are only displayed in the Google
-    AI Studio. See https://discuss.ai.google.dev/t/thoughts-are-missing-cot-not-included-anymore/63653 for more details.
-
-    If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
+    to `True`. If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
 
     See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
     """
@@ -726,9 +723,7 @@ def _process_response_from_parts(
     items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
-            # NOTE: Google doesn't include the `thought` field anymore. We handle this here in case they decide to
-            # change their mind and start including it again.
-            if part.get('thought'):  # pragma: no cover
+            if part.get('thought'):
                 items.append(ThinkingPart(content=part['text']))
             else:
                 items.append(TextPart(content=part['text']))
