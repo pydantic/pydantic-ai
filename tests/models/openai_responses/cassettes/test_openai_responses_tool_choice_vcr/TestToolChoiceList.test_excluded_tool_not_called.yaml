@@ -1,0 +1,167 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '702'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the population of London?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get population of a city
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5236'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '5095'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174140
+      created_at: 1766174135
+      error: null
+      id: resp_053b747a065d0b09006945adb7096881a392b8814c090f7bba
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa28zbIg_mdRTOYLOWfPdBeRS4ygnT7tUSvL61wC9IiyMq2p8pUDldnyKvmv9J2AhVjDTOPznDK1BxfsrANNWg2e-izKsxvDNMOKBoMuO1iPC35lzyDloOqQqYya1uhLFydF4QSSLDzXsouqVRxGiy9_LBfRaPqScQrYnEeWn8W-EPW310LrcW4agtSk4hMzNhd10uWQcmUTo5ryG1-UUnxKjajOaW0nm9zVD4oysnD808LgfUiR-DdByKuQ6Nediy3MykEvXmCLcHmTsvoAoKsN-cYDQLiV8tb05tRGxLpz705zccHuAbsUUqCUh1C1KYtCXOJrl6j1JNKzlUK0iUoF3TcvmPs1xIoDbUgGB-1e56LXc7-gP-T30mb1YIsajKjTtwZQRkwWGLpL1aiDl0BpP_RiSLB4srG6RbDikwrHRm5Tm_ewpEpL3Bj8lG3IkylLTP9epAEFPoX_8VO-GovdacodH718_2ZEnqDQPX_zT22NinpwuNZ4R2QyomdIy4jpobtFAKNejEh9YBUjCaFeHgIsqwy6Iu9KRRal9DWof3Gn1_gOskKSqe0RlLgMexUnFJcIrQmoR43hnMpRQz3ejunI92xt7BRVrxcoNRZ-1Rg8H1_sscO39H7RTVl-VeDgvPmmPZbdPfA-u2nN7ZfWpTNbSTzmFRL8J6Uy9nYebZZMxdWPI2N83Cc7htkE_oy3oG7AjyEOgutZuQPdJWZypNcv7aSIKuXoxr9Zjvg2Ki4jStNG_2GSO-JS-BRIZ3K_mAsLtLQHCwMWLJDvylJXJMbSiAIFExoMAdaHMYs5MAFv6EOsFQxcTtLRdUWY-6UTv4QKnSnsawGjby9gWfHyVqtCTxJfK9GTDR_vYpA5ZfDo3yuAq5i7HfKS4AFGW4oPhJX4C6a8DUPHOw8tg98ZUDQS6SiILvpmkk8OvkCA4J2XA7siGhnt6e01_8Fazedg7kViXQFotGpL2GFxH6ROWYlOy_L5wSA46O2icUm28GM_3zNYBY7_3VyxqWLnYdmf1lbJnLbgXH5gg1ZH1G40O5rhXOi1lzX71YZjSdK9Ebm0NSLuJ959l0YGUl00NldQPRaN17_zo3sZ0-tFgBExkxvq14usjyFC-ahYqon7m-fAphQjxfMULlHVoCJi0rR7UjWItLFWp3yHj7ZVyhUqhEea0v9PBlP446xKSRCswBTCAPX1FsWvDV6vZt6KLC2qhy4s-8jdpeuz3B-BV_vYbiDjAFaLMSSJHT_rZOUOhuSJ9OFU29s4vv8X6VPx4Vnzo5wnyQR3vzxMw9LkW8K_fhgiOIR787KgX9hp3oc6VNkiulwPVlIHyIRYjikEmjC4hdkNkqu-myxe97ayze6zLwi10XeJnCcHSyeMQhH05rkkwE_NnFSrSgmjxoGNlLbxFEh9aWQj3CJvarbHPoSWrVtr5GlKdfn7MyxomCvCUeVSjRFrpmHRRbeOoqqvQnnajNd_nmTWfMpC9N3U2qOVBIclmFdrYaIQVYEo-Rqi6NPJnju7ZqCUSyHmFOZVfeAK4hUdqQc8-L5gB1z6tqz5vINRT0mElgv41Wevz3bw-CHcJg-vyCyvgAxvLGDVtbvTNMjZGHjUFGNjxtV2ZSvgtzCV3cOiobE-ypWVwNm0fKYFaG2kIJcl_YfON_CH3nAfvpfI0OILBU5EJXiLSUTlvn4hHJnNsGTHOgg9p4MYtZgBTit7-3OaiEWcGtITmxWjuPi39o2Whi2XjVJmhnXrg6pXldqbxPN6WdOJmk4i9Cg7z2AOXxoktyyIBThvjLJyzVv9d1_pVUJ5Woo9z8OAulrkeu7bQMyF99IBF0wzv_BugCdup2brrjdqK1YgmfxGdsmX1923g5M5fVt4dI2giz7ykz7ZWELi7QhQ08hMlFhHq0EqTMk2hXAnwtIWjk43D7461pT9V7MMJQ7_TNbkMVGyjLDYa2J2VanvG7tU6kAb8V8jru6kxItA4HMNbu8Pt_LYNakAtCGeBd09k9Ub4GvkOGsU_eF6AJE3v_pVxXGzmCST6Kaq2b-sNJ5_F37as_IpD-Ofu3Z0o186ZO0BpUIl-2M8bNbZmWr8dYunXuKVMR5FMYvDZXkCYAB4XJVaRlZTFQRp5tQnlJMYdZccQoayjl1iG87iG64I9Rqn4fxFR3M8WVBTq2SvJ0nW91hP0qnpumm41POHUZdnUAZOsEJFOYoFk-wZ37Eo4mHFZyqPCXVDHwYv-0KrtkHwCGwjycmI0cqEwUntwKSBijD08dVHN_SPJQI5qtKKEhNpYlf-t9iMRSytTKC0g4V0x-3WMhS3ZIWcG9DYgb3kIEnL9ZU8TpqBStrqbgEz259X0pLV_bLuw_JrKy-brbvDIt5uhSw--KxtRHIY2zllWnrjlK62CksXAeKS8Co0Ozc-ysxiVA_aCN4_BtoStznTBgN9PpQT5iC2TzpGqlE92k88wvv4MU4YGy_MfoyzswU7TrPW7SRr1mr9RsT7jV1qGJV84-ZVN-w9cacJrQx7sqeIMDr0uj_j7gvJSUz-q7Gnw9e5GYVG4fNY9CTIaLMNVrg4BqSKhradjk4U2xgybHEL23O3sfBLyfMr9--qsP76Mc4mBx8oipl-Kt3ve5h8Ig6pzQ2e8ZEsnio95MPU1nKrEEmoucm06gM2qRUe9b8AEUbbWQlsUSSHDZfBWSvQSzjgr3hCDONVIMgM2_14XGp7VPryJl3Q0RTc4XnUzSDMKUE=
+        id: rs_053b747a065d0b09006945adb79c7481a38c9c9a3de7113df6
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"London"}'
+        call_id: call_241hJ2RGL4zYBF4q7j8Jy3wh
+        id: fc_053b747a065d0b09006945adbbacf481a3a955318160772077
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get population of a city
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 69
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 276
+        output_tokens_details:
+          reasoning_tokens: 256
+        total_tokens: 345
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

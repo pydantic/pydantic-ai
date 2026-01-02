@@ -1,0 +1,136 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '397'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Say hello in one word
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3499'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2013'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174062
+      created_at: 1766174061
+      error: null
+      id: resp_0593209bf6ea67fc006945ad6d108081959596a5aca76c4888
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa1vf1WqNBNJFvWks_-QlTOf9xNzR4y4pTIYxZ0Rn5n7zdEgxudGluN38yDXTTbJ2SFCsO4fmNL81v9XjfDxXtgRHxHDK5NeRkvRPigjytCkBGwcDr3GkcdQviigWOxP9Cd8bGtLg3_VdsbvsGa9hmi4o28CLXr-vkblkeYsb1hP5kKyK_EJxgJzs8BT8nS4k6LDOnYRrFwEo6BcE0JEWaD-BpavW8CSbW7h5ZLQM12P2KA7JsDQdwGy5E5gC2cXfQP_PqQgx4qLpS1VGP6gvuAWD7VU6ZNm9UpYmUx60SdJhpLANEbECXHQo3-IwDaT-A0y8Kr3_g4IT2viItLvr2_7mFdh58ZALtPXjxZ_V_VAYq0XHx2yVxp47zRlRehxHVYy6GprujETYrL1AbZ4zHEYkD8YTb7tKyicHcyedQfBv1e3xMyprMZ4pq8Pp59trius4nIyRW-PIWm0oDagYZf8h1kpL1sz7iy5fkj6Bc2QZkvmAwjIi7r7TYHNVFHqTJ6xclDcJ6oFXEnfyTSDUIsetovRj1Aeb7B8MC8PosfjyX8rdJJSmgBRNM2WEgIexv_54W-SD-d7UIJbpvBBTWl2jc8wtp_xz5C4K_ZneYoRY3LZX0-JzPwBOm-XgaQONNdan1FDQ-GsCUptIt7pGlAiW4Vt7iU6-AwpgPFrkNjd4CJ8AWeQEjUdI_kynkmB9AfdMWSOjMQZTHw_5NOVkyy8MeUrVIwRs4E2nhUghVZggIhn25ELX2ZVWDEPWaVB7Kj1OsuiyfKyNNs9kAPz-mMNg5WsTui7DEAuTIldimcJ4yUCFu1BhJjwCyeRgyLxddJG_QKR-J33qf5gfZeGm7W6rnTq9GPkqnUOiLvnLJlc8iEGeyQt1e1Vxp0NAAVTXyQaNOnwUJ8woOkctIdZ28fk1cR4ZN86q9DztVuZWSShDaecohL0AnnfaqgC3HUkjm24qmT9eKqCIL_bwct42-VVHe6h4L0yCY78yfprvJ_8Vdh0wxT2UmfhN-LyziOBwPMv1mpZvja0sH1mpkTEpnzU7fyH2bRfw8O-BNuZZzwzpei5oNg9RUFW2RyTX6bSX0IxC1hN2RInTMrqM7Tffb4p18Zrg8MGXFodC40vp-Sw5YMj-j5Fq12xfVBcOlV_9UY_yBGAX1Pgl2Ve5PruxCt1a7POFe1O_8c2mhvUSRsh0xVOcpTSfKQP9nw1OqG4ADX2UaoKEhnysPXKox0KVO_2ma98-ApElQDbygGyV5Z8o_bTe52_1fMMy2A8C_tk3yR3ZZEZvTxpY28cCHZ_dLVrwPcQQirnNwLQd8V2I0SUqLNHeuMHmVmrtx0JMlXdRtpmcmWrhvngWYQjAtca9zTTbX1bfI51Amh0MEHU8LrvH49L1AOC6aZW4czJWqt7IgWLMF2asZNRvmTsrfeaSYUj0XMX-mhXKYkCfTAhbIh9M24=
+        id: rs_0593209bf6ea67fc006945ad6d6c2c8195b5e3489f68f680ed
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Hello
+          type: output_text
+        id: msg_0593209bf6ea67fc006945ad6ec3188195955ff420ad7c6518
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 49
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 71
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 120
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

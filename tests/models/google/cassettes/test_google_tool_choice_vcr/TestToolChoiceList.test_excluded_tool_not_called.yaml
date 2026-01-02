@@ -1,0 +1,93 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '643'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the population of London?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get weather for a city
+          name: get_weather
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get population of a city
+          name: get_population
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1294'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=969
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: London
+              name: get_weather
+            thoughtSignature: CoUDAXLI2nz1JV1oAvhV0dheKMbdWgHFeYLsRiMbkNdpb8XWFbZd1N/fJbnF6vG2si/uQmsnj2edqh5Xdwv1t7vtTmTwlPEe5jrvIAWUU1dU2nWQGRJ56FNeWxhiy8EuC08V2E/pWbV0akHb9ORJLMsmpx30rA6koOVbkBO/Mw9LUEVQ4+KQKpTqDJebTnZMq+ORTifSSr/+doRthHaOM4zEmD/rn9vXgxMuczoDzzT1OSPQuGVu1qtofwtUXWe+JqB3KXDDdoU69Rqag0uVW/iAI7inbclnVUEYjekpRLNqAVIJWPffRLW447puLXHicPlFW6gSONWQ61rViK1NBLnbBtLW1pWiBYjTSbt6pdgBGc6qcm5K0Slz35CxQtDGYRA9eJM8Ebdu9ByK45x9T0tdCB/exs5WVcMMZR0qTvIAF5P5689HK5a88gajr70EcuPSa6HYyMm4CV0Sylx72c8ChUf3z/hjf0yzOc324QbEhBxjcL5zUevM4+jaGYAsirEhDg87I+I=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: b8VFafy2M4usz7IPr6fTwAI
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 82
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 82
+        thoughtsTokenCount: 68
+        totalTokenCount: 165
+    status:
+      code: 200
+      message: OK
+version: 1

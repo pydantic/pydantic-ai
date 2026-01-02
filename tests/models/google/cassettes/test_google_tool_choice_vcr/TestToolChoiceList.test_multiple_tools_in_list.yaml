@@ -1,0 +1,103 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '838'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What time is it in Tokyo?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          - get_time
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get weather for a city
+          name: get_weather
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get current time in a timezone
+          name: get_time
+          parameters_json_schema:
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        - description: Get population of a city
+          name: get_population
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1414'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1011
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                timezone: Asia/Tokyo
+              name: get_time
+            thoughtSignature: CtoDAXLI2nzLDlvIET46IFjQ+PVQsW8NG3LWNynF7aFqm5w93h5v7hDSyBnSY3nieMTg0Prnu01EaZ/nf1De1Lempm1KXNW72aOBUNJvcHd0MRbDUV/GZKTabP1TSdzevswq7oX718AVLwAUrISHJEJELJvnEARfgxDyVeOtxf1ae2WGcYcrVyL+S2NeUVlP4kwfUbOAeeyDFXLTFy1UCHPrSsawN+GEidB4vv5LdH+bsyEfyAhPtdxepyzjiYezBvEM86/YtH1Kw5Fi6GY7Jq0eJt6v5UppTtmAt3V5koTBVEiLQl2LEdDHDzGKy16W0g68+eXL1l8cdVjnI+duwcYzH+AaTYEODByQTlVLauurcqlDM+sj+XqC+PQp9w0CHb1By1KTACe7kdPBWDkPHXlQJojEnwQ/jO7xaYGKCIdX/VrIaC4ECtLBijbDBALVm8fEgMs7uPEN+bLHNhYyYal92ugAiZcKVMMCCvPz89RFjtYzkKSdvfcY6Lx0STy+QfBkoQt84eGGfe2ivdn5Yz3zhK7XPFsasonQ/1NcEZg5nl8dWG2lLeGxzjhKdRL6VjdsOJAPB2VlncPr1DzBRUm9QyhgGWj3RA2MjFylYaA/jpzJWdKLBrpvYc9H
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: bsVFaZyqHvSsz7IPn9C10AQ
+      usageMetadata:
+        candidatesTokenCount: 17
+        promptTokenCount: 120
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 120
+        thoughtsTokenCount: 112
+        totalTokenCount: 249
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -5,4 +5,4 @@
       inherited_members: true
       members:
         - ModelSettings
-        - UsageLimits
+        - ToolsPlusOutput

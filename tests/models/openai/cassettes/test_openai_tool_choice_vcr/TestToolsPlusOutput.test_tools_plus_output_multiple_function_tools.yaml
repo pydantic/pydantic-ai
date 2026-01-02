@@ -1,0 +1,335 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1369'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather and population for Chicago
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        allowed_tools:
+          mode: required
+          tools:
+          - function:
+              name: get_weather
+            type: function
+          - function:
+              name: get_population
+            type: function
+          - function:
+              name: final_result
+            type: function
+        type: allowed_tools
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current time in a timezone.
+          name: get_time
+          parameters:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the population of a city.
+          name: get_population
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1297'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '4779'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Chicago"}'
+              name: get_weather
+            id: call_e7n8N6sMFfH9gMr8fu8f2rEJ
+            type: function
+          - function:
+              arguments: '{"city": "Chicago"}'
+              name: get_population
+            id: call_7wdreEMf0P53pgbm59En7h6z
+            type: function
+      created: 1766169253
+      id: chatcmpl-CoZanoessHVhxuU6goEwMlm0lFEim
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 245
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 192
+          rejected_prediction_tokens: 0
+        prompt_tokens: 198
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 443
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1882'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=XbgAX9Bgii44LTpHAEVcLVXkv0E_2lsUoFXC_QuRMaI-1766169258-1.0.1.1-XxTvywDIgSbx2xakFJh2CZ__qKPWseGezsMRs_y6gVb8KXbC3pANaaCcsgEv.B7ZRVz7G33x.EDDvRSeOVeP9bkaTzV6GAHkZBIggJ1GuNg;
+        _cfuvid=hvqscxly87SBkRKqOGOVAhakw_uW_vN64JqI3I5fTnI-1766169258529-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather and population for Chicago
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city": "Chicago"}'
+            name: get_weather
+          id: call_e7n8N6sMFfH9gMr8fu8f2rEJ
+          type: function
+        - function:
+            arguments: '{"city": "Chicago"}'
+            name: get_population
+          id: call_7wdreEMf0P53pgbm59En7h6z
+          type: function
+      - content: Sunny, 22C in Chicago
+        role: tool
+        tool_call_id: call_e7n8N6sMFfH9gMr8fu8f2rEJ
+      - content: Chicago has 1 million people
+        role: tool
+        tool_call_id: call_7wdreEMf0P53pgbm59En7h6z
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        allowed_tools:
+          mode: required
+          tools:
+          - function:
+              name: get_weather
+            type: function
+          - function:
+              name: get_population
+            type: function
+          - function:
+              name: final_result
+            type: function
+        type: allowed_tools
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current time in a timezone.
+          name: get_time
+          parameters:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the population of a city.
+          name: get_population
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1338'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '7861'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Chicago","summary":"Weather: Sunny, 22°C. Population: 1,000,000 (as returned by population
+                lookup). Note: that population figure appears lower than commonly reported — Chicago''s city population is
+                often cited around 2.7 million; I can fetch an official/updated estimate if you want."}'
+              name: final_result
+            id: call_clHbjHdWUdK5teJImsN4bEwq
+            type: function
+      created: 1766169259
+      id: chatcmpl-CoZatTmaIf6sB0pAJ8RDKtB03MjK9
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 470
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 384
+          rejected_prediction_tokens: 0
+        prompt_tokens: 275
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 745
+    status:
+      code: 200
+      message: OK
+version: 1

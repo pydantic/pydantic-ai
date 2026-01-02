@@ -1,0 +1,191 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '604'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Get weather for Tokyo and summarize
+          type: text
+        role: user
+      model: claude-sonnet-4-20250514
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+      - description: Information about a city.
+        input_schema:
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '483'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01K689q7kyiUpAJLmUrcgv5U
+        input:
+          city: Tokyo
+        name: get_weather
+        type: tool_use
+      id: msg_01PYDKvwUXerptD6bPZPW6DB
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 456
+        output_tokens: 38
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '888'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Get weather for Tokyo and summarize
+          type: text
+        role: user
+      - content:
+        - id: toolu_01K689q7kyiUpAJLmUrcgv5U
+          input:
+            city: Tokyo
+          name: get_weather
+          type: tool_use
+        role: assistant
+      - content:
+        - content: Sunny, 22C in Tokyo
+          is_error: false
+          tool_use_id: toolu_01K689q7kyiUpAJLmUrcgv5U
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-20250514
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+      - description: Information about a city.
+        input_schema:
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '681'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_018A3vYtYhhY3rCUn7PXhghD
+        input:
+          city: Tokyo
+          summary: Tokyo is experiencing pleasant sunny weather with a temperature of 22°C (approximately 72°F). It's a beautiful
+            day with clear skies and comfortable conditions for outdoor activities.
+        name: final_result
+        type: tool_use
+      id: msg_01F1q4S2AYVheYxmwHSJQ8gC
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 529
+        output_tokens: 90
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,117 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Tokyo and summarize"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the current
+      weather for a city."}}, {"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "Information about a city."}}], "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NmFkMjUxOWEtNThlNC00MWQ1LWI3ZjctZmJkYjE2NjViNTYw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '678'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '426'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2185
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Tokyo
+              name: get_weather
+              toolUseId: tooluse_xbC6OcmhTDqgme0uHS4GhQ
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 737
+        outputTokens: 38
+        serverToolUsage: {}
+        totalTokens: 775
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Tokyo and summarize"}]}, {"role": "assistant",
+      "content": [{"toolUse": {"toolUseId": "tooluse_xbC6OcmhTDqgme0uHS4GhQ", "name": "get_weather", "input": {"city": "Tokyo"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_xbC6OcmhTDqgme0uHS4GhQ", "content": [{"text": "Sunny,
+      22C in Tokyo"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec":
+      {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}},
+      "required": ["city"], "type": "object"}}, "description": "Get the current weather for a city."}}, {"toolSpec": {"name":
+      "final_result", "inputSchema": {"json": {"properties": {"city": {"type": "string"}, "summary": {"type": "string"}},
+      "required": ["city", "summary"], "title": "CityInfo", "type": "object"}}, "description": "Information about a city."}}],
+      "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YzA3YmI4ZDctZThhNS00OWI0LThjNmUtNzQwNWRjZThhNmY5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '990'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '635'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2650
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Tokyo
+                summary: Tokyo is currently experiencing sunny weather with a pleasant temperature of 22°C (approximately
+                  72°F). It's a beautiful day in Japan's capital city with clear skies and comfortable conditions.
+              name: final_result
+              toolUseId: tooluse_agjwa93jRUeiq95G2v_EIg
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 810
+        outputTokens: 93
+        serverToolUsage: {}
+        totalTokens: 903
+    status:
+      code: 200
+      message: OK
+version: 1

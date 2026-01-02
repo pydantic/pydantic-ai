@@ -1,0 +1,204 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '689'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather for Tokyo and summarize
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1394'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1143
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Tokyo
+              name: get_weather
+            thoughtSignature: Cs8DAXLI2nwLmrGYsgN3jlDmEzj9iTaLd6NBPv/hPKdLjLEjQ4+RcKBbPMRsjKV12kGGGkLFSW6p/fiY832Sa70BCQS+IBmAqaB9Y2lYAPZ1QqZfW6wEuAGOGW7Wlgl+QS0kvdU/OSZ/pUTb4jWeMPrvncZTS4WzohOaAINhRSAwK4Y+Hi7HaTnRkt4L7a8JdYzpeFsYU47bAhotQ/gmWhKO/G+FLukuOZEQ98dJ3VDrP5v/u830OEHu7cS2xDYLnrSxLjEWwCXrnbGj9sp61SplejOYBpvt31ysNSG1fQb/IiQC6plebQp37/Or2+2tFpcAMTTjT8hnUC+n/E0LY6RemXqFPKPpPojt3iZl/IoxjnudUKR2cWHxwAwkyqzEAV0ZvWPi/rITxxF4B8to8pBuGeHpGGrq7BqnkNBATevYlN/NCXU2Fh6RS2ORkSjcAgMkRVda9Ypq/+NYXy+gXv9JEaHhiuut+gpSoMWXo/qdkTOH8SSdG3UJRTumYg9yi7f91eBqhgxlseQg5JFLxtJWBEodKnaM8ZKn6BgqZYUshzShN3ZyNngnaL2cRsM3b0pv6WVCVIAzGNprakjyfY1BZBV0eB3nvga71hhtVv368w==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: XMVFacLELZS9z7IP7Ybl0Qk
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 95
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 95
+        thoughtsTokenCount: 108
+        totalTokenCount: 218
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1664'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather for Tokyo and summarize
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: Tokyo
+            id: pyd_ai_00cb89bee9424e45ab71f9390a351387
+            name: get_weather
+          thoughtSignature: Cs8DAXLI2nwLmrGYsgN3jlDmEzj9iTaLd6NBPv_hPKdLjLEjQ4-RcKBbPMRsjKV12kGGGkLFSW6p_fiY832Sa70BCQS-IBmAqaB9Y2lYAPZ1QqZfW6wEuAGOGW7Wlgl-QS0kvdU_OSZ_pUTb4jWeMPrvncZTS4WzohOaAINhRSAwK4Y-Hi7HaTnRkt4L7a8JdYzpeFsYU47bAhotQ_gmWhKO_G-FLukuOZEQ98dJ3VDrP5v_u830OEHu7cS2xDYLnrSxLjEWwCXrnbGj9sp61SplejOYBpvt31ysNSG1fQb_IiQC6plebQp37_Or2-2tFpcAMTTjT8hnUC-n_E0LY6RemXqFPKPpPojt3iZl_IoxjnudUKR2cWHxwAwkyqzEAV0ZvWPi_rITxxF4B8to8pBuGeHpGGrq7BqnkNBATevYlN_NCXU2Fh6RS2ORkSjcAgMkRVda9Ypq_-NYXy-gXv9JEaHhiuut-gpSoMWXo_qdkTOH8SSdG3UJRTumYg9yi7f91eBqhgxlseQg5JFLxtJWBEodKnaM8ZKn6BgqZYUshzShN3ZyNngnaL2cRsM3b0pv6WVCVIAzGNprakjyfY1BZBV0eB3nvga71hhtVv368w==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_00cb89bee9424e45ab71f9390a351387
+            name: get_weather
+            response:
+              return_value: Sunny, 22C in Tokyo
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1424'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1226
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Tokyo
+                summary: The weather in Tokyo is Sunny with a temperature of 22C.
+              name: final_result
+            thoughtSignature: CqQDAXLI2nwaSyxS0Dtc0zvonN6r2B08bBSuIHYH6atzo64mWTvkGpRuiPu5SvxtfY5kIyi5vXQhAftSCT4qb8asbRannYnRF2MMC7ALIdgOWgU9/QDr3Dq2k2rujZ+kioV0ihi2RTjke0TSKYRZsWfSn7yy+60cNTuE8dqtNtQdsg4EVtftUtfPF+fprvstwluiqyy0gVOiGcfqtSJ3CQJuCbf/ZNUJ5w37S5HapzrbzN3y7mYhhXi00e/+2vUki1D4SQOuX8BC8wlx94Hy3HqtjPx13z3h1/AofsWN+WWbZfHux+m0QxsSa6+coz97vYdUVckxeN1qDNq5p64xVHibespkI0qzlbGoyMLzZGMS29CGIyG7gSwK/ploWFuFF+8zUPYV31RlV9JjOjSopS63SMq48Sq2UtwEycGUdbxOlhItXZIT8t8cX1pt+WDswWW0wk7PRuAAGHi+G8G64OUl4J9YkX5W+/0VSKQvaONqXZpvuUms8DCs0QyC6/++hvWmrJcp8+Mv+ubENNaoqxCchy07TuFPAch5JLJoxUPHUXzb4ojh
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: XsVFaZiQCPWcz7IPjPDb6QU
+      usageMetadata:
+        candidatesTokenCount: 33
+        promptTokenCount: 134
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 134
+        thoughtsTokenCount: 108
+        totalTokenCount: 275
+    status:
+      code: 200
+      message: OK
+version: 1

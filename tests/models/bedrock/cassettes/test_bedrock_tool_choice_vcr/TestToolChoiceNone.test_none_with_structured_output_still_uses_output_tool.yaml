@@ -1,0 +1,61 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Tell me about Madrid"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "Information about a city."}}], "toolChoice": {"tool": {"name": "final_result"}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OGQxYjI3NjItMWY5Ny00OGFmLWI1OWItMzFkZGJiYmRmODUy
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '451'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1067'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3452
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Madrid
+                summary: Madrid is the capital and largest city of Spain, located in the center of the country. It is known
+                  for its rich cultural heritage, world-class museums including the Prado Museum, Royal Palace, vibrant nightlife,
+                  and beautiful parks like Retiro Park. The city is a major political, economic, and cultural center of Spain,
+                  with a metropolitan population of over 6 million people. Madrid features stunning architecture ranging from
+                  medieval to modern, excellent cuisine including tapas, and is home to famous football clubs like Real Madrid.
+                  The city enjoys a continental Mediterranean climate with hot summers and cool winters.
+              name: final_result
+              toolUseId: tooluse_evus12j8TumX3-xgjF2M3A
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 677
+        outputTokens: 171
+        serverToolUsage: {}
+        totalTokens: 848
+    status:
+      code: 200
+      message: OK
+version: 1

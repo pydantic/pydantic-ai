@@ -1,0 +1,64 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Tell me about New York"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "Information about a city."}}], "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MTE2MDBiNjUtODU1My00NzE3LWEzZGQtMzQ3MzA3ZTNkNDgw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '430'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1313'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 4348
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: New York
+                summary: 'New York, often called New York City (NYC) or simply "The Big Apple," is the most populous city
+                  in the United States with over 8 million residents. Located in the state of New York, it comprises five
+                  boroughs: Manhattan, Brooklyn, Queens, The Bronx, and Staten Island. NYC is a global hub for finance, culture,
+                  media, fashion, art, and entertainment. It''s home to iconic landmarks including the Statue of Liberty,
+                  Empire State Building, Central Park, Times Square, and Broadway theaters. The city hosts the New York Stock
+                  Exchange on Wall Street and is headquarters to numerous Fortune 500 companies. Known for its diverse population,
+                  world-class museums like the Metropolitan Museum of Art, and renowned culinary scene, New York attracts
+                  millions of tourists annually and serves as a major center for international diplomacy, housing the United
+                  Nations headquarters.'
+              name: final_result
+              toolUseId: tooluse_qVtPf_XKSGChQN4sCGYyCA
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 673
+        outputTokens: 234
+        serverToolUsage: {}
+        totalTokens: 907
+    status:
+      code: 200
+      message: OK
+version: 1

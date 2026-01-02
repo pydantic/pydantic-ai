@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Say hello in one word"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the current
+      weather for a city."}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NDY2NTk3NjgtMTRhMS00OGJjLTlkNzktZTA4MGE0MWJhYWY5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '407'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '320'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1297
+      output:
+        message:
+          content:
+          - text: Hello!
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 570
+        outputTokens: 5
+        serverToolUsage: {}
+        totalTokens: 575
+    status:
+      code: 200
+      message: OK
+version: 1

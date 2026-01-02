@@ -1,0 +1,86 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '458'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What's the weather in Rome?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: NONE
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '968'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3766
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |-
+              The weather in Rome, Italy is currently **22°C (72°F)** and it's **partly cloudy**.
+
+              Here's a bit more detail:
+              *   **Feels like:** 23°C (73°F)
+              *   **Wind:** Light breeze from the West at about 8 km/h (5 mph)
+              *   **Humidity:** Around 65%
+
+              For the rest of today, you can expect a high of around **25°C (77°F)** with continued partly cloudy skies. Tonight will be mostly clear with a low around **16°C (61°F)**.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: Z8VFaca-O6yDz7IPjrHK-QU
+      usageMetadata:
+        candidatesTokenCount: 140
+        promptTokenCount: 49
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 49
+        thoughtsTokenCount: 639
+        totalTokenCount: 828
+    status:
+      code: 200
+      message: OK
+version: 1
