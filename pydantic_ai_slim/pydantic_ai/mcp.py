@@ -32,7 +32,7 @@ try:
     from mcp.client.session import ClientSession, ElicitationFnT, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.client.streamable_http import GetSessionIdCallback, streamable_http_client, streamablehttp_client
     from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
     from mcp.shared.message import SessionMessage
@@ -1153,20 +1153,10 @@ class _MCPServerHTTP(MCPServer):
         )
 
         if self.http_client is not None:
-            # TODO: Clean up once https://github.com/modelcontextprotocol/python-sdk/pull/1177 lands.
-            @asynccontextmanager
-            async def httpx_client_factory(
-                headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> AsyncIterator[httpx.AsyncClient]:
-                assert self.http_client is not None
-                yield self.http_client
-
-            async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
+            async with streamable_http_client(self.url, http_client=self.http_client) as (
                 read_stream,
                 write_stream,
-                *_,
+                _,
             ):
                 yield read_stream, write_stream
         else:
