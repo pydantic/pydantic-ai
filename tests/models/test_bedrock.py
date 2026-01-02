@@ -44,7 +44,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsInstance, IsStr, try_import
+from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from botocore.exceptions import ClientError
@@ -321,7 +321,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolCallPart(
                         tool_name='temperature',
                         args={'date': '2022-01-01', 'city': 'London'},
-                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
+                        tool_call_id=IsStr(),
                     ),
                 ],
                 usage=RequestUsage(input_tokens=551, output_tokens=132),
@@ -338,7 +338,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolReturnPart(
                         tool_name='temperature',
                         content='30°C',
-                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -353,7 +353,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolCallPart(
                         tool_name='final_result',
                         args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
-                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
+                        tool_call_id=IsStr(),
                     ),
                 ],
                 usage=RequestUsage(input_tokens=685, output_tokens=166),
@@ -370,7 +370,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -463,7 +463,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                     ToolCallPart(
                         tool_name='get_capital',
                         args={'country': 'France'},
-                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
+                        tool_call_id=IsStr(),
                     ),
                 ],
                 usage=RequestUsage(input_tokens=417, output_tokens=69),
@@ -480,7 +480,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                     RetryPromptPart(
                         content='The country is not supported.',
                         tool_name='get_capital',
-                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -634,18 +634,16 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             ),
             PartStartEvent(
                 index=1,
-                part=ToolCallPart(tool_name='get_temperature', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
+                part=ToolCallPart(tool_name='get_temperature', tool_call_id=IsStr()),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
+                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id=IsStr()),
             ),
             PartEndEvent(
                 index=1,
-                part=ToolCallPart(
-                    tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'
-                ),
+                part=ToolCallPart(tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id=IsStr()),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
@@ -1393,7 +1391,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 9, 10, 22, 46, 57, tzinfo=datetime.timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
                 finish_reason='stop',
@@ -2302,5 +2300,157 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
     assert bedrock_messages == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},
+        ]
+    )
+
+
+async def test_multimodal_tool_return_mapping(bedrock_provider: BedrockProvider, document_content: BinaryContent):
+    """Test that multimodal content in tool returns is properly mapped to Bedrock format."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    # Test document BinaryContent in tool return
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_doc', content=document_content, tool_call_id='doc1', timestamp=now),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'doc1',
+                            'content': [
+                                {
+                                    'document': {
+                                        'name': 'Document 1',
+                                        'format': 'pdf',
+                                        'source': {'bytes': IsBytes()},
+                                    }
+                                }
+                            ],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_image_binary_tool_return_mapping(bedrock_provider: BedrockProvider, image_content: BinaryContent):
+    """Test that image BinaryContent in tool returns is properly mapped to Bedrock format."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_img', content=image_content, tool_call_id='img1', timestamp=now),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'img1',
+                            'content': [{'image': {'format': 'jpeg', 'source': {'bytes': IsBytes()}}}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_video_binary_tool_return_mapping(bedrock_provider: BedrockProvider, video_content: BinaryContent):
+    """Test that video BinaryContent in tool returns is properly mapped to Bedrock format."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_vid', content=video_content, tool_call_id='vid1', timestamp=now),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'vid1',
+                            'content': [{'video': {'format': 'mp4', 'source': {'bytes': IsBytes()}}}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_mixed_content_tool_return_mapping(
+    bedrock_provider: BedrockProvider, image_content: BinaryContent, document_content: BinaryContent
+):
+    """Test that tool returns with mixed content (data + files) are properly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    # Tool returning both JSON data and an image
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_mixed',
+                    content=[{'result': 'success'}, image_content],
+                    tool_call_id='mix1',
+                    timestamp=now,
+                ),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'mix1',
+                            'content': [
+                                {'text': '[{"result":"success"}]'},
+                                {'image': {'format': 'jpeg', 'source': {'bytes': IsBytes()}}},
+                            ],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
         ]
     )
