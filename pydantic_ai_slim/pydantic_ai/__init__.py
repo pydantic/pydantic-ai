@@ -103,7 +103,19 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    FreeformText,
+    LarkGrammar,
+    RegexGrammar,
+    RunContext,
+    TextFormat,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .toolsets import (
     AbstractToolset,
     ApprovalRequiredToolset,
@@ -213,6 +225,10 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    'TextFormat',
+    'FreeformText',
+    'RegexGrammar',
+    'LarkGrammar',
     # toolsets
     'AbstractToolset',
     'ApprovalRequiredToolset',

@@ -208,6 +208,28 @@ print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
+### Freeform Function Calling and Grammar Constraints
+
+The GPT-5 family of models (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) support freeform function calling, which allows tools to receive raw text instead of JSON-wrapped data. This is useful for code execution, SQL queries, shell commands, and other text-based inputs.
+
+Grammar constraints can be applied using [`FreeformText`][pydantic_ai.tools.FreeformText], [`RegexGrammar`][pydantic_ai.tools.RegexGrammar], or [`LarkGrammar`][pydantic_ai.tools.LarkGrammar]. See [Grammar-Constrained Tool Parameters](../tools.md#grammar-constrained-tools) for usage details.
+
+!!! note "OpenAI-specific considerations"
+
+    - **Native enforcement**: GPT-5 models enforce grammar constraints during generation, ensuring valid output without retries
+    - **Parallel tool calling**: Freeform function calling does NOT support parallel tool calling
+    - **Grammar complexity**: There is a limit to the grammar complexity GPT-5 supports—test your grammars thoroughly
+    - **Model limitations**: `gpt-5-nano` may struggle with complex grammar constraints
+
+For grammar output types, see [Grammar-Constrained String Output](../output.md#grammar-constrained-output).
+
+**Resources:**
+
+- [OpenAI Freeform Function Calling](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#2-freeform-function-calling)
+- [OpenAI Context-Free Grammar](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#3-contextfree-grammar-cfg)
+- [Lark Documentation](https://lark-parser.readthedocs.io/en/stable/)
+- [Lark IDE](https://www.lark-parser.org/ide/)
+
 ## OpenAI-compatible Models
 
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.

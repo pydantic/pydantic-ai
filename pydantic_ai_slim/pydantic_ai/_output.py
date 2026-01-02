@@ -32,7 +32,7 @@ from .output import (
     ToolOutput,
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
-from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
+from .tools import GenerateToolJsonSchema, ObjectJsonSchema, TextFormat, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
@@ -542,12 +542,17 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
+        text_format: TextFormat | None = None
+
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
             self.validator = self._function_schema.validator
             json_schema = self._function_schema.json_schema
             json_schema['description'] = self._function_schema.description
+            text_format = self._function_schema.text_format
         else:
+            # Extract text_format from Annotated type if present
+            text_format = _function_schema.extract_text_format(output)
             json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
             if _utils.is_model_like(output):
@@ -596,6 +601,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 description=description,
                 json_schema=json_schema,
                 strict=strict,
+                text_format=text_format,
             )
         )
 
@@ -930,6 +936,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 description=description,
                 parameters_json_schema=object_def.json_schema,
                 strict=object_def.strict,
+                text_format=object_def.text_format,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
                 kind='output',
             )
