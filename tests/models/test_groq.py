@@ -277,6 +277,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -410,6 +411,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -557,6 +559,7 @@ async def test_stream_structured(allow_model_requests: None):
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -666,6 +669,7 @@ async def test_image_as_binary_content_tool_response(
                         content='See file 241a70',
                         tool_call_id='arq6emmq6',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()),
                 ],
@@ -5463,6 +5467,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         content='Something with name: nonexistent',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5602,6 +5607,7 @@ We need to output the call.\
                         content='Something with name: test_name',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsDatetime(),

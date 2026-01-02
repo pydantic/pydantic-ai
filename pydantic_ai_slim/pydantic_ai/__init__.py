@@ -101,6 +101,18 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
+from .prompt_config import (
+    DEFAULT_FINAL_RESULT_PROCESSED,
+    DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
+    DEFAULT_MODEL_RETRY,
+    DEFAULT_OUTPUT_TOOL_NOT_EXECUTED,
+    DEFAULT_OUTPUT_VALIDATION_FAILED,
+    DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
+    DEFAULT_TOOL_CALL_DENIED,
+    PromptConfig,
+    PromptTemplates,
+    ToolConfig,
+)
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
@@ -242,6 +254,17 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    # prompt_config
+    'PromptConfig',
+    'PromptTemplates',
+    'ToolConfig',
+    'DEFAULT_FINAL_RESULT_PROCESSED',
+    'DEFAULT_FUNCTION_TOOL_NOT_EXECUTED',
+    'DEFAULT_MODEL_RETRY',
+    'DEFAULT_OUTPUT_TOOL_NOT_EXECUTED',
+    'DEFAULT_OUTPUT_VALIDATION_FAILED',
+    'DEFAULT_PROMPTED_OUTPUT_TEMPLATE',
+    'DEFAULT_TOOL_CALL_DENIED',
     # format_prompt
     'format_as_xml',
     # settings

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
+from pydantic_ai.tools import ToolDefinition
+
 from .._run_context import AgentDepsT, RunContext
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
@@ -32,6 +34,13 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
             else:
                 tools[original_name] = tool
         return tools
+
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        original_to_new_name_map = {v: k for k, v in self.name_map.items()}
+        return [
+            replace(tool_def, name=original_to_new_name_map.get(tool_def.name, tool_def.name))
+            for tool_def in (await super().get_all_tool_definitions(ctx))
+        ]
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

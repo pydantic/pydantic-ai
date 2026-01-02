@@ -109,6 +109,7 @@ print(dice_result.all_messages())
                 content='4',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
+                return_kind='tool-executed',
             )
         ],
         timestamp=datetime.datetime(...),
@@ -132,6 +133,7 @@ print(dice_result.all_messages())
                 content='Anne',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
+                return_kind='tool-executed',
             )
         ],
         timestamp=datetime.datetime(...),
