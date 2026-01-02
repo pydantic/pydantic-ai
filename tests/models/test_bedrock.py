@@ -389,6 +389,7 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     assert data == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions.'
     )
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=61))
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -1813,7 +1814,21 @@ async def test_bedrock_cache_point_adds_cache_control(
     # Different tokens usage depending on a model - could be written or read depending on the cassette read/write
     usage = result.usage()
     assert usage.cache_write_tokens >= 1000 or usage.cache_read_tokens >= 1000
-    assert usage.input_tokens <= 20
+    assert usage.input_tokens >= usage.cache_write_tokens + usage.cache_read_tokens
+
+
+async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    long_context = 'ONLY SINGLE NUMBER IN RESPONSE\n' * 100  # More tokens to activate a cache
+
+    result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
+    assert result.output == snapshot('5')
+    assert result.usage() == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
 
 
 @pytest.mark.vcr()
@@ -1850,12 +1865,12 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     first = await agent.run(run_args)
     assert first.output == snapshot('21')
     first_usage = first.usage()
-    assert first_usage == snapshot(RunUsage(input_tokens=2, cache_write_tokens=1322, output_tokens=5, requests=1))
+    assert first_usage == snapshot(RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1))
 
     second = await agent.run(run_args)
     assert second.output == snapshot('21')
     second_usage = second.usage()
-    assert second_usage == snapshot(RunUsage(input_tokens=2, output_tokens=5, cache_read_tokens=1322, requests=1))
+    assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
 
 
 async def test_bedrock_cache_point_as_first_content_raises_error(
