@@ -1781,6 +1781,295 @@ async def test_image_as_binary_content_tool_response(
     )
 
 
+async def test_document_as_binary_content_tool_response(
+    allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
+):
+    """Test that PDF documents returned from tools are sent as separate user message (not in tool_result)."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_document() -> BinaryContent:
+        return document_content
+
+    result = await agent.run('What is the content of the document from get_document tool?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the content of the document from get_document tool?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content="I'll retrieve the document content for you."),
+                    ToolCallPart(tool_name='get_document', args={}, tool_call_id='toolu_013xd5U4vGrThMe5xJbBNgrW'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=552,
+                    output_tokens=46,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 552,
+                        'output_tokens': 46,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id=IsStr(),
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_document',
+                        content=BinaryContent(data=IsBytes(), media_type='application/pdf'),
+                        tool_call_id='toolu_013xd5U4vGrThMe5xJbBNgrW',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The document is a PDF file with very simple content. It contains only one page with the heading "**Dummy PDF file**" at the top. The rest of the page appears to be blank. This is essentially a placeholder or test PDF document with minimal content.'
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=2228,
+                    output_tokens=57,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 2228,
+                        'output_tokens': 57,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_document_url_tool_response(allow_model_requests: None, anthropic_api_key: str):
+    """Test that DocumentUrl returned from tools is sent as separate user message."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_document() -> DocumentUrl:
+        return DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf')
+
+    result = await agent.run('What is the content of the document from get_document tool?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the content of the document from get_document tool?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content="I'll retrieve the document content for you."),
+                    ToolCallPart(tool_name='get_document', args={}, tool_call_id='toolu_01BGs82XcSBAZ2jbeMaV3utg'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=552,
+                    output_tokens=46,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 552,
+                        'output_tokens': 46,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id=IsStr(),
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_document',
+                        content=DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf'),
+                        tool_call_id='toolu_01BGs82XcSBAZ2jbeMaV3utg',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+Based on the document retrieved, here is the content:
+
+## Document Summary
+
+**Title:** Sample PDF
+
+**Description:** "This is a simple PDF file. Fun fun fun."
+
+**Content:** The document is a sample PDF file containing Lorem Ipsum placeholder text. It's a classic dummy text commonly used in publishing and graphic design to demonstrate the visual form of a document without relying on meaningful content.
+
+The document consists of several paragraphs of Latin-derived placeholder text starting with "Lorem ipsum dolor sit amet, consectetuer adipiscing elit..." and continues with various phrases commonly found in Lorem Ipsum text.
+
+The document appears to be a single-page PDF used likely for testing or demonstration purposes, as indicated by its title and the use of standard Lorem Ipsum filler text throughout.\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=3295,
+                    output_tokens=168,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 3295,
+                        'output_tokens': 168,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_image_url_tool_response(allow_model_requests: None, anthropic_api_key: str):
+    """Test that ImageUrl returned from tools is sent natively in tool_result."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> ImageUrl:
+        return ImageUrl(url='https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png')
+
+    result = await agent.run('What is shown in the image from get_image tool?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is shown in the image from get_image tool?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content="I'll retrieve the image for you to see what it shows."),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01LuW5uk1XDjiMNJfDEv3QXp'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=551,
+                    output_tokens=50,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 551,
+                        'output_tokens': 50,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id=IsStr(),
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content=ImageUrl(
+                            url='https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png'
+                        ),
+                        tool_call_id='toolu_01LuW5uk1XDjiMNJfDEv3QXp',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+The image shows the **Google logo**. It features the word "Google" written in the company's distinctive colorful typography:
+- **G** - Blue
+- **o** - Red
+- **o** - Yellow
+- **g** - Blue
+- **l** - Green
+- **e** - Red
+
+This is Google's well-known corporate logo that uses a sans-serif font (Product Sans) with their signature multi-colored design.\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=767,
+                    output_tokens=100,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 767,
+                        'output_tokens': 100,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 @pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))

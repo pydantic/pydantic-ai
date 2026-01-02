@@ -44,7 +44,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsInstance, IsStr, try_import
+from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from botocore.exceptions import ClientError
@@ -2285,5 +2285,157 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
     assert bedrock_messages == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},
+        ]
+    )
+
+
+async def test_multimodal_tool_return_mapping(bedrock_provider: BedrockProvider, document_content: BinaryContent):
+    """Test that multimodal content in tool returns is properly mapped to Bedrock format."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    # Test document BinaryContent in tool return
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_doc', content=document_content, tool_call_id='doc1', timestamp=now),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'doc1',
+                            'content': [
+                                {
+                                    'document': {
+                                        'name': 'Document 1',
+                                        'format': 'pdf',
+                                        'source': {'bytes': IsBytes()},
+                                    }
+                                }
+                            ],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_image_binary_tool_return_mapping(bedrock_provider: BedrockProvider, image_content: BinaryContent):
+    """Test that image BinaryContent in tool returns is properly mapped to Bedrock format."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_img', content=image_content, tool_call_id='img1', timestamp=now),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'img1',
+                            'content': [{'image': {'format': 'jpeg', 'source': {'bytes': IsBytes()}}}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_video_binary_tool_return_mapping(bedrock_provider: BedrockProvider, video_content: BinaryContent):
+    """Test that video BinaryContent in tool returns is properly mapped to Bedrock format."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_vid', content=video_content, tool_call_id='vid1', timestamp=now),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'vid1',
+                            'content': [{'video': {'format': 'mp4', 'source': {'bytes': IsBytes()}}}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_mixed_content_tool_return_mapping(
+    bedrock_provider: BedrockProvider, image_content: BinaryContent, document_content: BinaryContent
+):
+    """Test that tool returns with mixed content (data + files) are properly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    # Tool returning both JSON data and an image
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_mixed',
+                    content=[{'result': 'success'}, image_content],
+                    tool_call_id='mix1',
+                    timestamp=now,
+                ),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'mix1',
+                            'content': [
+                                {'text': '[{"result":"success"}]'},
+                                {'image': {'format': 'jpeg', 'source': {'bytes': IsBytes()}}},
+                            ],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
         ]
     )

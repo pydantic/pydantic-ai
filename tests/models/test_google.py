@@ -5312,3 +5312,71 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
         }
     )
     assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
+
+
+async def test_multimodal_tool_return_mapping(google_provider: GoogleProvider, image_content: BinaryContent):
+    """Test that multimodal content in tool returns is properly mapped to Google format."""
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_image', content=image_content, tool_call_id='img1'),
+            ],
+        ),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'get_image',
+                            'response': {},
+                            'id': 'img1',
+                        }
+                    },
+                    {'inline_data': {'data': IsBytes(), 'mime_type': 'image/jpeg'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_mixed_content_tool_return_mapping(google_provider: GoogleProvider, image_content: BinaryContent):
+    """Test that tool returns with mixed content (data + files) are properly mapped."""
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_data_with_image', content=[{'result': 'success'}, image_content], tool_call_id='mix1'
+                ),
+            ],
+        ),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'get_data_with_image',
+                            'response': {'return_value': [{'result': 'success'}]},
+                            'id': 'mix1',
+                        }
+                    },
+                    {'inline_data': {'data': IsBytes(), 'mime_type': 'image/jpeg'}},
+                ],
+            }
+        ]
+    )

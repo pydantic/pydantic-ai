@@ -3846,3 +3846,119 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     # Expect Data URI with correct MIME type for mp3
     assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'
+
+
+async def test_responses_api_multimodal_tool_return_image_binary(image_content: BinaryContent):
+    """Test Responses API maps BinaryContent image in tool returns correctly."""
+    part = ToolReturnPart(tool_name='get_image', content=image_content, tool_call_id='img1')
+
+    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        [
+            {
+                'type': 'input_image',
+                'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+'),
+                'detail': 'auto',
+            }
+        ]
+    )
+
+
+async def test_responses_api_multimodal_tool_return_image_binary_with_metadata(image_content: BinaryContent):
+    """Test Responses API maps BinaryContent image with vendor_metadata detail setting."""
+    image_content_with_metadata = BinaryContent(
+        data=image_content.data, media_type='image/jpeg', vendor_metadata={'detail': 'high'}
+    )
+    part = ToolReturnPart(tool_name='get_image', content=image_content_with_metadata, tool_call_id='img1')
+
+    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        [
+            {
+                'type': 'input_image',
+                'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+'),
+                'detail': 'high',
+            }
+        ]
+    )
+
+
+async def test_responses_api_multimodal_tool_return_document_binary(document_content: BinaryContent):
+    """Test Responses API maps BinaryContent document in tool returns correctly."""
+    part = ToolReturnPart(tool_name='get_doc', content=document_content, tool_call_id='doc1')
+
+    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        [
+            {
+                'type': 'input_file',
+                'file_data': IsStr(regex=r'^data:application/pdf;base64,.+'),
+                'filename': 'filename.pdf',
+            }
+        ]
+    )
+
+
+async def test_responses_api_multimodal_tool_return_image_url():
+    """Test Responses API maps ImageUrl in tool returns correctly."""
+    image_url = ImageUrl(url='https://example.com/image.jpg')
+    part = ToolReturnPart(tool_name='get_image', content=image_url, tool_call_id='img1')
+
+    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot([{'type': 'input_image', 'image_url': 'https://example.com/image.jpg', 'detail': 'auto'}])
+
+
+async def test_responses_api_multimodal_tool_return_image_url_with_metadata():
+    """Test Responses API maps ImageUrl with vendor_metadata detail setting."""
+    image_url = ImageUrl(url='https://example.com/image.jpg', vendor_metadata={'detail': 'low'})
+    part = ToolReturnPart(tool_name='get_image', content=image_url, tool_call_id='img1')
+
+    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot([{'type': 'input_image', 'image_url': 'https://example.com/image.jpg', 'detail': 'low'}])
+
+
+async def test_responses_api_multimodal_tool_return_document_url():
+    """Test Responses API maps DocumentUrl in tool returns correctly."""
+    doc_url = DocumentUrl(url='https://example.com/doc.pdf')
+    part = ToolReturnPart(tool_name='get_doc', content=doc_url, tool_call_id='doc1')
+
+    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot([{'type': 'input_file', 'file_url': 'https://example.com/doc.pdf'}])
+
+
+async def test_responses_api_multimodal_tool_return_audio_url():
+    """Test Responses API maps AudioUrl in tool returns correctly."""
+    audio_url = AudioUrl(url='https://example.com/audio.mp3')
+    part = ToolReturnPart(tool_name='get_audio', content=audio_url, tool_call_id='audio1')
+
+    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot([{'type': 'input_file', 'file_url': 'https://example.com/audio.mp3'}])
+
+
+async def test_responses_api_multimodal_tool_return_with_text_and_image(image_content: BinaryContent):
+    """Test Responses API maps tool return with both text/json content and image."""
+    part = ToolReturnPart(
+        tool_name='analyze',
+        content=['Analysis result: success', image_content],
+        tool_call_id='analyze1',
+    )
+
+    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        [
+            {'type': 'input_text', 'text': '["Analysis result: success"]'},
+            {
+                'type': 'input_image',
+                'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+'),
+                'detail': 'auto',
+            },
+        ]
+    )
