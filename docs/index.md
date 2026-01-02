@@ -1,3 +1,7 @@
+---
+title: Pydantic AI
+---
+
 # Pydantic AI {.hide}
 
 --8<-- "docs/.partials/index-header.html"

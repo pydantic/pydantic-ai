@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import base64
 import datetime
 import os
@@ -4326,8 +4325,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
             )
 
-        await asyncio.sleep(3)
-
         m = GoogleModel('gemini-2.5-pro', provider=google_provider)
         agent = Agent(
             m,
@@ -4489,8 +4486,6 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
             await client.aio.file_search_stores.upload_to_file_search_store(
                 file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
             )
-
-        await asyncio.sleep(3)
 
         m = GoogleModel('gemini-2.5-pro', provider=google_provider)
         agent = Agent(
@@ -5131,7 +5126,7 @@ def test_google_missing_tool_call_thought_signature():
             'parts': [
                 {
                     'function_call': {'name': 'tool', 'args': {}, 'id': 'tool_call_id'},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 },
                 {'function_call': {'name': 'tool2', 'args': {}, 'id': 'tool_call_id2'}},
             ],
@@ -5180,7 +5175,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=29, output_tokens=127, details={'thoughts_tokens': 117, 'text_prompt_tokens': 29}
+                    input_tokens=29, output_tokens=212, details={'thoughts_tokens': 202, 'text_prompt_tokens': 29}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5204,8 +5199,8 @@ async def test_google_streaming_tool_call_thought_signature(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The capital of Mexico is **Mexico City**.')],
-                usage=RequestUsage(input_tokens=170, output_tokens=9, details={'text_prompt_tokens': 170}),
+                parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                usage=RequestUsage(input_tokens=257, output_tokens=8, details={'text_prompt_tokens': 257}),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
@@ -5253,15 +5248,15 @@ async def test_google_streaming_tool_call_thought_signature(
                     timestamp=IsDatetime(),
                 )
             ),
-            PartStartEvent(index=0, part=TextPart(content='The')),
+            PartStartEvent(index=0, part=TextPart(content='The capital of Mexico')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=0,
-                delta=TextPartDelta(content_delta=' capital of Mexico is **Mexico City**.'),
+                delta=TextPartDelta(content_delta=' is Mexico City.'),
             ),
             PartEndEvent(
                 index=0,
-                part=TextPart(content='The capital of Mexico is **Mexico City**.'),
+                part=TextPart(content='The capital of Mexico is Mexico City.'),
             ),
         ]
     )
