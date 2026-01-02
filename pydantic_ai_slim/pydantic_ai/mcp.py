@@ -1272,7 +1272,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
     @property
     def _transport_client(self):
-        return streamablehttp_client
+        return streamable_http_client
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url
