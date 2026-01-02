@@ -33,11 +33,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1565'
+      - '1593'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3843
+      - gfet4t7; dur=3592
       transfer-encoding:
       - chunked
       vary:
@@ -51,21 +51,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_image
-            thoughtSignature: EvMECvAEAXLI2nzsI+8/DDdm1FR5w8hdZuhqTJRDHKhBAZuylW/K7XMSXHMJ0x4/wcsjfLRzPgLO7LJKE6WVxETlghR+vIDCYFcCGfOZn4hlYgSSyZsLnnW46KhILIRf+3xZOs/G8CTpnIcLQOZMxfawfOZRPrI/h37sPmFgMGV4eeiUHviV9OX7jqtOha+RhlaNdPnTiZP1hpHh140NCR2mYeO30QDKTYWKkKpv0/ARPSKdxf5NrAqLpo7L3GQdtWrp8oIPUboh5ZFzfjOfbr61ih+ns0sI3VGTAM8HBfZf5JfetQLsd5j2qEpNAHDBYCgqRpT9Y3g7HoSnAN9dSAbP1IHuG3rSX/aZw61I0x8mb7L+rDi28+i3KumWCE7Bdb5CxE+sZLxGgukuOnHLr2mfmlJkvsi53M5GIBIOEtWsDj/HQUBSUu6ImWMz449p7x+AQcbnKNbRf784HE6/FtI8xF/HZGk7BIWdOqN0EB5mwMojRLDkBhc8jLHG9RTKoGrwkVLMVEA/gqKhYRncC/CRf0eKyeC5BqajSuu8BRqwbDYAI1v+DNQtFpNsCGsAUNJ+DLKOtQkl2vHetenJIADfPsy5ipEW2R1nFh+mEfr1FfpBZsCsHnmW+5LKOCYi7DOjQfR2ZVP7pcsSiY6r8eIHUltc1EL/FEN0EAaGXj9t51N1JJxw6/+u/bmXh+FvTRtmofSl8jgLO7EaUIzOnfRbAbd6nCSOnCjd6lqtnehCRrSZtHp2ZfU137BtioZaqnH2OzrxnDQ3WCjRREI/wAAkaYPpRR5TRoeLD/9jtPx/ZIGMrtv0beIh6bXjzeZyFJulBg4x
+            thoughtSignature: EogFCoUFAXLI2nzbRxXzFZACaLwH5W7n1EGolByST5GuNvRwztWMduzLu6OdBz5KidGgUna8V6rp1TrldOnS97iDxdetoQHWU64WfFct+Prz/P1qpF6/j4mfe/KXEld9MVt7QyK0L4lZJEB+Wp7Ytr0u4SvldvNRfFJ3TJs0fj41e767CuJdeE4E/S1TupbFEriZC0BweC+mLqTT/01DzeBxjWkO3N7u4aFusBuTRM5dr5B3KJ/kvYwrvf+w2qf3/H8AVg+bFUhZfa8Jo4EfQqCpa8Bj+XziwusvUU0sUQSA1xq/IYxrY/SDEzcj6AMmb94eVjQeHgW9sACKgPw86C6xGWfor4Y6sj+V0i266NhQFs4n1duibpAeqUblUced5FuhtKKdeHji0750/key9hMz86wiL92J91xJkZiF5cVu2HAGr8u1pH4riiKNOzZhJDnCGKFYKSvcs5FWMw9JhiUw0j1fS7v4Du+UahuXQqO8e5BRBnhPDUeAvue7HONpykX33zl2snK3hn5ZPqJPEtq3jFTxkgqnnWBf80c7GL1p0CAtkWzgIZwFkCWxrN0tbPAW+ZeZ4b3XL1e3KWWxjNrroeaZS1b30wfwPwLvsFuVLMZBhkcOF56Y+R/fiEw+TjZfEFurQVk779OWZd+SvZWd/qCY89YMkITnfRvsTvmKWwtx0w7Rigsol9D48mIacTnEzPRyzqgOXuF1YxS5XFwHPQLDyr3uEe7pXBX8z+2JGee4mBr70kBlfODhTD95MI+5jELOczJSl25+mN1rmOf5k7UTw2aDPPrE3zVY2fFOBO2mjrsYCLCl1eQvR4ybG0o1JmqfSRTGE+X6fbLCAP8JtVbhjD2hrQEC
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-pro-preview
-      responseId: i8FKaYzbK8OLxN8Pw6_0oAs
+      responseId: OEVVaeOpAtLhz7IPyeXCuAg
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 33
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 33
-        thoughtsTokenCount: 153
-        totalTokenCount: 196
+        thoughtsTokenCount: 145
+        totalTokenCount: 188
     status:
       code: 200
       message: OK
@@ -78,7 +78,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132038'
+      - '132034'
       content-type:
       - application/json
       host:
@@ -93,7 +93,7 @@ interactions:
         - functionCall:
             args: {}
             name: get_image
-          thoughtSignature: context_engineering_is_the_way_to_go
+          thoughtSignature: skip_thought_signature_validator
         role: model
       - parts:
         - functionResponse:
@@ -119,11 +119,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2266'
+      - '1875'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=5495
+      - gfet4t7; dur=5022
       transfer-encoding:
       - chunked
       vary:
@@ -134,29 +134,25 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: |+
-              .
-
-          - text: |-
-              Based on the image provided, the fruit is a **kiwi** (also known as a kiwifruit).
-
-              The image clearly shows a cross-section of the fruit, displaying its characteristic bright green flesh, small black seeds arranged around a white center, and fuzzy brown skin on the edges.
-            thoughtSignature: ErsHCrgHAXLI2nwnUyTTB5jmYrAS1nVRT0CfZjkDscwSQ/YLbTCBGXdtS5gPMTGSBDrhzfvqm1V8QXAGVsu2TuKySk/ctyxcf1sFOrfA+5XJi38YNitAfimhSpbFbZu532eleailxAK4PyM1OvT0nwcV/i88couDvZN4d3zPaVgaHlzvBXqF0G7YH00uvL9oE/UWoHCnAKixo70Fnsxax56BhhK0IywW1tOE3ZodwL2/hNuqirXdBSSaKJ9r0oxPOa8LyYWY2rZEM2GRiFv0ojVcO2xPq4ZjbcuLc5ZHY63iM739qtUwNNm8a9t/Zh2fjr87fw5rypcSvv4+RIfNWvFxSeqIsImG3nrE3J77Mp8Do43gHpi30QAmC1sARfbZdMFWht0MXlOB9TZI0DKYbP88cN730WEWnUBVwLgyp8D+r1HrtpclJ6CT+H43HD8MiWLblbI27WcKIi2so6hqelERyggM3LACEH1aRYgqhP5Cgk9WAOjLHmgdJZZKSdmC0dblhAXAdjhPLQMlgFQtBoe4sapeIoqBYfCfTOQAijZXTYy3ZCqe2FaHPKY8mJETj1LTPpLIFbkQjcqc0gt7SG8miLIzsz9JR0EvdhFxUEt3mAosXY4u1rzpfyry2ADdOOOr/Wag30nm+6zyqEzDYxyvsSQ2T219hmVZGLy1o9V1Hcw6VIim91PwAQ1wMExIaj/dt/U0sXwWmLwKuw5xrL78DOpoUqT19Og7UT1ilzix4wm+TT6s788JfPmNQt64PxLYcFYOfi3NZEq+RU5B3fIg9F2qED04xbSV6CtrIacnpXCSc0f1GRVOWiSyAp1943EhHs42tjrkjtkX2WuMoC2Wx/8Er/yXlTp3RJbHMl+DUsddOtPyVpyQkg4iiiKQ47vQCCG61uU90u7rr8hWjHknHkvENalPuIxs8+U40PNp8/J0MO1wOYj/P2TNJRIMCNVQm6phQmzO+VVLshmLwxNN3NVe+CRAVJ4UJwpHA5hT3onjWuuh9diFVlghk1OmcqA1vTb588HbtxiVrFwIy/oonfIPHZ11uAkV6NhtfYzc9B/rXBbVhjZVfrLC+2XxP8aHMqQtSEPh4DJXvbM9OGByIoy94hh6eQAPijRlP/u6sHzGXb5aNZa1Oh47LSHTNwVbB6xGxk2jYo8qlF+MZK5z70ic00Gm6z/mTqVh7aLlTH37r708qH/tlAIvXZmE46zWv/K37WneymIPA8t4M84wFlmm9ybN1rPJ0hq59Yzd9k0aAfJMeOJvTmjNbw==
+          - text: '6'
+          - text: The fruit in the image is a **kiwi** (specifically, a cross-section showing its green flesh, black seeds,
+              and white core).
+            thoughtSignature: EowGCokGAXLI2nzMqCx0QJm1/L/VP1FNNuc95WqCtATY/EA+tdPw4v0D/qZjEc2B/vcpadcbPQiTCgplsTCPVEDH9dPijW557NuqqU3M63T0zMY6d5R8dk/L4Sh86ZVFVA7FcivBuYLqNpvOXO4QHZpMjTW0lBrj64pi6NqXfJUay55/W4WP7t/Duy74Bf6/xGfBXejtHrnow1J7YM7VyjVfxiRUFkQJ2wZn34DkNpsQULYFwIMSerqevhurGHTpnoIdgcpP6N16zQRJb3ziSudEdqQAgKgJ4XgEsPHhuVlRMUE9/gDThDPOX3cuc8CF+IsWE7+3wUXy3HanhBi3i35LAuSko6H3UiSX7Uy9fLKdiN0rzBOYc/GCxMMvKb98B+2NU27TXUBus8NS54j6oMFExqtRpicjO2xNp8nBBnBwHrkDfRsubyCbK1b8jEPdBBPNC2BcjUeXrjUrR6hiK+/vKkjfofdZnLMAT8P+PfSTWdr7hWLGc0MVyY0ro74IF3H4H7jjiHwrGp/YEvTWaU/Wk8Yl3FqoV+IDx9+eklsY9feZzjFVgKdMf96hlVGLMuxfMxVg8AfWBnts2SDZMIOCTWP+KWo3LU+e3LepRmxv5V2GTZ6qkR1HyeLAOWa6D3rgBbPSwpWHq1lGtxznhOn/MlWpq4YdYwTf87kzBO2kkuVAfEaVqlwvJyp9bToCKCNA6QqKRRQZMJ3nA4ULECiuTRV7nDsY5cBHCedCJpYjrPZdiywj49P2EINg+TBf2HFs5sFQM/rUgdC2eL0fQVpmd+pNvS/UgbH86xO960QBYapqkIWrFtR6W72+MgaFhBErOvAyghnP8nezrieOA/ZFErLcMs8ZMwGVMaFKoyjH+sSIId00ZlLjxjm2cj6xM/K9DpbjXLhZUvkmdNbO7XjS2A4QQXpXSlTJnRT2qO8kyxe8rnF566aXn/agYdRSvaIvB/j/0xMzBiHrYtXxYMIGbI1PqjPVI8mEoVkt7Bi5GnTIIRz6Kk1vcfZBVNZn8VOyB8rGsbqfTn4LnMJp
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-pro-preview
-      responseId: kcFKafaBFLm0kdUPp6i_kQo
+      responseId: PUVVabfNEuGymtkPr9GT2Q0
       usageMetadata:
-        candidatesTokenCount: 62
+        candidatesTokenCount: 31
         promptTokenCount: 1166
         promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 78
         - modality: IMAGE
           tokenCount: 1088
-        thoughtsTokenCount: 231
-        totalTokenCount: 1459
+        - modality: TEXT
+          tokenCount: 78
+        thoughtsTokenCount: 184
+        totalTokenCount: 1381
     status:
       code: 200
       message: OK

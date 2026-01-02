@@ -1045,7 +1045,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 },
                 {'text': 'xxx'},
             ],
@@ -1062,7 +1062,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 }
             ],
         }
@@ -1220,7 +1220,7 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=163, details={'thoughts_tokens': 153, 'text_prompt_tokens': 33}
+                    input_tokens=33, output_tokens=155, details={'thoughts_tokens': 145, 'text_prompt_tokens': 33}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1250,24 +1250,15 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
+                    TextPart(content='6'),
                     TextPart(
-                        content="""\
-.
-
-"""
-                    ),
-                    TextPart(
-                        content="""\
-Based on the image provided, the fruit is a **kiwi** (also known as a kiwifruit).
-
-The image clearly shows a cross-section of the fruit, displaying its characteristic bright green flesh, small black seeds arranged around a white center, and fuzzy brown skin on the edges.\
-"""
+                        content='The fruit in the image is a **kiwi** (specifically, a cross-section showing its green flesh, black seeds, and white core).'
                     ),
                 ],
                 usage=RequestUsage(
                     input_tokens=1166,
-                    output_tokens=293,
-                    details={'thoughts_tokens': 231, 'image_prompt_tokens': 1088, 'text_prompt_tokens': 78},
+                    output_tokens=215,
+                    details={'thoughts_tokens': 184, 'image_prompt_tokens': 1088, 'text_prompt_tokens': 78},
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1375,9 +1366,7 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
     assert result.output == snapshot('Your Chinese zodiac is Dragon.\n')
 
     result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
-    assert result.output == snapshot(
-        'I am sorry, I cannot provide you with your Chinese zodiac sign because you are not old enough. You must be at least 18 years old.'
-    )
+    assert result.output == snapshot('I am sorry, I cannot fulfill this request. The age needs to be greater than 18.')
 
 
 @pytest.mark.vcr()
@@ -1440,9 +1429,7 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         return 20.0
 
     result = await agent.run('What is the temperature in Tokyo?')
-    assert result.output == snapshot(
-        'I was not able to get the temperature in Tokyo. There seems to be an issue with the way the location is being processed by the tool.'
-    )
+    assert result.output == snapshot('I need the latitude and longitude for Tokyo. Can you please provide them?')
 
 
 @pytest.mark.vcr()
