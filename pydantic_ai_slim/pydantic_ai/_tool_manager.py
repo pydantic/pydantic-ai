@@ -35,6 +35,8 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
+    default_max_retries: int = 1
+    """Default number of times to retry a tool"""
 
     @classmethod
     @contextmanager
@@ -62,6 +64,7 @@ class ToolManager(Generic[AgentDepsT]):
             toolset=self.toolset,
             ctx=ctx,
             tools=await self.toolset.get_tools(ctx),
+            default_max_retries=self.default_max_retries,
         )
 
     @property
@@ -174,7 +177,7 @@ class ToolManager(Generic[AgentDepsT]):
 
             return await self.toolset.call_tool(name, args_dict, ctx, tool)
         except (ValidationError, ModelRetry) as e:
-            max_retries = tool.max_retries if tool is not None else 1
+            max_retries = tool.max_retries if tool is not None else self.default_max_retries
             current_retry = self.ctx.retries.get(name, 0)
 
             if current_retry == max_retries:
