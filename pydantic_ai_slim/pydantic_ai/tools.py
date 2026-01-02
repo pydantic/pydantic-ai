@@ -263,8 +263,13 @@ class FreeformText:
     Other models will use JSON-based function calling with agent-side validation.
     """
 
-    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         """Pass-through schema - no validation needed for freeform text."""
+        # When used as Annotated[str, FreeformText()], source_type is str
+        # When used directly as FreeformText, source_type is FreeformText
+        if source_type is cls or (hasattr(source_type, '__origin__') and source_type.__origin__ is cls):
+            return core_schema.is_instance_schema(cls)
         return handler(source_type)
 
     def get_description(self) -> str | None:
@@ -307,12 +312,16 @@ class RegexGrammar:
         except re.error as e:
             raise ValueError('Regex pattern is invalid') from e
 
-    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         """Create a schema that validates the string matches the regex pattern."""
-        return core_schema.no_info_after_validator_function(
-            self._validate,
-            handler(source_type),
-        )
+        # When used directly as RegexGrammar (in TextFormat union), validate it's an instance
+        if source_type is cls or (hasattr(source_type, '__origin__') and source_type.__origin__ is cls):
+            return core_schema.is_instance_schema(cls)
+        # When used as Annotated[str, RegexGrammar(pattern)], this is called on the instance
+        # but classmethod receives cls, so we can't access instance data here
+        # The validation happens via the instance's _validate method when used in Annotated
+        return handler(source_type)
 
     def _validate(self, value: str) -> str:
         """Validate that the value matches the regex pattern."""
@@ -376,12 +385,14 @@ class LarkGrammar:
                 stacklevel=2,
             )  # pragma: no cover
 
-    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         """Create a schema that validates the string matches the Lark grammar."""
-        return core_schema.no_info_after_validator_function(
-            self._validate,
-            handler(source_type),
-        )
+        # When used directly as LarkGrammar (in TextFormat union), validate it's an instance
+        if source_type is cls or (hasattr(source_type, '__origin__') and source_type.__origin__ is cls):
+            return core_schema.is_instance_schema(cls)
+        # When used as Annotated[str, LarkGrammar(grammar)], pass through to handler
+        return handler(source_type)
 
     def _validate(self, value: str) -> str:
         """Validate that the value matches the Lark grammar."""
