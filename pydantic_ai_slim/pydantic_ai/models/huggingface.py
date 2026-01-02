@@ -314,8 +314,8 @@ class HuggingFaceModel(Model):
             _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
+    @staticmethod
     def _get_tool_choice(
-        self,
         model_settings: HuggingFaceModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[
@@ -353,7 +353,7 @@ class HuggingFaceModel(Model):
         if not tool_defs:
             return [], None
 
-        tools = [self._map_tool_definition(r) for r in tool_defs.values()]
+        tools = [HuggingFaceModel._map_tool_definition(r) for r in tool_defs.values()]
         return tools, tool_choice
 
     async def _map_messages(

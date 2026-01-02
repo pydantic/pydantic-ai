@@ -84,7 +84,7 @@ class TestToolChoiceTranslation:
         assert tool_config.get('toolChoice') == snapshot({'any': {}})
 
     def test_single_tool_in_list_format(self, bedrock_model: BedrockConverseModel):
-        """Single tool in list uses {tool: {name: X}} format."""
+        """Single tool in list uses {tool: {name: X}} format, all tools sent for caching."""
         settings: BedrockModelSettings = {'tool_choice': ['get_weather']}
         params = ModelRequestParameters(function_tools=[make_tool('get_weather'), make_tool('get_time')])
 
@@ -93,8 +93,8 @@ class TestToolChoiceTranslation:
         assert tool_config is not None
         # Single tool uses named format
         assert tool_config.get('toolChoice') == snapshot({'tool': {'name': 'get_weather'}})
-        # Tools are filtered
-        assert len(tool_config['tools']) == 1
+        # All tools are sent (not filtered) for caching benefits when forcing a single tool
+        assert len(tool_config['tools']) == 2
 
     def test_multiple_tools_in_list_format(self, bedrock_model: BedrockConverseModel):
         """Multiple tools in list uses {any: {}} with filtered tools."""
@@ -123,7 +123,7 @@ class TestToolChoiceTranslation:
 
         assert tool_config is not None
         # 2 tools (get_weather + final_result), so uses 'any'
-        assert tool_config.get('toolChoice') == snapshot({'any': {}})
+        assert tool_config.get('toolChoice') == snapshot({'auto': {}})
         assert len(tool_config['tools']) == 2
 
     def test_none_with_output_tools_uses_auto(self, bedrock_model: BedrockConverseModel):

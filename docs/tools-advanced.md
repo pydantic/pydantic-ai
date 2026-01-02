@@ -355,7 +355,16 @@ If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool
 
 The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSettings] controls which tools the model can use during a request. This is useful for disabling tools, forcing tool use, or restricting which tools are available.
 
-Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)) and **output tools** (internal tools used for [structured output](output.md#tool-output)). The `tool_choice` setting controls function tools; output tools are handled separately.
+!!! warning "Per-Run Setting"
+    This feature is a stepping-stone to expanded functionality, like forcing an agent to call tools at specific steps.
+    Used directly, the `tool_choice` setting applies to **every model request** in an agent run:
+
+    - `'required'` forces a tool call at every step, not just the first
+    - `['tool_a']` restricts to that tool for the entire run, preventing completion if the agent needs output tools
+
+    If you want to use it for per-request control, use [direct model requests](direct.md) or the `prepare_tools` function above.
+
+Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)), and **output tools** (internal tools used for [structured output](output.md#tool-output)). The `tool_choice` setting controls function tools; output tools are handled by the framework.
 
 ### Options
 
@@ -366,16 +375,6 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | `'required'` | Force the model to use a function tool. Output tools excluded. |
 | `['tool_a', ...]` | Restrict to specific function tools by name. Output tools excluded. |
 | [`ToolsPlusOutput`][pydantic_ai.settings.ToolsPlusOutput]`(function_tools=['...'])` | Restrict function tools while keeping output tools available. |
-
-### Limitations
-
-!!! warning "Per-Run Setting"
-    The `tool_choice` setting applies to **every model request** in an agent run:
-
-    - `'required'` forces a tool call at every step, not just the first
-    - `['tool_a']` restricts to that tool for the entire run, preventing completion if the agent needs output tools
-
-    For per-request control, use [direct model requests](direct.md) or the `prepare_tools` function above.
 
 ### Example
 
@@ -401,12 +400,6 @@ result = agent.run_sync('Hello', model_settings={'tool_choice': 'none'})
 result = agent.run_sync('Hello', model_settings={'tool_choice': 'required'})
 result = agent.run_sync('Hello', model_settings={'tool_choice': ['get_weather']})
 ```
-
-_(This example is complete, it can be run "as is")_
-
-!!! note
-    The [`TestModel`][pydantic_ai.models.test.TestModel] used above does not simulate tool_choice behavior.
-    With real models, `'none'` disables tools and `'required'` forces tool use.
 
 ### Provider Support
 

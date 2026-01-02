@@ -80,7 +80,7 @@ class TestToolChoiceTranslation:
         assert len(tools) == 1
 
     def test_single_tool_in_list_format(self, huggingface_model: HuggingFaceModel):
-        """Single tool in list uses ChatCompletionInputToolChoiceClass format."""
+        """Single tool in list uses ChatCompletionInputToolChoiceClass format, all tools sent for caching."""
         settings: HuggingFaceModelSettings = {'tool_choice': ['get_weather']}
         params = ModelRequestParameters(function_tools=[make_tool('get_weather'), make_tool('get_time')])
 
@@ -89,9 +89,8 @@ class TestToolChoiceTranslation:
         # Single tool uses named format
         assert isinstance(tool_choice, ChatCompletionInputToolChoiceClass)
         assert tool_choice.function.name == 'get_weather'
-        # Tools are filtered
-        assert len(tools) == 1
-        assert tools[0]['function']['name'] == 'get_weather'
+        # All tools are sent (not filtered) for caching benefits when forcing a single tool
+        assert len(tools) == 2
 
     def test_multiple_tools_in_list_format(self, huggingface_model: HuggingFaceModel):
         """Multiple tools in list uses 'required' with filtered tools."""
@@ -109,7 +108,7 @@ class TestToolChoiceTranslation:
         assert tool_names == {'get_weather', 'get_time'}
 
     def test_tools_plus_output_format(self, huggingface_model: HuggingFaceModel):
-        """ToolsPlusOutput uses 'required' with filtered tools (multiple tools)."""
+        """ToolsPlusOutput uses 'auto' to allow text output (multiple tools)."""
         settings: HuggingFaceModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['get_weather'])}
         params = ModelRequestParameters(
             function_tools=[make_tool('get_weather'), make_tool('get_time')],
@@ -118,8 +117,8 @@ class TestToolChoiceTranslation:
 
         tools, tool_choice = huggingface_model._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
-        # 2 tools (get_weather + final_result), falls back to 'required'
-        assert tool_choice == 'required'
+        # 2 tools (get_weather + final_result), uses 'auto' to allow text output
+        assert tool_choice == 'auto'
         assert len(tools) == 2
         tool_names: set[str] = {t['function']['name'] for t in tools}
         assert tool_names == {'get_weather', 'final_result'}

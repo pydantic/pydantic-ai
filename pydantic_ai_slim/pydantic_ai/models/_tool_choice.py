@@ -32,19 +32,19 @@ def validate_tool_choice(  # noqa: C901
 
     Input behavior:
 
-        - `None` / `'auto'`: Returns `'auto'` if text output allowed, else `'required'`.
+        - `None` / `'auto'`: Returns `'auto'` if direct output allowed, else `'required'`.
         - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
           appropriate mode and warns. Otherwise returns `'none'`.
-        - `'required'`: Requires function tool use. Raises if output tools exist or no
-          function tools are defined.
+        - `'required'`: Requires function tool use. Raises if no function tools are defined.
         - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
         - `ToolsPlusOutput`: Combines specified function tools with all output tools.
+          Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
     """
     tool_choice = (model_settings or {}).get('tool_choice')
 
     allow_direct_output = model_request_parameters.allow_text_output or model_request_parameters.allow_image_output
 
-    tool_defs_keys = model_request_parameters.tool_defs.keys()  # includes builtin tools when present
+    tool_names = set(model_request_parameters.tool_defs.keys())
 
     def _warn(msg: str) -> None:
         warnings.warn(msg, UserWarning, stacklevel=6)
@@ -56,7 +56,7 @@ def validate_tool_choice(  # noqa: C901
 
     # Default / auto
     if tool_choice in (None, 'auto'):
-        return 'auto' if model_request_parameters.allow_text_output else 'required'
+        return 'auto' if allow_direct_output else 'required'
 
     # none / []: disable function tools, but output tools may still exist
     if tool_choice in ('none', []):
@@ -86,11 +86,6 @@ def validate_tool_choice(  # noqa: C901
 
     # required (only function tools allowed)
     if tool_choice == 'required':
-        if model_request_parameters.output_tools:
-            raise UserError(
-                "`tool_choice='required'` is incompatible with output types. "
-                'Use `ToolsPlusOutput` to specify function tools while allowing structured output.'
-            )
         if not model_request_parameters.function_tools:
             raise UserError(
                 '`tool_choice` was set to "required", but no function tools are defined. '
@@ -100,29 +95,29 @@ def validate_tool_choice(  # noqa: C901
 
     # list[str]: required, restricted to these tools
     if isinstance(tool_choice, list):
-        # stable order, unique
+        # dict.fromkeys keeps the order while removing duplicates
+        # set() doesn't preserve order
+        # and we need both the list (for the return value) and the set (for validation)
         chosen = list(dict.fromkeys(tool_choice))
         chosen_set = set(chosen)
+        _invalid(chosen_set, tool_names, available_label='Available tools')
 
-        if chosen_set == set(tool_defs_keys):
+        if chosen_set == tool_names:
             return 'required'
 
-        _invalid(chosen_set, set(tool_defs_keys), available_label='Available tools')
         return (chosen, 'required')
 
-    # ToolsPlusOutput: specific function tools + all output tools
+    # ToolsPlusOutput: specific function tools + all output tools or direct text/image output
     if isinstance(tool_choice, ToolsPlusOutput):
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
 
         # stable order, unique
         if not tool_choice.function_tools:
-            _warn("ToolsPlusOutput with empty function_tools - defaulting to 'none'")
             if output_tool_names:
-                return (output_tool_names, 'auto' if allow_direct_output else 'required')
+                _warn('ToolsPlusOutput with empty function_tools - using output tools only')
+                return 'auto' if allow_direct_output else 'required'
+            _warn("ToolsPlusOutput with empty function_tools - defaulting to 'none'")
             return 'none'
-
-        if not output_tool_names:
-            _warn('ToolsPlusOutput used but no output tools exist - defaulting to list[str] behavior')
 
         chosen_function = list(dict.fromkeys(tool_choice.function_tools))
         chosen_function_set = set(chosen_function)
@@ -135,8 +130,11 @@ def validate_tool_choice(  # noqa: C901
         )
 
         allowed_tools = chosen_function + output_tool_names
-        if set(allowed_tools) == set(tool_defs_keys):
+        if set(allowed_tools) == tool_names:
             return 'required'
-        return (allowed_tools, 'required')
+
+        # If direct output is allowed, use 'auto' mode to permit text/image responses
+        mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'
+        return (allowed_tools, mode)
 
     assert_never(tool_choice)

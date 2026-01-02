@@ -83,7 +83,7 @@ class TestToolChoiceTranslation:
         assert len(tools) == 1
 
     def test_single_tool_in_list_format(self, anthropic_model: AnthropicModel):
-        """Single tool in list uses {type: 'tool', name: X} format with filtered tools."""
+        """Single tool in list uses {type: 'tool', name: X} format, all tools sent for caching."""
         settings: AnthropicModelSettings = {'tool_choice': ['get_weather']}
         params = ModelRequestParameters(function_tools=[make_tool('get_weather'), make_tool('get_time')])
 
@@ -91,8 +91,8 @@ class TestToolChoiceTranslation:
 
         # Single tool uses named format which forces that specific tool
         assert tool_choice == snapshot({'type': 'tool', 'name': 'get_weather'})
-        # Only the specified tool is sent
-        assert {t['name'] for t in tools if 'name' in t} == {'get_weather'}
+        # All tools are sent (not filtered) for caching benefits when forcing a single tool
+        assert {t['name'] for t in tools if 'name' in t} == {'get_weather', 'get_time'}
 
     def test_multiple_tools_in_list_format(self, anthropic_model: AnthropicModel):
         """Multiple tools in list uses {type: 'any'} with filtered tools."""
@@ -119,7 +119,7 @@ class TestToolChoiceTranslation:
         tools, tool_choice = anthropic_model._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
         # 2 tools total (get_weather + final_result) so uses 'any'
-        assert tool_choice == snapshot({'type': 'any'})
+        assert tool_choice == snapshot({'type': 'auto'})
         tool_names: set[str] = {t['name'] for t in tools if 'name' in t}
         assert tool_names == {'get_weather', 'final_result'}
 
@@ -133,7 +133,7 @@ class TestToolChoiceTranslation:
 
         tools, tool_choice = anthropic_model._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
-        assert tool_choice == snapshot({'type': 'any'})
+        assert tool_choice == snapshot({'type': 'auto'})
         tool_names: set[str] = {t['name'] for t in tools if 'name' in t}
         assert tool_names == {'get_weather', 'get_time', 'final_result'}
 

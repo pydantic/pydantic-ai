@@ -79,7 +79,7 @@ class TestToolChoiceTranslation:
         assert len(tools) == 1
 
     def test_single_tool_in_list_format(self, groq_model: GroqModel):
-        """Single tool in list uses named tool choice format."""
+        """Single tool in list uses named tool choice format, all tools sent for caching."""
         settings: GroqModelSettings = {'tool_choice': ['get_weather']}
         params = ModelRequestParameters(function_tools=[make_tool('get_weather'), make_tool('get_time')])
 
@@ -87,8 +87,8 @@ class TestToolChoiceTranslation:
 
         # Explicit API format: forces the specific tool
         assert tool_choice == snapshot({'type': 'function', 'function': {'name': 'get_weather'}})
-        # Tools are filtered to only include the specified tool
-        assert [t['function']['name'] for t in tools] == ['get_weather']
+        # All tools are sent (not filtered) for caching benefits when forcing a single tool
+        assert [t['function']['name'] for t in tools] == ['get_weather', 'get_time']
 
     def test_multiple_tools_in_list_format(self, groq_model: GroqModel):
         """Multiple tools in list fall back to 'required' with filtered tools."""
@@ -106,7 +106,7 @@ class TestToolChoiceTranslation:
         assert tool_names == {'get_weather', 'get_time'}
 
     def test_tools_plus_output_with_single_function_tool(self, groq_model: GroqModel):
-        """ToolsPlusOutput with single function tool uses named format."""
+        """ToolsPlusOutput with single function tool uses 'auto' to allow text output."""
         settings: GroqModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['get_weather'])}
         params = ModelRequestParameters(
             function_tools=[make_tool('get_weather'), make_tool('get_time')],
@@ -115,13 +115,13 @@ class TestToolChoiceTranslation:
 
         tools, tool_choice = groq_model._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
-        # With 2 tools (get_weather + final_result), falls back to 'required'
-        assert tool_choice == 'required'
+        # With 2 tools (get_weather + final_result), uses 'auto' to allow text output
+        assert tool_choice == 'auto'
         tool_names = {t['function']['name'] for t in tools}
         assert tool_names == {'get_weather', 'final_result'}
 
     def test_tools_plus_output_with_multiple_function_tools(self, groq_model: GroqModel):
-        """ToolsPlusOutput with multiple function tools uses 'required' with filtered tools."""
+        """ToolsPlusOutput with multiple function tools uses 'auto' to allow text output."""
         settings: GroqModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['get_weather', 'get_time'])}
         params = ModelRequestParameters(
             function_tools=[make_tool('get_weather'), make_tool('get_time'), make_tool('get_population')],
@@ -130,7 +130,7 @@ class TestToolChoiceTranslation:
 
         tools, tool_choice = groq_model._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
-        assert tool_choice == 'required'
+        assert tool_choice == 'auto'
         tool_names = {t['function']['name'] for t in tools}
         assert tool_names == {'get_weather', 'get_time', 'final_result'}
 

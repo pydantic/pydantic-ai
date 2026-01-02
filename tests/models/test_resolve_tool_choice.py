@@ -30,7 +30,7 @@ def make_params(
     *,
     function_tools: list[str] | None = None,
     output_tools: list[str] | None = None,
-    allow_text_output: bool = True,
+    allow_text_output: bool = False,
     allow_image_output: bool = False,
 ) -> ModelRequestParameters:
     """Create ModelRequestParameters with specified tools and settings."""
@@ -175,13 +175,14 @@ class TestRequired:
 
         assert result == 'required'
 
-    def test_with_output_tools_raises_error(self):
-        """With output tools present, raises UserError."""
+    def test_with_output_tools_allowed(self):
+        """With output tools present, 'required' is still valid - user wants to force function tool use."""
         settings: ModelSettings = {'tool_choice': 'required'}
         params = make_params(function_tools=['tool_a'], output_tools=['final_result'])
 
-        with pytest.raises(UserError, match='incompatible with output types'):
-            validate_tool_choice(settings, params)
+        result = validate_tool_choice(settings, params)
+
+        assert result == 'required'
 
     def test_no_function_tools_raises_error(self):
         """Without function tools, raises UserError."""
@@ -252,10 +253,27 @@ class TestToolList:
 class TestToolsPlusOutput:
     """Tests for tool_choice=ToolsPlusOutput(...)."""
 
-    def test_with_function_and_output_tools(self):
-        """Combines specified function tools with all output tools."""
+    def test_with_function_and_output_tools_text_allowed(self):
+        """Combines specified function tools with output tools, uses 'auto' when text allowed."""
         settings: ModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['tool_a'])}
-        params = make_params(function_tools=['tool_a', 'tool_b'], output_tools=['final_result'])
+        params = make_params(
+            function_tools=['tool_a', 'tool_b'],
+            output_tools=['final_result'],
+            allow_text_output=True,
+        )
+
+        result = validate_tool_choice(settings, params)
+
+        assert result == snapshot((['tool_a', 'final_result'], 'auto'))
+
+    def test_with_function_and_output_tools_no_text(self):
+        """Combines specified function tools with output tools, uses 'required' when no text allowed."""
+        settings: ModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['tool_a'])}
+        params = make_params(
+            function_tools=['tool_a', 'tool_b'],
+            output_tools=['final_result'],
+            allow_text_output=False,
+        )
 
         result = validate_tool_choice(settings, params)
 
@@ -264,11 +282,15 @@ class TestToolsPlusOutput:
     def test_multiple_function_tools(self):
         """Multiple function tools are combined with output tools."""
         settings: ModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['tool_a', 'tool_b'])}
-        params = make_params(function_tools=['tool_a', 'tool_b', 'tool_c'], output_tools=['final_result'])
+        params = make_params(
+            function_tools=['tool_a', 'tool_b', 'tool_c'],
+            output_tools=['final_result'],
+            allow_text_output=True,
+        )
 
         result = validate_tool_choice(settings, params)
 
-        assert result == snapshot((['tool_a', 'tool_b', 'final_result'], 'required'))
+        assert result == snapshot((['tool_a', 'tool_b', 'final_result'], 'auto'))
 
     def test_all_tools_returns_required(self):
         """When combined list matches all tools, returns just 'required'."""
@@ -280,7 +302,7 @@ class TestToolsPlusOutput:
         assert result == 'required'
 
     def test_empty_function_tools_with_output_tools_text_allowed(self):
-        """Empty function tools with output tools warns and returns output tools with 'auto'."""
+        """Empty function tools with output tools warns and returns 'auto' (not tuple)."""
         settings: ModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=[])}
         params = make_params(
             function_tools=['tool_a'],
@@ -291,10 +313,10 @@ class TestToolsPlusOutput:
         with pytest.warns(UserWarning, match='empty function_tools'):
             result = validate_tool_choice(settings, params)
 
-        assert result == snapshot((['final_result'], 'auto'))
+        assert result == 'auto'
 
     def test_empty_function_tools_with_output_tools_no_text(self):
-        """Empty function tools with output tools and no text output returns 'required' mode."""
+        """Empty function tools with output tools and no text output returns 'required' (not tuple)."""
         settings: ModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=[])}
         params = make_params(
             function_tools=['tool_a'],
@@ -305,7 +327,7 @@ class TestToolsPlusOutput:
         with pytest.warns(UserWarning, match='empty function_tools'):
             result = validate_tool_choice(settings, params)
 
-        assert result == snapshot((['final_result'], 'required'))
+        assert result == 'required'
 
     def test_empty_function_tools_no_output_tools(self):
         """Empty function tools without output tools warns and returns 'none'."""
@@ -317,15 +339,14 @@ class TestToolsPlusOutput:
 
         assert result == 'none'
 
-    def test_no_output_tools_warns(self):
-        """Using ToolsPlusOutput without output tools warns about fallback behavior."""
+    def test_no_output_tools(self):
+        """Using ToolsPlusOutput without output tools still works - restricts to function tools."""
         settings: ModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['tool_a'])}
-        params = make_params(function_tools=['tool_a', 'tool_b'], output_tools=[])
+        params = make_params(function_tools=['tool_a', 'tool_b'], output_tools=[], allow_text_output=True)
 
-        with pytest.warns(UserWarning, match='no output tools exist'):
-            result = validate_tool_choice(settings, params)
+        result = validate_tool_choice(settings, params)
 
-        assert result == snapshot((['tool_a'], 'required'))
+        assert result == snapshot((['tool_a'], 'auto'))
 
     def test_invalid_function_tool_raises_error(self):
         """Invalid function tool in ToolsPlusOutput raises UserError."""
@@ -338,212 +359,12 @@ class TestToolsPlusOutput:
     def test_preserves_order_and_deduplicates(self):
         """Preserves order and removes duplicates from function tools."""
         settings: ModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['tool_b', 'tool_a', 'tool_b'])}
-        params = make_params(function_tools=['tool_a', 'tool_b', 'tool_c'], output_tools=['final_result'])
-
-        result = validate_tool_choice(settings, params)
-
-        assert result == snapshot((['tool_b', 'tool_a', 'final_result'], 'required'))
-
-
-# =============================================================================
-# Part B: Integration Tests with Agent + TestModel
-# =============================================================================
-#
-# Note: TestModel does not call validate_tool_choice() - that's done by each
-# real provider implementation (OpenAI, Anthropic, etc.). These tests verify
-# the agent correctly passes tool_choice settings through to the model.
-# For full end-to-end tool_choice tests, see provider-specific test files.
-
-
-class TestAgentToolChoiceIntegration:
-    """Integration tests verifying tool_choice is passed to models correctly.
-
-    These tests verify:
-    1. Settings flow through agent → model pipeline
-    2. Error conditions are caught at the right level
-    3. ModelRequestParameters are built correctly
-    """
-
-    def test_model_settings_passed_to_model(self):
-        """Verify model_settings including tool_choice are passed to the model."""
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        agent = Agent('test')
-
-        @agent.tool_plain
-        def my_tool(x: int) -> str:
-            return str(x)
-
-        model = TestModel()
-        settings: ModelSettings = {'tool_choice': 'auto', 'temperature': 0.5}
-        agent.run_sync('hello', model=model, model_settings=settings)
-
-        params = model.last_model_request_parameters
-        assert params is not None
-        assert len(params.function_tools) == 1
-        assert params.function_tools[0].name == 'my_tool'
-
-    def test_output_tools_available_with_structured_output(self):
-        """Verify output tools are created when using structured output."""
-        from pydantic import BaseModel
-
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        class Output(BaseModel):
-            result: str
-
-        agent: Agent[None, Output] = Agent('test', output_type=Output)
-        model = TestModel()
-        agent.run_sync('hello', model=model)
-
-        params = model.last_model_request_parameters
-        assert params is not None
-        output_tool_names = [t.name for t in params.output_tools]
-        assert 'final_result' in output_tool_names
-
-    def test_allow_text_output_with_string_output_type(self):
-        """Agent with str output type should allow text output."""
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        agent = Agent('test')  # default output_type=str
-        model = TestModel()
-        agent.run_sync('hello', model=model)
-
-        params = model.last_model_request_parameters
-        assert params is not None
-        assert params.allow_text_output is True
-
-    def test_allow_text_output_with_structured_only(self):
-        """Agent with only structured output type should not allow text output."""
-        from pydantic import BaseModel
-
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        class Output(BaseModel):
-            result: str
-
-        agent: Agent[None, Output] = Agent('test', output_type=Output)
-        model = TestModel()
-        agent.run_sync('hello', model=model)
-
-        params = model.last_model_request_parameters
-        assert params is not None
-        assert params.allow_text_output is False
-
-    def test_allow_text_output_with_union_type(self):
-        """Agent with union output type (str | BaseModel) should allow text output."""
-        from pydantic import BaseModel
-
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        class StructuredOutput(BaseModel):
-            result: str
-
-        agent: Agent[None, str | StructuredOutput] = Agent('test', output_type=str | StructuredOutput)
-        model = TestModel()
-        agent.run_sync('hello', model=model)
-
-        params = model.last_model_request_parameters
-        assert params is not None
-        assert params.allow_text_output is True
-
-    def test_function_tools_registered_correctly(self):
-        """Verify function tools are registered and passed to model."""
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        agent = Agent('test')
-
-        @agent.tool_plain
-        def tool_a(x: int) -> str:
-            return str(x)  # pragma: no cover
-
-        @agent.tool_plain
-        def tool_b(y: str) -> int:
-            return len(y)  # pragma: no cover
-
-        model = TestModel(call_tools=[])
-        agent.run_sync('hello', model=model)
-
-        params = model.last_model_request_parameters
-        assert params is not None
-        tool_names = {t.name for t in params.function_tools}
-        assert tool_names == {'tool_a', 'tool_b'}
-
-
-class TestValidateToolChoiceWithAgentParams:
-    """Tests that verify validate_tool_choice works with real agent-generated parameters.
-
-    These tests create ModelRequestParameters as they would be built by the agent,
-    then call validate_tool_choice directly to verify the expected behavior.
-    """
-
-    def test_agent_with_structured_output_and_required_raises(self):
-        """Simulates agent with structured output trying to use tool_choice='required'."""
-        settings: ModelSettings = {'tool_choice': 'required'}
         params = make_params(
-            function_tools=['my_tool'],
-            output_tools=['final_result'],  # structured output creates output tool
-            allow_text_output=False,
-        )
-
-        with pytest.raises(UserError, match='incompatible with output types'):
-            validate_tool_choice(settings, params)
-
-    def test_agent_with_structured_output_and_tool_list(self):
-        """Simulates agent with structured output using a tool list."""
-        settings: ModelSettings = {'tool_choice': ['my_tool']}
-        params = make_params(
-            function_tools=['my_tool', 'other_tool'],
+            function_tools=['tool_a', 'tool_b', 'tool_c'],
             output_tools=['final_result'],
-            allow_text_output=False,
-        )
-
-        result = validate_tool_choice(settings, params)
-
-        assert result == snapshot((['my_tool'], 'required'))
-
-    def test_agent_with_structured_output_and_tools_plus_output(self):
-        """Simulates agent with structured output using ToolsPlusOutput."""
-        settings: ModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['my_tool'])}
-        params = make_params(
-            function_tools=['my_tool', 'other_tool'],
-            output_tools=['final_result'],
-            allow_text_output=False,
-        )
-
-        result = validate_tool_choice(settings, params)
-
-        assert result == snapshot((['my_tool', 'final_result'], 'required'))
-
-    def test_agent_text_only_with_none(self):
-        """Simulates text-only agent using tool_choice='none'."""
-        settings: ModelSettings = {'tool_choice': 'none'}
-        params = make_params(
-            function_tools=['my_tool'],
-            output_tools=[],
             allow_text_output=True,
         )
 
         result = validate_tool_choice(settings, params)
 
-        assert result == 'none'
-
-    def test_agent_text_and_structured_with_none(self):
-        """Simulates agent with both text and structured output using tool_choice='none'."""
-        settings: ModelSettings = {'tool_choice': 'none'}
-        params = make_params(
-            function_tools=['my_tool'],
-            output_tools=['final_result'],
-            allow_text_output=True,  # union type allows text
-        )
-
-        with pytest.warns(UserWarning, match="tool_choice='none' but output tools"):
-            result = validate_tool_choice(settings, params)
-
-        assert result == snapshot((['final_result'], 'auto'))
+        assert result == snapshot((['tool_b', 'tool_a', 'final_result'], 'auto'))

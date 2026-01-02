@@ -24,6 +24,10 @@ class ToolsPlusOutput:
     """The names of function tools available to the model."""
 
 
+ToolChoice = ToolChoiceScalar | list[str] | ToolsPlusOutput | None
+"""Type alias for all valid tool_choice values."""
+
+
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
@@ -110,7 +114,7 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     """
 
-    tool_choice: ToolChoiceScalar | list[str] | ToolsPlusOutput | None
+    tool_choice: ToolChoice
     """Control which function tools the model can use.
 
     See the [Tool Choice guide](https://ai.pydantic.dev/tool-choice/) for detailed documentation
