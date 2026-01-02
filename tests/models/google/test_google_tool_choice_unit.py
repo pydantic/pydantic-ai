@@ -123,7 +123,7 @@ class TestToolChoiceTranslation:
         assert len(tools) == 3
 
     def test_tools_plus_output_format(self, google_model: GoogleModel):
-        """ToolsPlusOutput uses mode=ANY with allowed_function_names."""
+        """ToolsPlusOutput uses mode=AUTO with filtered tools (Google doesn't support AUTO+allowed_function_names)."""
         settings: GoogleModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['get_weather'])}
         params = ModelRequestParameters(
             function_tools=[make_tool('get_weather'), make_tool('get_time')],
@@ -132,16 +132,13 @@ class TestToolChoiceTranslation:
 
         tools, tool_config, _image_config = google_model._get_tool_config(params, settings)  # pyright: ignore[reportPrivateUsage]
 
-        assert tool_config == snapshot(
-            {
-                'function_calling_config': {
-                    'mode': FunctionCallingConfigMode.ANY,
-                    'allowed_function_names': ['get_weather', 'final_result'],
-                }
-            }
-        )
+        assert tool_config == snapshot({'function_calling_config': {'mode': FunctionCallingConfigMode.AUTO}})
         assert tools is not None
-        assert len(tools) == 3
+        assert len(tools) == 2
+        tool_names: set[str] = {
+            name for t in tools if (decls := t.get('function_declarations')) and (name := decls[0].get('name'))
+        }
+        assert tool_names == {'get_weather', 'final_result'}
 
     def test_none_with_output_tools_uses_auto_mode(self, google_model: GoogleModel):
         """tool_choice='none' with output tools returns mode=AUTO with filtered tools."""

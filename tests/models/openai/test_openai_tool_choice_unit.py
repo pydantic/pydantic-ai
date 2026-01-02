@@ -158,7 +158,7 @@ class TestToolChoiceTranslation:
             {
                 'type': 'allowed_tools',
                 'allowed_tools': {
-                    'mode': 'required',
+                    'mode': 'auto',
                     'tools': [
                         {'type': 'function', 'function': {'name': 'get_weather'}},
                         {'type': 'function', 'function': {'name': 'final_result'}},

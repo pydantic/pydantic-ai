@@ -148,7 +148,7 @@ class TestToolChoiceTranslation:
         assert tool_choice == snapshot(
             {
                 'type': 'allowed_tools',
-                'mode': 'required',
+                'mode': 'auto',
                 'tools': [
                     {'type': 'function', 'name': 'get_weather'},
                     {'type': 'function', 'name': 'final_result'},

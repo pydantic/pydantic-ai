@@ -108,7 +108,7 @@ class TestToolChoiceTranslation:
         assert tool_names == {'get_weather', 'get_time'}
 
     def test_tools_plus_output_format(self, mistral_model: MistralModel):
-        """ToolsPlusOutput uses 'required' with combined function and output tools."""
+        """ToolsPlusOutput uses 'auto' mode when text output is allowed."""
         settings: ModelSettings = {'tool_choice': ToolsPlusOutput(function_tools=['get_weather'])}
         params = ModelRequestParameters(
             function_tools=[make_tool('get_weather'), make_tool('get_time')],
@@ -117,7 +117,7 @@ class TestToolChoiceTranslation:
 
         tools, tool_choice = mistral_model._get_tool_choice(params, settings)  # pyright: ignore[reportPrivateUsage]
 
-        assert tool_choice == 'required'
+        assert tool_choice == 'auto'
         assert tools is not None
         assert len(tools) == 2
         tool_names = {t.function.name for t in tools}
