@@ -7,11 +7,13 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings, ToolsPlusOutput
 
+ValidatedToolChoice = Literal['none', 'auto', 'required'] | tuple[list[str], Literal['auto', 'required']]
+
 
 def validate_tool_choice(  # noqa: C901
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
-) -> Literal['none', 'auto', 'required'] | tuple[list[str], Literal['auto', 'required']]:
+) -> ValidatedToolChoice:
     """Validate and normalize tool_choice settings into a canonical form for providers.
 
     Args:
