@@ -336,8 +336,7 @@ def extract_text_format(annotation: Any) -> TextFormat | None:
     Returns:
         The TextFormat instance if found, None otherwise.
     """
-    # Import here to avoid circular imports
-    from .tools import FreeformText, LarkGrammar, RegexGrammar
+    from .tools import TextFormat
 
     if get_origin(annotation) is not Annotated:
         return None
@@ -356,7 +355,7 @@ def extract_text_format(annotation: Any) -> TextFormat | None:
 
     # Look for TextFormat in metadata
     for item in metadata:
-        if isinstance(item, (FreeformText, RegexGrammar, LarkGrammar)):
+        if isinstance(item, TextFormat):
             return item
 
     return None
