@@ -276,8 +276,11 @@ class FreeformText:
         """Return None since freeform text has no constraints to describe."""
         return None
 
+    def __hash__(self) -> int:
+        return hash(type(self))
 
-@dataclass
+
+@dataclass(unsafe_hash=True)
 class RegexGrammar:
     r"""Grammar constraint using regular expression pattern matching.
 
@@ -334,7 +337,7 @@ class RegexGrammar:
         return f'Input must match regex pattern: {self.pattern}'
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class LarkGrammar:
     """Grammar constraint using Lark parser grammar.
 
