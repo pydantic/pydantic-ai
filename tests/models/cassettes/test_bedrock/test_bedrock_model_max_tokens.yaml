@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZmZhYjMyZmItODRjOS00YWZjLWE4NTAtNTQ4OTUxMjI5NmU4
+        ODNjYTAzN2QtNGNkYi00MDI5LTg3MmItYWQ4OTdiYzI0YjA5
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -15,18 +15,18 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '206'
+      - '227'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 159
+        latencyMs: 232
       output:
         message:
           content:
@@ -36,6 +36,7 @@ interactions:
       usage:
         inputTokens: 13
         outputTokens: 5
+        serverToolUsage: {}
         totalTokens: 18
     status:
       code: 200

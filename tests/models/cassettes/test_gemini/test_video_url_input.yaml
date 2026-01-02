@@ -5,7 +5,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       host:
@@ -2161,6 +2161,8 @@ interactions:
     headers:
       accept-ranges:
       - bytes
+      age:
+      - '6510'
       cache-control:
       - max-age=14400
       connection:
@@ -2174,11 +2176,9 @@ interactions:
       last-modified:
       - Fri, 25 Apr 2025 19:49:57 GMT
       nel:
-      - '{"success_fraction":0,"report_to":"cf-nel","max_age":604800}'
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
       report-to:
-      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=ST1IcbfE1WzoXEz%2BANCxy4b4Of6oINqzKneE5yNhUBeyOfSbUxrAmBM%2BytXFClqQ68fAMflibJHLRogDr77QifjQHc9fdxl4lgLZY6C9s0tu4BcilETl9jU1qWOfqM1l1g%3D%3D"}],"group":"cf-nel","max_age":604800}'
-      server-timing:
-      - cfL4;desc="?proto=TCP&rtt=1546&min_rtt=1522&rtt_var=447&sent=5&recv=7&lost=0&retrans=0&sent_bytes=2830&recv_bytes=796&delivery_rate=1894048&cwnd=251&unsent_bytes=0&cid=6143a730689510c2&ts=302&x=0"
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=u0Ax0a7JWex0J6WFMe38mzB9dPoy%2BpzxBtZFYzFInsxhxQHdg8yRpe4zdyEWWzDuycPXBKwDlXhShQCsrDuFiWVND8Bb9J3Z%2B%2Ftq%2FgEbNer5DA6Z6SYRdg%3D%3D"}]}'
       vary:
       - Accept-Encoding
     status:
@@ -2189,7 +2189,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -2211,17 +2211,17 @@ interactions:
         parts:
         - text: You are a helpful chatbot.
         role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1836'
+      - '2192'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2753
+      - gfet4t7; dur=9896
       transfer-encoding:
       - chunked
       vary:
@@ -2230,36 +2230,39 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.5572924109978404
-        content:
+      - content:
           parts:
-          - text: |
-              That's a lovely picture!  It shows a picturesque outdoor cafe or restaurant situated in a narrow, whitewashed alleyway.
+          - text: |-
+              This video is a beautiful, static shot (or appears to be a still image) of a picturesque Mediterranean scene.
 
+              Here's a breakdown:
 
-              Here's a breakdown of what we see:
+              *   **Setting:** It depicts a narrow, charming alleyway or street, likely in a coastal town or island.
+              *   **Architecture:** The buildings on both sides are traditional, whitewashed stucco, characteristic of Cycladic architecture often found in the Greek islands. There are minimal details on the walls, with some simple light fixtures on the left and a blue-painted window frame on the right.
+              *   **Cafe/Restaurant:** Along the left side of the alley, several rustic wooden tables and chairs are set up, suggesting an outdoor cafe or restaurant. On the far left wall, there are also some woven baskets hanging or placed.
+              *   **Pathway:** The ground is paved with a distinctive pattern of light-colored stones, adding to the quaint aesthetic.
+              *   **The Sea View:** The alley opens up directly to a stunning view of the sea. The water is a vibrant blue, with noticeable waves gently breaking.
+              *   **Horizon:** In the distance, across the sparkling water, another landmass or island can be seen under a clear, bright blue sky.
+              *   **Atmosphere:** The overall impression is one of serenity, beauty, and a quintessential Mediterranean vacation spot, perfect for enjoying a meal or drink with a breathtaking ocean view.
 
-              * **Location:** The cafe is nestled between two white buildings, typical of Greek island architecture (possibly Mykonos or a similar island, judging by the style).  The alleyway opens up to a view of the Aegean Sea, which is visible in the background. The sea appears somewhat choppy.
-
-              * **Setting:** The cafe has several wooden tables and chairs set out along the alley. The tables are simple and seem to be made of light-colored wood. There are cushions on a built-in bench along one wall providing seating. Small potted plants are on some tables, adding to the ambiance. The cobblestone ground in the alley adds to the charming, traditional feel.
-
-              * **Atmosphere:** The overall feel is relaxed and serene, despite the somewhat windy conditions indicated by the sea. The bright white buildings and the blue sea create a classic Mediterranean vibe. The picture evokes a sense of calmness and escape.
-
-              In short, the image depicts an idyllic scene of a charming seaside cafe in a picturesque Greek island setting.
+              It strongly evokes places like Mykonos or Santorini in Greece, known for their iconic white buildings and narrow pathways leading to the sea.
           role: model
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: 3zxXaYO9Fc2UmtkP-8q1iA0
       usageMetadata:
-        candidatesTokenCount: 246
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 246
-        promptTokenCount: 10
+        candidatesTokenCount: 317
+        promptTokenCount: 301
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 10
+          tokenCount: 12
         - modality: VIDEO
-        totalTokenCount: 256
+          tokenCount: 263
+        - modality: AUDIO
+          tokenCount: 26
+        thoughtsTokenCount: 1032
+        totalTokenCount: 1650
     status:
       code: 200
       message: OK
