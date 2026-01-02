@@ -1,3 +1,12 @@
+"""Deprecated Gemini model implementation.
+
+This module is deprecated. Use `pydantic_ai.models.google.GoogleModel` instead.
+See <https://ai.pydantic.dev/models/google/> for more details.
+
+This module uses a custom HTTP implementation. The recommended `GoogleModel` in
+`google.py` uses the official `google-genai` SDK.
+"""
+
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Sequence
@@ -390,7 +399,9 @@ class GeminiModel(Model):
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
                 elif isinstance(item, CachePoint):
-                    # Gemini doesn't support prompt caching via CachePoint
+                    # Gemini doesn't support inline CachePoint markers. Google's caching requires
+                    # pre-creating cache objects via the API, then referencing them by name using
+                    # `GoogleModelSettings.google_cached_content`. See https://ai.google.dev/gemini-api/docs/caching
                     pass
                 else:
                     assert_never(item)  # pragma: lax no cover
@@ -549,8 +560,8 @@ class _GeminiRequest(TypedDict):
     """
 
     # Note: Even though Google supposedly supports camelCase and snake_case, we've had user report misbehavior
-    # when using snake_case, which is why this typeddict now uses camelCase. And anyway, the plan is to replace this
-    # with an official google SDK in the near future anyway.
+    # when using snake_case, which is why this typeddict now uses camelCase. The recommended `GoogleModel` in
+    # `google.py` uses the official `google-genai` SDK and should be used instead of this deprecated module.
     contents: list[_GeminiContent]
     tools: NotRequired[_GeminiTools]
     toolConfig: NotRequired[_GeminiToolConfig]
