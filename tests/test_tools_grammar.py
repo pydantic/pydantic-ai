@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Annotated
 from unittest.mock import patch
 
@@ -45,6 +46,7 @@ class TestRegexGrammar:
         assert grammar.get_description() == r'Input must match regex pattern: \d{3}-\d{4}'
 
 
+@pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
 class TestLarkGrammar:
     """Tests for LarkGrammar class."""
 
