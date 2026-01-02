@@ -118,7 +118,7 @@ SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
 
 
 @customize_repr
-def _(value: bytes):
+def _(value: bytes):  # pragma: no cover
     """Use IsBytes() for large byte sequences in snapshots.
     inline-snapshot serializes dataclass fields by calling repr() on each field value.
     For BinaryContent.data (bytes), this would embed huge byte literals in snapshots.
