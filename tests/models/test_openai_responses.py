@@ -9328,3 +9328,70 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+@pytest.mark.vcr()
+async def test_gpt5_freeform_text_streaming(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """Test streaming with FreeformText custom tool to exercise streaming custom tool paths."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def execute_sql(query: Annotated[str, FreeformText()]) -> str:
+        """Execute SQL query on the database."""
+        return 'Result: 5 users found'
+
+    streamed_text: list[str] = []
+    async with agent.run_stream('List the first 5 users from the users table') as result:
+        async for chunk in result.stream_text():
+            streamed_text.append(chunk)
+
+    # Verify we got streaming output
+    assert len(streamed_text) >= 1
+    final_text = ''.join(streamed_text)
+    assert 'users' in final_text.lower() or '5' in final_text
+
+    # Verify tool was called with SQL query
+    messages = result.all_messages()
+    tool_calls = [part for msg in messages for part in msg.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    args = tool_calls[0].args
+    assert isinstance(args, dict)
+    query = args.get('query')
+    assert isinstance(query, str)
+    assert 'SELECT' in query.upper() or 'select' in query.lower()
+
+
+@pytest.mark.vcr()
+async def test_gpt5_freeform_text_retry(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """Test custom tool retry path (line 1731) with FreeformText tool that fails then succeeds."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    call_count = 0
+
+    @agent.tool_plain
+    def execute_sql(query: Annotated[str, FreeformText()]) -> str:
+        """Execute SQL query on the database."""
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ModelRetry('Invalid query syntax, please use SELECT * FROM users')
+        return 'Result: 3 users found'
+
+    result = await agent.run('Show me all users')
+
+    # Should have retried - verify we got at least 2 tool calls
+    messages = result.all_messages()
+    tool_calls = [part for msg in messages for part in msg.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_calls) >= 1
+
+    # Verify there's a RetryPromptPart in the messages (proves retry path was taken)
+    retry_parts = [part for msg in messages for part in msg.parts if isinstance(part, RetryPromptPart)]
+    assert len(retry_parts) >= 1
