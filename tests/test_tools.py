@@ -2802,7 +2802,7 @@ def test_tool_examples_init():
     examples = [{'x': 1}]
     tool = Tool(my_tool, examples=examples)
     assert tool.examples == examples
-    assert tool.tool_def.examples == examples
+    assert tool.examples == tool.tool_def.examples == examples
 
 
 def test_tool_from_schema_examples():
@@ -2838,8 +2838,6 @@ def test_agent_tool_decorators_examples():
 
 
 def test_tool_output_examples():
-    from pydantic_ai.output import ToolOutput
-
     examples = [{'x': 1}]
     tool_output = ToolOutput(int, name='foo', examples=examples)
     assert tool_output.examples == examples

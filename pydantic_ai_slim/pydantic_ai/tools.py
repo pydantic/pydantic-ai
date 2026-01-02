@@ -533,7 +533,7 @@ class ToolDefinition:
     examples: list[dict[str, Any]] | None = None
     """Example inputs demonstrating correct tool usage patterns.
 
-    Provide 1-5 realistic examples showing parameter conventions, optional field patterns,
+    Provide realistic examples showing parameter conventions, optional field patterns,
     nested structures, and API-specific conventions. Each example must validate against
     the tool's `parameters_json_schema`.
 

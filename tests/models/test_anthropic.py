@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
 from typing import Annotated, Any, TypeVar, cast
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -55,6 +56,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
@@ -62,7 +64,14 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic
+    from anthropic import (
+        NOT_GIVEN,
+        APIConnectionError,
+        APIStatusError,
+        AsyncAnthropic,
+        AsyncAnthropicBedrock,
+        AsyncAnthropicVertex,
+    )
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -8295,8 +8304,6 @@ Instructions content\
 
 
 async def test_anthropic_tool_definition_examples(allow_model_requests: None):
-    from pydantic_ai.tools import ToolDefinition
-
     examples = [{'x': 1}]
     tool_def = ToolDefinition(name='foo', description='bar', examples=examples)
 
@@ -8330,10 +8337,6 @@ async def test_anthropic_beta_headers_with_examples(allow_model_requests: None):
 
 
 async def test_anthropic_bedrock_beta_headers_with_examples(allow_model_requests: None):
-    from unittest.mock import MagicMock
-
-    from anthropic import AsyncAnthropicBedrock
-
     # Mock client to pass isinstance check
     mock_client = MagicMock(spec=AsyncAnthropicBedrock)
     mock_client.base_url = 'https://bedrock.amazonaws.com'
@@ -8354,10 +8357,6 @@ async def test_anthropic_bedrock_beta_headers_with_examples(allow_model_requests
 
 
 async def test_anthropic_vertex_beta_headers_with_examples(allow_model_requests: None):
-    from unittest.mock import MagicMock
-
-    from anthropic import AsyncAnthropicVertex
-
     mock_client = MagicMock(spec=AsyncAnthropicVertex)
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
 
