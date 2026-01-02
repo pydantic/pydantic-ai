@@ -112,7 +112,8 @@ else:
                 return super().equals(other)
             else:
                 return other == self._first_other
-            
+
+
 SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
 
 

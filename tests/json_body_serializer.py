@@ -1,9 +1,12 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
+import gzip
 import json
 import unicodedata
 import urllib.parse
+import zlib
 from typing import TYPE_CHECKING, Any
 
+import brotli
 import yaml
 
 # Smart quote and special character normalization.
@@ -123,7 +126,20 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     # Responses will have the body under a field called 'string'
                     body = body.get('string')
                 if body:
-                    # NOTE(Marcelo): This doesn't handle gzip compression.
+                    if isinstance(body, bytes):
+                        content_encoding = headers.get('content-encoding', [])
+                        # Decompress the body and remove the content-encoding header.
+                        # Otherwise httpx will try to decompress again on cassette replay.
+                        if 'br' in content_encoding:
+                            body = brotli.decompress(body)
+                            headers.pop('content-encoding', None)
+                        elif 'gzip' in content_encoding or (len(body) > 2 and body[:2] == b'\x1f\x8b'):
+                            try:
+                                body = gzip.decompress(body)
+                                headers.pop('content-encoding', None)
+                            except (gzip.BadGzipFile, zlib.error):
+                                pass
+                        body = body.decode('utf-8')
                     parsed = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
                     # Normalize smart quotes and special characters
                     data['parsed_body'] = normalize_body(parsed)
