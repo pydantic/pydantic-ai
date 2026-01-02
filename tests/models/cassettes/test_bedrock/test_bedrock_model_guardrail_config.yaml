@@ -1,51 +1,98 @@
 interactions:
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
-      are a helpful chatbot."}], "guardrailConfig": {"guardrailIdentifier": "guardrailv1", "guardrailVersion": "v1", "trace": "enabled"}'
+      are a helpful chatbot."}], "inferenceConfig": {}, "guardrailConfig": {"guardrailIdentifier": "z1uci6pmvugd", "guardrailVersion":
+      "DRAFT", "trace": "enabled"}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZmZhYjMyZmItODRjOS00YWZjLWE4NTAtNTQ4OTUxMjI5NmU4
+        YWFiMDkzNDItOWJlYS00M2FiLWE0ZTMtZTQxNmZkOTU3OTkx
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '178'
+      - '273'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '206'
+      - '1826'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 159
+        latencyMs: 1117
       output:
         message:
           content:
-          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural,
-              political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum,
-              and the Notre-Dame Cathedral, among many other historical and architectural treasures.
-
+          - text: The capital of France is Paris. Known for its rich history, iconic landmarks such as the Eiffel Tower, Louvre
+              Museum, and charming architecture, Paris is a global center for art, culture, fashion, and gastronomy. It's
+              also a major player in politics, being the heart of the French government.
           role: assistant
-      stopReason: max_tokens
-      usage:
-        inputTokens: 13
-        outputTokens: 5
-        totalTokens: 18
+      stopReason: end_turn
       trace:
         guardrail:
-          modelOutput:
-            - test
-      performanceConfig:
-        latency: optimized
+          actionReason: No action.
+          inputAssessment:
+            z1uci6pmvugd:
+              appliedGuardrailDetails:
+                guardrailArn: arn:aws:bedrock:us-east-2:353014496775:guardrail/z1uci6pmvugd
+                guardrailId: z1uci6pmvugd
+                guardrailOrigin:
+                - REQUEST
+                guardrailOwnership: SELF
+                guardrailVersion: DRAFT
+              invocationMetrics:
+                guardrailCoverage:
+                  textCharacters:
+                    guarded: 30
+                    total: 30
+                guardrailProcessingLatency: 350
+                usage:
+                  automatedReasoningPolicies: 0
+                  automatedReasoningPolicyUnits: 0
+                  contentPolicyUnits: 1
+                  contextualGroundingPolicyUnits: 0
+                  sensitiveInformationPolicyFreeUnits: 0
+                  sensitiveInformationPolicyUnits: 0
+                  topicPolicyUnits: 0
+                  wordPolicyUnits: 0
+          modelOutput: []
+          outputAssessments:
+            z1uci6pmvugd:
+            - appliedGuardrailDetails:
+                guardrailArn: arn:aws:bedrock:us-east-2:353014496775:guardrail/z1uci6pmvugd
+                guardrailId: z1uci6pmvugd
+                guardrailOrigin:
+                - REQUEST
+                guardrailOwnership: SELF
+                guardrailVersion: DRAFT
+              invocationMetrics:
+                guardrailCoverage:
+                  textCharacters:
+                    guarded: 292
+                    total: 292
+                guardrailProcessingLatency: 273
+                usage:
+                  automatedReasoningPolicies: 0
+                  automatedReasoningPolicyUnits: 0
+                  contentPolicyUnits: 1
+                  contextualGroundingPolicyUnits: 0
+                  sensitiveInformationPolicyFreeUnits: 0
+                  sensitiveInformationPolicyUnits: 0
+                  topicPolicyUnits: 0
+                  wordPolicyUnits: 0
+      usage:
+        inputTokens: 13
+        outputTokens: 62
+        serverToolUsage: {}
+        totalTokens: 75
     status:
       code: 200
       message: OK

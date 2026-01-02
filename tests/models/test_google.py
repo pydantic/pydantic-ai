@@ -1,12 +1,11 @@
 from __future__ import annotations as _annotations
 
 import base64
-import datetime
 import os
 import re
 import tempfile
 from collections.abc import AsyncIterator
-from datetime import timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 import pytest
@@ -119,19 +118,19 @@ def google_provider(gemini_api_key: str) -> GoogleProvider:
 
 
 async def test_google_model(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     assert model.base_url == 'https://generativelanguage.googleapis.com/'
     assert model.system == 'google-gla'
     agent = Agent(model=model, instructions='You are a chatbot.')
 
     result = await agent.run('Hello!')
-    assert result.output == snapshot('Hello there! How can I help you today?\n')
+    assert result.output == snapshot('Hello! How can I help you today?')
     assert result.usage() == snapshot(
         RunUsage(
             requests=1,
-            input_tokens=7,
-            output_tokens=11,
-            details={'text_prompt_tokens': 7, 'text_candidates_tokens': 11},
+            input_tokens=9,
+            output_tokens=43,
+            details={'thoughts_tokens': 34, 'text_prompt_tokens': 9},
         )
     )
     assert result.all_messages() == snapshot(
@@ -148,11 +147,11 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Hello there! How can I help you today?\n')],
+                parts=[TextPart(content='Hello! How can I help you today?')],
                 usage=RequestUsage(
-                    input_tokens=7, output_tokens=11, details={'text_candidates_tokens': 11, 'text_prompt_tokens': 7}
+                    input_tokens=9, output_tokens=43, details={'thoughts_tokens': 34, 'text_prompt_tokens': 9}
                 ),
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -171,11 +170,11 @@ async def test_google_model_structured_output(allow_model_requests: None, google
 
     class Response(TypedDict):
         temperature: str
-        date: datetime.date
+        date: date
         city: str
 
     @agent.tool_plain
-    async def temperature(city: str, date: datetime.date) -> str:
+    async def temperature(city: str, date: date) -> str:
         """Get the temperature in a city on a specific date.
 
         Args:
@@ -188,7 +187,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
         return '30°C'
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
-    assert result.output == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
+    assert result.output == snapshot({'temperature': '30°C', 'date': date(2022, 1, 1), 'city': 'London'})
     assert result.usage() == snapshot(
         RunUsage(
             requests=2,
@@ -299,7 +298,7 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
                         provider_name='google-gla',
                         provider_url='https://generativelanguage.googleapis.com/',
                         provider_details={'finish_reason': 'STOP'},
-                        provider_response_id='w1peaMz6INOvnvgPgYfPiQY',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
                     )
                 )
@@ -399,7 +398,7 @@ print(result)\
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='1NjJaIDxJcL7qtsP5aPfqQs',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1092,7 +1091,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='btnJaOrqE4_6qtsP7bOboQs',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1172,7 +1171,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='dtnJaKyTAri3qtsPu4imqQs',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1238,7 +1237,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='ftnJaMmAMcm-qtsPwvCCoAo',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1418,7 +1417,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='itnJaJK1BsGxqtsPrIeb6Ao',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1501,7 +1500,7 @@ async def test_google_model_web_fetch_tool(
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='qgqkaI-iDLrTjMcP0bP24A4',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2022,7 +2021,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='UN4gafq5OY-kmtkPwqS6kAs',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2077,9 +2076,9 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=datetime.timezone.utc),
+                    'timestamp': datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
                 },
-                provider_response_id='resp_68c1fb6b6a248196a6216e80fc2ace380c14a8a9087e8689',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2179,7 +2178,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='beHBaJfEMIi-qtsP3769-Q8',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3514,7 +3513,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='D2Eoab-bKZvpz7IPx__4kA8',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3551,7 +3550,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='FWEoacC5OqGEz7IPgMjBwAc',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3655,7 +3654,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='cmIoaZ6pJYXRz7IPs4ia-Ag',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -4807,7 +4806,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=datetime.timezone.utc),
+                    'timestamp': datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4845,7 +4844,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=datetime.timezone.utc),
+                    'timestamp': datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
