@@ -891,11 +891,13 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            examples = None
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
+                examples = output.examples
 
                 output = output.output
 
@@ -904,6 +906,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict = default_strict
 
             processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
+            # Flatten examples if the output function has a single argument that gets flattened in the schema
+            if examples and processor._function_schema and processor._function_schema.single_arg_name:  # pyright: ignore[reportPrivateUsage]
+                arg_name = processor._function_schema.single_arg_name  # pyright: ignore[reportPrivateUsage]
+                examples = [ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in examples]
             object_def = processor.object_def
 
             if name is None:
@@ -931,6 +937,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 parameters_json_schema=object_def.json_schema,
                 strict=object_def.strict,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
+                examples=examples,
                 kind='output',
             )
             processors[name] = processor

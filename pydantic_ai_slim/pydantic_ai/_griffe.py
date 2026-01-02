@@ -65,6 +65,22 @@ def doc_descriptions(
     if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
         main_desc = main.value
 
+    # Handle Examples section
+    if examples := next((p for p in sections if p.kind == DocstringSectionKind.examples), None):
+        examples_content: list[str] = []
+        for source, output in examples.value:
+            if output:
+                examples_content.append(f'{source}\n{output}')
+            else:
+                examples_content.append(source)
+
+        if examples_content:
+            formatted_examples = '\n\n'.join(examples_content)
+            if main_desc:
+                main_desc = f'{main_desc}\n\nExamples:\n{formatted_examples}'
+            else:
+                main_desc = f'Examples:\n{formatted_examples}'
+
     if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
         return_statement = return_.value[0]
         return_desc = return_statement.description
