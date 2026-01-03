@@ -5,7 +5,7 @@ import dataclasses
 import inspect
 import uuid
 from asyncio import Task
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -19,6 +19,7 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
+from pydantic_ai._tool_usage_policy import AgentToolPolicy
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
@@ -137,6 +138,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     model_settings: ModelSettings | None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
+    tools_usage_policy: AgentToolPolicy | None
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
@@ -830,6 +832,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
+        tools_usage_policy=ctx.deps.tools_usage_policy,
         metadata=ctx.state.metadata,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
@@ -1033,6 +1036,43 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
+def _handle_tool_calls_parts(
+    tool_calls: list[_messages.ToolCallPart],
+    current_tool_calls: int,
+    output_parts: list[_messages.ModelRequestPart],
+    tool_manager: ToolManager[DepsT],
+    calls_to_run: list[_messages.ToolCallPart],
+    projected_tool_uses: Counter[str],
+    projected_usage: _usage.RunUsage,
+) -> Iterator[_messages.HandleResponseEvent]:
+    accepted_per_tool: Counter[str] = Counter()
+    total_accepted = 0
+
+    for call in tool_calls:
+        rejection_reason = tool_manager.check_tool_call_allowed(
+            call.tool_name,
+            current_tool_calls,
+            total_accepted,
+            accepted_per_tool[call.tool_name],
+            projected_tool_uses[call.tool_name],
+            projected_usage,
+        )
+        if rejection_reason is not None:
+            return_part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content=rejection_reason,
+                tool_call_id=call.tool_call_id,
+                # TODO: Add return kind and prompt_config here once supported by #3656
+            )
+            output_parts.append(return_part)
+            yield _messages.FunctionToolResultEvent(return_part)
+        else:
+            accepted_per_tool[call.tool_name] += 1
+            total_accepted += 1
+            yield _messages.FunctionToolCallEvent(call)
+            calls_to_run.append(call)
+
+
 async def _call_tools(
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -1049,19 +1089,29 @@ async def _call_tools(
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
+    projected_usage = deepcopy(usage)
+    projected_usage.tool_calls += len(tool_calls)
+
     if usage_limits.tool_calls_limit is not None:
-        projected_usage = deepcopy(usage)
-        projected_usage.tool_calls += len(tool_calls)
         usage_limits.check_before_tool_call(projected_usage)
 
+    projected_tool_uses = Counter[str]()
     for call in tool_calls:
-        yield _messages.FunctionToolCallEvent(call)
+        projected_tool_uses[call.tool_name] += 1
+
+    calls_to_run: list[_messages.ToolCallPart] = []
+
+    # Process tool calls with partial acceptance - accept as many as allowed by limits
+    for event in _handle_tool_calls_parts(
+        tool_calls, usage.tool_calls, output_parts, tool_manager, calls_to_run, projected_tool_uses, projected_usage
+    ):
+        yield event
 
     with tracer.start_as_current_span(
         'running tools',
         attributes={
-            'tools': [call.tool_name for call in tool_calls],
-            'logfire.msg': f'running {len(tool_calls)} tool{"" if len(tool_calls) == 1 else "s"}',
+            'tools': [call.tool_name for call in calls_to_run],
+            'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
         },
     ):
 
@@ -1095,8 +1145,8 @@ async def _call_tools(
 
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
-        if tool_manager.should_call_sequentially(tool_calls):
-            for index, call in enumerate(tool_calls):
+        if tool_manager.should_call_sequentially(calls_to_run):
+            for index, call in enumerate(calls_to_run):
                 if event := await handle_call_or_result(
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
                     index,
@@ -1109,7 +1159,7 @@ async def _call_tools(
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
                     name=call.tool_name,
                 )
-                for call in tool_calls
+                for call in calls_to_run
             ]
 
             pending = tasks
@@ -1126,7 +1176,11 @@ async def _call_tools(
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     _populate_deferred_calls(
-        tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
+        calls_to_run,
+        deferred_calls_by_index,
+        deferred_metadata_by_index,
+        output_deferred_calls,
+        output_deferred_metadata,
     )
 
 

@@ -411,7 +411,140 @@ If a tool requires sequential/serial execution, you can pass the [`sequential`][
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
 !!! note "Limiting tool executions"
-    You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
+    You can cap the total number of successful tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). This is a "hard" limit that raises an error when exceeded. The `tool_calls` counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
+
+    For finer control over individual tools, or for "soft" limits that let the model decide how to proceed instead of raising an error, see [Soft Tool Usage Limits](#soft-tool-usage-limits) below.
+
+### Soft Tool Usage Limits
+
+Pydantic AI provides soft limit mechanisms that let the model decide how to proceed instead of raising an error. These are configured using [`ToolLimits`][pydantic_ai.ToolLimits] for individual tools and [`AgentToolPolicy`][pydantic_ai.AgentToolPolicy] for agent-wide limits.
+
+#### Per-Tool Limits with `ToolLimits`
+
+Use [`ToolLimits`][pydantic_ai.ToolLimits] to control how many times a specific tool can be called. Set it via the `usage_limits` parameter when registering a tool:
+
+```python
+from pydantic_ai import Agent, ToolLimits
+
+agent = Agent('test')
+
+
+@agent.tool_plain(usage_limits=ToolLimits(max_uses=3))
+def fetch_record(record_id: int) -> str:
+    """Fetch a record by ID. Limited to 3 calls per run."""
+    return f'Record {record_id}: data...'
+
+
+# The tool will be available for the first 3 calls, then removed
+result = agent.run_sync('Fetch records 1, 2, 3, and 4')
+print(result.output)
+#> {"fetch_record":"Record 0: data..."}
+```
+
+`ToolLimits` provides the following options:
+
+| Option | Description |
+| ------ | ----------- |
+| `max_uses` | Maximum calls allowed across the entire run. Once reached, the tool is removed from available tools. |
+| `max_uses_per_step` | Maximum calls allowed within a single step (model request → tool calls → response). Resets each step. |
+| `partial_acceptance` | When `False`, reject all calls to this tool if the batch would exceed limits (default: `True`). |
+
+This is useful when you want to limit specific expensive or rate-limited tools while leaving others unrestricted.
+
+#### Agent-Wide Limits with `AgentToolPolicy`
+
+Use [`AgentToolPolicy`][pydantic_ai.AgentToolPolicy] to limit the total number of tool calls across all tools within a run. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
+
+```python
+from pydantic_ai import Agent, AgentToolPolicy
+
+agent = Agent('anthropic:claude-sonnet-4-5', tools_usage_policy=AgentToolPolicy(max_uses=5))
+
+
+@agent.tool_plain
+def search(query: str) -> str:
+    return f'Results for: {query}'
+
+
+@agent.tool_plain
+def fetch(url: str) -> str:
+    return f'Content from: {url}'
+
+
+# Combined tool calls across both tools are limited to 5
+result = agent.run_sync('Search for Python docs, then fetch the top 3 results')
+print(result.output)
+#> I found the Python documentation and fetched the top 3 results...
+```
+
+You can override the policy per-run:
+
+```python
+from pydantic_ai import Agent, AgentToolPolicy
+
+agent = Agent('test', tools_usage_policy=AgentToolPolicy(max_uses=5))
+
+# Use a stricter limit for this specific run
+result = agent.run_sync('Quick search only', tools_usage_policy=AgentToolPolicy(max_uses=2))
+```
+
+`AgentToolPolicy` provides the following options:
+
+| Option | Description |
+| ------ | ----------- |
+| `max_uses` | Maximum total calls allowed across all tools for the entire run. |
+| `max_uses_per_step` | Maximum total calls allowed across all tools within a single step. |
+| `tool_usage_limits` | A dict mapping tool names to `ToolLimits` for per-tool overrides. |
+| `partial_acceptance` | Master switch for partial acceptance behavior (default: `True`). |
+
+#### Partial Acceptance vs All-or-Nothing
+
+By default, when a model requests more tool calls than allowed, Pydantic AI uses **partial acceptance**: it accepts as many calls as the limits allow and rejects the rest individually. This lets the model make progress with the calls that succeeded.
+
+You can switch to **all-or-nothing** behavior by setting `partial_acceptance=False`. This rejects the entire batch if not all calls can be accepted:
+
+```python
+from pydantic_ai import Agent, AgentToolPolicy
+
+# All-or-nothing: if the model requests 5 calls but only 4 are allowed, reject all 5
+agent = Agent(
+    'openai:gpt-4o',
+    tools_usage_policy=AgentToolPolicy(max_uses=4, partial_acceptance=False)
+)
+```
+
+For per-tool all-or-nothing behavior, set `partial_acceptance=False` on the tool's `ToolLimits`. This is useful for tools that have transactional semantics or require all their calls to succeed together:
+
+```python
+from pydantic_ai import Agent, ToolLimits
+
+agent = Agent('openai:gpt-4o')
+
+
+@agent.tool_plain(usage_limits=ToolLimits(max_uses=3, partial_acceptance=False))
+def batch_operation(item: str) -> str:
+    """Process items in a batch. All calls must succeed together."""
+    return f'Processed {item}'
+
+
+# If the model tries to call this 5 times but only 3 are allowed,
+# all 5 calls are rejected (not 3 accepted + 2 rejected)
+```
+
+The two levels work hierarchically:
+
+- **`AgentToolPolicy.partial_acceptance`** is the master switch. When `False`, no partial acceptance occurs anywhere—all tool calls in the batch are rejected if limits would be exceeded.
+- **`ToolLimits.partial_acceptance`** controls individual tools, but only takes effect if the policy-level setting is `True`.
+
+#### Choosing the Right Limit
+
+All options count only **successful** tool invocations:
+
+| Parameter | Scope | Behavior | Use Case |
+| --------- | ----- | -------- | -------- |
+| `ToolLimits.max_uses` | Per-tool | Tool removed from available tools | Limit specific expensive/rate-limited tools |
+| `AgentToolPolicy.max_uses` | All tools | Returns message to model | Soft limit; model adapts gracefully |
+| `UsageLimits.tool_calls_limit` | All tools | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop to prevent runaway costs |
 
 #### Output Tool Calls
 
