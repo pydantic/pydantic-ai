@@ -2839,13 +2839,14 @@ def _map_mcp_call(
 
 
 def _warn_on_dict_typed_params(provider_name: str, tool_name: str, json_schema: dict[str, Any]) -> bool:
-    """Detect if a JSON schema contains dict-typed parameters and emit a warning if so.
+    """Detect if a JSON schema contains object-typed parameters without any specified properties and emit a warning if so.
 
-    Dict types manifest as objects with additionalProperties that is:
-    - True (allows any additional properties)
-    - A schema object (e.g., {'type': 'string'})
+    JSON schema `properties` entries which have:
+        - "type": "object"
+        - no "properties" key
+    are incompatible with OpenAI's API which silently drops them.
 
-    These are incompatible with OpenAI's API which silently drops them.
+    These JSON schema entries typically come from dict-typed tool parameters.
 
     c.f. https://github.com/pydantic/pydantic-ai/issues/3654
     """
@@ -2856,8 +2857,8 @@ def _warn_on_dict_typed_params(provider_name: str, tool_name: str, json_schema: 
 
     properties: dict[str, dict[str, Any]] = json_schema.get('properties', {})
     for prop_schema in properties.values():
-        # Check for object type with non False/absent additionalProperties
-        if (prop_schema.get('type') == 'object') and (prop_schema.get('additionalProperties') not in (False, None)):
+        # Check for object type without any `properties`
+        if (prop_schema.get('type') == 'object') and not prop_schema.get('properties'):
             has_dict_params = True
 
         # Check arrays of objects with non False/absent additionalProperties
@@ -2866,7 +2867,7 @@ def _warn_on_dict_typed_params(provider_name: str, tool_name: str, json_schema: 
             if (
                 isinstance(items, dict)
                 and (items.get('type') == 'object')  # type: ignore[reportUnknownMemberType]
-                and (items.get('additionalProperties') not in (False, None))  # type: ignore[reportUnknownMemberType]
+                and not items.get('properties')  # type: ignore[reportUnknownMemberType]
             ):
                 has_dict_params = True
 
