@@ -2858,7 +2858,7 @@ def _warn_on_dict_typed_params(provider_name: str, tool_name: str, json_schema: 
     properties: dict[str, dict[str, Any]] = json_schema.get('properties', {})
     for prop_schema in properties.values():
         # Check for object type without any `properties`
-        if (prop_schema.get('type') == 'object') and not prop_schema.get('properties'):
+        if (prop_schema.get('type') == 'object') and 'properties' not in prop_schema:
             has_dict_params = True
 
         # Check arrays of objects with non False/absent additionalProperties
@@ -2867,7 +2867,7 @@ def _warn_on_dict_typed_params(provider_name: str, tool_name: str, json_schema: 
             if (
                 isinstance(items, dict)
                 and (items.get('type') == 'object')  # type: ignore[reportUnknownMemberType]
-                and not items.get('properties')  # type: ignore[reportUnknownMemberType]
+                and 'properties' not in items
             ):
                 has_dict_params = True
 
