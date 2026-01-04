@@ -46,7 +46,7 @@ from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, 
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.thinking import format_bedrock_thinking, resolve_thinking_config
+from pydantic_ai.thinking import resolve_thinking_config
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -315,7 +315,19 @@ class BedrockConverseModel(Model):
             return None
 
         resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
-        return format_bedrock_thinking(resolved, self.profile)
+        if resolved is None:
+            return None
+        if not resolved.enabled:
+            return {'type': 'disabled'}
+
+        # Derive budget from effort if not explicitly set
+        budget_tokens = resolved.budget_tokens
+        if budget_tokens is None and resolved.effort and self.profile.effort_to_budget_map:
+            budget_tokens = self.profile.effort_to_budget_map.get(resolved.effort)
+        if budget_tokens is None:
+            budget_tokens = self.profile.default_thinking_budget or 4096
+
+        return {'type': 'enabled', 'budget_tokens': budget_tokens}
 
     async def request(
         self,

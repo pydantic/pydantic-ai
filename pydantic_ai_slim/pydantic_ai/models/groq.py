@@ -42,7 +42,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import format_groq_reasoning, resolve_thinking_config
+from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -192,7 +192,29 @@ class GroqModel(Model):
             return None
 
         resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
-        return format_groq_reasoning(resolved, self.profile, self._model_name, 'Groq')
+        if resolved is None or not resolved.enabled:
+            return None
+
+        # Warn about ignored settings (Groq doesn't support fine-grained control)
+        ignored: list[str] = []
+        if resolved.budget_tokens is not None:
+            ignored.append('budget_tokens')
+        if resolved.effort is not None:
+            ignored.append('effort')
+
+        if ignored:
+            from ._warnings import warn_settings_ignored_batch
+
+            warn_settings_ignored_batch(
+                setting_names=ignored,
+                provider_name='Groq',
+                reason='Groq reasoning models do not support fine-grained control. Reasoning will be enabled with default behavior',
+            )
+
+        # Map include_in_response to reasoning format
+        if resolved.include_in_response is False:
+            return 'hidden'
+        return 'parsed'
 
     @property
     def base_url(self) -> str:

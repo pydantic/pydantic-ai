@@ -10,7 +10,7 @@ from typing_extensions import override
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
-from ..thinking import format_cerebras_reasoning, resolve_thinking_config
+from ..thinking import resolve_thinking_config
 from . import ModelRequestParameters
 
 try:
@@ -121,7 +121,29 @@ class CerebrasModel(OpenAIChatModel):
             return None
 
         resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
-        return format_cerebras_reasoning(resolved, self.profile, self._model_name, 'Cerebras')
+        if resolved is None:
+            return None
+        if not resolved.enabled:
+            return True  # disable_reasoning=True
+
+        # Warn about ignored settings (Cerebras only supports enable/disable)
+        ignored: list[str] = []
+        for setting in ('budget_tokens', 'effort', 'include_in_response', 'summary'):
+            value = getattr(resolved, setting, None)
+            if value is not None and (setting != 'include_in_response' or value is not True):
+                ignored.append(setting)
+
+        if ignored:
+            from ._warnings import warn_settings_ignored_batch
+
+            warn_settings_ignored_batch(
+                setting_names=ignored,
+                provider_name='Cerebras',
+                model_name=self._model_name,
+                reason='Cerebras reasoning can only be enabled or disabled. Reasoning will be enabled with default behavior',
+            )
+
+        return None  # Don't set disable_reasoning (use default enabled behavior)
 
 
 def _cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:

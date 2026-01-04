@@ -48,7 +48,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
-from ..thinking import format_anthropic_thinking, resolve_thinking_config
+from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -295,7 +295,19 @@ class AnthropicModel(Model):
             return None
 
         resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
-        return format_anthropic_thinking(resolved, self.profile)
+        if resolved is None:
+            return None
+        if not resolved.enabled:
+            return {'type': 'disabled'}
+
+        # Derive budget from effort if not explicitly set
+        budget_tokens = resolved.budget_tokens
+        if budget_tokens is None and resolved.effort and self.profile.effort_to_budget_map:
+            budget_tokens = self.profile.effort_to_budget_map.get(resolved.effort)
+        if budget_tokens is None:
+            budget_tokens = self.profile.default_thinking_budget or 4096
+
+        return {'type': 'enabled', 'budget_tokens': budget_tokens}
 
     async def request(
         self,

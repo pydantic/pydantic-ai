@@ -17,7 +17,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
-from ..thinking import format_openrouter_reasoning, resolve_thinking_config
+from ..thinking import resolve_thinking_config
 from . import ModelRequestParameters
 
 try:
@@ -573,7 +573,30 @@ class OpenRouterModel(OpenAIChatModel):
             return None
 
         resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
-        return format_openrouter_reasoning(resolved, self.profile)
+        if resolved is None:
+            return None
+        if not resolved.enabled:
+            return {'enabled': False}
+
+        result: OpenRouterReasoning = {}
+
+        # Map effort directly (OpenRouter uses same values)
+        if resolved.effort:
+            result['effort'] = resolved.effort
+
+        # Map budget_tokens to max_tokens
+        if resolved.budget_tokens:
+            result['max_tokens'] = resolved.budget_tokens
+
+        # Map include_in_response=False to exclude=True
+        if resolved.include_in_response is False:
+            result['exclude'] = True
+
+        # If no specific settings, just enable
+        if not result:
+            result['enabled'] = True
+
+        return result
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:

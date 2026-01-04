@@ -49,7 +49,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import format_google_thinking, resolve_thinking_config
+from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -91,6 +91,7 @@ try:
         PartDict,
         SafetySettingDict,
         ThinkingConfigDict,
+        ThinkingLevel,
         ToolCodeExecutionDict,
         ToolConfigDict,
         ToolDict,
@@ -271,7 +272,58 @@ class GoogleModel(Model):
             return None
 
         resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
-        return format_google_thinking(resolved, self.profile, self.model_name)
+        if resolved is None:
+            return None
+
+        uses_thinking_level = self.profile.supports_thinking_level
+
+        if not resolved.enabled:
+            if uses_thinking_level:
+                return {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': False}
+            else:
+                return {'thinking_budget': 0}
+
+        result: ThinkingConfigDict = {}
+
+        if uses_thinking_level:
+            # Gemini 3+: Map effort to thinking_level
+            effort_to_level = {
+                'low': ThinkingLevel.LOW,
+                'medium': ThinkingLevel.MEDIUM,
+                'high': ThinkingLevel.HIGH,
+            }
+
+            if resolved.effort:
+                # Check for Pro model medium→high mapping
+                is_pro = 'pro' in self.model_name.lower()
+                if resolved.effort == 'medium' and is_pro:
+                    from ._warnings import warn_setting_mapped
+
+                    warn_setting_mapped(
+                        setting_name='effort',
+                        setting_value='medium',
+                        provider_name='Google',
+                        model_name=self.model_name,
+                        mapped_to='high',
+                        reason="Gemini 3 Pro only supports 'low' and 'high' effort levels. Thinking will use 'high' effort",
+                    )
+                    result['thinking_level'] = ThinkingLevel.HIGH
+                else:
+                    result['thinking_level'] = effort_to_level.get(resolved.effort, ThinkingLevel.HIGH)
+            else:
+                result['thinking_level'] = ThinkingLevel.HIGH
+        else:
+            # Gemini 2.5: Use thinking_budget
+            budget_tokens = resolved.budget_tokens
+            if budget_tokens is None and resolved.effort and self.profile.effort_to_budget_map:
+                budget_tokens = self.profile.effort_to_budget_map.get(resolved.effort)
+            if budget_tokens is not None:
+                result['thinking_budget'] = budget_tokens
+
+        # Handle include_in_response → include_thoughts
+        result['include_thoughts'] = resolved.include_in_response
+
+        return result if result else None
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
