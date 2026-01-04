@@ -7,13 +7,12 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
-from ..exceptions import ModelHTTPError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     FinishReason,
     ModelResponseStreamEvent,
     ThinkingPart,
 )
-from ..exceptions import UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
