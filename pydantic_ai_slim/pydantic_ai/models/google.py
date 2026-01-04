@@ -36,6 +36,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    MultiModalContent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -616,7 +617,7 @@ class GoogleModel(Model):
             _provider_timestamp=first_chunk.create_time,
         )
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
@@ -632,15 +633,63 @@ class GoogleModel(Model):
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.append(
-                            {
-                                'function_response': {
-                                    'name': part.tool_name,
-                                    'response': part.model_response_object(),
-                                    'id': part.tool_call_id,
+                        # Check if content contains MultiModalContent for Gemini 3+ models
+                        if self.profile.supports_tool_multimedia_output and isinstance(part.content, MultiModalContent):
+                            # For multimodal tool returns, include both the response and the multimedia content as parts
+                            message_parts.append(
+                                {
+                                    'function_response': {
+                                        'name': part.tool_name,
+                                        'response': {'result': 'ok'},  # Simple acknowledgment
+                                        'id': part.tool_call_id,
+                                    }
                                 }
-                            }
-                        )
+                            )
+                            # Add the multimedia content - reuse the same mapping logic as UserPromptPart
+                            message_parts.extend(await self._map_multimedia_content(part.content))
+                        elif self.profile.supports_tool_multimedia_output and isinstance(part.content, list):
+                            # Check if the list contains MultiModalContent
+                            has_multimedia = any(isinstance(item, MultiModalContent) for item in part.content)  # type: ignore[misc]
+                            if has_multimedia:
+                                # Add function response
+                                message_parts.append(
+                                    {
+                                        'function_response': {
+                                            'name': part.tool_name,
+                                            'response': {'result': 'ok'},  # Simple acknowledgment
+                                            'id': part.tool_call_id,
+                                        }
+                                    }
+                                )
+                                # Add each multimedia item
+                                for item in part.content:  # type: ignore[misc]
+                                    if isinstance(item, MultiModalContent):
+                                        message_parts.extend(await self._map_multimedia_content(item))
+                                    elif isinstance(item, str):
+                                        # Include text items in the response
+                                        message_parts.append({'text': item})
+                            else:
+                                # No multimedia, use standard serialization
+                                message_parts.append(
+                                    {
+                                        'function_response': {
+                                            'name': part.tool_name,
+                                            'response': part.model_response_object(),
+                                            'id': part.tool_call_id,
+                                        }
+                                    }
+                                )
+                        else:
+                            # Standard tool return without multimedia
+                            message_parts.append(
+                                {
+                                    'function_response': {
+                                        'name': part.tool_name,
+                                        'response': part.model_response_object(),
+                                        'id': part.tool_call_id,
+                                    }
+                                }
+                            )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
@@ -734,6 +783,50 @@ class GoogleModel(Model):
                 else:
                     assert_never(item)
         return content
+
+    async def _map_multimedia_content(self, item: MultiModalContent) -> list[PartDict]:
+        """Map a single MultiModalContent item to Google API format.
+
+        This is extracted from _map_user_prompt to be reusable for tool returns.
+        """
+        if isinstance(item, BinaryContent):
+            inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
+            result: PartDict = {'inline_data': inline_data_dict}
+            if item.vendor_metadata:
+                result['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+            return [result]
+        elif isinstance(item, VideoUrl) and (
+            item.is_youtube or (item.url.startswith('gs://') and self.system == 'google-vertex')
+        ):
+            file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
+            result: PartDict = {'file_data': file_data_dict}
+            if item.vendor_metadata:
+                result['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+            return [result]
+        elif isinstance(item, FileUrl):
+            if item.force_download or (
+                self.system == 'google-gla'
+                and not item.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
+            ):
+                downloaded_item = await download_item(item, data_format='bytes')
+                inline_data: BlobDict = {
+                    'data': downloaded_item['data'],
+                    'mime_type': downloaded_item['data_type'],
+                }
+                result: PartDict = {'inline_data': inline_data}
+                if isinstance(item, VideoUrl) and item.vendor_metadata:
+                    result['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                return [result]
+            else:
+                file_data: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
+                result: PartDict = {'file_data': file_data}
+                if isinstance(item, VideoUrl) and item.vendor_metadata:
+                    result['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                return [result]
+        else:
+            # For ImageUrl, DocumentUrl, AudioUrl - they're all FileUrl subclasses
+            # This should never be reached as all MultiModalContent types are covered above
+            assert_never(item)
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()
