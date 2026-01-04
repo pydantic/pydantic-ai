@@ -469,9 +469,7 @@ class OpenAIChatModel(Model):
     def system_prompt_role(self) -> OpenAISystemPromptRole | None:
         return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
-    def _resolve_reasoning_effort(
-        self, model_settings: OpenAIChatModelSettings
-    ) -> ReasoningEffort | None:
+    def _resolve_reasoning_effort(self, model_settings: OpenAIChatModelSettings) -> ReasoningEffort | None:
         """Resolve reasoning effort from unified or provider-specific settings.
 
         Provider-specific `openai_reasoning_effort` takes precedence over unified `thinking`.

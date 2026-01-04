@@ -555,9 +555,7 @@ class OpenRouterModel(OpenAIChatModel):
         new_settings = _openrouter_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
 
-    def _resolve_reasoning_config(
-        self, model_settings: OpenRouterModelSettings
-    ) -> OpenRouterReasoning | None:
+    def _resolve_reasoning_config(self, model_settings: OpenRouterModelSettings) -> OpenRouterReasoning | None:
         """Resolve unified thinking settings to OpenRouter reasoning config.
 
         Args:
@@ -585,9 +583,7 @@ class OpenRouterModel(OpenAIChatModel):
             return {'enabled': True}
         elif thinking is False:
             if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
-                )
+                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
             return {'enabled': False}
 
         # Handle ThinkingConfig dict
@@ -596,9 +592,7 @@ class OpenRouterModel(OpenAIChatModel):
         # Check enabled=False
         if config.get('enabled') is False:
             if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
-                )
+                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
             return {'enabled': False}
 
         result: OpenRouterReasoning = {}

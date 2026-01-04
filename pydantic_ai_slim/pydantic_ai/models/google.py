@@ -256,9 +256,7 @@ class GoogleModel(Model):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
-    def _resolve_thinking_config(
-        self, model_settings: GoogleModelSettings
-    ) -> ThinkingConfigDict | None:
+    def _resolve_thinking_config(self, model_settings: GoogleModelSettings) -> ThinkingConfigDict | None:
         """Resolve thinking configuration from unified or provider-specific settings.
 
         Provider-specific `google_thinking_config` takes precedence over unified `thinking`.

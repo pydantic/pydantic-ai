@@ -102,9 +102,7 @@ class TestWarnSettingMapped:
 
     def test_with_model_name(self):
         """Mapping warning includes model name when provided."""
-        with pytest.warns(
-            UserWarning, match="Google model 'gemini-3-pro' mapped effort='medium' to 'high'"
-        ):
+        with pytest.warns(UserWarning, match="Google model 'gemini-3-pro' mapped effort='medium' to 'high'"):
             warn_setting_mapped(
                 setting_name='effort',
                 setting_value='medium',

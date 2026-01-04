@@ -304,9 +304,7 @@ class BedrockConverseModel(Model):
 
         return {'toolSpec': tool_spec}
 
-    def _resolve_thinking_config(
-        self, model_settings: BedrockModelSettings
-    ) -> dict[str, Any] | None:
+    def _resolve_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:
         """Resolve thinking configuration from unified settings for Bedrock.
 
         For Claude models on Bedrock, thinking is passed via additionalModelRequestFields.
@@ -533,9 +531,7 @@ class BedrockConverseModel(Model):
         ):
             params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
         # Handle additionalModelRequestFields with unified thinking support
-        additional_model_requests_fields = dict(
-            settings.get('bedrock_additional_model_requests_fields', None) or {}
-        )
+        additional_model_requests_fields = dict(settings.get('bedrock_additional_model_requests_fields', None) or {})
         # Add thinking config from unified settings if not already set via additional_model_requests_fields
         if 'thinking' not in additional_model_requests_fields:
             thinking_config = self._resolve_thinking_config(settings)

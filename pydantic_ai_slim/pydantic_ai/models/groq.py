@@ -174,9 +174,7 @@ class GroqModel(Model):
 
         return merged_settings, customized_parameters
 
-    def _resolve_reasoning_format(
-        self, model_settings: GroqModelSettings
-    ) -> Literal['hidden', 'raw', 'parsed'] | None:
+    def _resolve_reasoning_format(self, model_settings: GroqModelSettings) -> Literal['hidden', 'raw', 'parsed'] | None:
         """Resolve unified thinking settings to Groq reasoning format.
 
         Args:
@@ -205,9 +203,7 @@ class GroqModel(Model):
             return 'parsed'
         elif thinking is False:
             if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
-                )
+                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
             # Disable thinking by not setting reasoning_format (return None)
             return None
 
@@ -232,9 +228,7 @@ class GroqModel(Model):
         # Check enabled=False
         if config.get('enabled') is False:
             if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
-                )
+                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
             return None
 
         # Map include_in_response to reasoning format

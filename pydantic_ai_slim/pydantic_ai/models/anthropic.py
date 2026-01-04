@@ -281,9 +281,7 @@ class AnthropicModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
-    def _resolve_thinking_config(
-        self, model_settings: AnthropicModelSettings
-    ) -> BetaThinkingConfigParam | None:
+    def _resolve_thinking_config(self, model_settings: AnthropicModelSettings) -> BetaThinkingConfigParam | None:
         """Resolve thinking configuration from unified or provider-specific settings.
 
         Provider-specific `anthropic_thinking` takes precedence over unified `thinking`.
@@ -391,11 +389,7 @@ class AnthropicModel(Model):
         settings = merge_model_settings(self.settings, model_settings)
         # Resolve thinking config from unified or provider-specific settings
         thinking_config = self._resolve_thinking_config(cast(AnthropicModelSettings, settings or {}))
-        if (
-            model_request_parameters.output_tools
-            and thinking_config
-            and thinking_config.get('type') == 'enabled'
-        ):
+        if model_request_parameters.output_tools and thinking_config and thinking_config.get('type') == 'enabled':
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)

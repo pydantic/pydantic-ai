@@ -104,9 +104,7 @@ class CerebrasModel(OpenAIChatModel):
         new_settings = _cerebras_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
 
-    def _resolve_reasoning_config(
-        self, model_settings: CerebrasModelSettings
-    ) -> bool | None:
+    def _resolve_reasoning_config(self, model_settings: CerebrasModelSettings) -> bool | None:
         """Resolve unified thinking settings to Cerebras disable_reasoning config.
 
         Args:
@@ -135,9 +133,7 @@ class CerebrasModel(OpenAIChatModel):
             return None
         elif thinking is False:
             if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
-                )
+                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
             # Disable reasoning
             return True
 
@@ -162,9 +158,7 @@ class CerebrasModel(OpenAIChatModel):
         # Check enabled=False
         if config.get('enabled') is False:
             if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.'
-                )
+                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
             return True
 
         # Any other config enables thinking (no need to disable)
