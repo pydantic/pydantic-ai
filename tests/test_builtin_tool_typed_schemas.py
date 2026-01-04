@@ -17,7 +17,6 @@ from pydantic_ai.messages import (
     FileSearchReturnPart,
     ImageGenerationCallPart,
     ImageGenerationReturnPart,
-    ModelMessagesTypeAdapter,
     ModelResponse,
     WebFetchCallPart,
     WebFetchReturnPart,
@@ -349,7 +348,7 @@ class TestBackwardsCompatibility:
 
     def test_memory_stays_as_base_class(self):
         """Test that memory tool parts stay as base BuiltinToolReturnPart."""
-        old_data = {
+        old_data: dict[str, object] = {
             'parts': [
                 {
                     'part_kind': 'builtin-tool-return',

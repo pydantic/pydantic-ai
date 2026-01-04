@@ -1175,7 +1175,9 @@ def _metadata_as_usage(response: GenerateContentResponse, provider: str, provide
     )
 
 
-def _map_executable_code(executable_code: ExecutableCode, provider_name: str, tool_call_id: str) -> CodeExecutionCallPart:
+def _map_executable_code(
+    executable_code: ExecutableCode, provider_name: str, tool_call_id: str
+) -> CodeExecutionCallPart:
     return CodeExecutionCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,

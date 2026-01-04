@@ -18,7 +18,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import NotRequired, deprecated
+from typing_extensions import deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -891,10 +891,10 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
 class CodeExecutionReturnPart(BuiltinToolReturnPart):
     """A return part for code execution tool results with normalized accessor properties."""
 
-    content: dict[str, Any] | list[Any] | str | Any
+    content: dict[str, Any] | list[Any] | str
     """The code execution result content."""
 
-    part_kind: Literal['code-execution-return'] = 'code-execution-return'
+    part_kind: Literal['code-execution-return'] = 'code-execution-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @property
@@ -906,7 +906,7 @@ class CodeExecutionReturnPart(BuiltinToolReturnPart):
             return self.content['stdout']
         if 'logs' in self.content:
             logs = self.content['logs']
-            return '\n'.join(logs) if isinstance(logs, list) else str(logs)
+            return '\n'.join(cast(list[str], logs)) if isinstance(logs, list) else str(logs)
         if 'output' in self.content:
             return self.content['output']
         if 'outcome' in self.content:
@@ -939,20 +939,20 @@ class CodeExecutionReturnPart(BuiltinToolReturnPart):
 class WebSearchReturnPart(BuiltinToolReturnPart):
     """A return part for web search tool results with normalized accessor properties."""
 
-    content: dict[str, Any] | list[Any] | str | Any
+    content: dict[str, Any] | list[Any] | str
     """The web search result content."""
 
-    part_kind: Literal['web-search-return'] = 'web-search-return'
+    part_kind: Literal['web-search-return'] = 'web-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @property
     def sources(self) -> list[dict[str, Any]]:
         """Get the search result sources, normalized across providers."""
         if isinstance(self.content, list):
-            return self.content
+            return cast(list[dict[str, Any]], self.content)
         if isinstance(self.content, dict) and 'sources' in self.content:
             sources = self.content['sources']
-            return sources if isinstance(sources, list) else []
+            return cast(list[dict[str, Any]], sources) if isinstance(sources, list) else []
         return []
 
     @property
@@ -967,10 +967,10 @@ class WebSearchReturnPart(BuiltinToolReturnPart):
 class WebFetchReturnPart(BuiltinToolReturnPart):
     """A return part for web fetch tool results with normalized accessor properties."""
 
-    content: dict[str, Any] | list[Any] | str | Any
+    content: dict[str, Any] | list[Any] | str
     """The web fetch result content."""
 
-    part_kind: Literal['web-fetch-return'] = 'web-fetch-return'
+    part_kind: Literal['web-fetch-return'] = 'web-fetch-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @property
@@ -1003,20 +1003,20 @@ class WebFetchReturnPart(BuiltinToolReturnPart):
 class FileSearchReturnPart(BuiltinToolReturnPart):
     """A return part for file search tool results with normalized accessor properties."""
 
-    content: dict[str, Any] | list[Any] | str | Any
+    content: dict[str, Any] | list[Any] | str
     """The file search result content."""
 
-    part_kind: Literal['file-search-return'] = 'file-search-return'
+    part_kind: Literal['file-search-return'] = 'file-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @property
     def results(self) -> list[dict[str, Any]]:
         """Get the search results, normalized across providers."""
         if isinstance(self.content, list):
-            return self.content
+            return cast(list[dict[str, Any]], self.content)
         if isinstance(self.content, dict) and 'results' in self.content:
             results = self.content['results']
-            return results if isinstance(results, list) else []
+            return cast(list[dict[str, Any]], results) if isinstance(results, list) else []
         return []
 
     @property
@@ -1031,10 +1031,10 @@ class FileSearchReturnPart(BuiltinToolReturnPart):
 class ImageGenerationReturnPart(BuiltinToolReturnPart):
     """A return part for image generation tool results (metadata only, image is in FilePart)."""
 
-    content: dict[str, Any] | str | Any
+    content: dict[str, Any] | str
     """The image generation result content (metadata, not the image itself)."""
 
-    part_kind: Literal['image-generation-return'] = 'image-generation-return'
+    part_kind: Literal['image-generation-return'] = 'image-generation-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @property
@@ -1443,7 +1443,7 @@ class CodeExecutionCallPart(BuiltinToolCallPart):
     args: dict[str, Any] | str | None = None
     """The code execution call arguments."""
 
-    part_kind: Literal['code-execution-call'] = 'code-execution-call'
+    part_kind: Literal['code-execution-call'] = 'code-execution-call'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @property
@@ -1460,7 +1460,7 @@ class WebSearchCallPart(BuiltinToolCallPart):
     args: dict[str, Any] | str | None = None
     """The web search call arguments."""
 
-    part_kind: Literal['web-search-call'] = 'web-search-call'
+    part_kind: Literal['web-search-call'] = 'web-search-call'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @property
@@ -1477,7 +1477,7 @@ class WebFetchCallPart(BuiltinToolCallPart):
     args: dict[str, Any] | str | None = None
     """The web fetch call arguments."""
 
-    part_kind: Literal['web-fetch-call'] = 'web-fetch-call'
+    part_kind: Literal['web-fetch-call'] = 'web-fetch-call'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @property
@@ -1498,7 +1498,7 @@ class FileSearchCallPart(BuiltinToolCallPart):
     args: dict[str, Any] | str | None = None
     """The file search call arguments."""
 
-    part_kind: Literal['file-search-call'] = 'file-search-call'
+    part_kind: Literal['file-search-call'] = 'file-search-call'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @property
@@ -1516,7 +1516,7 @@ class FileSearchCallPart(BuiltinToolCallPart):
 class ImageGenerationCallPart(BuiltinToolCallPart):
     """A call part for image generation tool (prompt comes from conversation context)."""
 
-    part_kind: Literal['image-generation-call'] = 'image-generation-call'
+    part_kind: Literal['image-generation-call'] = 'image-generation-call'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
@@ -1575,6 +1575,7 @@ _BuiltinToolReturnPartUnion = (
     | ImageGenerationReturnPart
 )
 
+
 def _migrate_builtin_tool_parts(data: dict[str, Any]) -> dict[str, Any]:
     """Migrate old BuiltinToolCallPart and BuiltinToolReturnPart data to specific subclasses.
 
@@ -1586,12 +1587,7 @@ def _migrate_builtin_tool_parts(data: dict[str, Any]) -> dict[str, Any]:
 
 
 ModelResponsePart = Annotated[
-    TextPart
-    | ToolCallPart
-    | _BuiltinToolCallPartUnion
-    | _BuiltinToolReturnPartUnion
-    | ThinkingPart
-    | FilePart,
+    TextPart | ToolCallPart | _BuiltinToolCallPartUnion | _BuiltinToolReturnPartUnion | ThinkingPart | FilePart,
     pydantic.BeforeValidator(_migrate_builtin_tool_parts),
     pydantic.Discriminator('part_kind'),
 ]
