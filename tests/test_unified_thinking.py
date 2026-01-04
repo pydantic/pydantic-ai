@@ -459,6 +459,86 @@ class TestOpenAIUnifiedThinking:
             model._resolve_reasoning_effort(settings)
 
 
+class TestOpenAIResponsesUnifiedThinking:
+    """Tests for unified thinking settings on OpenAI Responses API models."""
+
+    @pytest.fixture
+    def openai_responses_reasoning_profile(self) -> ModelProfile:
+        """An OpenAI Responses model profile that supports reasoning."""
+        return ModelProfile(
+            supports_thinking=True,
+            thinking_always_enabled=True,
+        )
+
+    def test_thinking_config_with_budget_tokens_warns(self, openai_responses_reasoning_profile: ModelProfile):
+        """ThinkingConfig with budget_tokens should warn about ignored setting."""
+        import warnings
+        from unittest.mock import Mock
+
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'o3'
+        model._profile = openai_responses_reasoning_profile
+        mock_provider = Mock()
+        mock_provider.name = 'openai'
+        model._provider = mock_provider
+
+        settings: OpenAIChatModelSettings = {'thinking': {'budget_tokens': 4096, 'effort': 'high'}}
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            result = model._apply_unified_thinking(settings, None, None)
+
+            assert len(w) == 1
+            assert 'budget_tokens' in str(w[0].message)
+            assert "effort='high'" in str(w[0].message)
+
+        effort, summary = result
+        assert effort == 'high'
+
+    def test_thinking_config_with_summary(self, openai_responses_reasoning_profile: ModelProfile):
+        """ThinkingConfig with summary should map to OpenAI format."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'o3'
+        model._profile = openai_responses_reasoning_profile
+
+        # Test summary='concise'
+        settings: OpenAIChatModelSettings = {'thinking': {'summary': 'concise'}}
+        effort, summary = model._apply_unified_thinking(settings, None, None)
+        assert summary == 'concise'
+
+        # Test summary='detailed'
+        settings = {'thinking': {'summary': 'detailed'}}
+        effort, summary = model._apply_unified_thinking(settings, None, None)
+        assert summary == 'detailed'
+
+        # Test summary=True maps to 'auto'
+        settings = {'thinking': {'summary': True}}
+        effort, summary = model._apply_unified_thinking(settings, None, None)
+        assert summary == 'auto'
+
+        # Test summary='none' maps to None
+        settings = {'thinking': {'summary': 'none'}}
+        effort, summary = model._apply_unified_thinking(settings, None, None)
+        assert summary is None
+
+    def test_unsupported_model_raises_error(self, non_thinking_profile: ModelProfile):
+        """Using thinking on a non-reasoning model should raise UserError."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'gpt-4o'
+        model._profile = non_thinking_profile
+
+        settings: OpenAIChatModelSettings = {'thinking': True}
+
+        with pytest.raises(UserError, match='does not support reasoning'):
+            model._apply_unified_thinking(settings, None, None)
+
+
 # ============================================================================
 # Profile capability tests
 # ============================================================================
@@ -753,6 +833,63 @@ class TestGroqUnifiedThinking:
         with pytest.raises(UserError, match='has reasoning always enabled and cannot be disabled'):
             model._resolve_reasoning_format(settings)
 
+    def test_thinking_config_enabled_false_raises_for_always_on(self, always_on_thinking_profile: ModelProfile):
+        """ThinkingConfig with enabled=False should raise UserError for always-on models."""
+        model = GroqModel.__new__(GroqModel)
+        model._model_name = 'deepseek-r1'
+        model._profile = always_on_thinking_profile
+
+        settings: GroqModelSettings = {'thinking': {'enabled': False}}
+
+        with pytest.raises(UserError, match='has reasoning always enabled and cannot be disabled'):
+            model._resolve_reasoning_format(settings)
+
+    def test_thinking_config_with_budget_tokens_warns(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with budget_tokens should warn about ignored setting."""
+        import warnings
+        from unittest.mock import Mock
+
+        model = GroqModel.__new__(GroqModel)
+        model._model_name = 'deepseek-r1-distill-llama-70b'
+        model._profile = thinking_profile
+        mock_provider = Mock()
+        mock_provider.name = 'groq'
+        model._provider = mock_provider
+
+        settings: GroqModelSettings = {'thinking': {'budget_tokens': 4096}}
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            result = model._resolve_reasoning_format(settings)
+
+            assert len(w) == 1
+            assert 'budget_tokens' in str(w[0].message)
+
+        assert result == 'parsed'
+
+    def test_thinking_config_with_effort_warns(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with effort should warn about ignored setting."""
+        import warnings
+        from unittest.mock import Mock
+
+        model = GroqModel.__new__(GroqModel)
+        model._model_name = 'deepseek-r1-distill-llama-70b'
+        model._profile = thinking_profile
+        mock_provider = Mock()
+        mock_provider.name = 'groq'
+        model._provider = mock_provider
+
+        settings: GroqModelSettings = {'thinking': {'effort': 'high'}}
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            result = model._resolve_reasoning_format(settings)
+
+            assert len(w) == 1
+            assert 'effort' in str(w[0].message)
+
+        assert result == 'parsed'
+
 
 # ============================================================================
 # Cerebras unified thinking tests
@@ -840,6 +977,28 @@ class TestCerebrasUnifiedThinking:
         settings: CerebrasModelSettings = {'thinking': True}
 
         with pytest.raises(UserError, match='does not support reasoning'):
+            model._resolve_reasoning_config(settings)
+
+    def test_thinking_false_raises_for_always_on(self, always_on_thinking_profile: ModelProfile):
+        """thinking=False should raise UserError for always-on reasoning models."""
+        model = CerebrasModel.__new__(CerebrasModel)
+        model._model_name = 'zai-glm-4.6'
+        model._profile = always_on_thinking_profile
+
+        settings: CerebrasModelSettings = {'thinking': False}
+
+        with pytest.raises(UserError, match='has reasoning always enabled'):
+            model._resolve_reasoning_config(settings)
+
+    def test_thinking_config_enabled_false_raises_for_always_on(self, always_on_thinking_profile: ModelProfile):
+        """ThinkingConfig with enabled=False should raise UserError for always-on models."""
+        model = CerebrasModel.__new__(CerebrasModel)
+        model._model_name = 'zai-glm-4.6'
+        model._profile = always_on_thinking_profile
+
+        settings: CerebrasModelSettings = {'thinking': {'enabled': False}}
+
+        with pytest.raises(UserError, match='has reasoning always enabled'):
             model._resolve_reasoning_config(settings)
 
 
