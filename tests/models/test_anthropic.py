@@ -8266,13 +8266,13 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=', the White House swapped out pro')),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president -")),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –")),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's")),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' NATO and EU bids')),
             PartEndEvent(
                 index=10,
                 part=TextPart(
-                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president - a political ally who once opposed Ukraine's NATO and EU bids"
+                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids"
                 ),
                 next_part_kind='text',
             ),
