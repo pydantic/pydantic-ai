@@ -21,7 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cerebras import CerebrasModel, CerebrasModelSettings
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModelSettings
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
 
@@ -484,7 +484,7 @@ class TestOpenAIResponsesUnifiedThinking:
         mock_provider.name = 'openai'
         model._provider = mock_provider
 
-        settings: OpenAIChatModelSettings = {'thinking': {'budget_tokens': 4096, 'effort': 'high'}}
+        settings: OpenAIResponsesModelSettings = {'thinking': {'budget_tokens': 4096, 'effort': 'high'}}
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
@@ -494,7 +494,7 @@ class TestOpenAIResponsesUnifiedThinking:
             assert 'budget_tokens' in str(w[0].message)
             assert "effort='high'" in str(w[0].message)
 
-        effort, summary = result
+        effort, _ = result
         assert effort == 'high'
 
     def test_thinking_config_with_summary(self, openai_responses_reasoning_profile: ModelProfile):
@@ -506,23 +506,23 @@ class TestOpenAIResponsesUnifiedThinking:
         model._profile = openai_responses_reasoning_profile
 
         # Test summary='concise'
-        settings: OpenAIChatModelSettings = {'thinking': {'summary': 'concise'}}
-        effort, summary = model._apply_unified_thinking(settings, None, None)
+        settings: OpenAIResponsesModelSettings = {'thinking': {'summary': 'concise'}}
+        _, summary = model._apply_unified_thinking(settings, None, None)
         assert summary == 'concise'
 
         # Test summary='detailed'
         settings = {'thinking': {'summary': 'detailed'}}
-        effort, summary = model._apply_unified_thinking(settings, None, None)
+        _, summary = model._apply_unified_thinking(settings, None, None)
         assert summary == 'detailed'
 
         # Test summary=True maps to 'auto'
         settings = {'thinking': {'summary': True}}
-        effort, summary = model._apply_unified_thinking(settings, None, None)
+        _, summary = model._apply_unified_thinking(settings, None, None)
         assert summary == 'auto'
 
         # Test summary='none' maps to None
         settings = {'thinking': {'summary': 'none'}}
-        effort, summary = model._apply_unified_thinking(settings, None, None)
+        _, summary = model._apply_unified_thinking(settings, None, None)
         assert summary is None
 
     def test_unsupported_model_raises_error(self, non_thinking_profile: ModelProfile):
@@ -533,7 +533,7 @@ class TestOpenAIResponsesUnifiedThinking:
         model._model_name = 'gpt-4o'
         model._profile = non_thinking_profile
 
-        settings: OpenAIChatModelSettings = {'thinking': True}
+        settings: OpenAIResponsesModelSettings = {'thinking': True}
 
         with pytest.raises(UserError, match='does not support reasoning'):
             model._apply_unified_thinking(settings, None, None)
