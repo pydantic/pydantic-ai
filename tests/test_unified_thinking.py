@@ -18,6 +18,7 @@ with try_import() as imports_successful:
     from google.genai.types import ThinkingLevel
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
     from pydantic_ai.models.cerebras import CerebrasModel, CerebrasModelSettings
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
@@ -180,6 +181,18 @@ class TestAnthropicUnifiedThinking:
 
         with pytest.raises(UserError, match='does not support thinking/reasoning'):
             model._resolve_thinking_config(settings)
+
+    def test_thinking_config_enabled_true_uses_default_budget(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with enabled=True but no effort/budget should use default budget."""
+        model = AnthropicModel.__new__(AnthropicModel)
+        model._model_name = 'claude-sonnet-4-5'
+        model._profile = thinking_profile
+
+        settings: AnthropicModelSettings = {'thinking': {'enabled': True}}
+        result = model._resolve_thinking_config(settings)
+
+        # Should use the default budget from the profile (4096)
+        assert result == {'type': 'enabled', 'budget_tokens': 4096}
 
 
 # ============================================================================
@@ -359,6 +372,41 @@ class TestGoogleUnifiedThinking:
 
         # Gemini 3 uses thinking_level=LOW with include_thoughts=False to disable
         assert result == {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': False}
+
+    def test_gemini3_thinking_config_enabled_false(self, google_gemini3_profile: ModelProfile):
+        """Gemini 3: ThinkingConfig with enabled=False should disable thinking."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-3-flash'
+        model._profile = google_gemini3_profile
+
+        settings: GoogleModelSettings = {'thinking': {'enabled': False}}
+        result = model._resolve_thinking_config(settings)
+
+        # Gemini 3 uses thinking_level=LOW with include_thoughts=False to disable
+        assert result == {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': False}
+
+    def test_gemini3_thinking_config_enabled_true_defaults_to_high(self, google_gemini3_profile: ModelProfile):
+        """Gemini 3: ThinkingConfig with enabled=True but no effort should default to HIGH."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-3-flash'
+        model._profile = google_gemini3_profile
+
+        settings: GoogleModelSettings = {'thinking': {'enabled': True}}
+        result = model._resolve_thinking_config(settings)
+
+        # Should default to HIGH when no effort is specified
+        assert result == {'thinking_level': ThinkingLevel.HIGH, 'include_thoughts': True}
+
+    def test_unsupported_model_raises_error(self, non_thinking_profile: ModelProfile):
+        """Using thinking on a Google model that doesn't support it should raise UserError."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-2.0-flash'
+        model._profile = non_thinking_profile
+
+        settings: GoogleModelSettings = {'thinking': True}
+
+        with pytest.raises(UserError, match='does not support thinking/reasoning'):
+            model._resolve_thinking_config(settings)
 
 
 # ============================================================================
@@ -899,6 +947,39 @@ class TestOpenRouterUnifiedThinking:
         with pytest.raises(UserError, match='has reasoning always enabled and cannot be disabled'):
             model._resolve_reasoning_config(settings)
 
+    def test_thinking_config_enabled_false_for_optional(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with enabled=False should return enabled=False for optional models."""
+        model = OpenRouterModel.__new__(OpenRouterModel)
+        model._model_name = 'anthropic/claude-sonnet-4-5'
+        model._profile = thinking_profile
+
+        settings: OpenRouterModelSettings = {'thinking': {'enabled': False}}
+        result = model._resolve_reasoning_config(settings)
+
+        assert result == {'enabled': False}
+
+    def test_thinking_config_enabled_false_raises_for_always_on(self, always_on_thinking_profile: ModelProfile):
+        """ThinkingConfig with enabled=False should raise UserError for always-on models."""
+        model = OpenRouterModel.__new__(OpenRouterModel)
+        model._model_name = 'deepseek/deepseek-r1'
+        model._profile = always_on_thinking_profile
+
+        settings: OpenRouterModelSettings = {'thinking': {'enabled': False}}
+
+        with pytest.raises(UserError, match='has reasoning always enabled and cannot be disabled'):
+            model._resolve_reasoning_config(settings)
+
+    def test_thinking_config_enabled_true_defaults_to_enabled(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with enabled=True but no other settings should return enabled=True."""
+        model = OpenRouterModel.__new__(OpenRouterModel)
+        model._model_name = 'anthropic/claude-sonnet-4-5'
+        model._profile = thinking_profile
+
+        settings: OpenRouterModelSettings = {'thinking': {'enabled': True}}
+        result = model._resolve_reasoning_config(settings)
+
+        assert result == {'enabled': True}
+
 
 # ============================================================================
 # Groq unified thinking tests
@@ -995,6 +1076,18 @@ class TestGroqUnifiedThinking:
 
         with pytest.raises(UserError, match='has reasoning always enabled and cannot be disabled'):
             model._resolve_reasoning_format(settings)
+
+    def test_thinking_config_enabled_false_returns_none_for_optional(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with enabled=False should return None for non-always-on models."""
+        model = GroqModel.__new__(GroqModel)
+        model._model_name = 'deepseek-r1-distill-llama-70b'
+        model._profile = thinking_profile
+
+        settings: GroqModelSettings = {'thinking': {'enabled': False}}
+        result = model._resolve_reasoning_format(settings)
+
+        # Should return None (don't set reasoning format, effectively disabling)
+        assert result is None
 
     def test_thinking_config_with_budget_tokens_warns(self, thinking_profile: ModelProfile):
         """ThinkingConfig with budget_tokens should warn about ignored setting."""
@@ -1152,6 +1245,115 @@ class TestCerebrasUnifiedThinking:
 
         with pytest.raises(UserError, match='has reasoning always enabled'):
             model._resolve_reasoning_config(settings)
+
+
+# ============================================================================
+# Bedrock unified thinking tests
+# ============================================================================
+
+
+class TestBedrockUnifiedThinking:
+    """Tests for unified thinking settings on Bedrock models."""
+
+    def test_thinking_true_uses_default_budget(self, thinking_profile: ModelProfile):
+        """thinking=True should enable thinking with the default budget."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': True}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'type': 'enabled', 'budget_tokens': 4096}
+
+    def test_thinking_false_disables_thinking(self, thinking_profile: ModelProfile):
+        """thinking=False should disable thinking."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': False}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'type': 'disabled'}
+
+    def test_thinking_config_with_budget(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with explicit budget_tokens should use that budget."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': {'budget_tokens': 2048}}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'type': 'enabled', 'budget_tokens': 2048}
+
+    def test_thinking_config_with_effort_low(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with effort='low' should map to 1024 tokens."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': {'effort': 'low'}}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'type': 'enabled', 'budget_tokens': 1024}
+
+    def test_thinking_config_with_effort_high(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with effort='high' should map to 16384 tokens."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': {'effort': 'high'}}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'type': 'enabled', 'budget_tokens': 16384}
+
+    def test_thinking_config_enabled_false(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with enabled=False should disable thinking."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': {'enabled': False}}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'type': 'disabled'}
+
+    def test_thinking_config_enabled_true_uses_default_budget(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with enabled=True but no effort/budget should use default budget."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': {'enabled': True}}
+        result = model._resolve_thinking_config(settings)
+
+        # Should use the default budget from the profile (4096)
+        assert result == {'type': 'enabled', 'budget_tokens': 4096}
+
+    def test_thinking_none_returns_none(self, thinking_profile: ModelProfile):
+        """No thinking setting should return None."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {}
+        result = model._resolve_thinking_config(settings)
+
+        assert result is None
+
+    def test_unsupported_model_raises_error(self, non_thinking_profile: ModelProfile):
+        """Using thinking on a model that doesn't support it should raise UserError."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-3-opus-20240229-v1:0'
+        model._profile = non_thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': True}
+
+        with pytest.raises(UserError, match='does not support thinking/reasoning'):
+            model._resolve_thinking_config(settings)
 
 
 # ============================================================================
