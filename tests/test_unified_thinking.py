@@ -377,6 +377,14 @@ class TestOpenAIUnifiedThinking:
             thinking_always_enabled=True,
         )
 
+    @pytest.fixture
+    def openai_optional_reasoning_profile(self) -> ModelProfile:
+        """An OpenAI model profile with optional reasoning (like o1-preview)."""
+        return ModelProfile(
+            supports_thinking=True,
+            thinking_always_enabled=False,
+        )
+
     def test_thinking_true_uses_medium_effort(self, openai_reasoning_profile: ModelProfile):
         """thinking=True should use medium effort by default."""
         model = OpenAIChatModel.__new__(OpenAIChatModel)
@@ -458,6 +466,41 @@ class TestOpenAIUnifiedThinking:
         with pytest.raises(UserError, match='does not support reasoning'):
             model._resolve_reasoning_effort(settings)
 
+    def test_thinking_false_disables_on_optional_model(self, openai_optional_reasoning_profile: ModelProfile):
+        """thinking=False should return None on models where reasoning is optional."""
+        model = OpenAIChatModel.__new__(OpenAIChatModel)
+        model._model_name = 'o1-preview'
+        model._profile = openai_optional_reasoning_profile
+
+        settings: OpenAIChatModelSettings = {'thinking': False}
+        result = model._resolve_reasoning_effort(settings)
+
+        assert result is None
+
+    def test_thinking_config_enabled_false_disables_on_optional_model(
+        self, openai_optional_reasoning_profile: ModelProfile
+    ):
+        """ThinkingConfig with enabled=False should return None on optional reasoning models."""
+        model = OpenAIChatModel.__new__(OpenAIChatModel)
+        model._model_name = 'o1-preview'
+        model._profile = openai_optional_reasoning_profile
+
+        settings: OpenAIChatModelSettings = {'thinking': {'enabled': False}}
+        result = model._resolve_reasoning_effort(settings)
+
+        assert result is None
+
+    def test_thinking_config_no_effort_defaults_to_medium(self, openai_optional_reasoning_profile: ModelProfile):
+        """ThinkingConfig without effort should default to 'medium'."""
+        model = OpenAIChatModel.__new__(OpenAIChatModel)
+        model._model_name = 'o1-preview'
+        model._profile = openai_optional_reasoning_profile
+
+        settings: OpenAIChatModelSettings = {'thinking': {'enabled': True}}
+        result = model._resolve_reasoning_effort(settings)
+
+        assert result == 'medium'
+
 
 class TestOpenAIResponsesUnifiedThinking:
     """Tests for unified thinking settings on OpenAI Responses API models."""
@@ -468,6 +511,14 @@ class TestOpenAIResponsesUnifiedThinking:
         return ModelProfile(
             supports_thinking=True,
             thinking_always_enabled=True,
+        )
+
+    @pytest.fixture
+    def openai_responses_optional_reasoning_profile(self) -> ModelProfile:
+        """An OpenAI Responses model profile with optional reasoning."""
+        return ModelProfile(
+            supports_thinking=True,
+            thinking_always_enabled=False,
         )
 
     def test_thinking_config_with_budget_tokens_warns(self, openai_responses_reasoning_profile: ModelProfile):
@@ -537,6 +588,111 @@ class TestOpenAIResponsesUnifiedThinking:
 
         with pytest.raises(UserError, match='does not support reasoning'):
             model._apply_unified_thinking(settings, None, None)
+
+    def test_thinking_true_uses_medium_effort(self, openai_responses_reasoning_profile: ModelProfile):
+        """thinking=True should use 'medium' as the default effort."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'o3'
+        model._profile = openai_responses_reasoning_profile
+
+        settings: OpenAIResponsesModelSettings = {'thinking': True}
+        effort, summary = model._apply_unified_thinking(settings, None, None)
+
+        assert effort == 'medium'
+        assert summary is None
+
+    def test_thinking_false_raises_for_always_on(self, openai_responses_reasoning_profile: ModelProfile):
+        """thinking=False on always-enabled reasoning model should raise UserError."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'o3'
+        model._profile = openai_responses_reasoning_profile
+
+        settings: OpenAIResponsesModelSettings = {'thinking': False}
+
+        with pytest.raises(UserError, match='has reasoning always enabled'):
+            model._apply_unified_thinking(settings, None, None)
+
+    def test_thinking_config_enabled_false_raises_for_always_on(
+        self, openai_responses_reasoning_profile: ModelProfile
+    ):
+        """ThinkingConfig with enabled=False on always-enabled reasoning model should raise."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'o3'
+        model._profile = openai_responses_reasoning_profile
+
+        settings: OpenAIResponsesModelSettings = {'thinking': {'enabled': False}}
+
+        with pytest.raises(UserError, match='has reasoning always enabled'):
+            model._apply_unified_thinking(settings, None, None)
+
+    def test_thinking_false_disables_on_optional_model(
+        self, openai_responses_optional_reasoning_profile: ModelProfile
+    ):
+        """thinking=False should return defaults on models where reasoning is optional."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'o1-preview'
+        model._profile = openai_responses_optional_reasoning_profile
+
+        settings: OpenAIResponsesModelSettings = {'thinking': False}
+        effort, summary = model._apply_unified_thinking(settings, None, None)
+
+        # Returns the defaults (None values) indicating no thinking config applied
+        assert effort is None
+        assert summary is None
+
+    def test_thinking_config_enabled_false_disables_on_optional_model(
+        self, openai_responses_optional_reasoning_profile: ModelProfile
+    ):
+        """ThinkingConfig with enabled=False should return defaults on optional models."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'o1-preview'
+        model._profile = openai_responses_optional_reasoning_profile
+
+        settings: OpenAIResponsesModelSettings = {'thinking': {'enabled': False}}
+        effort, summary = model._apply_unified_thinking(settings, None, None)
+
+        assert effort is None
+        assert summary is None
+
+    def test_preserves_existing_reasoning_effort(self, openai_responses_reasoning_profile: ModelProfile):
+        """Existing reasoning_effort value should be preserved."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'o3'
+        model._profile = openai_responses_reasoning_profile
+
+        # Test with explicit effort that should NOT override existing value
+        settings: OpenAIResponsesModelSettings = {'thinking': {'effort': 'low'}}
+        effort, _ = model._apply_unified_thinking(settings, 'high', None)
+
+        # Existing 'high' should be preserved
+        assert effort == 'high'
+
+    def test_preserves_existing_reasoning_summary(self, openai_responses_reasoning_profile: ModelProfile):
+        """Existing reasoning_summary value should be preserved."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'o3'
+        model._profile = openai_responses_reasoning_profile
+
+        # Test with explicit summary that should NOT override existing value
+        settings: OpenAIResponsesModelSettings = {'thinking': {'summary': 'detailed'}}
+        _, summary = model._apply_unified_thinking(settings, None, 'concise')
+
+        # Existing 'concise' should be preserved
+        assert summary == 'concise'
 
 
 # ============================================================================
