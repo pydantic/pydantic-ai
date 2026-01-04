@@ -106,7 +106,7 @@ def warn_setting_mapped(
     if model_name:
         base = f"{provider_name} model '{model_name}' mapped {setting_name}={setting_value!r} to {mapped_to!r}"
     else:
-        base = f"{provider_name} mapped {setting_name}={setting_value!r} to {mapped_to!r}"
+        base = f'{provider_name} mapped {setting_name}={setting_value!r} to {mapped_to!r}'
 
     parts = [base]
 
@@ -158,7 +158,7 @@ def warn_settings_ignored_batch(
     if model_name:
         base = f"{provider_name} model '{model_name}' ignores these settings: {formatted_names}"
     else:
-        base = f"{provider_name} ignores these unified thinking settings: {formatted_names}"
+        base = f'{provider_name} ignores these unified thinking settings: {formatted_names}'
 
     parts = [base]
 

@@ -14,15 +14,15 @@ from pydantic_ai.profiles.google import GOOGLE_EFFORT_TO_BUDGET
 from .conftest import try_import
 
 with try_import() as imports_successful:
+    # Import ThinkingLevel for Gemini 3 tests
+    from google.genai.types import ThinkingLevel
+
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.cerebras import CerebrasModel, CerebrasModelSettings
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
-
-    # Import ThinkingLevel for Gemini 3 tests
-    from google.genai.types import ThinkingLevel
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='model extras not installed')
