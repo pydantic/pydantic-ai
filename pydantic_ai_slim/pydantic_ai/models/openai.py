@@ -478,51 +478,14 @@ class OpenAIChatModel(Model):
         if 'openai_reasoning_effort' in model_settings:
             return model_settings['openai_reasoning_effort']
 
-        # Check for unified thinking setting
         thinking = model_settings.get('thinking')
         if thinking is None:
             return None
 
-        # Validate that the model supports thinking
-        if not self.profile.supports_thinking:
-            raise UserError(
-                f'Model {self.model_name!r} does not support reasoning. '
-                f'Remove the `thinking` setting or use an OpenAI reasoning model (o-series or GPT-5).'
-            )
+        from ..thinking import format_openai_reasoning, resolve_thinking_config
 
-        # Handle thinking=False (cannot disable for OpenAI reasoning models)
-        if thinking is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self.model_name!r} has reasoning always enabled and cannot be disabled. '
-                    f'Remove the `thinking=False` setting.'
-                )
-            return None
-
-        # Handle thinking=True (use provider default)
-        if thinking is True:
-            # OpenAI reasoning models use 'medium' as default
-            return 'medium'
-
-        # Handle ThinkingConfig dict
-        config: ThinkingConfig = thinking
-
-        # Check if explicitly disabled
-        if config.get('enabled') is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self.model_name!r} has reasoning always enabled and cannot be disabled. '
-                    f"Remove the `thinking={{'enabled': False}}` setting."
-                )
-            return None
-
-        # Get effort level directly from config
-        effort = config.get('effort')
-        if effort is not None:
-            return effort
-
-        # Default to medium effort
-        return 'medium'
+        resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
+        return format_openai_reasoning(resolved, self.profile)
 
     def prepare_request(
         self,
@@ -1571,8 +1534,8 @@ class OpenAIResponsesModel(Model):
         # Validate that the model supports thinking
         if not self.profile.supports_thinking:
             raise UserError(
-                f'Model {self.model_name!r} does not support reasoning. '
-                f'Remove the `thinking` setting or use an OpenAI reasoning model.'
+                f'Model {self.model_name!r} does not support thinking/reasoning. '
+                f'Remove the `thinking` setting or use a model that supports thinking.'
             )
 
         if thinking is False:

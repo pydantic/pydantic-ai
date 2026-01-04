@@ -310,45 +310,14 @@ class BedrockConverseModel(Model):
         For Claude models on Bedrock, thinking is passed via additionalModelRequestFields.
         Returns the thinking config dict in Anthropic format, or None if not enabled.
         """
-        # Check for unified thinking setting
         thinking = model_settings.get('thinking')
         if thinking is None:
             return None
 
-        # Validate that the model supports thinking
-        if not self.profile.supports_thinking:
-            raise UserError(
-                f'Model {self.model_name!r} does not support thinking/reasoning. '
-                f'Remove the `thinking` setting or use a model that supports extended thinking.'
-            )
+        from ..thinking import format_bedrock_thinking, resolve_thinking_config
 
-        # Handle thinking=False (disable thinking)
-        if thinking is False:
-            return {'type': 'disabled'}
-
-        # Handle thinking=True (enable with default budget)
-        if thinking is True:
-            budget = self.profile.default_thinking_budget or 4096
-            return {'type': 'enabled', 'budget_tokens': budget}
-
-        # Handle ThinkingConfig dict
-        config: ThinkingConfig = thinking
-
-        # Check if explicitly disabled
-        if config.get('enabled') is False:
-            return {'type': 'disabled'}
-
-        # Get budget - either explicit or from effort level
-        budget_tokens: int | None = config.get('budget_tokens')
-        if budget_tokens is None and (effort := config.get('effort')):
-            effort_map = self.profile.effort_to_budget_map or ANTHROPIC_EFFORT_TO_BUDGET
-            budget_tokens = effort_map.get(effort)
-
-        # Default budget if still not set
-        if budget_tokens is None:
-            budget_tokens = self.profile.default_thinking_budget or 4096
-
-        return {'type': 'enabled', 'budget_tokens': budget_tokens}
+        resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
+        return format_bedrock_thinking(resolved, self.profile)
 
     async def request(
         self,

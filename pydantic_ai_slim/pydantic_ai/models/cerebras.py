@@ -120,49 +120,10 @@ class CerebrasModel(OpenAIChatModel):
         if thinking is None:
             return None
 
-        # Check model support
-        if not self.profile.supports_thinking:
-            raise UserError(
-                f'Model {self._model_name!r} does not support reasoning. '
-                'Use a reasoning model (e.g., zai-glm-4.6, gpt-oss-120b) or remove the thinking setting.'
-            )
+        from ..thinking import format_cerebras_reasoning, resolve_thinking_config
 
-        # Handle boolean shorthand
-        if thinking is True:
-            # Enable thinking (default behavior, no need to set disable_reasoning)
-            return None
-        elif thinking is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
-            # Disable reasoning
-            return True
-
-        # Handle ThinkingConfig dict
-        config: ThinkingConfig = thinking
-
-        # Warn about ignored settings
-        ignored: list[str] = []
-        for setting in ('budget_tokens', 'effort', 'include_in_response', 'summary'):
-            if config.get(setting) is not None:
-                ignored.append(setting)
-        if ignored:
-            from ._warnings import warn_settings_ignored_batch
-
-            warn_settings_ignored_batch(
-                setting_names=ignored,
-                provider_name=self.system,
-                model_name=self._model_name,
-                reason='Cerebras reasoning can only be enabled or disabled. Reasoning will be enabled with default behavior',
-            )
-
-        # Check enabled=False
-        if config.get('enabled') is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
-            return True
-
-        # Any other config enables thinking (no need to disable)
-        return None
+        resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
+        return format_cerebras_reasoning(resolved, self.profile, self._model_name, 'Cerebras')
 
 
 def _cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:

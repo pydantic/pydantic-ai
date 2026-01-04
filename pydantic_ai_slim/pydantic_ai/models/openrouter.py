@@ -571,49 +571,10 @@ class OpenRouterModel(OpenAIChatModel):
         if thinking is None:
             return None
 
-        # Check model support
-        if not self.profile.supports_thinking:
-            raise UserError(
-                f'Model {self._model_name!r} does not support reasoning. '
-                'Use a reasoning model (e.g., o3, deepseek-r1) or remove the thinking setting.'
-            )
+        from ..thinking import format_openrouter_reasoning, resolve_thinking_config
 
-        # Handle boolean shorthand
-        if thinking is True:
-            return {'enabled': True}
-        elif thinking is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
-            return {'enabled': False}
-
-        # Handle ThinkingConfig dict
-        config: ThinkingConfig = thinking
-
-        # Check enabled=False
-        if config.get('enabled') is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
-            return {'enabled': False}
-
-        result: OpenRouterReasoning = {}
-
-        # Map effort level directly (OpenRouter uses same values)
-        if effort := config.get('effort'):
-            result['effort'] = effort
-
-        # Map budget_tokens to max_tokens (Anthropic-style)
-        if budget_tokens := config.get('budget_tokens'):
-            result['max_tokens'] = budget_tokens
-
-        # Map include_in_response=False to exclude=True
-        if config.get('include_in_response') is False:
-            result['exclude'] = True
-
-        # If no specific settings, just enable
-        if not result:
-            result['enabled'] = True
-
-        return result
+        resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
+        return format_openrouter_reasoning(resolved, self.profile)
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:

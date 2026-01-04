@@ -523,7 +523,7 @@ class TestOpenAIUnifiedThinking:
 
         settings: OpenAIChatModelSettings = {'thinking': True}
 
-        with pytest.raises(UserError, match='does not support reasoning'):
+        with pytest.raises(UserError, match='does not support thinking/reasoning'):
             model._resolve_reasoning_effort(settings)
 
     def test_thinking_false_disables_on_optional_model(self, openai_optional_reasoning_profile: ModelProfile):
@@ -646,7 +646,7 @@ class TestOpenAIResponsesUnifiedThinking:
 
         settings: OpenAIResponsesModelSettings = {'thinking': True}
 
-        with pytest.raises(UserError, match='does not support reasoning'):
+        with pytest.raises(UserError, match='does not support thinking/reasoning'):
             model._apply_unified_thinking(settings, None, None)
 
     def test_thinking_true_uses_medium_effort(self, openai_responses_reasoning_profile: ModelProfile):
@@ -946,7 +946,7 @@ class TestOpenRouterUnifiedThinking:
 
         settings: OpenRouterModelSettings = {'thinking': True}
 
-        with pytest.raises(UserError, match='does not support reasoning'):
+        with pytest.raises(UserError, match='does not support thinking/reasoning'):
             model._resolve_reasoning_config(settings)
 
     def test_thinking_false_raises_for_always_on(self, always_on_thinking_profile: ModelProfile):
@@ -1065,7 +1065,7 @@ class TestGroqUnifiedThinking:
 
         settings: GroqModelSettings = {'thinking': True}
 
-        with pytest.raises(UserError, match='does not support reasoning'):
+        with pytest.raises(UserError, match='does not support thinking/reasoning'):
             model._resolve_reasoning_format(settings)
 
     def test_thinking_false_raises_for_always_on(self, always_on_thinking_profile: ModelProfile):
@@ -1234,7 +1234,7 @@ class TestCerebrasUnifiedThinking:
 
         settings: CerebrasModelSettings = {'thinking': True}
 
-        with pytest.raises(UserError, match='does not support reasoning'):
+        with pytest.raises(UserError, match='does not support thinking/reasoning'):
             model._resolve_reasoning_config(settings)
 
     def test_thinking_false_raises_for_always_on(self, always_on_thinking_profile: ModelProfile):
@@ -1443,3 +1443,72 @@ class TestAdditionalProfileCapabilities:
         profile = harmony_model_profile('llama-3-70b')
         assert profile is not None
         assert profile.supports_thinking is False
+
+
+# ============================================================================
+# Direct Unit Tests for thinking.py Module
+# ============================================================================
+
+
+class TestThinkingModuleDirect:
+    """Direct unit tests for pydantic_ai.thinking module functions.
+
+    These tests cover edge cases (like None inputs) that aren't hit through
+    the model API integration tests above.
+    """
+
+    def test_resolve_thinking_config_none_returns_none(self, thinking_profile: ModelProfile):
+        """resolve_thinking_config returns None when thinking is None."""
+        from pydantic_ai.thinking import resolve_thinking_config
+
+        result = resolve_thinking_config(None, thinking_profile, 'test-model')
+        assert result is None
+
+    def test_format_anthropic_thinking_none_returns_none(self, thinking_profile: ModelProfile):
+        """format_anthropic_thinking returns None when config is None."""
+        from pydantic_ai.thinking import format_anthropic_thinking
+
+        result = format_anthropic_thinking(None, thinking_profile)
+        assert result is None
+
+    def test_format_bedrock_thinking_none_returns_none(self, thinking_profile: ModelProfile):
+        """format_bedrock_thinking returns None when config is None."""
+        from pydantic_ai.thinking import format_bedrock_thinking
+
+        result = format_bedrock_thinking(None, thinking_profile)
+        assert result is None
+
+    def test_format_google_thinking_none_returns_none(self, thinking_profile: ModelProfile):
+        """format_google_thinking returns None when config is None."""
+        from pydantic_ai.thinking import format_google_thinking
+
+        result = format_google_thinking(None, thinking_profile, 'gemini-2.5-pro')
+        assert result is None
+
+    def test_format_openai_reasoning_none_returns_none(self, thinking_profile: ModelProfile):
+        """format_openai_reasoning returns None when config is None."""
+        from pydantic_ai.thinking import format_openai_reasoning
+
+        result = format_openai_reasoning(None, thinking_profile)
+        assert result is None
+
+    def test_format_groq_reasoning_none_returns_none(self, thinking_profile: ModelProfile):
+        """format_groq_reasoning returns None when config is None."""
+        from pydantic_ai.thinking import format_groq_reasoning
+
+        result = format_groq_reasoning(None, thinking_profile, 'qwen-qwq', 'Groq')
+        assert result is None
+
+    def test_format_cerebras_reasoning_none_returns_none(self, thinking_profile: ModelProfile):
+        """format_cerebras_reasoning returns None when config is None."""
+        from pydantic_ai.thinking import format_cerebras_reasoning
+
+        result = format_cerebras_reasoning(None, thinking_profile, 'zai-glm', 'Cerebras')
+        assert result is None
+
+    def test_format_openrouter_reasoning_none_returns_none(self, thinking_profile: ModelProfile):
+        """format_openrouter_reasoning returns None when config is None."""
+        from pydantic_ai.thinking import format_openrouter_reasoning
+
+        result = format_openrouter_reasoning(None, thinking_profile)
+        assert result is None

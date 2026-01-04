@@ -190,53 +190,10 @@ class GroqModel(Model):
         if thinking is None:
             return None
 
-        # Check model support
-        if not self.profile.supports_thinking:
-            raise UserError(
-                f'Model {self._model_name!r} does not support reasoning. '
-                'Use a reasoning model or remove the thinking setting.'
-            )
+        from ..thinking import format_groq_reasoning, resolve_thinking_config
 
-        # Handle boolean shorthand
-        if thinking is True:
-            # Enable thinking with parsed output (structured)
-            return 'parsed'
-        elif thinking is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
-            # Disable thinking by not setting reasoning_format (return None)
-            return None
-
-        # Handle ThinkingConfig dict
-        config: ThinkingConfig = thinking
-
-        # Warn about ignored settings
-        ignored: list[str] = []
-        if config.get('budget_tokens') is not None:
-            ignored.append('budget_tokens')
-        if config.get('effort') is not None:
-            ignored.append('effort')
-        if ignored:
-            from ._warnings import warn_settings_ignored_batch
-
-            warn_settings_ignored_batch(
-                setting_names=ignored,
-                provider_name=self.system,
-                reason='Groq reasoning models do not support fine-grained control. Reasoning will be enabled with default behavior',
-            )
-
-        # Check enabled=False
-        if config.get('enabled') is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(f'Model {self._model_name!r} has reasoning always enabled and cannot be disabled.')
-            return None
-
-        # Map include_in_response to reasoning format
-        include_in_response = config.get('include_in_response', True)
-        if include_in_response is False:
-            return 'hidden'
-        else:
-            return 'parsed'
+        resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
+        return format_groq_reasoning(resolved, self.profile, self._model_name, 'Groq')
 
     @property
     def base_url(self) -> str:
