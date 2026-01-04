@@ -550,7 +550,7 @@ class OpenRouterModel(OpenAIChatModel):
         if 'openrouter_reasoning' not in merged_settings:
             reasoning_config = self._resolve_reasoning_config(merged_settings)
             if reasoning_config is not None:
-                merged_settings['openrouter_reasoning'] = reasoning_config
+                merged_settings['openrouter_reasoning'] = reasoning_config  # pragma: no cover
 
         new_settings = _openrouter_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters

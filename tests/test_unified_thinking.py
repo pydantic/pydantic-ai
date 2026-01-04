@@ -274,6 +274,18 @@ class TestGoogleUnifiedThinking:
 
         assert result == {'include_thoughts': False}
 
+    def test_thinking_config_enabled_false_gemini25(self, google_thinking_profile: ModelProfile):
+        """Gemini 2.5: ThinkingConfig with enabled=False should disable with budget=0."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-2.5-flash'
+        model._profile = google_thinking_profile
+
+        settings: GoogleModelSettings = {'thinking': {'enabled': False}}
+        result = model._resolve_thinking_config(settings)
+
+        # Gemini 2.5 uses thinking_budget=0 to disable
+        assert result == {'thinking_budget': 0}
+
     def test_provider_specific_takes_precedence(self, google_thinking_profile: ModelProfile):
         """google_thinking_config should take precedence over thinking."""
         model = GoogleModel.__new__(GoogleModel)

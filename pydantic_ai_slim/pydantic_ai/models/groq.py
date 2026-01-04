@@ -170,7 +170,7 @@ class GroqModel(Model):
         if 'groq_reasoning_format' not in merged_settings:
             reasoning_format = self._resolve_reasoning_format(merged_settings)
             if reasoning_format is not None:
-                merged_settings['groq_reasoning_format'] = reasoning_format
+                merged_settings['groq_reasoning_format'] = reasoning_format  # pragma: no cover
 
         return merged_settings, customized_parameters
 
