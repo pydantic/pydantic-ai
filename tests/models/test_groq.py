@@ -19,8 +19,6 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,

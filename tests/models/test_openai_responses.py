@@ -60,7 +60,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsInt, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -3135,7 +3135,7 @@ I\
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' be')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' extremely')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' long')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' —')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' -')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' potentially')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' hundreds')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' of')),
@@ -5823,7 +5823,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                             'background': 'opaque',
                             'quality': 'high',
                             'size': '1536x1024',
-                            'revised_prompt': 'Edit the previously generated ultra-realistic 4K axolotl macro: add a miniature colorful woven Mexican sombrero on the axolotl’s head, properly scaled, with a thin beige chin cord gently under the jaw, brim casting a soft shadow on its face. Keep the pink feathery gills unobstructed and in sharp focus; maintain the underwater setting with soft natural light beams from above, suspended particles, shallow depth of field and creamy bokeh, smooth pale freckled skin, delicate toes on rounded pebbles, bluish-green aquatic plants and a hint of driftwood. Sombrero details: vivid serape-style stripes (red, green, yellow, blue), decorative pom-pom trim on the brim edge, slightly wet texture with tiny clinging air bubbles. Centered composition, head slightly tilted toward the camera, sharp focus on eyes, gills, and hat, accurate axolotl anatomy, no extra limbs, no artifacts.',
+                            'revised_prompt': 'Edit the previously generated ultra-realistic 4K axolotl macro: add a miniature colorful woven Mexican sombrero on the axolotl\'s head, properly scaled, with a thin beige chin cord gently under the jaw, brim casting a soft shadow on its face. Keep the pink feathery gills unobstructed and in sharp focus; maintain the underwater setting with soft natural light beams from above, suspended particles, shallow depth of field and creamy bokeh, smooth pale freckled skin, delicate toes on rounded pebbles, bluish-green aquatic plants and a hint of driftwood. Sombrero details: vivid serape-style stripes (red, green, yellow, blue), decorative pom-pom trim on the brim edge, slightly wet texture with tiny clinging air bubbles. Centered composition, head slightly tilted toward the camera, sharp focus on eyes, gills, and hat, accurate axolotl anatomy, no extra limbs, no artifacts.',
                         },
                         tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                         timestamp=IsDatetime(),
@@ -6107,7 +6107,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                             'background': 'opaque',
                             'quality': 'high',
                             'size': '1024x1024',
-                            'revised_prompt': 'Photorealistic close-up of a pink leucistic axolotl underwater in a clear freshwater aquarium, gently hovering above dark volcanic sand. The axolotl’s featherlike external gills are a vibrant coral pink with fine filaments, its small smiling mouth and beady black eyes visible. Translucent, slightly speckled skin with subtle iridescence. Soft, dappled caustic light ripples across its back from the water surface. Surrounding environment includes lush green aquatic plants (anubias, java fern) and smooth river stones. Slight particulate in the water for realism. Shot at eye level, 50mm macro feel, shallow depth of field with creamy bokeh background. Natural color grading, crisp details, high resolution.',
+                            'revised_prompt': 'Photorealistic close-up of a pink leucistic axolotl underwater in a clear freshwater aquarium, gently hovering above dark volcanic sand. The axolotl\'s featherlike external gills are a vibrant coral pink with fine filaments, its small smiling mouth and beady black eyes visible. Translucent, slightly speckled skin with subtle iridescence. Soft, dappled caustic light ripples across its back from the water surface. Surrounding environment includes lush green aquatic plants (anubias, java fern) and smooth river stones. Slight particulate in the water for realism. Shot at eye level, 50mm macro feel, shallow depth of field with creamy bokeh background. Natural color grading, crisp details, high resolution.',
                         },
                         tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
                         timestamp=IsDatetime(),
@@ -6484,7 +6484,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                             'background': 'opaque',
                             'quality': 'high',
                             'size': '1024x1024',
-                            'revised_prompt': 'Photorealistic close-up of a pink leucistic axolotl (Ambystoma mexicanum) in a crystal-clear freshwater aquarium. Details: feathery red external gills, smooth speckled skin, small black eyes, endearing “smile.” Composition: subject centered at a slight angle, shallow depth of field, soft rim lighting, gentle caustics on fine sand substrate, lush green aquatic plants (Anubias, Java moss) in the background, tiny air bubbles, clean glass. Aesthetic: 4K, high dynamic range, professional macro wildlife photography, natural colors, no text or watermark.',
+                            'revised_prompt': 'Photorealistic close-up of a pink leucistic axolotl (Ambystoma mexicanum) in a crystal-clear freshwater aquarium. Details: feathery red external gills, smooth speckled skin, small black eyes, endearing "smile." Composition: subject centered at a slight angle, shallow depth of field, soft rim lighting, gentle caustics on fine sand substrate, lush green aquatic plants (Anubias, Java moss) in the background, tiny air bubbles, clean glass. Aesthetic: 4K, high dynamic range, professional macro wildlife photography, natural colors, no text or watermark.',
                         },
                         tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
                         timestamp=IsDatetime(),
@@ -6706,7 +6706,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                             'background': 'opaque',
                             'quality': 'high',
                             'size': '1536x1024',
-                            'revised_prompt': 'A cozy, softly lit underwater scene of a wild-type brown axolotl resting on sandy substrate beside a piece of driftwood and a small sprig of Java moss. Realistic detail, slight vignette, gentle ripples of caustic light on the sand, crisp focus on the axolotl’s face and gills, high resolution.',
+                            'revised_prompt': 'A cozy, softly lit underwater scene of a wild-type brown axolotl resting on sandy substrate beside a piece of driftwood and a small sprig of Java moss. Realistic detail, slight vignette, gentle ripples of caustic light on the sand, crisp focus on the axolotl\'s face and gills, high resolution.',
                         },
                         tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
                         timestamp=IsDatetime(),
@@ -7106,11 +7106,11 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                         content="""\
 The monorepo is organized into these main packages:  \n\
 
-• pydantic-ai-slim\u2003– core agent framework (type-safe agents, model interface, tooling)  \n\
-• pydantic-evals\u2003\u2003– evaluation system (datasets, metrics, evaluators, reports)  \n\
-• pydantic-graph\u2003\u2003– graph-based execution engine (state-machine orchestration)  \n\
-• clai\u2003\u2003\u2003\u2003\u2003\u2003\u2003– CLI for scaffolding and running agents  \n\
-• examples\u2003\u2003\u2003\u2003– sample apps & demos showing real-world usage\
+• pydantic-ai-slim\u2003- core agent framework (type-safe agents, model interface, tooling)  \n\
+• pydantic-evals\u2003\u2003- evaluation system (datasets, metrics, evaluators, reports)  \n\
+• pydantic-graph\u2003\u2003- graph-based execution engine (state-machine orchestration)  \n\
+• clai\u2003\u2003\u2003\u2003\u2003\u2003\u2003- CLI for scaffolding and running agents  \n\
+• examples\u2003\u2003\u2003\u2003- sample apps & demos showing real-world usage\
 """,
                         id='msg_0083938b3a28070e0068fabda04de881a089010e6710637ab3',
                     ),
