@@ -307,7 +307,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
-                'output': {'status': 'completed', 'sources': []},
+                'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
@@ -329,7 +329,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
-                'output': {'status': 'completed', 'sources': []},
+                'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
@@ -351,7 +351,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
-                'output': {'status': 'completed', 'sources': []},
+                'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
@@ -376,7 +376,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
-                'output': {'status': 'completed', 'sources': []},
+                'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
@@ -398,7 +398,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
-                'output': {'status': 'completed', 'sources': []},
+                'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
@@ -420,7 +420,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
-                'output': {'status': 'completed', 'sources': []},
+                'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
@@ -442,7 +442,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
-                'output': {'status': 'completed', 'sources': []},
+                'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},

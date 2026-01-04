@@ -52,10 +52,6 @@ from ..messages import (
     WebFetchReturnPart,
     WebSearchCallPart,
     WebSearchReturnPart,
-    normalize_code_execution_content,
-    normalize_file_search_content,
-    normalize_web_fetch_content,
-    normalize_web_search_content,
 )
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
@@ -900,13 +896,11 @@ class GeminiStreamedResponse(StreamedResponse):
         grounding_chunks = grounding_metadata.grounding_chunks
         retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
         if retrieved_contexts:  # pragma: no branch
-            normalized, provider_details = normalize_file_search_content(retrieved_contexts, 'google')
             part = FileSearchReturnPart(
                 provider_name=self.provider_name,
                 tool_name=FileSearchTool.kind,
                 tool_call_id=self._file_search_tool_call_id,
-                content=normalized,
-                provider_details=provider_details,
+                content=retrieved_contexts,
             )
             self._file_search_tool_call_id = None
             return part
@@ -983,7 +977,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
     for item in m.parts:
         part: PartDict = {}
         if (
-            isinstance(item.provider_details, dict)
+            item.provider_details
             and (thought_signature := item.provider_details.get('thought_signature'))
             and m.provider_name == provider_name
         ):
@@ -1024,9 +1018,8 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                     pass
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == provider_name:
-                if item.tool_name == CodeExecutionTool.kind and isinstance(item.provider_details, dict):
-                    # Use provider_details (raw Google format) for round-trip compatibility
-                    part['code_execution_result'] = cast(CodeExecutionResultDict, item.provider_details)  # pyright: ignore[reportUnknownMemberType]
+                if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
+                    part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
                 elif item.tool_name == WebSearchTool.kind:
                     # Web search results are not sent back
                     pass
@@ -1114,8 +1107,7 @@ def _process_response_from_parts(
             raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
         if provider_details:
-            existing = item.provider_details if isinstance(item.provider_details, dict) else {}
-            item.provider_details = {**existing, **provider_details}
+            item.provider_details = {**(item.provider_details or {}), **provider_details}
 
         items.append(item)
     return ModelResponse(
@@ -1197,14 +1189,11 @@ def _map_executable_code(
 def _map_code_execution_result(
     code_execution_result: CodeExecutionResult, provider_name: str, tool_call_id: str
 ) -> CodeExecutionReturnPart:
-    raw_content = code_execution_result.model_dump(mode='json')
-    normalized, provider_details = normalize_code_execution_content(raw_content, 'google')
     return CodeExecutionReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        content=normalized,
+        content=code_execution_result.model_dump(mode='json'),
         tool_call_id=tool_call_id,
-        provider_details=provider_details,
     )
 
 
@@ -1213,12 +1202,6 @@ def _map_grounding_metadata(
 ) -> tuple[WebSearchCallPart, WebSearchReturnPart] | tuple[None, None]:
     if grounding_metadata and (web_search_queries := grounding_metadata.web_search_queries):
         tool_call_id = _utils.generate_tool_call_id()
-        raw_content = (
-            [chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
-            if (grounding_chunks := grounding_metadata.grounding_chunks)
-            else []
-        )
-        normalized, provider_details = normalize_web_search_content(raw_content, 'google')
         return (
             WebSearchCallPart(
                 provider_name=provider_name,
@@ -1230,8 +1213,9 @@ def _map_grounding_metadata(
                 provider_name=provider_name,
                 tool_name=WebSearchTool.kind,
                 tool_call_id=tool_call_id,
-                content=normalized,
-                provider_details=provider_details,
+                content=[chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
+                if (grounding_chunks := grounding_metadata.grounding_chunks)
+                else [],
             ),
         )
     else:
@@ -1279,7 +1263,6 @@ def _map_file_search_grounding_metadata(
     if not retrieved_contexts:
         return None, None
 
-    normalized, provider_details = normalize_file_search_content(retrieved_contexts, 'google')
     tool_call_id = _utils.generate_tool_call_id()
     return (
         FileSearchCallPart(
@@ -1292,8 +1275,7 @@ def _map_file_search_grounding_metadata(
             provider_name=provider_name,
             tool_name=FileSearchTool.kind,
             tool_call_id=tool_call_id,
-            content=normalized,
-            provider_details=provider_details,
+            content=retrieved_contexts,
         ),
     )
 
@@ -1305,8 +1287,6 @@ def _map_url_context_metadata(
         tool_call_id = _utils.generate_tool_call_id()
         # Extract URLs from the metadata
         urls = [meta.retrieved_url for meta in url_metadata if meta.retrieved_url]
-        raw_content = [meta.model_dump(mode='json') for meta in url_metadata]
-        normalized, provider_details = normalize_web_fetch_content(raw_content, 'google')
         return (
             WebFetchCallPart(
                 provider_name=provider_name,
@@ -1318,8 +1298,7 @@ def _map_url_context_metadata(
                 provider_name=provider_name,
                 tool_name=WebFetchTool.kind,
                 tool_call_id=tool_call_id,
-                content=normalized,
-                provider_details=provider_details,
+                content=[meta.model_dump(mode='json') for meta in url_metadata],
             ),
         )
     else:

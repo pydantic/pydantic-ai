@@ -63,10 +63,6 @@ from ..messages import (
     VideoUrl,
     WebSearchCallPart,
     WebSearchReturnPart,
-    normalize_code_execution_content,
-    normalize_file_search_content,
-    normalize_image_generation_content,
-    normalize_web_search_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
@@ -2625,7 +2621,7 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
 def _map_code_interpreter_tool_call(
     item: responses.ResponseCodeInterpreterToolCall, provider_name: str
 ) -> tuple[CodeExecutionCallPart, CodeExecutionReturnPart, list[FilePart]]:
-    raw_content: dict[str, Any] = {
+    result: dict[str, Any] = {
         'status': item.status,
     }
 
@@ -2646,9 +2642,8 @@ def _map_code_interpreter_tool_call(
                 assert_never(output)
 
     if logs:
-        raw_content['logs'] = logs
+        result['logs'] = logs
 
-    normalized, provider_details = normalize_code_execution_content(raw_content, 'openai-responses')
     return (
         CodeExecutionCallPart(
             tool_name=CodeExecutionTool.kind,
@@ -2662,9 +2657,8 @@ def _map_code_interpreter_tool_call(
         CodeExecutionReturnPart(
             tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,
-            content=normalized,
+            content=result,
             provider_name=provider_name,
-            provider_details=provider_details,
         ),
         file_parts,
     )
@@ -2675,7 +2669,7 @@ def _map_web_search_tool_call(
 ) -> tuple[WebSearchCallPart, WebSearchReturnPart]:
     args: dict[str, Any] | None = None
 
-    raw_content: dict[str, Any] = {
+    result = {
         'status': item.status,
     }
 
@@ -2685,9 +2679,8 @@ def _map_web_search_tool_call(
 
         # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
         if sources := args.pop('sources', None):
-            raw_content['sources'] = sources
+            result['sources'] = sources
 
-    normalized, provider_details = normalize_web_search_content(raw_content, 'openai-responses')
     return (
         WebSearchCallPart(
             tool_name=WebSearchTool.kind,
@@ -2698,9 +2691,8 @@ def _map_web_search_tool_call(
         WebSearchReturnPart(
             tool_name=WebSearchTool.kind,
             tool_call_id=item.id,
-            content=normalized,
+            content=result,
             provider_name=provider_name,
-            provider_details=provider_details,
         ),
     )
 
@@ -2711,13 +2703,11 @@ def _map_file_search_tool_call(
 ) -> tuple[FileSearchCallPart, FileSearchReturnPart]:
     args = {'queries': item.queries}
 
-    raw_result: dict[str, Any] = {
+    result: dict[str, Any] = {
         'status': item.status,
     }
     if item.results is not None:
-        raw_result['results'] = [r.model_dump(mode='json') for r in item.results]
-
-    normalized, provider_details = normalize_file_search_content(raw_result, 'openai')
+        result['results'] = [r.model_dump(mode='json') for r in item.results]
 
     return (
         FileSearchCallPart(
@@ -2729,9 +2719,8 @@ def _map_file_search_tool_call(
         FileSearchReturnPart(
             tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
-            content=normalized,
+            content=result,
             provider_name=provider_name,
-            provider_details=provider_details,
         ),
     )
 
@@ -2739,20 +2728,20 @@ def _map_file_search_tool_call(
 def _map_image_generation_tool_call(
     item: responses.response_output_item.ImageGenerationCall, provider_name: str
 ) -> tuple[ImageGenerationCallPart, ImageGenerationReturnPart, FilePart | None]:
-    raw_result: dict[str, Any] = {
+    result = {
         'status': item.status,
     }
 
     # Not present on the type, but present on the actual object.
     # See https://github.com/openai/openai-python/issues/2649
     if background := getattr(item, 'background', None):
-        raw_result['background'] = background
+        result['background'] = background
     if quality := getattr(item, 'quality', None):
-        raw_result['quality'] = quality
+        result['quality'] = quality
     if size := getattr(item, 'size', None):
-        raw_result['size'] = size
+        result['size'] = size
     if revised_prompt := getattr(item, 'revised_prompt', None):
-        raw_result['revised_prompt'] = revised_prompt
+        result['revised_prompt'] = revised_prompt
     output_format = getattr(item, 'output_format', 'png')
 
     file_part: FilePart | None = None
@@ -2766,9 +2755,7 @@ def _map_image_generation_tool_call(
         )
 
         # For some reason, the streaming API leaves `status` as `generating` even though generation has completed.
-        raw_result['status'] = 'completed'
-
-    normalized, provider_details = normalize_image_generation_content(raw_result, 'openai')
+        result['status'] = 'completed'
 
     return (
         ImageGenerationCallPart(
@@ -2779,9 +2766,8 @@ def _map_image_generation_tool_call(
         ImageGenerationReturnPart(
             tool_name=ImageGenerationTool.kind,
             tool_call_id=item.id,
-            content=normalized,
+            content=result,
             provider_name=provider_name,
-            provider_details=provider_details,
         ),
         file_part,
     )

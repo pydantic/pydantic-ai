@@ -927,79 +927,6 @@ The weather in San Francisco today is partly cloudy with a high of 17°C (62.6°
                     WebSearchReturnPart(
                         tool_name='web_search',
                         content={
-                            'status': 'completed',
-                            'sources': [
-                                {'title': 'Weather in San Francisco', 'url': 'https://www.weatherapi.com/'},
-                                {
-                                    'title': 'Wednesday, September 17, 2025. San Francisco, CA - Weather ...',
-                                    'url': 'https://weathershogun.com/weather/usa/ca/san-francisco/480/september/2025-09-17',
-                                },
-                                {
-                                    'title': 'Find cheap flights from Milan (MXP) to San Francisco (SFO)',
-                                    'url': 'https://www.aa.com/en-it/flights-from-milan-to-san-francisco',
-                                },
-                                {
-                                    'title': 'San Francisco weather in September 2025 | Weather25.com',
-                                    'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
-                                },
-                                {
-                                    'title': 'Bay Area basks in unseasonable heat with thunderstorms and ...',
-                                    'url': 'https://www.cbsnews.com/sanfrancisco/news/bay-area-hot-weather-thunderstorms-fire-danger-dry-lightning/',
-                                },
-                                {
-                                    'title': 'Area Forecast Discussion - National Weather Service',
-                                    'url': 'https://forecast.weather.gov/product.php?site=mtr&issuedby=MTR&product=AFD',
-                                },
-                                {
-                                    'title': 'Weather in San Francisco in September 2025',
-                                    'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
-                                },
-                                {
-                                    'title': 'The Fantasy Forecast: September skies with Maye weather',
-                                    'url': 'https://dailycampus.com/2025/09/17/the-fantasy-forecast-september-skies-with-maye-weather/',
-                                },
-                                {
-                                    'title': '60-Day Extended Weather Forecast for San Francisco, San ...',
-                                    'url': 'https://www.almanac.com/weather/longrange/CA/San%20Francisco%2C%20San%20Francisco%20County',
-                                },
-                                {
-                                    'title': 'San Francisco weather in September 2025 | California',
-                                    'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                                },
-                                {
-                                    'title': 'Weather Forecast for San Francisco for Wednesday 17 September',
-                                    'url': 'https://www.metcheck.com/WEATHER/dayforecast.asp?location=San%20Francisco&locationID=1628582&lat=-25.23078&lon=-57.57218&dateFor=17/09/2025',
-                                },
-                                {
-                                    'title': 'Weather in San Francisco, California for September 2025',
-                                    'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
-                                },
-                                {
-                                    'title': 'San Francisco September 2025 Historical Weather Data (California ...',
-                                    'url': 'https://weatherspark.com/h/m/557/2025/9/Historical-Weather-in-September-2025-in-San-Francisco-California-United-States',
-                                },
-                                {
-                                    'title': 'Weather Forecast for Batey San Francisco for Wednesday 17 ...',
-                                    'url': 'https://www.metcheck.com/WEATHER/dayforecast.asp?location=Batey%20San%20Francisco&locationID=511664&lat=18.62123&lon=-68.63688&dateFor=17/09/2025',
-                                },
-                                {
-                                    'title': 'Wednesday morning First Alert weather forecast with Jessica Burch',
-                                    'url': 'https://www.youtube.com/watch?v=fzAVNg32R2M',
-                                },
-                                {
-                                    'title': 'Monthly Weather Forecast for San Francisco, CA',
-                                    'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
-                                },
-                                {
-                                    'title': 'Rain and thunderstorms coming to Bay Area - SFGATE',
-                                    'url': 'https://www.sfgate.com/bayarea/article/thunder-rain-tropical-storm-mario-21053020.php',
-                                },
-                            ],
-                        },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='groq',
-                        provider_details={
                             'images': None,
                             'results': [
                                 {
@@ -1106,6 +1033,9 @@ The weather in San Francisco today is partly cloudy with a high of 17°C (62.6°
                                 },
                             ],
                         },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='groq',
                     ),
                     TextPart(
                         content="""\
@@ -1180,75 +1110,6 @@ search(What is the weather in San Francisco today?)
                     WebSearchReturnPart(
                         tool_name='web_search',
                         content={
-                            'status': 'completed',
-                            'sources': [
-                                {'title': 'Weather in San Francisco', 'url': 'https://www.weatherapi.com/'},
-                                {
-                                    'title': 'San Francisco, CA | Weather Forecasts Now, Live Radar Maps ...',
-                                    'url': 'https://www.weatherbug.com/weather-forecast/now/san-francisco-ca-94103',
-                                },
-                                {
-                                    'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                    'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                                },
-                                {
-                                    'title': 'Weather for San Francisco, California, USA - Time and Date',
-                                    'url': 'https://www.timeanddate.com/weather/usa/san-francisco',
-                                },
-                                {
-                                    'title': 'San Francisco - 14-Day Forecast: Temperature, Wind & Radar',
-                                    'url': 'https://www.ventusky.com/san-francisco',
-                                },
-                                {
-                                    'title': 'Bay Area forecast discussion - National Weather Service',
-                                    'url': 'https://forecast.weather.gov/product.php?format=ci&glossary=1&issuedby=mtr&product=afd&site=mtr&version=1',
-                                },
-                                {
-                                    'title': 'Weather in San Francisco in September 2025',
-                                    'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
-                                },
-                                {
-                                    'title': 'San Francisco weather in September 2025 | Weather25.com',
-                                    'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
-                                },
-                                {
-                                    'title': 'San Francisco, CA Weather Forecast - AccuWeather',
-                                    'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
-                                },
-                                {
-                                    'title': 'AccuWeather Forecast: 1 more day of hot temperatures away from ...',
-                                    'url': 'https://abc7news.com/post/weather-bay-area-forecast-temperatures/39468/',
-                                },
-                                {
-                                    'title': 'San Francisco Bay Area weather and First Alert Weather forecasts',
-                                    'url': 'https://www.cbsnews.com/sanfrancisco/weather/',
-                                },
-                                {
-                                    'title': '10-Day Weather Forecast for San Francisco, CA',
-                                    'url': 'https://weather.com/weather/tenday/l/USCA0987:1:US',
-                                },
-                                {
-                                    'title': '10-Day Weather Forecast for San Francisco, CA',
-                                    'url': 'https://weather.com/weather/tenday/l/94112:4:US',
-                                },
-                                {
-                                    'title': 'Past Weather in San Francisco, California, USA - Time and Date',
-                                    'url': 'https://www.timeanddate.com/weather/usa/san-francisco/historic',
-                                },
-                                {
-                                    'title': 'Monthly Weather Forecast for San Francisco, CA',
-                                    'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
-                                },
-                                {
-                                    'title': 'San Francisco, CA Hourly Weather Forecast - Weather Underground',
-                                    'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
-                                },
-                            ],
-                        },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='groq',
-                        provider_details={
                             'images': None,
                             'results': [
                                 {
@@ -1349,6 +1210,9 @@ search(What is the weather in San Francisco today?)
                                 },
                             ],
                         },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='groq',
                     ),
                     ThinkingPart(content=IsStr()),
                     TextPart(
@@ -1457,75 +1321,6 @@ search(What is the weather in San Francisco today?)
                 part=WebSearchReturnPart(
                     tool_name='web_search',
                     content={
-                        'status': 'completed',
-                        'sources': [
-                            {'title': 'Weather in San Francisco', 'url': 'https://www.weatherapi.com/'},
-                            {
-                                'title': 'San Francisco, CA | Weather Forecasts Now, Live Radar Maps ...',
-                                'url': 'https://www.weatherbug.com/weather-forecast/now/san-francisco-ca-94103',
-                            },
-                            {
-                                'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                            },
-                            {
-                                'title': 'Weather for San Francisco, California, USA - Time and Date',
-                                'url': 'https://www.timeanddate.com/weather/usa/san-francisco',
-                            },
-                            {
-                                'title': 'San Francisco - 14-Day Forecast: Temperature, Wind & Radar',
-                                'url': 'https://www.ventusky.com/san-francisco',
-                            },
-                            {
-                                'title': 'Bay Area forecast discussion - National Weather Service',
-                                'url': 'https://forecast.weather.gov/product.php?format=ci&glossary=1&issuedby=mtr&product=afd&site=mtr&version=1',
-                            },
-                            {
-                                'title': 'Weather in San Francisco in September 2025',
-                                'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
-                            },
-                            {
-                                'title': 'San Francisco weather in September 2025 | Weather25.com',
-                                'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
-                            },
-                            {
-                                'title': 'San Francisco, CA Weather Forecast - AccuWeather',
-                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
-                            },
-                            {
-                                'title': 'AccuWeather Forecast: 1 more day of hot temperatures away from ...',
-                                'url': 'https://abc7news.com/post/weather-bay-area-forecast-temperatures/39468/',
-                            },
-                            {
-                                'title': 'San Francisco Bay Area weather and First Alert Weather forecasts',
-                                'url': 'https://www.cbsnews.com/sanfrancisco/weather/',
-                            },
-                            {
-                                'title': '10-Day Weather Forecast for San Francisco, CA',
-                                'url': 'https://weather.com/weather/tenday/l/USCA0987:1:US',
-                            },
-                            {
-                                'title': '10-Day Weather Forecast for San Francisco, CA',
-                                'url': 'https://weather.com/weather/tenday/l/94112:4:US',
-                            },
-                            {
-                                'title': 'Past Weather in San Francisco, California, USA - Time and Date',
-                                'url': 'https://www.timeanddate.com/weather/usa/san-francisco/historic',
-                            },
-                            {
-                                'title': 'Monthly Weather Forecast for San Francisco, CA',
-                                'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
-                            },
-                            {
-                                'title': 'San Francisco, CA Hourly Weather Forecast - Weather Underground',
-                                'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
-                            },
-                        ],
-                    },
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='groq',
-                    provider_details={
                         'images': None,
                         'results': [
                             {
@@ -1626,6 +1421,9 @@ search(What is the weather in San Francisco today?)
                             },
                         ],
                     },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='groq',
                 ),
                 previous_part_kind='web-search-call',
             ),
@@ -2066,75 +1864,6 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                 result=WebSearchReturnPart(
                     tool_name='web_search',
                     content={
-                        'status': 'completed',
-                        'sources': [
-                            {'title': 'Weather in San Francisco', 'url': 'https://www.weatherapi.com/'},
-                            {
-                                'title': 'San Francisco, CA | Weather Forecasts Now, Live Radar Maps ...',
-                                'url': 'https://www.weatherbug.com/weather-forecast/now/san-francisco-ca-94103',
-                            },
-                            {
-                                'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                            },
-                            {
-                                'title': 'Weather for San Francisco, California, USA - Time and Date',
-                                'url': 'https://www.timeanddate.com/weather/usa/san-francisco',
-                            },
-                            {
-                                'title': 'San Francisco - 14-Day Forecast: Temperature, Wind & Radar',
-                                'url': 'https://www.ventusky.com/san-francisco',
-                            },
-                            {
-                                'title': 'Bay Area forecast discussion - National Weather Service',
-                                'url': 'https://forecast.weather.gov/product.php?format=ci&glossary=1&issuedby=mtr&product=afd&site=mtr&version=1',
-                            },
-                            {
-                                'title': 'Weather in San Francisco in September 2025',
-                                'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
-                            },
-                            {
-                                'title': 'San Francisco weather in September 2025 | Weather25.com',
-                                'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
-                            },
-                            {
-                                'title': 'San Francisco, CA Weather Forecast - AccuWeather',
-                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
-                            },
-                            {
-                                'title': 'AccuWeather Forecast: 1 more day of hot temperatures away from ...',
-                                'url': 'https://abc7news.com/post/weather-bay-area-forecast-temperatures/39468/',
-                            },
-                            {
-                                'title': 'San Francisco Bay Area weather and First Alert Weather forecasts',
-                                'url': 'https://www.cbsnews.com/sanfrancisco/weather/',
-                            },
-                            {
-                                'title': '10-Day Weather Forecast for San Francisco, CA',
-                                'url': 'https://weather.com/weather/tenday/l/USCA0987:1:US',
-                            },
-                            {
-                                'title': '10-Day Weather Forecast for San Francisco, CA',
-                                'url': 'https://weather.com/weather/tenday/l/94112:4:US',
-                            },
-                            {
-                                'title': 'Past Weather in San Francisco, California, USA - Time and Date',
-                                'url': 'https://www.timeanddate.com/weather/usa/san-francisco/historic',
-                            },
-                            {
-                                'title': 'Monthly Weather Forecast for San Francisco, CA',
-                                'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
-                            },
-                            {
-                                'title': 'San Francisco, CA Hourly Weather Forecast - Weather Underground',
-                                'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
-                            },
-                        ],
-                    },
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='groq',
-                    provider_details={
                         'images': None,
                         'results': [
                             {
@@ -2235,6 +1964,9 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                             },
                         ],
                     },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='groq',
                 )
             ),
         ]

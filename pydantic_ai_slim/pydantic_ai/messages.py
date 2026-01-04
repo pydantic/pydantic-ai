@@ -29,131 +29,145 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 # =============================================================================
-# TypedDict schemas for builtin tool return content (UNIFIED)
+# TypedDict schemas for builtin tool return content
 # =============================================================================
-# These TypedDicts define the NORMALIZED content structure for each builtin tool
-# return part. Provider-specific data is transformed into these unified schemas,
-# with raw provider data available in provider_details.
-#
-# Key design decisions:
-# - Consistent field names across providers (e.g., 'output' not 'stdout'/'logs')
-# - status field uses Literal types for known states
-# - Fields are optional (total=False) as not all providers populate all fields
-# - Raw provider data is stored in provider_details for users who need it
-
-
-CodeExecutionStatus: TypeAlias = Literal['completed', 'failed', 'timeout', 'unknown']
-"""Status of code execution: completed (success), failed (error), timeout, or unknown."""
+# These TypedDicts define the unified content structure for each builtin tool
+# return part. Fields are all optional (total=False) because different providers
+# populate different subsets of fields.
 
 
 class CodeExecutionReturnContent(TypedDict, total=False):
-    """Unified content schema for code execution results.
+    """Unified content schema for code execution results across providers.
 
-    All providers normalize to these fields:
-    - Anthropic stdout → output, stderr → error, return_code → exit_code
-    - Google output → output, outcome → status
-    - OpenAI logs (joined) → output, status → status
+    Different providers use different fields:
+    - Anthropic: type, stdout, stderr, return_code, content
+    - Google: outcome, output
+    - OpenAI: status, logs
     """
 
-    status: CodeExecutionStatus
-    """Execution status: 'completed', 'failed', 'timeout', or 'unknown'."""
+    # Anthropic fields
+    type: str
+    """Discriminator field (e.g., 'code_execution_result')."""
+    stdout: str
+    """Standard output from code execution (Anthropic)."""
+    stderr: str
+    """Standard error from code execution (Anthropic)."""
+    return_code: int
+    """Process exit code (Anthropic)."""
+    content: list[Any]
+    """Additional content objects (Anthropic, typically empty)."""
+    # Google fields
+    outcome: str
+    """Execution outcome status (e.g., 'OUTCOME_OK', 'OUTCOME_TIMEOUT') (Google)."""
     output: str
-    """Combined output from code execution (normalized from provider-specific fields)."""
-    error: str
-    """Error output (from stderr or error message), empty string if no errors."""
-    exit_code: int
-    """Process exit code (0 for success), only available from some providers."""
-
-
-BuiltinToolStatus: TypeAlias = Literal['completed', 'failed', 'unknown']
-"""Generic status for builtin tool operations."""
+    """Execution output (Google)."""
+    # OpenAI fields
+    status: str
+    """Execution status (e.g., 'completed') (OpenAI)."""
+    logs: list[str]
+    """Output lines from execution (OpenAI)."""
 
 
 class WebSearchSource(TypedDict, total=False):
-    """A single web search result source (unified).
+    """A single web search result source.
 
-    URL is normalized from 'uri' (Google) or 'url' (other providers).
+    Fields vary by provider - OpenAI uses 'url', Google uses 'uri'.
     """
 
     title: str
     """Title of the search result."""
     url: str
-    """URL of the search result (normalized from uri/url)."""
+    """URL of the search result (OpenAI, Anthropic)."""
+    uri: str
+    """URI of the search result (Google uses 'uri' instead of 'url')."""
     snippet: str
     """Snippet/preview text from the result."""
     relevance_score: float
-    """Relevance score of the result (0.0-1.0)."""
+    """Relevance score of the result."""
 
 
 class WebSearchReturnContent(TypedDict, total=False):
     """Unified content schema for web search results.
 
-    All providers normalize to a dict with status and sources list.
+    OpenAI returns dict with 'status' and 'sources' keys.
+    Google/Anthropic may return list directly - use WebSearchSource list type.
     """
 
-    status: BuiltinToolStatus
-    """Search status: 'completed', 'failed', or 'unknown'."""
+    status: str
+    """Search status (e.g., 'completed') (OpenAI)."""
     sources: list[WebSearchSource]
-    """List of search result sources."""
+    """List of search result sources (OpenAI dict format)."""
 
 
 class WebFetchPage(TypedDict, total=False):
-    """A single fetched web page result (unified).
+    """A single fetched web page result.
 
-    URL is normalized from 'retrieved_url' (Google) or 'url' (Anthropic).
+    Fields vary by provider - Anthropic uses 'url', Google uses 'retrieved_url'.
     """
 
-    url: str
-    """URL of the fetched page (normalized from url/retrieved_url)."""
     content: str
     """The fetched page content/text."""
-    content_type: str
+    url: str
+    """URL of the fetched page (Anthropic)."""
+    retrieved_url: str
+    """Retrieved URL (Google uses 'retrieved_url' instead of 'url')."""
+    type: str
     """MIME type of the content (e.g., 'text/html')."""
-    fetched_at: str
+    retrieved_at: str
     """ISO timestamp when the page was fetched."""
 
 
 class WebFetchReturnContent(TypedDict, total=False):
     """Unified content schema for web fetch results.
 
-    All providers normalize to a dict with status and pages list.
+    Anthropic returns single dict, Google returns list - use WebFetchPage list type.
     """
 
-    status: BuiltinToolStatus
-    """Fetch status: 'completed', 'failed', or 'unknown'."""
-    pages: list[WebFetchPage]
-    """List of fetched pages."""
+    content: str
+    """The fetched page content/text (single page format)."""
+    url: str
+    """URL of the fetched page (Anthropic)."""
+    retrieved_url: str
+    """Retrieved URL (Google)."""
+    type: str
+    """MIME type of the content."""
+    retrieved_at: str
+    """ISO timestamp when the page was fetched."""
 
 
 class FileSearchResult(TypedDict, total=False):
-    """A single file search result (unified)."""
+    """A single file search result.
+
+    OpenAI includes detailed file metadata, Google includes store context.
+    """
 
     id: str
-    """Result ID."""
+    """Result ID (OpenAI)."""
+    file_id: str
+    """File ID (OpenAI)."""
     filename: str
-    """Filename."""
-    content: str
-    """Matched text content."""
+    """Filename (OpenAI)."""
     score: float
     """Relevance score."""
-    file_store: str
-    """File search store identifier (normalized from file_id/file_search_store)."""
+    text: str
+    """Matched text content."""
+    content: str
+    """Content of the result."""
+    file_search_store: str
+    """File search store identifier (Google)."""
 
 
 class FileSearchReturnContent(TypedDict, total=False):
     """Unified content schema for file search results.
 
-    All providers normalize to a dict with status and results list.
+    OpenAI returns dict with 'status' and 'results' keys.
+    Google returns list directly - use FileSearchResult list type.
     """
 
-    status: BuiltinToolStatus
-    """Search status: 'completed', 'failed', or 'unknown'."""
+    status: str
+    """Search status (e.g., 'completed') (OpenAI)."""
     results: list[FileSearchResult]
-    """List of search results."""
-
-
-ImageGenerationStatus: TypeAlias = Literal['completed', 'generating', 'failed', 'unknown']
-"""Status of image generation."""
+    """List of search results (OpenAI dict format)."""
 
 
 class ImageGenerationReturnContent(TypedDict, total=False):
@@ -162,8 +176,8 @@ class ImageGenerationReturnContent(TypedDict, total=False):
     Note: The actual image is returned as a separate FilePart, not in content.
     """
 
-    status: ImageGenerationStatus
-    """Generation status: 'completed', 'generating', 'failed', or 'unknown'."""
+    status: str
+    """Generation status (e.g., 'completed')."""
     revised_prompt: str
     """The actual prompt used for generation (may differ from input)."""
     size: str
@@ -172,259 +186,6 @@ class ImageGenerationReturnContent(TypedDict, total=False):
     """Quality setting (e.g., 'high', 'standard')."""
     background: str
     """Background setting (e.g., 'opaque', 'transparent')."""
-
-
-# =============================================================================
-# Normalization functions for builtin tool return content
-# =============================================================================
-# These functions transform provider-specific data into the unified schemas above.
-# Each returns (normalized_content, raw_provider_data) for storing in provider_details.
-
-
-def normalize_code_execution_content(
-    raw: dict[str, Any], provider: str
-) -> tuple[CodeExecutionReturnContent, dict[str, Any]]:
-    """Normalize code execution content from any provider to unified format.
-
-    Args:
-        raw: Raw provider-specific content dict.
-        provider: Provider name ('anthropic', 'google', 'openai', etc.).
-
-    Returns:
-        Tuple of (normalized_content, raw_data_for_provider_details).
-    """
-    normalized: CodeExecutionReturnContent = {}
-
-    if provider == 'anthropic':
-        # Anthropic: stdout, stderr, return_code, type, content
-        return_code = raw.get('return_code')
-        if return_code is not None:
-            normalized['status'] = 'completed' if return_code == 0 else 'failed'
-            normalized['exit_code'] = return_code
-        else:
-            normalized['status'] = 'unknown'
-        if stdout := raw.get('stdout'):
-            normalized['output'] = stdout
-        else:
-            normalized['output'] = ''
-        if stderr := raw.get('stderr'):
-            normalized['error'] = stderr
-
-    elif provider == 'google':
-        # Google: outcome, output
-        outcome = raw.get('outcome', '')
-        outcome_map: dict[str, CodeExecutionStatus] = {
-            'OUTCOME_OK': 'completed',
-            'OUTCOME_FAILED': 'failed',
-            'OUTCOME_TIMEOUT': 'timeout',
-            'OUTCOME_DEADLINE_EXCEEDED': 'timeout',
-        }
-        normalized['status'] = outcome_map.get(outcome, 'unknown')
-        normalized['output'] = raw.get('output', '')
-
-    elif provider in ('openai', 'openai-responses'):
-        # OpenAI: status, logs
-        status = raw.get('status', '')
-        if status in ('completed', 'failed'):
-            normalized['status'] = cast(CodeExecutionStatus, status)
-        else:
-            normalized['status'] = 'unknown'
-        logs = raw.get('logs', [])
-        normalized['output'] = '\n'.join(logs) if logs else ''
-
-    else:
-        # Unknown provider - best effort
-        normalized['status'] = 'unknown'
-        normalized['output'] = str(raw.get('output', raw.get('stdout', raw.get('logs', ''))))
-
-    return normalized, raw
-
-
-def normalize_web_search_content(
-    raw: dict[str, Any] | list[dict[str, Any]], provider: str
-) -> tuple[WebSearchReturnContent, dict[str, Any] | list[dict[str, Any]]]:
-    """Normalize web search content from any provider to unified format.
-
-    Args:
-        raw: Raw provider-specific content (dict or list).
-        provider: Provider name.
-
-    Returns:
-        Tuple of (normalized_content, raw_data_for_provider_details).
-    """
-    normalized: WebSearchReturnContent = {'status': 'completed', 'sources': []}
-
-    def _extract_source(item: dict[str, Any]) -> WebSearchSource:
-        source: WebSearchSource = {}
-        if title := item.get('title'):
-            source['title'] = title
-        # Normalize uri -> url
-        if url := item.get('url') or item.get('uri'):
-            source['url'] = url
-        if snippet := item.get('snippet'):
-            source['snippet'] = snippet
-        if (score := item.get('relevance_score')) is not None:
-            source['relevance_score'] = score
-        return source
-
-    if isinstance(raw, list):
-        # Google/Anthropic: list of sources directly
-        for item in raw:
-            if source := _extract_source(item):
-                normalized['sources'].append(source)
-    else:
-        # OpenAI: dict with status and sources
-        if status := raw.get('status'):
-            normalized['status'] = 'completed' if status == 'completed' else 'failed' if status == 'failed' else 'unknown'
-        if sources := raw.get('sources'):
-            for item in sources:
-                if source := _extract_source(item):
-                    normalized['sources'].append(source)
-        # Groq: dict with results array (and optionally images)
-        elif results := raw.get('results'):
-            for item in results:
-                if source := _extract_source(item):
-                    normalized['sources'].append(source)
-        # Groq fallback: output string
-        elif output := raw.get('output'):
-            # Store raw output as a single source with snippet
-            normalized['sources'].append({'snippet': output})
-
-    return normalized, raw
-
-
-def normalize_web_fetch_content(
-    raw: dict[str, Any] | list[dict[str, Any]], provider: str
-) -> tuple[WebFetchReturnContent, dict[str, Any] | list[dict[str, Any]]]:
-    """Normalize web fetch content from any provider to unified format.
-
-    Args:
-        raw: Raw provider-specific content (dict or list).
-        provider: Provider name.
-
-    Returns:
-        Tuple of (normalized_content, raw_data_for_provider_details).
-    """
-    normalized: WebFetchReturnContent = {'status': 'completed', 'pages': []}
-
-    if isinstance(raw, list):
-        # Google: list of pages
-        for item in raw:
-            page: WebFetchPage = {}
-            # Normalize retrieved_url -> url
-            if url := item.get('url') or item.get('retrieved_url'):
-                page['url'] = url
-            if content := item.get('content'):
-                page['content'] = content
-            if content_type := item.get('type') or item.get('content_type'):
-                page['content_type'] = content_type
-            if fetched_at := item.get('retrieved_at') or item.get('fetched_at'):
-                page['fetched_at'] = fetched_at
-            if page:
-                normalized['pages'].append(page)
-    else:
-        # Anthropic: single page dict
-        page: WebFetchPage = {}
-        if url := raw.get('url') or raw.get('retrieved_url'):
-            page['url'] = url
-        if content := raw.get('content'):
-            page['content'] = content
-        if content_type := raw.get('type') or raw.get('content_type'):
-            page['content_type'] = content_type
-        if fetched_at := raw.get('retrieved_at') or raw.get('fetched_at'):
-            page['fetched_at'] = fetched_at
-        if page:
-            normalized['pages'].append(page)
-
-    return normalized, raw
-
-
-def normalize_file_search_content(
-    raw: dict[str, Any] | list[dict[str, Any]], provider: str
-) -> tuple[FileSearchReturnContent, dict[str, Any] | list[dict[str, Any]]]:
-    """Normalize file search content from any provider to unified format.
-
-    Args:
-        raw: Raw provider-specific content (dict or list).
-        provider: Provider name.
-
-    Returns:
-        Tuple of (normalized_content, raw_data_for_provider_details).
-    """
-    normalized: FileSearchReturnContent = {'status': 'completed', 'results': []}
-
-    if isinstance(raw, list):
-        # Google: list of results directly
-        for item in raw:
-            result: FileSearchResult = {}
-            if id_ := item.get('id'):
-                result['id'] = id_
-            if filename := item.get('filename'):
-                result['filename'] = filename
-            # Normalize text -> content
-            if content := item.get('content') or item.get('text'):
-                result['content'] = content
-            if (score := item.get('score')) is not None:
-                result['score'] = score
-            # Normalize file_id/file_search_store -> file_store
-            if file_store := item.get('file_store') or item.get('file_id') or item.get('file_search_store'):
-                result['file_store'] = file_store
-            if result:
-                normalized['results'].append(result)
-    else:
-        # OpenAI: dict with status and results
-        if status := raw.get('status'):
-            normalized['status'] = 'completed' if status == 'completed' else 'failed' if status == 'failed' else 'unknown'
-        if results := raw.get('results'):
-            for item in results:
-                result: FileSearchResult = {}
-                if id_ := item.get('id'):
-                    result['id'] = id_
-                if filename := item.get('filename'):
-                    result['filename'] = filename
-                if content := item.get('content') or item.get('text'):
-                    result['content'] = content
-                if (score := item.get('score')) is not None:
-                    result['score'] = score
-                if file_store := item.get('file_store') or item.get('file_id') or item.get('file_search_store'):
-                    result['file_store'] = file_store
-                if result:
-                    normalized['results'].append(result)
-
-    return normalized, raw
-
-
-def normalize_image_generation_content(
-    raw: dict[str, Any], provider: str
-) -> tuple[ImageGenerationReturnContent, dict[str, Any]]:
-    """Normalize image generation content from any provider to unified format.
-
-    Args:
-        raw: Raw provider-specific content dict.
-        provider: Provider name.
-
-    Returns:
-        Tuple of (normalized_content, raw_data_for_provider_details).
-    """
-    normalized: ImageGenerationReturnContent = {}
-
-    # OpenAI is currently the only provider with image generation
-    status = raw.get('status', '')
-    if status in ('completed', 'generating', 'failed'):
-        normalized['status'] = cast(ImageGenerationStatus, status)
-    else:
-        normalized['status'] = 'unknown'
-
-    if revised_prompt := raw.get('revised_prompt'):
-        normalized['revised_prompt'] = revised_prompt
-    if size := raw.get('size'):
-        normalized['size'] = size
-    if quality := raw.get('quality'):
-        normalized['quality'] = quality
-    if background := raw.get('background'):
-        normalized['background'] = background
-
-    return normalized, raw
 
 
 _mime_types = MimeTypes()
@@ -1277,11 +1038,10 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     provider_name: str | None = None
     """The name of the provider that generated the response."""
 
-    provider_details: dict[str, Any] | list[dict[str, Any]] | None = None
+    provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
-    May be a list for providers that return array-based responses (e.g., Google)."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1291,12 +1051,12 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
 class CodeExecutionReturnPart(BuiltinToolReturnPart):
     """A return part for code execution tool results.
 
-    Content is normalized to unified fields (status, output, error, exit_code).
-    Raw provider data is available in provider_details.
+    The content field contains provider-specific data. See CodeExecutionReturnContent
+    for the unified schema of possible fields across providers.
     """
 
-    content: CodeExecutionReturnContent
-    """Normalized code execution result with unified fields. Raw data in provider_details."""
+    content: CodeExecutionReturnContent | dict[str, Any]
+    """The code execution result content. See CodeExecutionReturnContent for the unified schema."""
 
     part_kind: Literal['code-execution-return'] = 'code-execution-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1306,12 +1066,12 @@ class CodeExecutionReturnPart(BuiltinToolReturnPart):
 class WebSearchReturnPart(BuiltinToolReturnPart):
     """A return part for web search tool results.
 
-    Content is normalized to unified fields (status, sources list).
-    Raw provider data is available in provider_details.
+    The content field contains provider-specific data. See WebSearchReturnContent
+    and WebSearchSource for the unified schema of possible fields.
     """
 
-    content: WebSearchReturnContent
-    """Normalized web search result with unified fields. Raw data in provider_details."""
+    content: WebSearchReturnContent | list[WebSearchSource] | dict[str, Any] | list[dict[str, Any]]
+    """The web search result content. Dict format (OpenAI) or list format (Google/Anthropic)."""
 
     part_kind: Literal['web-search-return'] = 'web-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1321,12 +1081,12 @@ class WebSearchReturnPart(BuiltinToolReturnPart):
 class WebFetchReturnPart(BuiltinToolReturnPart):
     """A return part for web fetch tool results.
 
-    Content is normalized to unified fields (status, pages list).
-    Raw provider data is available in provider_details.
+    The content field contains provider-specific data. See WebFetchReturnContent
+    and WebFetchPage for the unified schema of possible fields.
     """
 
-    content: WebFetchReturnContent
-    """Normalized web fetch result with unified fields. Raw data in provider_details."""
+    content: WebFetchReturnContent | list[WebFetchPage] | dict[str, Any] | list[dict[str, Any]]
+    """The web fetch result content. Single dict (Anthropic) or list (Google)."""
 
     part_kind: Literal['web-fetch-return'] = 'web-fetch-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1336,12 +1096,12 @@ class WebFetchReturnPart(BuiltinToolReturnPart):
 class FileSearchReturnPart(BuiltinToolReturnPart):
     """A return part for file search tool results.
 
-    Content is normalized to unified fields (status, results list).
-    Raw provider data is available in provider_details.
+    The content field contains provider-specific data. See FileSearchReturnContent
+    and FileSearchResult for the unified schema of possible fields.
     """
 
-    content: FileSearchReturnContent
-    """Normalized file search result with unified fields. Raw data in provider_details."""
+    content: FileSearchReturnContent | list[FileSearchResult] | dict[str, Any] | list[dict[str, Any]]
+    """The file search result content. Dict format (OpenAI) or list format (Google)."""
 
     part_kind: Literal['file-search-return'] = 'file-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1351,12 +1111,12 @@ class FileSearchReturnPart(BuiltinToolReturnPart):
 class ImageGenerationReturnPart(BuiltinToolReturnPart):
     """A return part for image generation tool results (metadata only, image is in FilePart).
 
-    Content contains generation metadata. The actual image is returned as a separate FilePart.
-    Raw provider data is available in provider_details.
+    The content field contains generation metadata. See ImageGenerationReturnContent
+    for the unified schema of possible fields.
     """
 
-    content: ImageGenerationReturnContent
-    """Image generation metadata. The actual image is in a separate FilePart."""
+    content: ImageGenerationReturnContent | dict[str, Any]
+    """The image generation result content (metadata). The actual image is in FilePart."""
 
     part_kind: Literal['image-generation-return'] = 'image-generation-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1373,129 +1133,26 @@ _TOOL_NAME_TO_RETURN_PART_CLASS: dict[str, type[BuiltinToolReturnPart]] = {
 }
 
 
-def _is_old_code_execution_content(content: Any) -> bool:
-    """Check if content is in old provider-specific format (not normalized)."""
-    if not isinstance(content, dict):
-        return False
-    # Old format has provider-specific fields, new format has 'output' and 'status'
-    has_old_fields = any(k in content for k in ('stdout', 'stderr', 'return_code', 'logs', 'outcome'))
-    has_new_fields = 'output' in content and 'status' in content
-    return has_old_fields and not has_new_fields
-
-
-def _is_old_web_search_content(content: Any) -> bool:
-    """Check if content is in old provider-specific format."""
-    if isinstance(content, list):
-        # Old Google/Anthropic format: list with 'uri' or raw provider fields
-        return any(isinstance(item, dict) and ('uri' in item or 'encrypted_content' in item) for item in cast(list[Any], content))
-    if isinstance(content, dict):
-        # Check if sources have 'uri' instead of normalized 'url'
-        sources: list[Any] = content.get('sources', [])
-        return any(isinstance(s, dict) and 'uri' in s and 'url' not in s for s in sources)
-    return False
-
-
-def _is_old_web_fetch_content(content: Any) -> bool:
-    """Check if content is in old provider-specific format."""
-    if isinstance(content, list):
-        # Old Google format: list with 'retrieved_url'
-        return any(isinstance(item, dict) and 'retrieved_url' in item for item in cast(list[Any], content))
-    if isinstance(content, dict):
-        # Old Anthropic single dict or new format - check for 'pages' field
-        return 'pages' not in content and ('url' in content or 'retrieved_url' in content)
-    return False
-
-
-def _is_old_file_search_content(content: Any) -> bool:
-    """Check if content is in old provider-specific format."""
-    if isinstance(content, list):
-        # Old Google format: direct list
-        return any(isinstance(item, dict) and 'file_search_store' in item for item in cast(list[Any], content))
-    if isinstance(content, dict):
-        # Check if missing 'results' wrapper
-        return 'results' not in content and ('text' in content or 'file_id' in content)
-    return False
-
-
-def _detect_provider_from_content(content: dict[str, Any], tool_name: str) -> str:
-    """Detect the provider from content structure for normalization."""
-    if tool_name == 'code_execution':
-        if 'stdout' in content or 'stderr' in content or 'return_code' in content:
-            return 'anthropic'
-        elif 'outcome' in content:
-            return 'google'
-        elif 'logs' in content:
-            return 'openai'
-    elif tool_name in ('web_search', 'web_fetch', 'file_search'):
-        if isinstance(content, list):
-            if any('uri' in item for item in content if isinstance(item, dict)):
-                return 'google'
-            if any('retrieved_url' in item for item in content if isinstance(item, dict)):
-                return 'google'
-            return 'anthropic'
-    return 'unknown'
-
-
 def _migrate_builtin_tool_return_part(data: dict[str, Any]) -> dict[str, Any]:
-    """Migrate old BuiltinToolReturnPart data to specific subclass and normalize content.
+    """Migrate old BuiltinToolReturnPart data to specific subclass based on tool_name.
 
-    This BeforeValidator:
-    1. Upgrades old serialized data with part_kind='builtin-tool-return' to specialized subclass
-    2. Normalizes old provider-specific content to unified format
+    This BeforeValidator upgrades old serialized data with part_kind='builtin-tool-return'
+    to the appropriate specialized subclass (e.g., 'code-execution-return').
     """
     if not isinstance(data, dict):
         return data  # pragma: lax no cover
 
     part_kind = data.get('part_kind')
     tool_name = data.get('tool_name', '')
-    content = data.get('content')
 
-    # Step 1: Upgrade part_kind if needed
     if part_kind == 'builtin-tool-return':
         if tool_name in _TOOL_NAME_TO_RETURN_PART_CLASS:
             new_class = _TOOL_NAME_TO_RETURN_PART_CLASS[tool_name]
             data = dict(data)
             data['part_kind'] = new_class.part_kind
-            part_kind = data['part_kind']
         # MCP and memory tools stay as base class (schemas not stable)
         elif tool_name.startswith('mcp_server:') or tool_name in ('mcp_server', 'memory'):
-            return data
-
-    # Step 2: Normalize content if in old format
-    if content is not None:
-        provider = data.get('provider_name') or _detect_provider_from_content(
-            content if isinstance(content, dict) else {}, tool_name
-        )
-
-        if part_kind == 'code-execution-return' and _is_old_code_execution_content(content):
-            normalized, raw = normalize_code_execution_content(content, provider)
-            data = dict(data)
-            data['content'] = normalized
-            if data.get('provider_details') is None:
-                data['provider_details'] = raw
-
-        elif part_kind == 'web-search-return' and _is_old_web_search_content(content):
-            normalized, raw = normalize_web_search_content(content, provider)
-            data = dict(data)
-            data['content'] = normalized
-            if data.get('provider_details') is None:
-                data['provider_details'] = raw
-
-        elif part_kind == 'web-fetch-return' and _is_old_web_fetch_content(content):
-            normalized, raw = normalize_web_fetch_content(content, provider)
-            data = dict(data)
-            data['content'] = normalized
-            if data.get('provider_details') is None:
-                data['provider_details'] = raw
-
-        elif part_kind == 'file-search-return' and _is_old_file_search_content(content):
-            normalized, raw = normalize_file_search_content(content, provider)
-            data = dict(data)
-            data['content'] = normalized
-            if data.get('provider_details') is None:
-                data['provider_details'] = raw
-
-        # Image generation doesn't need migration - format is consistent
+            pass
 
     return data
 
