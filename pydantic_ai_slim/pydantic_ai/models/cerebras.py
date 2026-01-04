@@ -144,6 +144,21 @@ class CerebrasModel(OpenAIChatModel):
         # Handle ThinkingConfig dict
         config: ThinkingConfig = thinking
 
+        # Warn about ignored settings
+        ignored: list[str] = []
+        for setting in ('budget_tokens', 'effort', 'include_in_response', 'summary'):
+            if config.get(setting) is not None:
+                ignored.append(setting)
+        if ignored:
+            from ._warnings import warn_settings_ignored_batch
+
+            warn_settings_ignored_batch(
+                setting_names=ignored,
+                provider_name=self.system,
+                model_name=self._model_name,
+                reason='Cerebras reasoning can only be enabled or disabled. Reasoning will be enabled with default behavior',
+            )
+
         # Check enabled=False
         if config.get('enabled') is False:
             if self.profile.thinking_always_enabled:

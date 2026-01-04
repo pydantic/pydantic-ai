@@ -136,7 +136,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # Thinking capabilities for reasoning models
         supports_thinking=is_reasoning_model,
         thinking_always_enabled=is_reasoning_model,  # OpenAI reasoning models always have thinking enabled
-        supports_thinking_effort=is_reasoning_model,  # OpenAI uses effort levels (low/medium/high)
     )
 
 

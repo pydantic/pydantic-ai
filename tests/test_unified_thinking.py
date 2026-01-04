@@ -17,6 +17,9 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import ANTHROPIC_EFFORT_TO_BUDGET
 from pydantic_ai.profiles.google import GOOGLE_EFFORT_TO_BUDGET
 
+# Import ThinkingLevel for Gemini 3 tests
+from google.genai.types import ThinkingLevel
+
 # ============================================================================
 # Test fixtures
 # ============================================================================
@@ -27,7 +30,6 @@ def thinking_profile() -> ModelProfile:
     """A model profile that supports thinking."""
     return ModelProfile(
         supports_thinking=True,
-        supports_thinking_budget=True,
         default_thinking_budget=4096,
         effort_to_budget_map=ANTHROPIC_EFFORT_TO_BUDGET,
     )
@@ -47,7 +49,6 @@ def always_on_thinking_profile() -> ModelProfile:
     return ModelProfile(
         supports_thinking=True,
         thinking_always_enabled=True,
-        supports_thinking_effort=True,
     )
 
 
@@ -184,12 +185,18 @@ class TestGoogleUnifiedThinking:
 
     @pytest.fixture
     def google_thinking_profile(self) -> ModelProfile:
-        """A Google model profile that supports thinking."""
+        """A Google model profile that supports thinking (Gemini 2.5 - uses thinking_budget)."""
         return ModelProfile(
             supports_thinking=True,
-            thinking_enabled_by_default=True,
-            supports_thinking_budget=True,
             effort_to_budget_map=GOOGLE_EFFORT_TO_BUDGET,
+        )
+
+    @pytest.fixture
+    def google_gemini3_profile(self) -> ModelProfile:
+        """A Google model profile for Gemini 3 (uses thinking_level instead of budget)."""
+        return ModelProfile(
+            supports_thinking=True,
+            supports_thinking_level=True,
         )
 
     def test_thinking_true_enables_with_include_thoughts(self, google_thinking_profile: ModelProfile):
@@ -262,6 +269,90 @@ class TestGoogleUnifiedThinking:
         # Provider-specific should win
         assert result == {'thinking_budget': 5000}
 
+    # --- Gemini 3 thinking_level tests ---
+
+    def test_gemini3_thinking_true_uses_level(self, google_gemini3_profile: ModelProfile):
+        """Gemini 3: thinking=True should enable thinking with thinking_level=HIGH."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-3-flash'
+        model._profile = google_gemini3_profile
+
+        settings: GoogleModelSettings = {'thinking': True}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'thinking_level': ThinkingLevel.HIGH, 'include_thoughts': True}
+
+    def test_gemini3_thinking_config_effort_low(self, google_gemini3_profile: ModelProfile):
+        """Gemini 3: ThinkingConfig with effort='low' should set thinking_level='low'."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-3-flash'
+        model._profile = google_gemini3_profile
+
+        settings: GoogleModelSettings = {'thinking': {'effort': 'low'}}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': True}
+
+    def test_gemini3_thinking_config_effort_medium(self, google_gemini3_profile: ModelProfile):
+        """Gemini 3 Flash: ThinkingConfig with effort='medium' should set thinking_level='medium'."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-3-flash'
+        model._profile = google_gemini3_profile
+
+        settings: GoogleModelSettings = {'thinking': {'effort': 'medium'}}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'thinking_level': ThinkingLevel.MEDIUM, 'include_thoughts': True}
+
+    def test_gemini3_thinking_config_effort_high(self, google_gemini3_profile: ModelProfile):
+        """Gemini 3: ThinkingConfig with effort='high' should set thinking_level='high'."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-3-flash'
+        model._profile = google_gemini3_profile
+
+        settings: GoogleModelSettings = {'thinking': {'effort': 'high'}}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'thinking_level': ThinkingLevel.HIGH, 'include_thoughts': True}
+
+    def test_gemini3_pro_medium_effort_warns_and_maps_to_high(self, google_gemini3_profile: ModelProfile):
+        """Gemini 3 Pro: effort='medium' should warn and map to 'high'."""
+        import warnings
+        from unittest.mock import Mock
+
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-3-pro'
+        model._profile = google_gemini3_profile
+        mock_provider = Mock()
+        mock_provider.name = 'google-gla'  # Set name as attribute, not Mock(name=...)
+        model._provider = mock_provider
+
+        settings: GoogleModelSettings = {'thinking': {'effort': 'medium'}}
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            result = model._resolve_thinking_config(settings)
+
+            # Should emit a warning about medium being mapped to high
+            assert len(w) == 1
+            assert "mapped effort='medium' to 'high'" in str(w[0].message)
+            assert 'gemini-3-pro' in str(w[0].message)
+
+        # Should map to 'high' instead
+        assert result == {'thinking_level': ThinkingLevel.HIGH, 'include_thoughts': True}
+
+    def test_gemini3_thinking_false_disables(self, google_gemini3_profile: ModelProfile):
+        """Gemini 3: thinking=False should disable thinking with thinking_level=LOW."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-3-flash'
+        model._profile = google_gemini3_profile
+
+        settings: GoogleModelSettings = {'thinking': False}
+        result = model._resolve_thinking_config(settings)
+
+        # Gemini 3 uses thinking_level=LOW with include_thoughts=False to disable
+        assert result == {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': False}
+
 
 # ============================================================================
 # OpenAI unified thinking tests
@@ -277,7 +368,6 @@ class TestOpenAIUnifiedThinking:
         return ModelProfile(
             supports_thinking=True,
             thinking_always_enabled=True,
-            supports_thinking_effort=True,
         )
 
     def test_thinking_true_uses_medium_effort(self, openai_reasoning_profile: ModelProfile):
@@ -378,7 +468,6 @@ class TestProfileThinkingCapabilities:
         profile = anthropic_model_profile('claude-3-7-sonnet')
         assert profile is not None
         assert profile.supports_thinking is True
-        assert profile.supports_thinking_budget is True
         assert profile.default_thinking_budget == 4096
 
         # Claude 4 models support thinking
@@ -395,16 +484,19 @@ class TestProfileThinkingCapabilities:
         """Google profile should set thinking capabilities for Gemini 2.5+ models."""
         from pydantic_ai.profiles.google import google_model_profile
 
-        # Gemini 2.5 models support thinking
+        # Gemini 2.5 models support thinking (via thinking_budget)
         profile = google_model_profile('gemini-2.5-flash')
         assert profile is not None
         assert profile.supports_thinking is True
-        assert profile.thinking_enabled_by_default is True
+        assert profile.supports_thinking_level is False  # Uses budget, not level
+        assert profile.effort_to_budget_map is not None
 
-        # Gemini 3 models support thinking
+        # Gemini 3 models support thinking (via thinking_level)
         profile = google_model_profile('gemini-3-flash')
         assert profile is not None
         assert profile.supports_thinking is True
+        assert profile.supports_thinking_level is True  # Uses level, not budget
+        assert profile.effort_to_budget_map is None  # No budget map for Gemini 3
 
         # Older models don't support thinking
         profile = google_model_profile('gemini-2.0-flash')
@@ -420,7 +512,6 @@ class TestProfileThinkingCapabilities:
         assert profile is not None
         assert profile.supports_thinking is True
         assert profile.thinking_always_enabled is True
-        assert profile.supports_thinking_effort is True
 
         # GPT-5 reasoning models support thinking
         profile = openai_model_profile('gpt-5')
@@ -697,14 +788,27 @@ class TestCerebrasUnifiedThinking:
 
         assert result is True
 
-    def test_thinking_config_with_budget_returns_none(self, thinking_profile: ModelProfile):
-        """ThinkingConfig with budget_tokens should return None (enable reasoning)."""
+    def test_thinking_config_with_budget_returns_none_and_warns(self, thinking_profile: ModelProfile):
+        """ThinkingConfig with budget_tokens should return None and emit warning."""
+        import warnings
+        from unittest.mock import Mock
+
         model = CerebrasModel.__new__(CerebrasModel)
         model._model_name = 'zai-glm-4.6'
         model._profile = thinking_profile
+        mock_provider = Mock()
+        mock_provider.name = 'cerebras'  # Set name as attribute, not Mock(name=...)
+        model._provider = mock_provider
 
         settings: CerebrasModelSettings = {'thinking': {'budget_tokens': 4096}}
-        result = model._resolve_reasoning_config(settings)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            result = model._resolve_reasoning_config(settings)
+
+            # Should emit a warning about ignored settings
+            assert len(w) == 1
+            assert 'budget_tokens' in str(w[0].message)
 
         # Cerebras doesn't support budget_tokens, but we enable reasoning
         assert result is None

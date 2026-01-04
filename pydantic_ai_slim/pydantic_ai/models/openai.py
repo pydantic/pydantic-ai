@@ -1598,6 +1598,19 @@ class OpenAIResponsesModel(Model):
                 )
             return reasoning_effort, reasoning_summary
 
+        # Warn about ignored budget_tokens setting
+        if config.get('budget_tokens') is not None:
+            from ._warnings import warn_setting_ignored
+
+            # Determine what effort level will be used
+            effective_effort = config.get('effort', 'medium')
+            warn_setting_ignored(
+                setting_name='budget_tokens',
+                provider_name=self.system,
+                reason=f"OpenAI reasoning models use effort levels instead of token budgets. Reasoning will use effort='{effective_effort}'",
+                alternative="Use effort='low', 'medium', or 'high' to control reasoning depth",
+            )
+
         # Apply effort and summary from config
         if reasoning_effort is None:
             reasoning_effort = config.get('effort', 'medium')

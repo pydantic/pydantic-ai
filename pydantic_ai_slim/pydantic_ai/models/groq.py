@@ -214,6 +214,21 @@ class GroqModel(Model):
         # Handle ThinkingConfig dict
         config: ThinkingConfig = thinking
 
+        # Warn about ignored settings
+        ignored: list[str] = []
+        if config.get('budget_tokens') is not None:
+            ignored.append('budget_tokens')
+        if config.get('effort') is not None:
+            ignored.append('effort')
+        if ignored:
+            from ._warnings import warn_settings_ignored_batch
+
+            warn_settings_ignored_batch(
+                setting_names=ignored,
+                provider_name=self.system,
+                reason='Groq reasoning models do not support fine-grained control. Reasoning will be enabled with default behavior',
+            )
+
         # Check enabled=False
         if config.get('enabled') is False:
             if self.profile.thinking_always_enabled:

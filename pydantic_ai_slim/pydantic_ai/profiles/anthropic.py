@@ -39,7 +39,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
         supports_thinking=supports_thinking,
-        supports_thinking_budget=supports_thinking,
         default_thinking_budget=4096 if supports_thinking else None,
         effort_to_budget_map=ANTHROPIC_EFFORT_TO_BUDGET if supports_thinking else None,
     )
