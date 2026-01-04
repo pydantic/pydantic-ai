@@ -690,9 +690,9 @@ def _map_executed_tool(
 ) -> tuple[WebSearchCallPart | None, WebSearchReturnPart | None]:
     if tool.type == 'search':
         if tool.search_results and (tool.search_results.images or tool.search_results.results):
-            results: dict[str, Any] | str = tool.search_results.model_dump(mode='json')
+            results: dict[str, Any] = tool.search_results.model_dump(mode='json')
         else:
-            results = tool.output or {}
+            results = {'output': tool.output} if tool.output else {}
 
         tool_call_id = tool_call_id or generate_tool_call_id()
         call_part = WebSearchCallPart(

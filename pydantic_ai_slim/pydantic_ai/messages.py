@@ -1055,7 +1055,7 @@ class CodeExecutionReturnPart(BuiltinToolReturnPart):
     for the unified schema of possible fields across providers.
     """
 
-    content: CodeExecutionReturnContent
+    content: CodeExecutionReturnContent | dict[str, Any]
     """The code execution result content. See CodeExecutionReturnContent for the unified schema."""
 
     part_kind: Literal['code-execution-return'] = 'code-execution-return'  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -1070,7 +1070,7 @@ class WebSearchReturnPart(BuiltinToolReturnPart):
     and WebSearchSource for the unified schema of possible fields.
     """
 
-    content: WebSearchReturnContent | list[WebSearchSource]
+    content: WebSearchReturnContent | list[WebSearchSource] | dict[str, Any] | list[dict[str, Any]]
     """The web search result content. Dict format (OpenAI) or list format (Google/Anthropic)."""
 
     part_kind: Literal['web-search-return'] = 'web-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -1085,7 +1085,7 @@ class WebFetchReturnPart(BuiltinToolReturnPart):
     and WebFetchPage for the unified schema of possible fields.
     """
 
-    content: WebFetchReturnContent | list[WebFetchPage]
+    content: WebFetchReturnContent | list[WebFetchPage] | dict[str, Any] | list[dict[str, Any]]
     """The web fetch result content. Single dict (Anthropic) or list (Google)."""
 
     part_kind: Literal['web-fetch-return'] = 'web-fetch-return'  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -1100,7 +1100,7 @@ class FileSearchReturnPart(BuiltinToolReturnPart):
     and FileSearchResult for the unified schema of possible fields.
     """
 
-    content: FileSearchReturnContent | list[FileSearchResult]
+    content: FileSearchReturnContent | list[FileSearchResult] | dict[str, Any] | list[dict[str, Any]]
     """The file search result content. Dict format (OpenAI) or list format (Google)."""
 
     part_kind: Literal['file-search-return'] = 'file-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -1115,7 +1115,7 @@ class ImageGenerationReturnPart(BuiltinToolReturnPart):
     for the unified schema of possible fields.
     """
 
-    content: ImageGenerationReturnContent
+    content: ImageGenerationReturnContent | dict[str, Any]
     """The image generation result content (metadata). The actual image is in FilePart."""
 
     part_kind: Literal['image-generation-return'] = 'image-generation-return'  # pyright: ignore[reportIncompatibleVariableOverride]
