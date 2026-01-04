@@ -11,15 +11,22 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypedDict, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import deprecated
+from typing_extensions import TypedDict, deprecated
 
+from . import _otel_messages, _utils
+from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
+from .exceptions import UnexpectedModelBehavior
+from .usage import RequestUsage
+
+if TYPE_CHECKING:
+    from .models.instrumented import InstrumentationSettings
 
 # =============================================================================
 # TypedDict schemas for builtin tool return content
@@ -180,13 +187,6 @@ class ImageGenerationReturnContent(TypedDict, total=False):
     background: str
     """Background setting (e.g., 'opaque', 'transparent')."""
 
-from . import _otel_messages, _utils
-from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
-from .exceptions import UnexpectedModelBehavior
-from .usage import RequestUsage
-
-if TYPE_CHECKING:
-    from .models.instrumented import InstrumentationSettings
 
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
@@ -1055,8 +1055,8 @@ class CodeExecutionReturnPart(BuiltinToolReturnPart):
     for the unified schema of possible fields across providers.
     """
 
-    content: CodeExecutionReturnContent | list[Any] | str
-    """The code execution result content. Structure varies by provider - see CodeExecutionReturnContent."""
+    content: CodeExecutionReturnContent
+    """The code execution result content. See CodeExecutionReturnContent for the unified schema."""
 
     part_kind: Literal['code-execution-return'] = 'code-execution-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""

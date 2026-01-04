@@ -49,9 +49,12 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert part.content['stdout'] == 'Hello, World!'
-        assert part.content.get('stderr') == ''
-        assert part.content['return_code'] == 0
+        # Verify content is stored correctly
+        assert part.content == content
+        # Access via local typed variable
+        assert content.get('stdout') == 'Hello, World!'
+        assert content.get('stderr') == ''
+        assert content.get('return_code') == 0
         assert part.part_kind == 'code-execution-return'
 
     def test_code_execution_return_part_openai_format(self):
@@ -65,8 +68,9 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert part.content['status'] == 'completed'
-        assert part.content['logs'] == ['Line 1', 'Line 2']
+        assert part.content == content
+        assert content.get('status') == 'completed'
+        assert content.get('logs') == ['Line 1', 'Line 2']
         assert part.part_kind == 'code-execution-return'
 
     def test_code_execution_return_part_google_format(self):
@@ -80,8 +84,9 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert part.content['output'] == 'Result: 42'
-        assert part.content['outcome'] == 'OUTCOME_OK'
+        assert part.content == content
+        assert content.get('output') == 'Result: 42'
+        assert content.get('outcome') == 'OUTCOME_OK'
         assert part.part_kind == 'code-execution-return'
 
     def test_web_search_return_part_openai_format(self):
@@ -98,9 +103,11 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert part.content['status'] == 'completed'
-        assert len(part.content['sources']) == 2
-        assert part.content['sources'][0]['title'] == 'Example'
+        assert part.content == content
+        assert content.get('status') == 'completed'
+        sources = content.get('sources')
+        assert sources is not None and len(sources) == 2
+        assert sources[0].get('title') == 'Example'
         assert part.part_kind == 'web-search-return'
 
     def test_web_search_return_part_list_format(self):
@@ -114,8 +121,9 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert len(part.content) == 2
-        assert part.content[0]['uri'] == 'https://example1.com'
+        assert part.content == content
+        assert len(content) == 2
+        assert content[0].get('uri') == 'https://example1.com'
         assert part.part_kind == 'web-search-return'
 
     def test_web_fetch_return_part_anthropic_format(self):
@@ -131,8 +139,9 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert part.content['content'] == 'Page content here...'
-        assert part.content['url'] == 'https://example.com'
+        assert part.content == content
+        assert content.get('content') == 'Page content here...'
+        assert content.get('url') == 'https://example.com'
         assert part.part_kind == 'web-fetch-return'
 
     def test_web_fetch_return_part_list_format(self):
@@ -146,8 +155,9 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert len(part.content) == 2
-        assert part.content[0]['retrieved_url'] == 'https://example1.com'
+        assert part.content == content
+        assert len(content) == 2
+        assert content[0].get('retrieved_url') == 'https://example1.com'
         assert part.part_kind == 'web-fetch-return'
 
     def test_file_search_return_part_openai_format(self):
@@ -163,9 +173,11 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert part.content['status'] == 'completed'
-        assert len(part.content['results']) == 1
-        assert part.content['results'][0]['filename'] == 'doc.pdf'
+        assert part.content == content
+        assert content.get('status') == 'completed'
+        results = content.get('results')
+        assert results is not None and len(results) == 1
+        assert results[0].get('filename') == 'doc.pdf'
         assert part.part_kind == 'file-search-return'
 
     def test_file_search_return_part_list_format(self):
@@ -179,8 +191,9 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert len(part.content) == 2
-        assert part.content[0]['file_search_store'] == 'store-1'
+        assert part.content == content
+        assert len(content) == 2
+        assert content[0].get('file_search_store') == 'store-1'
         assert part.part_kind == 'file-search-return'
 
     def test_image_generation_return_part(self):
@@ -197,11 +210,12 @@ class TestTypedReturnParts:
             tool_call_id='test-id',
             content=content,
         )
-        assert part.content['status'] == 'completed'
-        assert part.content['revised_prompt'] == 'A beautiful sunset over mountains'
-        assert part.content['size'] == '1024x1024'
-        assert part.content['quality'] == 'high'
-        assert part.content['background'] == 'opaque'
+        assert part.content == content
+        assert content.get('status') == 'completed'
+        assert content.get('revised_prompt') == 'A beautiful sunset over mountains'
+        assert content.get('size') == '1024x1024'
+        assert content.get('quality') == 'high'
+        assert content.get('background') == 'opaque'
         assert part.part_kind == 'image-generation-return'
 
 
@@ -297,8 +311,8 @@ class TestBackwardsCompatibility:
         assert len(response.parts) == 1
         part = response.parts[0]
         assert isinstance(part, CodeExecutionReturnPart)
-        assert part.content['stdout'] == 'Hello'
-        assert part.content['return_code'] == 0
+        assert part.content.get('stdout') == 'Hello'
+        assert part.content.get('return_code') == 0
 
     def test_old_builtin_tool_return_part_migration_web_search(self):
         """Test that old web search returns migrate correctly."""
@@ -316,7 +330,8 @@ class TestBackwardsCompatibility:
         response = pydantic.TypeAdapter(ModelResponse).validate_python(old_data)
         part = response.parts[0]
         assert isinstance(part, WebSearchReturnPart)
-        assert part.content['status'] == 'completed'
+        assert isinstance(part.content, dict)
+        assert part.content.get('status') == 'completed'
 
     def test_old_builtin_tool_call_part_migration(self):
         """Test that old part_kind='builtin-tool-call' migrates to specific subclass."""
@@ -387,7 +402,8 @@ class TestBackwardsCompatibility:
         response = pydantic.TypeAdapter(ModelResponse).validate_python(old_data)
         part = response.parts[0]
         assert isinstance(part, WebFetchReturnPart)
-        assert part.content['url'] == 'https://example.com'
+        assert isinstance(part.content, dict)
+        assert part.content.get('url') == 'https://example.com'
 
     def test_unknown_tool_stays_as_base_class(self):
         """Test that unknown tool names stay as base BuiltinToolReturnPart."""
@@ -434,8 +450,8 @@ class TestBackwardsCompatibility:
 
         part = deserialized.parts[0]
         assert isinstance(part, CodeExecutionReturnPart)
-        assert part.content['stdout'] == 'Hello'
-        assert part.content['return_code'] == 0
+        assert part.content.get('stdout') == 'Hello'
+        assert part.content.get('return_code') == 0
 
 
 class TestIsinstanceChecks:
@@ -495,7 +511,7 @@ class TestIsinstanceChecks:
 
         code_exec_returns = [p for p in response.parts if isinstance(p, CodeExecutionReturnPart)]
         assert len(code_exec_returns) == 1
-        assert code_exec_returns[0].content['stdout'] == '1'
+        assert code_exec_returns[0].content.get('stdout') == '1'
 
         web_search_calls = [p for p in response.parts if isinstance(p, WebSearchCallPart)]
         assert len(web_search_calls) == 1
@@ -517,7 +533,7 @@ class TestTypedDictSchemas:
             tool_call_id='test-id',
             content=content,
         )
-        # Accessing typed content
+        # Accessing typed content via .get() for optional fields
         assert part.content.get('stdout') == 'test'
         assert part.content.get('status') == 'completed'
 
@@ -528,7 +544,7 @@ class TestTypedDictSchemas:
             'url': 'https://example.com',
             'snippet': 'A snippet of text',
         }
-        assert source['title'] == 'Test Result'
+        assert source.get('title') == 'Test Result'
         assert source.get('relevance_score') is None  # Optional field
 
     def test_file_search_result_type_hints(self):
@@ -539,8 +555,8 @@ class TestTypedDictSchemas:
             'score': 0.95,
             'content': 'Matched content',
         }
-        assert result['filename'] == 'test.pdf'
-        assert result['score'] == 0.95
+        assert result.get('filename') == 'test.pdf'
+        assert result.get('score') == 0.95
 
     def test_image_generation_content_type_hints(self):
         """Test that ImageGenerationReturnContent TypedDict has expected keys."""
