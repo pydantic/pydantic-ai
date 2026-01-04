@@ -539,10 +539,13 @@ class BedrockConverseModel(Model):
                 additional_model_requests_fields['thinking'] = thinking_config
         if additional_model_requests_fields:
             params['additionalModelRequestFields'] = additional_model_requests_fields
-        if prompt_variables := settings.get('bedrock_prompt_variables', None):  # pragma: no cover
-            params['promptVariables'] = prompt_variables  # pragma: no cover
-        if service_tier := settings.get('bedrock_service_tier', None):
-            params['serviceTier'] = service_tier
+        # These settings are only processed if model_settings was explicitly passed
+        # (not when using the default empty BedrockModelSettings)
+        if model_settings:
+            if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
+                params['promptVariables'] = prompt_variables
+            if service_tier := model_settings.get('bedrock_service_tier', None):
+                params['serviceTier'] = service_tier
 
         try:
             if stream:
