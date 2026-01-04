@@ -1629,7 +1629,7 @@ class OpenAIResponsesModel(Model):
             return 'auto'
         if summary in ('concise', 'detailed', 'auto'):
             return summary
-        return None
+        return None  # pragma: no cover
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
