@@ -616,9 +616,7 @@ class TestOpenAIResponsesUnifiedThinking:
         with pytest.raises(UserError, match='has reasoning always enabled'):
             model._apply_unified_thinking(settings, None, None)
 
-    def test_thinking_config_enabled_false_raises_for_always_on(
-        self, openai_responses_reasoning_profile: ModelProfile
-    ):
+    def test_thinking_config_enabled_false_raises_for_always_on(self, openai_responses_reasoning_profile: ModelProfile):
         """ThinkingConfig with enabled=False on always-enabled reasoning model should raise."""
         from pydantic_ai.models.openai import OpenAIResponsesModel
 
@@ -631,9 +629,7 @@ class TestOpenAIResponsesUnifiedThinking:
         with pytest.raises(UserError, match='has reasoning always enabled'):
             model._apply_unified_thinking(settings, None, None)
 
-    def test_thinking_false_disables_on_optional_model(
-        self, openai_responses_optional_reasoning_profile: ModelProfile
-    ):
+    def test_thinking_false_disables_on_optional_model(self, openai_responses_optional_reasoning_profile: ModelProfile):
         """thinking=False should return defaults on models where reasoning is optional."""
         from pydantic_ai.models.openai import OpenAIResponsesModel
 
