@@ -25,6 +25,8 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CodeExecutionCallPart,
+    CodeExecutionReturnPart,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -350,7 +352,7 @@ async def test_google_model_builtin_code_execution_stream(
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    CodeExecutionCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -363,14 +365,14 @@ async def test_google_model_builtin_code_execution_stream(
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolCallPart(
+                    CodeExecutionCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -383,7 +385,7 @@ print(result)\
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                         tool_call_id=IsStr(),
@@ -417,7 +419,7 @@ print(result)\
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -433,7 +435,7 @@ print(result)\
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -446,22 +448,22 @@ print(result)\
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='code-execution-return',
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='code-execution-call',
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -474,11 +476,11 @@ print(result)\
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
-                previous_part_kind='builtin-tool-return',
+                previous_part_kind='code-execution-return',
             ),
             PartEndEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -491,26 +493,26 @@ print(result)\
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='code-execution-return',
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolReturnPart(
+                part=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='code-execution-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The result is'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=4, part=TextPart(content='The result is'), previous_part_kind='code-execution-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -428,330,955.977')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='45.')),
             PartEndEvent(index=4, part=TextPart(content='The result is -428,330,955.97745.')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -525,7 +527,7 @@ print(result)\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
@@ -534,7 +536,7 @@ print(result)\
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -549,7 +551,7 @@ print(result)\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),

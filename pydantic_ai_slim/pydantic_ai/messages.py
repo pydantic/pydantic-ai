@@ -18,7 +18,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import deprecated
+from typing_extensions import NotRequired, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -887,6 +887,227 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
+@dataclass(repr=False)
+class CodeExecutionReturnPart(BuiltinToolReturnPart):
+    """A return part for code execution tool results with normalized accessor properties."""
+
+    content: dict[str, Any] | list[Any] | str | Any
+    """The code execution result content."""
+
+    part_kind: Literal['code-execution-return'] = 'code-execution-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def output(self) -> str | None:
+        """Get stdout/output, normalized across providers."""
+        if not isinstance(self.content, dict):
+            return str(self.content) if self.content else None
+        if 'stdout' in self.content:
+            return self.content['stdout']
+        if 'logs' in self.content:
+            logs = self.content['logs']
+            return '\n'.join(logs) if isinstance(logs, list) else str(logs)
+        if 'output' in self.content:
+            return self.content['output']
+        if 'outcome' in self.content:
+            return self.content['outcome']
+        return None
+
+    @property
+    def error_output(self) -> str | None:
+        """Get stderr, normalized across providers."""
+        if isinstance(self.content, dict) and 'stderr' in self.content:
+            return self.content['stderr'] or None
+        return None
+
+    @property
+    def return_code(self) -> int | None:
+        """Get the process return code."""
+        if isinstance(self.content, dict) and 'return_code' in self.content:
+            return self.content['return_code']
+        return None
+
+    @property
+    def status(self) -> str | None:
+        """Get the execution status."""
+        if isinstance(self.content, dict) and 'status' in self.content:
+            return self.content['status']
+        return None
+
+
+@dataclass(repr=False)
+class WebSearchReturnPart(BuiltinToolReturnPart):
+    """A return part for web search tool results with normalized accessor properties."""
+
+    content: dict[str, Any] | list[Any] | str | Any
+    """The web search result content."""
+
+    part_kind: Literal['web-search-return'] = 'web-search-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def sources(self) -> list[dict[str, Any]]:
+        """Get the search result sources, normalized across providers."""
+        if isinstance(self.content, list):
+            return self.content
+        if isinstance(self.content, dict) and 'sources' in self.content:
+            sources = self.content['sources']
+            return sources if isinstance(sources, list) else []
+        return []
+
+    @property
+    def status(self) -> str | None:
+        """Get the search status."""
+        if isinstance(self.content, dict) and 'status' in self.content:
+            return self.content['status']
+        return None
+
+
+@dataclass(repr=False)
+class WebFetchReturnPart(BuiltinToolReturnPart):
+    """A return part for web fetch tool results with normalized accessor properties."""
+
+    content: dict[str, Any] | list[Any] | str | Any
+    """The web fetch result content."""
+
+    part_kind: Literal['web-fetch-return'] = 'web-fetch-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def fetched_pages(self) -> list[dict[str, Any]]:
+        """Get the fetched page data, normalized across providers."""
+        if isinstance(self.content, list):
+            return self.content
+        if isinstance(self.content, dict):
+            return [self.content]
+        return []
+
+    @property
+    def fetched_content(self) -> str | None:
+        """Get the fetched content as a single string (first page only)."""
+        pages = self.fetched_pages
+        if pages and isinstance(pages[0], dict):
+            return pages[0].get('content')
+        return None
+
+    @property
+    def url(self) -> str | None:
+        """Get the URL that was fetched (first page only)."""
+        pages = self.fetched_pages
+        if pages and isinstance(pages[0], dict):
+            return pages[0].get('url') or pages[0].get('retrieved_url')
+        return None
+
+
+@dataclass(repr=False)
+class FileSearchReturnPart(BuiltinToolReturnPart):
+    """A return part for file search tool results with normalized accessor properties."""
+
+    content: dict[str, Any] | list[Any] | str | Any
+    """The file search result content."""
+
+    part_kind: Literal['file-search-return'] = 'file-search-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def results(self) -> list[dict[str, Any]]:
+        """Get the search results, normalized across providers."""
+        if isinstance(self.content, list):
+            return self.content
+        if isinstance(self.content, dict) and 'results' in self.content:
+            results = self.content['results']
+            return results if isinstance(results, list) else []
+        return []
+
+    @property
+    def status(self) -> str | None:
+        """Get the search status."""
+        if isinstance(self.content, dict) and 'status' in self.content:
+            return self.content['status']
+        return None
+
+
+@dataclass(repr=False)
+class ImageGenerationReturnPart(BuiltinToolReturnPart):
+    """A return part for image generation tool results (metadata only, image is in FilePart)."""
+
+    content: dict[str, Any] | str | Any
+    """The image generation result content (metadata, not the image itself)."""
+
+    part_kind: Literal['image-generation-return'] = 'image-generation-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def status(self) -> str | None:
+        """Get the generation status."""
+        if isinstance(self.content, dict) and 'status' in self.content:
+            return self.content['status']
+        return None
+
+    @property
+    def revised_prompt(self) -> str | None:
+        """Get the revised prompt used for generation."""
+        if isinstance(self.content, dict):
+            return self.content.get('revised_prompt')
+        return None
+
+    @property
+    def image_size(self) -> str | None:
+        """Get the size of the generated image."""
+        if isinstance(self.content, dict):
+            return self.content.get('size')
+        return None
+
+    @property
+    def quality(self) -> str | None:
+        """Get the quality setting used for generation."""
+        if isinstance(self.content, dict):
+            return self.content.get('quality')
+        return None
+
+    @property
+    def background(self) -> str | None:
+        """Get the background setting used for generation."""
+        if isinstance(self.content, dict):
+            return self.content.get('background')
+        return None
+
+
+# Mapping from tool_name to specialized return part class for migration
+_TOOL_NAME_TO_RETURN_PART_CLASS: dict[str, type[BuiltinToolReturnPart]] = {
+    'code_execution': CodeExecutionReturnPart,
+    'web_search': WebSearchReturnPart,
+    'web_fetch': WebFetchReturnPart,
+    'url_context': WebFetchReturnPart,  # Deprecated alias
+    'file_search': FileSearchReturnPart,
+    'image_generation': ImageGenerationReturnPart,
+}
+
+
+def _migrate_builtin_tool_return_part(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate old BuiltinToolReturnPart data to specific subclass based on tool_name.
+
+    This BeforeValidator upgrades old serialized data with part_kind='builtin-tool-return'
+    to the appropriate specialized subclass (e.g., 'code-execution-return').
+    """
+    if not isinstance(data, dict):
+        return data
+
+    part_kind = data.get('part_kind')
+    tool_name = data.get('tool_name', '')
+
+    if part_kind == 'builtin-tool-return':
+        if tool_name in _TOOL_NAME_TO_RETURN_PART_CLASS:
+            new_class = _TOOL_NAME_TO_RETURN_PART_CLASS[tool_name]
+            data = dict(data)
+            data['part_kind'] = new_class.part_kind
+        # MCP and memory tools stay as base class (schemas not stable)
+        elif tool_name.startswith('mcp_server:') or tool_name in ('mcp_server', 'memory'):
+            pass
+
+    return data
+
+
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
@@ -1215,8 +1436,163 @@ class BuiltinToolCallPart(BaseToolCallPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
+@dataclass(repr=False)
+class CodeExecutionCallPart(BuiltinToolCallPart):
+    """A call part for code execution tool with normalized accessor properties."""
+
+    args: dict[str, Any] | str | None = None
+    """The code execution call arguments."""
+
+    part_kind: Literal['code-execution-call'] = 'code-execution-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def code(self) -> str | None:
+        """Get the code to be executed."""
+        args = self.args_as_dict()
+        return args.get('code')
+
+
+@dataclass(repr=False)
+class WebSearchCallPart(BuiltinToolCallPart):
+    """A call part for web search tool with normalized accessor properties."""
+
+    args: dict[str, Any] | str | None = None
+    """The web search call arguments."""
+
+    part_kind: Literal['web-search-call'] = 'web-search-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def query(self) -> str | None:
+        """Get the search query."""
+        args = self.args_as_dict()
+        return args.get('query')
+
+
+@dataclass(repr=False)
+class WebFetchCallPart(BuiltinToolCallPart):
+    """A call part for web fetch tool with normalized accessor properties."""
+
+    args: dict[str, Any] | str | None = None
+    """The web fetch call arguments."""
+
+    part_kind: Literal['web-fetch-call'] = 'web-fetch-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def urls(self) -> list[str]:
+        """Get the URLs to fetch."""
+        args = self.args_as_dict()
+        if 'urls' in args:
+            return args['urls']
+        if 'url' in args:
+            return [args['url']]
+        return []
+
+
+@dataclass(repr=False)
+class FileSearchCallPart(BuiltinToolCallPart):
+    """A call part for file search tool with normalized accessor properties."""
+
+    args: dict[str, Any] | str | None = None
+    """The file search call arguments."""
+
+    part_kind: Literal['file-search-call'] = 'file-search-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def queries(self) -> list[str]:
+        """Get the search queries."""
+        args = self.args_as_dict()
+        if 'queries' in args:
+            return args['queries']
+        if 'query' in args:
+            return [args['query']]
+        return []
+
+
+@dataclass(repr=False)
+class ImageGenerationCallPart(BuiltinToolCallPart):
+    """A call part for image generation tool (prompt comes from conversation context)."""
+
+    part_kind: Literal['image-generation-call'] = 'image-generation-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+# Mapping from tool_name to specialized call part class for migration
+_TOOL_NAME_TO_CALL_PART_CLASS: dict[str, type[BuiltinToolCallPart]] = {
+    'code_execution': CodeExecutionCallPart,
+    'web_search': WebSearchCallPart,
+    'web_fetch': WebFetchCallPart,
+    'url_context': WebFetchCallPart,  # Deprecated alias
+    'file_search': FileSearchCallPart,
+    'image_generation': ImageGenerationCallPart,
+}
+
+
+def _migrate_builtin_tool_call_part(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate old BuiltinToolCallPart data to specific subclass based on tool_name.
+
+    This BeforeValidator upgrades old serialized data with part_kind='builtin-tool-call'
+    to the appropriate specialized subclass (e.g., 'code-execution-call').
+    """
+    if not isinstance(data, dict):
+        return data
+
+    part_kind = data.get('part_kind')
+    tool_name = data.get('tool_name', '')
+
+    if part_kind == 'builtin-tool-call':
+        if tool_name in _TOOL_NAME_TO_CALL_PART_CLASS:
+            new_class = _TOOL_NAME_TO_CALL_PART_CLASS[tool_name]
+            data = dict(data)
+            data['part_kind'] = new_class.part_kind
+        # MCP and memory tools stay as base class (schemas not stable)
+        elif tool_name.startswith('mcp_server:') or tool_name in ('mcp_server', 'memory'):
+            pass
+
+    return data
+
+
+# Union of all builtin tool call part types for the discriminator
+_BuiltinToolCallPartUnion = (
+    BuiltinToolCallPart
+    | CodeExecutionCallPart
+    | WebSearchCallPart
+    | WebFetchCallPart
+    | FileSearchCallPart
+    | ImageGenerationCallPart
+)
+
+# Union of all builtin tool return part types for the discriminator
+_BuiltinToolReturnPartUnion = (
+    BuiltinToolReturnPart
+    | CodeExecutionReturnPart
+    | WebSearchReturnPart
+    | WebFetchReturnPart
+    | FileSearchReturnPart
+    | ImageGenerationReturnPart
+)
+
+def _migrate_builtin_tool_parts(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate old BuiltinToolCallPart and BuiltinToolReturnPart data to specific subclasses.
+
+    This BeforeValidator upgrades old serialized data to the appropriate specialized subclass.
+    """
+    data = _migrate_builtin_tool_call_part(data)
+    data = _migrate_builtin_tool_return_part(data)
+    return data
+
+
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    TextPart
+    | ToolCallPart
+    | _BuiltinToolCallPartUnion
+    | _BuiltinToolReturnPartUnion
+    | ThinkingPart
+    | FilePart,
+    pydantic.BeforeValidator(_migrate_builtin_tool_parts),
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -1801,7 +2177,25 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'file',
+            'code-execution-call',
+            'web-search-call',
+            'web-fetch-call',
+            'file-search-call',
+            'image-generation-call',
+            'code-execution-return',
+            'web-search-return',
+            'web-fetch-return',
+            'file-search-return',
+            'image-generation-return',
+        ]
+        | None
     ) = None
     """The kind of the previous part, if any.
 
@@ -1841,7 +2235,25 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'file',
+            'code-execution-call',
+            'web-search-call',
+            'web-fetch-call',
+            'file-search-call',
+            'image-generation-call',
+            'code-execution-return',
+            'web-search-return',
+            'web-fetch-return',
+            'file-search-return',
+            'image-generation-return',
+        ]
+        | None
     ) = None
     """The kind of the next part, if any.
 
