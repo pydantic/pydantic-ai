@@ -1215,7 +1215,7 @@ def _map_grounding_metadata(
                 tool_call_id=tool_call_id,
                 content=[chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
                 if (grounding_chunks := grounding_metadata.grounding_chunks)
-                else None,
+                else [],
             ),
         )
     else:
