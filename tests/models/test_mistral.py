@@ -48,12 +48,14 @@ with try_import() as imports_successful:
         Mistral,
         TextChunk as MistralTextChunk,
         UsageInfo as MistralUsageInfo,
+        UserMessage as MistralUserMessage,
     )
     from mistralai.models import (
         ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionEvent as MistralCompletionEvent,
         SDKError,
         ToolCall as MistralToolCall,
+        ToolMessage as MistralToolMessage,
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
@@ -2638,3 +2640,39 @@ async def test_document_url_no_force_download() -> None:
         await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
         mock_download.assert_not_called()
+
+
+async def test_dummy_assistant_message_between_tool_and_user():
+    """Test that a dummy assistant message is inserted when ToolMessage is followed by UserMessage."""
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    # Message history: tool call response followed by user message
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Call the tool')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='tool1')],
+            model_name='mistral-large',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='tool1')]),
+        # This user message after a tool return should trigger dummy assistant message
+        ModelRequest(parts=[UserPromptPart(content='Thanks for the result')]),
+    ]
+
+    mistral_messages = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert mistral_messages == snapshot(
+        [
+            MistralUserMessage(content='Call the tool'),
+            MistralAssistantMessage(
+                content=[],
+                tool_calls=[
+                    MistralToolCall(
+                        function=MistralFunctionCall(name='my_tool', arguments={'x': 1}), id='tool1', type='function'
+                    )
+                ],
+            ),
+            MistralToolMessage(content='result', tool_call_id='tool1'),
+            MistralAssistantMessage(content=[MistralTextChunk(text='OK')]),
+            MistralUserMessage(content='Thanks for the result'),
+        ]
+    )

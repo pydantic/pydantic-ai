@@ -5380,3 +5380,77 @@ async def test_mixed_content_tool_return_mapping(google_provider: GoogleProvider
             }
         ]
     )
+
+
+async def test_tool_return_file_filtered_when_map_returns_none(
+    google_provider: GoogleProvider, image_content: BinaryContent
+):
+    """Test that files returning None from _map_file_to_part are filtered out."""
+    from unittest.mock import patch
+
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_image', content=image_content, tool_call_id='img1'),
+            ],
+        ),
+    ]
+
+    async def mock_map_file(file):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        return None  # Simulate unsupported file type
+
+    with patch.object(m, '_map_file_to_part', side_effect=mock_map_file):
+        _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # The file should be filtered out, only function_response should remain
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'get_image',
+                            'response': {},
+                            'id': 'img1',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_user_prompt_file_filtered_when_map_returns_none(
+    google_provider: GoogleProvider, image_content: BinaryContent
+):
+    """Test that files returning None from _map_file_to_part in user prompts are filtered out."""
+    from unittest.mock import patch
+
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Hello', image_content]),
+            ],
+        ),
+    ]
+
+    async def mock_map_file(file):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        return None  # Simulate unsupported file type
+
+    with patch.object(m, '_map_file_to_part', side_effect=mock_map_file):
+        _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # The file should be filtered out, only text should remain
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [{'text': 'Hello'}],
+            }
+        ]
+    )

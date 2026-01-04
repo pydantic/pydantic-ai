@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
 from typing import Annotated, Any, TypeVar, cast
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -1558,7 +1559,6 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
 
 async def test_image_url_force_download() -> None:
     """Test that force_download=True calls download_item for ImageUrl."""
-    from unittest.mock import AsyncMock, patch
 
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
@@ -1593,7 +1593,6 @@ async def test_image_url_force_download() -> None:
 
 async def test_image_url_no_force_download() -> None:
     """Test that force_download=False does not call download_item for ImageUrl."""
-    from unittest.mock import AsyncMock, patch
 
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
@@ -1622,7 +1621,6 @@ async def test_image_url_no_force_download() -> None:
 
 async def test_document_url_pdf_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl (PDF)."""
-    from unittest.mock import AsyncMock, patch
 
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
@@ -1657,7 +1655,6 @@ async def test_document_url_pdf_force_download() -> None:
 
 async def test_document_url_text_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl (text/plain)."""
-    from unittest.mock import AsyncMock, patch
 
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
@@ -8584,3 +8581,112 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_tool_return_image_url_force_download():
+    """Test that ImageUrl with force_download=True downloads and sends image data in tool_result."""
+
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='tool1')],
+            model_name='claude-sonnet-4-5',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=ImageUrl(url='https://example.com/image.png', force_download=True),
+                    tool_call_id='tool1',
+                )
+            ]
+        ),
+    ]
+
+    with patch('pydantic_ai.models.anthropic.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': b'\x89PNG\r\n\x1a\n', 'data_type': 'png'}
+        _, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    # Check the tool_result contains the image as base64
+    tool_result_msg = anthropic_messages[-1]
+    assert tool_result_msg['role'] == 'user'
+    tool_result_content = tool_result_msg['content'][0]  # pyright: ignore[reportIndexIssue,reportUnknownVariableType]
+    assert tool_result_content['type'] == 'tool_result'  # pyright: ignore[reportArgumentType]
+    # The content should have an image block from the downloaded data
+    image_block = tool_result_content['content'][0]  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
+    assert image_block['type'] == 'image'  # pyright: ignore[reportArgumentType]
+    assert image_block['source']['type'] == 'base64'  # pyright: ignore[reportArgumentType]
+
+
+async def test_tool_return_document_url_in_user_message():
+    """Test that DocumentUrl returned from tools is sent alongside tool_result in user message."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_doc', args={}, tool_call_id='tool1')],
+            model_name='claude-sonnet-4-5',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_doc',
+                    content=DocumentUrl(url='https://example.com/doc.pdf'),
+                    tool_call_id='tool1',
+                )
+            ]
+        ),
+    ]
+
+    _, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+
+    # Should have: user msg, assistant msg with tool_use, user msg with tool_result + document
+    assert len(anthropic_messages) == 3
+    # Last message should be user message with both tool_result and document content
+    tool_result_msg = anthropic_messages[-1]
+    assert tool_result_msg['role'] == 'user'
+    # Should have tool_result and document in same message
+    tool_result = [c for c in tool_result_msg['content'] if isinstance(c, dict) and c.get('type') == 'tool_result']
+    doc_content = [c for c in tool_result_msg['content'] if isinstance(c, dict) and c.get('type') == 'document']
+    assert len(tool_result) == 1
+    assert len(doc_content) == 1
+    assert doc_content[0]['source']['type'] == 'url'  # pyright: ignore[reportGeneralTypeIssues,reportArgumentType]
+
+
+async def test_tool_return_binary_pdf_in_user_message():
+    """Test that BinaryContent with non-image media_type is sent alongside tool_result in user message."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_doc', args={}, tool_call_id='tool1')],
+            model_name='claude-sonnet-4-5',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_doc',
+                    content=BinaryContent(data=b'%PDF-1.4', media_type='application/pdf'),
+                    tool_call_id='tool1',
+                )
+            ]
+        ),
+    ]
+
+    _, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+
+    # Should have: user msg, assistant msg with tool_use, user msg with tool_result + document
+    assert len(anthropic_messages) == 3
+    # Last message should be user message with both tool_result and document content
+    tool_result_msg = anthropic_messages[-1]
+    assert tool_result_msg['role'] == 'user'
+    # Should have tool_result and document in same message
+    tool_result = [c for c in tool_result_msg['content'] if isinstance(c, dict) and c.get('type') == 'tool_result']
+    doc_content = [c for c in tool_result_msg['content'] if isinstance(c, dict) and c.get('type') == 'document']
+    assert len(tool_result) == 1
+    assert len(doc_content) == 1

@@ -2439,3 +2439,278 @@ async def test_mixed_content_tool_return_mapping(
             }
         ]
     )
+
+
+async def test_empty_tool_result_text_format(bedrock_provider: BedrockProvider):
+    """Test that empty tool result uses text format fallback when profile uses text format."""
+    # Default profile uses text format
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    # Tool returns None (empty content)
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_nothing', content=None, tool_call_id='empty1', timestamp=now),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    # Should have empty text fallback
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'empty1',
+                            'content': [{'text': ''}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_empty_tool_result_json_format():
+    """Test that empty tool result uses json format fallback when profile uses json format."""
+    from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+    # Create a stub provider that uses json format profile
+    class JsonFormatBedrockProvider(Provider[Any]):
+        @property
+        def name(self) -> str:
+            return 'bedrock-json'
+
+        @property
+        def base_url(self) -> str:
+            return 'https://bedrock.stub'
+
+        @property
+        def client(self) -> Any:
+            return None
+
+        def model_profile(self, model_name: str):
+            return BedrockModelProfile(bedrock_tool_result_format='json')
+
+    model = BedrockConverseModel('mistral.mistral-large-2402-v1:0', provider=JsonFormatBedrockProvider())
+    now = datetime.datetime.now()
+
+    # Tool returns None (empty content)
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_nothing', content=None, tool_call_id='empty1', timestamp=now),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    # Should have empty json fallback
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'empty1',
+                            'content': [{'json': {}}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_image_url_s3_tool_return(bedrock_provider: BedrockProvider):
+    """Test that ImageUrl with S3 URL in tool returns uses S3 location source."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_img',
+                    content=ImageUrl(url='s3://my-bucket/image.png', media_type='image/png'),
+                    tool_call_id='img1',
+                    timestamp=now,
+                ),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'img1',
+                            'content': [
+                                {
+                                    'image': {
+                                        'format': 'png',
+                                        'source': {'s3Location': {'uri': 's3://my-bucket/image.png'}},
+                                    }
+                                }
+                            ],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_image_url_s3_with_bucket_owner(bedrock_provider: BedrockProvider):
+    """Test that S3 URL with bucketOwner query param includes bucket owner in location."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_img',
+                    content=ImageUrl(url='s3://my-bucket/image.png?bucketOwner=123456789012', media_type='image/png'),
+                    tool_call_id='img1',
+                    timestamp=now,
+                ),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'img1',
+                            'content': [
+                                {
+                                    'image': {
+                                        'format': 'png',
+                                        'source': {
+                                            's3Location': {
+                                                'uri': 's3://my-bucket/image.png',
+                                                'bucketOwner': '123456789012',
+                                            }
+                                        },
+                                    }
+                                }
+                            ],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_document_url_http_tool_return(bedrock_provider: BedrockProvider):
+    """Test that DocumentUrl with HTTP URL downloads and uses bytes source."""
+    from unittest.mock import AsyncMock, patch
+
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_doc',
+                    content=DocumentUrl(url='https://example.com/doc.pdf'),
+                    tool_call_id='doc1',
+                    timestamp=now,
+                ),
+            ],
+        ),
+    ]
+
+    with patch('pydantic_ai.models.bedrock.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': b'%PDF-1.4', 'data_type': 'pdf'}
+        _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'doc1',
+                            'content': [
+                                {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': b'%PDF-1.4'}}}
+                            ],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_video_url_s3_tool_return(bedrock_provider: BedrockProvider):
+    """Test that VideoUrl with S3 URL in tool returns uses S3 location source."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_vid',
+                    content=VideoUrl(url='s3://my-bucket/video.mp4', media_type='video/mp4'),
+                    tool_call_id='vid1',
+                    timestamp=now,
+                ),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'vid1',
+                            'content': [
+                                {
+                                    'video': {
+                                        'format': 'mp4',
+                                        'source': {'s3Location': {'uri': 's3://my-bucket/video.mp4'}},
+                                    }
+                                }
+                            ],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )

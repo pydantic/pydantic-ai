@@ -1081,3 +1081,37 @@ def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:
 @dataclass
 class MockCredentials:
     project_id = 'foobar'
+
+
+def test_has_multimodal_content_with_list():
+    """Test _has_multimodal_content helper with list content containing multimodal items."""
+    from datetime import datetime
+
+    # Test with list containing ImageUrl
+    tool_return_with_list = ToolReturnPart(
+        tool_name='get_data_with_image',
+        content=['Some text data', ImageUrl(url='https://example.com/image.png')],
+        tool_call_id='test1',
+        timestamp=datetime.now(),
+    )
+    assert _has_multimodal_content(tool_return_with_list, ImageUrl) is True
+    assert _has_multimodal_content(tool_return_with_list, DocumentUrl) is False
+
+    # Test with list containing DocumentUrl
+    tool_return_with_doc = ToolReturnPart(
+        tool_name='get_doc',
+        content=[{'data': 'value'}, DocumentUrl(url='https://example.com/doc.pdf')],
+        tool_call_id='test2',
+        timestamp=datetime.now(),
+    )
+    assert _has_multimodal_content(tool_return_with_doc, DocumentUrl) is True
+    assert _has_multimodal_content(tool_return_with_doc, ImageUrl) is False
+
+    # Test with empty list
+    tool_return_empty_list = ToolReturnPart(
+        tool_name='get_empty',
+        content=[],
+        tool_call_id='test3',
+        timestamp=datetime.now(),
+    )
+    assert _has_multimodal_content(tool_return_empty_list, ImageUrl) is False

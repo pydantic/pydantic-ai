@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -1014,7 +1014,6 @@ async def test_document_url_input_force_download_response_api(allow_model_reques
 
 async def test_image_url_force_download_chat() -> None:
     """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1049,7 +1048,6 @@ async def test_image_url_force_download_chat() -> None:
 
 async def test_image_url_no_force_download_chat() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1078,7 +1076,6 @@ async def test_image_url_no_force_download_chat() -> None:
 
 async def test_document_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
 
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1113,7 +1110,6 @@ async def test_document_url_force_download_responses() -> None:
 
 async def test_document_url_no_force_download_responses() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
 
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1142,7 +1138,6 @@ async def test_document_url_no_force_download_responses() -> None:
 
 async def test_audio_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
 
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
@@ -3962,3 +3957,71 @@ async def test_responses_api_multimodal_tool_return_with_text_and_image(image_co
             },
         ]
     )
+
+
+async def test_responses_api_multimodal_tool_return_image_url_force_download():
+    """Test Responses API maps ImageUrl with force_download=True in tool returns correctly."""
+
+    image_url = ImageUrl(url='https://example.com/image.jpg', force_download=True)
+    part = ToolReturnPart(tool_name='get_image', content=image_url, tool_call_id='img1')
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD',
+            'data_type': 'jpg',
+        }
+        result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    assert result == snapshot(
+        [{'type': 'input_image', 'image_url': 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD', 'detail': 'auto'}]
+    )
+
+
+async def test_responses_api_multimodal_tool_return_audio_url_force_download():
+    """Test Responses API maps AudioUrl with force_download=True in tool returns correctly."""
+
+    audio_url = AudioUrl(url='https://example.com/audio.mp3', force_download=True)
+    part = ToolReturnPart(tool_name='get_audio', content=audio_url, tool_call_id='audio1')
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0U=',
+            'data_type': 'mp3',
+        }
+        result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    assert result == snapshot(
+        [{'type': 'input_file', 'file_data': 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0U=', 'filename': 'filename.mp3'}]
+    )
+
+
+async def test_responses_api_multimodal_tool_return_document_url_force_download():
+    """Test Responses API maps DocumentUrl with force_download=True in tool returns correctly."""
+
+    doc_url = DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
+    part = ToolReturnPart(tool_name='get_doc', content=doc_url, tool_call_id='doc1')
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:application/pdf;base64,JVBERi0xLjQK',
+            'data_type': 'pdf',
+        }
+        result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    assert result == snapshot(
+        [{'type': 'input_file', 'file_data': 'data:application/pdf;base64,JVBERi0xLjQK', 'filename': 'filename.pdf'}]
+    )
+
+
+async def test_responses_api_multimodal_tool_return_unsupported_binary_type():
+    """Test Responses API raises error for unsupported BinaryContent media type in tool returns."""
+    import pytest
+
+    binary_audio = BinaryContent(data=b'audio data', media_type='audio/mp3')
+    part = ToolReturnPart(tool_name='get_audio', content=binary_audio, tool_call_id='audio1')
+
+    with pytest.raises(RuntimeError, match='Unsupported binary content type: audio/mp3'):
+        await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
