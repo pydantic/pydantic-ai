@@ -39,6 +39,8 @@ class ModelProfile:
     """
     supports_image_output: bool = False
     """Whether the model supports image output."""
+    supports_tool_multimedia_output: bool = False
+    """Whether the model supports multimedia output in tool calls."""
     default_structured_output_mode: StructuredOutputMode = 'tool'
     """The default structured output mode to use for the model."""
     prompted_output_template: str = dedent(

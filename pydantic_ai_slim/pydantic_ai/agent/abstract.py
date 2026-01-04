@@ -593,6 +593,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                supports_tool_multimedia_output = (
+                                    graph_ctx.deps.model.profile.supports_tool_multimedia_output
+                                )
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
                                     tool_calls=stream.response.tool_calls,
@@ -600,6 +603,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     final_result=final_result,
                                     ctx=graph_ctx,
                                     output_parts=parts,
+                                    supports_tool_multimedia_output=supports_tool_multimedia_output,
                                 ):
                                     pass
 

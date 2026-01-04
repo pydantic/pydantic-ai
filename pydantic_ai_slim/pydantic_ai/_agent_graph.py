@@ -737,6 +737,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
+        supports_tool_multimedia_output = ctx.deps.model.profile.supports_tool_multimedia_output
+
         async for event in process_tool_calls(
             tool_manager=ctx.deps.tool_manager,
             tool_calls=tool_calls,
@@ -745,6 +747,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             ctx=ctx,
             output_parts=output_parts,
             output_final_result=output_final_result,
+            supports_tool_multimedia_output=supports_tool_multimedia_output,
         ):
             yield event
 
@@ -857,6 +860,7 @@ async def process_tool_calls(  # noqa: C901
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
     output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1),
+    supports_tool_multimedia_output: bool = False,
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     """Process function (i.e., non-result) tool calls in parallel.
 
@@ -991,6 +995,7 @@ async def process_tool_calls(  # noqa: C901
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
             output_deferred_metadata=deferred_metadata,
+            supports_tool_multimedia_output=supports_tool_multimedia_output,
         ):
             yield event
 
@@ -1043,6 +1048,7 @@ async def _call_tools(
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
     output_deferred_metadata: dict[str, dict[str, Any]],
+    supports_tool_multimedia_output: bool,
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
@@ -1098,7 +1104,9 @@ async def _call_tools(
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
+                    _call_tool(
+                        tool_manager, call, tool_call_results.get(call.tool_call_id), supports_tool_multimedia_output
+                    ),
                     index,
                 ):
                     yield event
@@ -1106,7 +1114,9 @@ async def _call_tools(
         else:
             tasks = [
                 asyncio.create_task(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
+                    _call_tool(
+                        tool_manager, call, tool_call_results.get(call.tool_call_id), supports_tool_multimedia_output
+                    ),
                     name=call.tool_name,
                 )
                 for call in tool_calls
@@ -1150,6 +1160,7 @@ async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
+    supports_tool_multimedia_output: bool,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:
@@ -1195,10 +1206,14 @@ async def _call_tool(
                     f'`ToolReturn` should be used directly.'
                 )
             elif isinstance(content, _messages.MultiModalContent):
-                identifier = content.identifier
-
-                return_values.append(f'See file {identifier}')
-                user_contents.extend([f'This is file {identifier}:', content])
+                if supports_tool_multimedia_output:
+                    # Model supports multimedia in tool returns, send it directly
+                    return_values.append(content)
+                else:
+                    # Model doesn't support multimedia in tool returns, simulate it with user message
+                    identifier = content.identifier
+                    return_values.append(f'See file {identifier}')
+                    user_contents.extend([f'This is file {identifier}:', content])
             else:
                 return_values.append(content)
 
@@ -1207,7 +1222,7 @@ async def _call_tool(
             content=user_contents,
         )
 
-    if (
+    if not supports_tool_multimedia_output and (
         isinstance(tool_return.return_value, _messages.MultiModalContent)
         or isinstance(tool_return.return_value, list)
         and any(
