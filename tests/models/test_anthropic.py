@@ -3462,7 +3462,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                             {
                                 'encrypted_content': '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',
                                 'page_age': '4 days ago',
-                                'title': 'Here\'s when S.F. weather could hit 90 degrees next week',
+                                'title': "Here's when S.F. weather could hit 90 degrees next week",
                                 'type': 'web_search_result',
                                 'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                             },
@@ -3632,9 +3632,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=1,
-                part=WebSearchCallPart(
-                    tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'
-                ),
+                part=WebSearchCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
@@ -3779,9 +3777,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=4,
-                part=WebSearchCallPart(
-                    tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'
-                ),
+                part=WebSearchCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
@@ -3903,7 +3899,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         {
                             'encrypted_content': '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',
                             'page_age': '4 days ago',
-                            'title': 'Here\'s when S.F. weather could hit 90 degrees next week',
+                            'title': "Here's when S.F. weather could hit 90 degrees next week",
                             'type': 'web_search_result',
                             'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                         },
@@ -4297,7 +4293,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                         {
                             'encrypted_content': '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',
                             'page_age': '4 days ago',
-                            'title': 'Here\'s when S.F. weather could hit 90 degrees next week',
+                            'title': "Here's when S.F. weather could hit 90 degrees next week",
                             'type': 'web_search_result',
                             'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                         },
@@ -5526,9 +5522,7 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
             ),
             PartStartEvent(
                 index=1,
-                part=WebFetchCallPart(
-                    tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'
-                ),
+                part=WebFetchCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
@@ -7936,9 +7930,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
         [
             PartStartEvent(
                 index=0,
-                part=WebSearchCallPart(
-                    tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'
-                ),
+                part=WebSearchCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'),
             ),
             PartDeltaEvent(
                 index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
@@ -8071,9 +8063,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartStartEvent(
                 index=3,
-                part=WebSearchCallPart(
-                    tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'
-                ),
+                part=WebSearchCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
