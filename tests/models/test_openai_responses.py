@@ -18,9 +18,9 @@ from pydantic_ai import (
     CodeExecutionCallPart,
     CodeExecutionReturnPart,
     DocumentUrl,
+    FilePart,
     FileSearchCallPart,
     FileSearchReturnPart,
-    FilePart,
     FinalResultEvent,
     ImageGenerationCallPart,
     ImageGenerationReturnPart,
@@ -3135,7 +3135,7 @@ I\
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' be')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' extremely')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' long')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' -')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' —')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' potentially')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' hundreds')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' of')),
@@ -5637,7 +5637,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' x')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' from')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' —')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='5')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
@@ -7106,11 +7106,11 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                         content="""\
 The monorepo is organized into these main packages:  \n\
 
-• pydantic-ai-slim\u2003- core agent framework (type-safe agents, model interface, tooling)  \n\
-• pydantic-evals\u2003\u2003- evaluation system (datasets, metrics, evaluators, reports)  \n\
-• pydantic-graph\u2003\u2003- graph-based execution engine (state-machine orchestration)  \n\
-• clai\u2003\u2003\u2003\u2003\u2003\u2003\u2003- CLI for scaffolding and running agents  \n\
-• examples\u2003\u2003\u2003\u2003- sample apps & demos showing real-world usage\
+• pydantic-ai-slim\u2003– core agent framework (type-safe agents, model interface, tooling)  \n\
+• pydantic-evals\u2003\u2003– evaluation system (datasets, metrics, evaluators, reports)  \n\
+• pydantic-graph\u2003\u2003– graph-based execution engine (state-machine orchestration)  \n\
+• clai\u2003\u2003\u2003\u2003\u2003\u2003\u2003– CLI for scaffolding and running agents  \n\
+• examples\u2003\u2003\u2003\u2003– sample apps & demos showing real-world usage\
 """,
                         id='msg_0083938b3a28070e0068fabda04de881a089010e6710637ab3',
                     ),

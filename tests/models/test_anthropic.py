@@ -2922,7 +2922,7 @@ I should search for San Francisco weather today to get the most current informat
                             {
                                 'encrypted_content': 'EsAECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKpn4YXFmvNuvbgCiRoMbBI3+2gw2envcVt9IjBP9gnH52WNd/KZ1aqqpAENEYKB6+sioLBcD46YsnVRU5ZprJbKeJqb0bQNXpJK9VkqwwNZ7EpUfgtmH6D/ybM4Mv9zZBsNReUYiXitifboRPIoghEm8Lyn0JxF+KCqALQIIjaj8r6lJZ4Mf/YrUSBmyLDpeL26PlQ3DbezagMktGheHMncW14DLDmS7jjw8VLNHjDIHrlt2GZxbHswvjE1jmMnowJ6UjnnlaGCceDJrFuLg36a/YpQpGQ/UQlTc32vIeDbL1yAPsXX6BL0Y5lDJ2Ox/ZUaT8EJ0M/5O4wDnNcZmR9jG+CXvh3WoGbpKPqsC5nqFIxlFFXn+8cLy3/rHPKGLzra7kJ9zcPuPWLUq8FIbtOT764k3JrXeDvnSr49n0x/cHY+tP6XerlHty0xtX66kNq74Y0hA5/J/cEEi9SZFkR1gHMi0oBV7nXLnPzM++KiiidVg9s4FGiINI7fBFAG1An1NnG8dtYpglyq8Y/I1H9ErahnigU9KMnS2hoW6ioDYAImR8KXXO6ZcHLpuaoeuDVplmgJG4a1tjiWUsn9rMfeNSzsUArfc593nRzaJRIzDWFwUEsEZhZCthaWqSud/HPZxwUSPF9Px0X+WPrp+SDiK89zPxc8Dl5NzafNQLSJfndpETf7ZjVsizVunS6lFfi7GAM=',
                                 'page_age': '1 week ago',
-                                'title': 'San Francisco Bay Area weather forecast - NBC Bay Area',
+                                'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
                                 'type': 'web_search_result',
                                 'url': 'https://www.nbcbayarea.com/weather/',
                             },
@@ -3347,7 +3347,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                             {
                                 'encrypted_content': 'EsAECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDIC57jccAgUeWO+CmRoMiXwQw/UZ+ZUqJBgnIjBZQrLFpduzQDmOBDmD4zJH7XN4Xhlm+4I8k5HXbtWRSQqmRnk7qv6LHDUggBXpm/EqwwOcJ+yN3KaBJfiMu1/qiV8LEdmf6tCtpcAfAluL+fdu5KV4R3WHb1bDJ8IjgXxvajYyad8cHuzTPQkTZv5i30jSavz9bdSoZV/xf9tLfD+Wi1wmWpc1SfZPqKqO2qeqBDdK9a5SSbKcCpBIlwCpnPOP4CkjVuZ9QENvxDkH+uUwT1QDAeiM0m7QAFpHbosyC+QHejiTWC5jRPdZ90nxtqAk1A6MIkYb6xJh+K/XleAMM5Ym4rWhhu4nIx8MmOjLrbZkw+QuOKJKXqfzqnbEkBPqXOndkTJWPl7TvmU7j3eNDZMNlOdi1wjhDxPmjtVbktbPhuTfXc7WAUTB2PPETC9zWfaJrUBKe1XOfh35Xh2Bi54xV0MulfckJ6uuU8W1VEMgCYkIadiNwfUPE9PCqOh2WzX8e9A2FGyUI6zG/8XDf9vJqDL34xX98PagCMBxHrE/tRr7VCDWMyfrMrdr1JLAQMY1Ct6hwVjqGkY2fShTfFCBveMIqsQQC7kZJMhko7ZP5CzXUCfIEdSA3+sM8s9UMqNBjyalWoqeeR2axAkz/2Y5oW0kcy6vUxDAxyoS08YGIu5t4ER3vWElTIq3DWd1GhJfGAM=',
                                 'page_age': '1 week ago',
-                                'title': 'San Francisco Bay Area weather forecast - NBC Bay Area',
+                                'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
                                 'type': 'web_search_result',
                                 'url': 'https://www.nbcbayarea.com/weather/',
                             },
@@ -3717,7 +3717,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         {
                             'encrypted_content': 'EsAECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDIC57jccAgUeWO+CmRoMiXwQw/UZ+ZUqJBgnIjBZQrLFpduzQDmOBDmD4zJH7XN4Xhlm+4I8k5HXbtWRSQqmRnk7qv6LHDUggBXpm/EqwwOcJ+yN3KaBJfiMu1/qiV8LEdmf6tCtpcAfAluL+fdu5KV4R3WHb1bDJ8IjgXxvajYyad8cHuzTPQkTZv5i30jSavz9bdSoZV/xf9tLfD+Wi1wmWpc1SfZPqKqO2qeqBDdK9a5SSbKcCpBIlwCpnPOP4CkjVuZ9QENvxDkH+uUwT1QDAeiM0m7QAFpHbosyC+QHejiTWC5jRPdZ90nxtqAk1A6MIkYb6xJh+K/XleAMM5Ym4rWhhu4nIx8MmOjLrbZkw+QuOKJKXqfzqnbEkBPqXOndkTJWPl7TvmU7j3eNDZMNlOdi1wjhDxPmjtVbktbPhuTfXc7WAUTB2PPETC9zWfaJrUBKe1XOfh35Xh2Bi54xV0MulfckJ6uuU8W1VEMgCYkIadiNwfUPE9PCqOh2WzX8e9A2FGyUI6zG/8XDf9vJqDL34xX98PagCMBxHrE/tRr7VCDWMyfrMrdr1JLAQMY1Ct6hwVjqGkY2fShTfFCBveMIqsQQC7kZJMhko7ZP5CzXUCfIEdSA3+sM8s9UMqNBjyalWoqeeR2axAkz/2Y5oW0kcy6vUxDAxyoS08YGIu5t4ER3vWElTIq3DWd1GhJfGAM=',
                             'page_age': '1 week ago',
-                            'title': 'San Francisco Bay Area weather forecast - NBC Bay Area',
+                            'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
                             'type': 'web_search_result',
                             'url': 'https://www.nbcbayarea.com/weather/',
                         },
@@ -4177,7 +4177,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                         {
                             'encrypted_content': 'EsAECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDIC57jccAgUeWO+CmRoMiXwQw/UZ+ZUqJBgnIjBZQrLFpduzQDmOBDmD4zJH7XN4Xhlm+4I8k5HXbtWRSQqmRnk7qv6LHDUggBXpm/EqwwOcJ+yN3KaBJfiMu1/qiV8LEdmf6tCtpcAfAluL+fdu5KV4R3WHb1bDJ8IjgXxvajYyad8cHuzTPQkTZv5i30jSavz9bdSoZV/xf9tLfD+Wi1wmWpc1SfZPqKqO2qeqBDdK9a5SSbKcCpBIlwCpnPOP4CkjVuZ9QENvxDkH+uUwT1QDAeiM0m7QAFpHbosyC+QHejiTWC5jRPdZ90nxtqAk1A6MIkYb6xJh+K/XleAMM5Ym4rWhhu4nIx8MmOjLrbZkw+QuOKJKXqfzqnbEkBPqXOndkTJWPl7TvmU7j3eNDZMNlOdi1wjhDxPmjtVbktbPhuTfXc7WAUTB2PPETC9zWfaJrUBKe1XOfh35Xh2Bi54xV0MulfckJ6uuU8W1VEMgCYkIadiNwfUPE9PCqOh2WzX8e9A2FGyUI6zG/8XDf9vJqDL34xX98PagCMBxHrE/tRr7VCDWMyfrMrdr1JLAQMY1Ct6hwVjqGkY2fShTfFCBveMIqsQQC7kZJMhko7ZP5CzXUCfIEdSA3+sM8s9UMqNBjyalWoqeeR2axAkz/2Y5oW0kcy6vUxDAxyoS08YGIu5t4ER3vWElTIq3DWd1GhJfGAM=',
                             'page_age': '1 week ago',
-                            'title': 'San Francisco Bay Area weather forecast - NBC Bay Area',
+                            'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
                             'type': 'web_search_result',
                             'url': 'https://www.nbcbayarea.com/weather/',
                         },
@@ -8125,7 +8125,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                         {
                             'encrypted_content': 'EqkHCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPjy4Tk2ZA4s5aAgVRoMg5FaArA68F15P7i8IjCZCpv40Dn+y0KLe3x/ljplOd/KcfdBTQvNmuUxny/UgY+KU9TM7COzrcwuUNw1uKYqrAbuTehNwNzgSjtez445VA7hf6k2fwMw4y81HsGAB9xqKRvV2tcvdObPOMif9xBZVXnvgzGOAaXHl5PZmv29eNRlfCMFYfMAaN/rdvLDKzhpC/IDd/Y3YZEuWfx4BiXoyJor8I9s+VQ5SjFLRfiLEU9H7l/2Mm7wNf8gWb6+X3gB5Fkysf5FLD6gxXCP21G/JdGMWv/FmcV4yQ1+lR0LMz7rNETtO2p8BAZgrZf89EEovpFcE1PNbrmAn8zjf/EWYHolVLFMdYQ+VBRqPQOjoMhHbQ0GGB6FioxFFodvXPY0XydttssInrn8D//87b7KAQXdfpjOjfb16gczZDkOEx4frn4SokkvuEQZWnlVtQmz8sbCSu8B0xBH0VdPXUGOFYh/GKOz8oiL5h2d2/Tqgh9C2IXNoFkxfYHlUQPaBah5Hfb7u8cJ6FpdR8Kd8YkeFQr+mGyGLEu3x4YdpqJvp9V3xWd2jucxP5USw8oHBncR/HFXotoXzHjyy3d3C+Lac1QH+x1/3gafKud3PmncfSwzaPrjcGpClkrokrsXZSCubdx55KQJCW8b1NEKp10w5xuhSg4aYH64pnEcx0IOTU620vb6k6OBMhUJ7wECtbyh/+I1xL7FVde5hNsyH18jsO2DwDUdleGlf+n/pCfTUlRo7ULt9I7Qq3iIo5UA79bvIOlwRYH4vfNnKEKKcoY2L8fhrsHrm1kaAYvPt4z7DdYHy/pd8Oixizos8O3zB094KAG+A6j2jjvUKhM3lVtPRGRa/eGYMSkkNW7Ik2vnMoPkvRsm0LM3/KNHOV+7SNvpM+/gW41rU/XDa55Tcmnw0uJsJOpOXxGhxF1MTXslCHLoE6VzuQnww/KAx82ZHAL1DVVxG9Cnk2QEH9GIx5IlK1og7OCoWfYvhV5ivlrazGDaJhx7WilJaX9TY5KN1dPRdxwvfl/5jJtRa8PqYsnk/oXak4Do5qCk6hC7uec9zVuG38j4+6uUeIB4AcBiueDNT8GRx9ccQ01v06JJtIXiXRtZQ2lCmC5ZHi1a0sA2kfCHCF6mu1VbopBV5vv00XQ1xvDFMIX1dBVsxhy6nRgD',
                             'page_age': None,
-                            'title': 'ABC News - Breaking News, Latest News and Videos',
+                            'title': 'ABC News – Breaking News, Latest News and Videos',
                             'type': 'web_search_result',
                             'url': 'https://abcnews.go.com/',
                         },
@@ -8146,7 +8146,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                         {
                             'encrypted_content': 'Et4ECioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFIPj42woU98JMQRhRoMOYuBjzQ62lFOxkn/IjD9AaavhYfhuVUR+6XA55O0rVbWwPlUZjgIAw6N1kXBv1Y8tQM1FE/uKJSLLR4ixN4q4QMIQdUoYsT+zyb16Ndd4qa2I96kPDnhBy4rXGenBrnwzaBiApJ90u3rB6aJgqwx+zISZ9Co+YB2KUrNtvdoS9YMmgA1qxw2BWltYVXsvToBjJWmqyyQylJbqXoVF+v7sqwcibbPipASR7JB+xjVKD/APg6dQV3CjCFCcQupR8bMjv4IRk6ka3WmxR7fn4yurYteWdyBPDAN2dzKS0Bg+z4KwUGsYikVXSKO9/qJJKsXKiZfxWw8JWDmYJIAqaVody+KON7XcATd9DIdBXSwhqyotmqy1csVklrT6pWrptr6PjBGcUHKMP64tcVtS+JJ2w3+uwIl7YKyuwU89CSE4BbZ98SPGkQZKn0s2t939eEx38hCPJ+PG/R0Mka9+wy7tAemacDc9JrcmtcUVri0d+xxultUgeQtlLTyloW7Ufz5FcngQC4RduJYC8K0iuLIsvXWGW/c4HWXqtXE6cMgSuEzsIZxLNpZG1QD1W5DEOuqQw6LtSoxWt+9VncSsGfIBT/RMsBm2knlLzmNw6iZ/HvKv1IHFVWKKyda3F94XN3Pzqc776uQTOxxwHblQPcyTQ/AewMkfhkvuFELT4ZaYv0vzB9W8qh/dZyczuUvNeQc8/ISVZcHF7ZaTaf5aT3nNpk/GAM=',
                             'page_age': None,
-                            'title': 'News - The White House',
+                            'title': 'News – The White House',
                             'type': 'web_search_result',
                             'url': 'https://www.whitehouse.gov/news/',
                         },
@@ -8555,7 +8555,7 @@ These stories represent major international diplomatic developments, significant
                         {
                             'encrypted_content': 'EqkHCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPjy4Tk2ZA4s5aAgVRoMg5FaArA68F15P7i8IjCZCpv40Dn+y0KLe3x/ljplOd/KcfdBTQvNmuUxny/UgY+KU9TM7COzrcwuUNw1uKYqrAbuTehNwNzgSjtez445VA7hf6k2fwMw4y81HsGAB9xqKRvV2tcvdObPOMif9xBZVXnvgzGOAaXHl5PZmv29eNRlfCMFYfMAaN/rdvLDKzhpC/IDd/Y3YZEuWfx4BiXoyJor8I9s+VQ5SjFLRfiLEU9H7l/2Mm7wNf8gWb6+X3gB5Fkysf5FLD6gxXCP21G/JdGMWv/FmcV4yQ1+lR0LMz7rNETtO2p8BAZgrZf89EEovpFcE1PNbrmAn8zjf/EWYHolVLFMdYQ+VBRqPQOjoMhHbQ0GGB6FioxFFodvXPY0XydttssInrn8D//87b7KAQXdfpjOjfb16gczZDkOEx4frn4SokkvuEQZWnlVtQmz8sbCSu8B0xBH0VdPXUGOFYh/GKOz8oiL5h2d2/Tqgh9C2IXNoFkxfYHlUQPaBah5Hfb7u8cJ6FpdR8Kd8YkeFQr+mGyGLEu3x4YdpqJvp9V3xWd2jucxP5USw8oHBncR/HFXotoXzHjyy3d3C+Lac1QH+x1/3gafKud3PmncfSwzaPrjcGpClkrokrsXZSCubdx55KQJCW8b1NEKp10w5xuhSg4aYH64pnEcx0IOTU620vb6k6OBMhUJ7wECtbyh/+I1xL7FVde5hNsyH18jsO2DwDUdleGlf+n/pCfTUlRo7ULt9I7Qq3iIo5UA79bvIOlwRYH4vfNnKEKKcoY2L8fhrsHrm1kaAYvPt4z7DdYHy/pd8Oixizos8O3zB094KAG+A6j2jjvUKhM3lVtPRGRa/eGYMSkkNW7Ik2vnMoPkvRsm0LM3/KNHOV+7SNvpM+/gW41rU/XDa55Tcmnw0uJsJOpOXxGhxF1MTXslCHLoE6VzuQnww/KAx82ZHAL1DVVxG9Cnk2QEH9GIx5IlK1og7OCoWfYvhV5ivlrazGDaJhx7WilJaX9TY5KN1dPRdxwvfl/5jJtRa8PqYsnk/oXak4Do5qCk6hC7uec9zVuG38j4+6uUeIB4AcBiueDNT8GRx9ccQ01v06JJtIXiXRtZQ2lCmC5ZHi1a0sA2kfCHCF6mu1VbopBV5vv00XQ1xvDFMIX1dBVsxhy6nRgD',
                             'page_age': None,
-                            'title': 'ABC News - Breaking News, Latest News and Videos',
+                            'title': 'ABC News – Breaking News, Latest News and Videos',
                             'type': 'web_search_result',
                             'url': 'https://abcnews.go.com/',
                         },
@@ -8576,7 +8576,7 @@ These stories represent major international diplomatic developments, significant
                         {
                             'encrypted_content': 'Et4ECioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFIPj42woU98JMQRhRoMOYuBjzQ62lFOxkn/IjD9AaavhYfhuVUR+6XA55O0rVbWwPlUZjgIAw6N1kXBv1Y8tQM1FE/uKJSLLR4ixN4q4QMIQdUoYsT+zyb16Ndd4qa2I96kPDnhBy4rXGenBrnwzaBiApJ90u3rB6aJgqwx+zISZ9Co+YB2KUrNtvdoS9YMmgA1qxw2BWltYVXsvToBjJWmqyyQylJbqXoVF+v7sqwcibbPipASR7JB+xjVKD/APg6dQV3CjCFCcQupR8bMjv4IRk6ka3WmxR7fn4yurYteWdyBPDAN2dzKS0Bg+z4KwUGsYikVXSKO9/qJJKsXKiZfxWw8JWDmYJIAqaVody+KON7XcATd9DIdBXSwhqyotmqy1csVklrT6pWrptr6PjBGcUHKMP64tcVtS+JJ2w3+uwIl7YKyuwU89CSE4BbZ98SPGkQZKn0s2t939eEx38hCPJ+PG/R0Mka9+wy7tAemacDc9JrcmtcUVri0d+xxultUgeQtlLTyloW7Ufz5FcngQC4RduJYC8K0iuLIsvXWGW/c4HWXqtXE6cMgSuEzsIZxLNpZG1QD1W5DEOuqQw6LtSoxWt+9VncSsGfIBT/RMsBm2knlLzmNw6iZ/HvKv1IHFVWKKyda3F94XN3Pzqc776uQTOxxwHblQPcyTQ/AewMkfhkvuFELT4ZaYv0vzB9W8qh/dZyczuUvNeQc8/ISVZcHF7ZaTaf5aT3nNpk/GAM=',
                             'page_age': None,
-                            'title': 'News - The White House',
+                            'title': 'News – The White House',
                             'type': 'web_search_result',
                             'url': 'https://www.whitehouse.gov/news/',
                         },
