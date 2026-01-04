@@ -45,10 +45,10 @@ from ..messages import (
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
-from ..profiles.anthropic import ANTHROPIC_EFFORT_TO_BUDGET
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, ThinkingConfig, merge_model_settings
+from ..settings import ModelSettings, merge_model_settings
+from ..thinking import format_anthropic_thinking, resolve_thinking_config
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -293,8 +293,6 @@ class AnthropicModel(Model):
         thinking = model_settings.get('thinking')
         if thinking is None:
             return None
-
-        from ..thinking import format_anthropic_thinking, resolve_thinking_config
 
         resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
         return format_anthropic_thinking(resolved, self.profile)

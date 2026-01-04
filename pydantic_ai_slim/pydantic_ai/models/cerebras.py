@@ -7,10 +7,10 @@ from typing import Any, Literal, cast
 
 from typing_extensions import override
 
-from ..exceptions import UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
-from ..settings import ModelSettings, ThinkingConfig
+from ..settings import ModelSettings
+from ..thinking import format_cerebras_reasoning, resolve_thinking_config
 from . import ModelRequestParameters
 
 try:
@@ -119,8 +119,6 @@ class CerebrasModel(OpenAIChatModel):
         thinking = model_settings.get('thinking')
         if thinking is None:
             return None
-
-        from ..thinking import format_cerebras_reasoning, resolve_thinking_config
 
         resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
         return format_cerebras_reasoning(resolved, self.profile, self._model_name, 'Cerebras')

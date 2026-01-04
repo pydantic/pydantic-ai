@@ -46,9 +46,10 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
-from ..profiles.google import GOOGLE_EFFORT_TO_BUDGET, GoogleModelProfile
+from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingConfig
+from ..settings import ModelSettings
+from ..thinking import format_google_thinking, resolve_thinking_config
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -90,7 +91,6 @@ try:
         PartDict,
         SafetySettingDict,
         ThinkingConfigDict,
-        ThinkingLevel,
         ToolCodeExecutionDict,
         ToolConfigDict,
         ToolDict,
@@ -269,8 +269,6 @@ class GoogleModel(Model):
         thinking = model_settings.get('thinking')
         if thinking is None:
             return None
-
-        from ..thinking import format_google_thinking, resolve_thinking_config
 
         resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
         return format_google_thinking(resolved, self.profile, self.model_name)

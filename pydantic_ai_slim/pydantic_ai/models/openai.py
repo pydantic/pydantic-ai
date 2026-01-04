@@ -60,6 +60,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingConfig
+from ..thinking import format_openai_reasoning, resolve_thinking_config
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -481,8 +482,6 @@ class OpenAIChatModel(Model):
         thinking = model_settings.get('thinking')
         if thinking is None:
             return None
-
-        from ..thinking import format_openai_reasoning, resolve_thinking_config
 
         resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
         return format_openai_reasoning(resolved, self.profile)

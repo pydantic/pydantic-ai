@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import ModelHTTPError
 from ..messages import (
     FinishReason,
     ModelResponseStreamEvent,
@@ -16,7 +16,8 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
-from ..settings import ModelSettings, ThinkingConfig
+from ..settings import ModelSettings
+from ..thinking import format_openrouter_reasoning, resolve_thinking_config
 from . import ModelRequestParameters
 
 try:
@@ -570,8 +571,6 @@ class OpenRouterModel(OpenAIChatModel):
         thinking = model_settings.get('thinking')
         if thinking is None:
             return None
-
-        from ..thinking import format_openrouter_reasoning, resolve_thinking_config
 
         resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
         return format_openrouter_reasoning(resolved, self.profile)

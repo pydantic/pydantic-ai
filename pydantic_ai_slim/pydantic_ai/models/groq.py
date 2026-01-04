@@ -41,7 +41,8 @@ from ..messages import (
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingConfig
+from ..settings import ModelSettings
+from ..thinking import format_groq_reasoning, resolve_thinking_config
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -189,8 +190,6 @@ class GroqModel(Model):
         thinking = model_settings.get('thinking')
         if thinking is None:
             return None
-
-        from ..thinking import format_groq_reasoning, resolve_thinking_config
 
         resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
         return format_groq_reasoning(resolved, self.profile, self._model_name, 'Groq')

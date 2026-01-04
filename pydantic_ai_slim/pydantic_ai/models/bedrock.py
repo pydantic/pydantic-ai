@@ -43,10 +43,10 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
-from pydantic_ai.profiles.anthropic import ANTHROPIC_EFFORT_TO_BUDGET
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
-from pydantic_ai.settings import ModelSettings, ThinkingConfig
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.thinking import format_bedrock_thinking, resolve_thinking_config
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -313,8 +313,6 @@ class BedrockConverseModel(Model):
         thinking = model_settings.get('thinking')
         if thinking is None:
             return None
-
-        from ..thinking import format_bedrock_thinking, resolve_thinking_config
 
         resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
         return format_bedrock_thinking(resolved, self.profile)
