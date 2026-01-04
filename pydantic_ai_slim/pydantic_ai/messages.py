@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypedDict, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -19,6 +19,166 @@ import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
 from typing_extensions import deprecated
+
+
+# =============================================================================
+# TypedDict schemas for builtin tool return content
+# =============================================================================
+# These TypedDicts define the unified content structure for each builtin tool
+# return part. Fields are all optional (total=False) because different providers
+# populate different subsets of fields.
+
+
+class CodeExecutionReturnContent(TypedDict, total=False):
+    """Unified content schema for code execution results across providers.
+
+    Different providers use different fields:
+    - Anthropic: type, stdout, stderr, return_code, content
+    - Google: outcome, output
+    - OpenAI: status, logs
+    """
+
+    # Anthropic fields
+    type: str
+    """Discriminator field (e.g., 'code_execution_result')."""
+    stdout: str
+    """Standard output from code execution (Anthropic)."""
+    stderr: str
+    """Standard error from code execution (Anthropic)."""
+    return_code: int
+    """Process exit code (Anthropic)."""
+    content: list[Any]
+    """Additional content objects (Anthropic, typically empty)."""
+    # Google fields
+    outcome: str
+    """Execution outcome status (e.g., 'OUTCOME_OK', 'OUTCOME_TIMEOUT') (Google)."""
+    output: str
+    """Execution output (Google)."""
+    # OpenAI fields
+    status: str
+    """Execution status (e.g., 'completed') (OpenAI)."""
+    logs: list[str]
+    """Output lines from execution (OpenAI)."""
+
+
+class WebSearchSource(TypedDict, total=False):
+    """A single web search result source.
+
+    Fields vary by provider - OpenAI uses 'url', Google uses 'uri'.
+    """
+
+    title: str
+    """Title of the search result."""
+    url: str
+    """URL of the search result (OpenAI, Anthropic)."""
+    uri: str
+    """URI of the search result (Google uses 'uri' instead of 'url')."""
+    snippet: str
+    """Snippet/preview text from the result."""
+    relevance_score: float
+    """Relevance score of the result."""
+
+
+class WebSearchReturnContent(TypedDict, total=False):
+    """Unified content schema for web search results.
+
+    OpenAI returns dict with 'status' and 'sources' keys.
+    Google/Anthropic may return list directly - use WebSearchSource list type.
+    """
+
+    status: str
+    """Search status (e.g., 'completed') (OpenAI)."""
+    sources: list[WebSearchSource]
+    """List of search result sources (OpenAI dict format)."""
+
+
+class WebFetchPage(TypedDict, total=False):
+    """A single fetched web page result.
+
+    Fields vary by provider - Anthropic uses 'url', Google uses 'retrieved_url'.
+    """
+
+    content: str
+    """The fetched page content/text."""
+    url: str
+    """URL of the fetched page (Anthropic)."""
+    retrieved_url: str
+    """Retrieved URL (Google uses 'retrieved_url' instead of 'url')."""
+    type: str
+    """MIME type of the content (e.g., 'text/html')."""
+    retrieved_at: str
+    """ISO timestamp when the page was fetched."""
+
+
+class WebFetchReturnContent(TypedDict, total=False):
+    """Unified content schema for web fetch results.
+
+    Anthropic returns single dict, Google returns list - use WebFetchPage list type.
+    """
+
+    content: str
+    """The fetched page content/text (single page format)."""
+    url: str
+    """URL of the fetched page (Anthropic)."""
+    retrieved_url: str
+    """Retrieved URL (Google)."""
+    type: str
+    """MIME type of the content."""
+    retrieved_at: str
+    """ISO timestamp when the page was fetched."""
+
+
+class FileSearchResult(TypedDict, total=False):
+    """A single file search result.
+
+    OpenAI includes detailed file metadata, Google includes store context.
+    """
+
+    id: str
+    """Result ID (OpenAI)."""
+    file_id: str
+    """File ID (OpenAI)."""
+    filename: str
+    """Filename (OpenAI)."""
+    score: float
+    """Relevance score."""
+    text: str
+    """Matched text content."""
+    content: str
+    """Content of the result."""
+    file_search_store: str
+    """File search store identifier (Google)."""
+
+
+class FileSearchReturnContent(TypedDict, total=False):
+    """Unified content schema for file search results.
+
+    OpenAI returns dict with 'status' and 'results' keys.
+    Google returns list directly - use FileSearchResult list type.
+    """
+
+    status: str
+    """Search status (e.g., 'completed') (OpenAI)."""
+    results: list[FileSearchResult]
+    """List of search results (OpenAI dict format)."""
+
+
+class ImageGenerationReturnContent(TypedDict, total=False):
+    """Unified content schema for image generation results (OpenAI only).
+
+    Note: The actual image is returned as a separate FilePart, not in content.
+    """
+
+    status: str
+    """Generation status (e.g., 'completed')."""
+    revised_prompt: str
+    """The actual prompt used for generation (may differ from input)."""
+    size: str
+    """Image dimensions (e.g., '1024x1024')."""
+    quality: str
+    """Quality setting (e.g., 'high', 'standard')."""
+    background: str
+    """Background setting (e.g., 'opaque', 'transparent')."""
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -889,188 +1049,77 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
 
 @dataclass(repr=False)
 class CodeExecutionReturnPart(BuiltinToolReturnPart):
-    """A return part for code execution tool results with normalized accessor properties."""
+    """A return part for code execution tool results.
 
-    content: dict[str, Any] | list[Any] | str
-    """The code execution result content."""
+    The content field contains provider-specific data. See CodeExecutionReturnContent
+    for the unified schema of possible fields across providers.
+    """
+
+    content: CodeExecutionReturnContent | list[Any] | str
+    """The code execution result content. Structure varies by provider - see CodeExecutionReturnContent."""
 
     part_kind: Literal['code-execution-return'] = 'code-execution-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def output(self) -> str | None:
-        """Get stdout/output, normalized across providers."""
-        if not isinstance(self.content, dict):
-            return str(self.content) if self.content else None
-        if 'stdout' in self.content:
-            return self.content['stdout']
-        if 'logs' in self.content:
-            logs = self.content['logs']
-            return '\n'.join(cast(list[str], logs)) if isinstance(logs, list) else str(logs)
-        if 'output' in self.content:
-            return self.content['output']
-        if 'outcome' in self.content:
-            return self.content['outcome']
-        return None
-
-    @property
-    def error_output(self) -> str | None:
-        """Get stderr, normalized across providers."""
-        if isinstance(self.content, dict) and 'stderr' in self.content:
-            return self.content['stderr'] or None
-        return None
-
-    @property
-    def return_code(self) -> int | None:
-        """Get the process return code."""
-        if isinstance(self.content, dict) and 'return_code' in self.content:
-            return self.content['return_code']
-        return None
-
-    @property
-    def status(self) -> str | None:
-        """Get the execution status."""
-        if isinstance(self.content, dict) and 'status' in self.content:
-            return self.content['status']
-        return None
-
 
 @dataclass(repr=False)
 class WebSearchReturnPart(BuiltinToolReturnPart):
-    """A return part for web search tool results with normalized accessor properties."""
+    """A return part for web search tool results.
 
-    content: dict[str, Any] | list[Any] | str
-    """The web search result content."""
+    The content field contains provider-specific data. See WebSearchReturnContent
+    and WebSearchSource for the unified schema of possible fields.
+    """
+
+    content: WebSearchReturnContent | list[WebSearchSource]
+    """The web search result content. Dict format (OpenAI) or list format (Google/Anthropic)."""
 
     part_kind: Literal['web-search-return'] = 'web-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def sources(self) -> list[dict[str, Any]]:
-        """Get the search result sources, normalized across providers."""
-        if isinstance(self.content, list):
-            return cast(list[dict[str, Any]], self.content)
-        if isinstance(self.content, dict) and 'sources' in self.content:
-            sources = self.content['sources']
-            return cast(list[dict[str, Any]], sources) if isinstance(sources, list) else []
-        return []
-
-    @property
-    def status(self) -> str | None:
-        """Get the search status."""
-        if isinstance(self.content, dict) and 'status' in self.content:
-            return self.content['status']
-        return None
-
 
 @dataclass(repr=False)
 class WebFetchReturnPart(BuiltinToolReturnPart):
-    """A return part for web fetch tool results with normalized accessor properties."""
+    """A return part for web fetch tool results.
 
-    content: dict[str, Any] | list[Any] | str
-    """The web fetch result content."""
+    The content field contains provider-specific data. See WebFetchReturnContent
+    and WebFetchPage for the unified schema of possible fields.
+    """
+
+    content: WebFetchReturnContent | list[WebFetchPage]
+    """The web fetch result content. Single dict (Anthropic) or list (Google)."""
 
     part_kind: Literal['web-fetch-return'] = 'web-fetch-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def fetched_pages(self) -> list[dict[str, Any]]:
-        """Get the fetched page data, normalized across providers."""
-        if isinstance(self.content, list):
-            return self.content
-        if isinstance(self.content, dict):
-            return [self.content]
-        return []
-
-    @property
-    def fetched_content(self) -> str | None:
-        """Get the fetched content as a single string (first page only)."""
-        pages = self.fetched_pages
-        if pages and isinstance(pages[0], dict):
-            return pages[0].get('content')
-        return None
-
-    @property
-    def url(self) -> str | None:
-        """Get the URL that was fetched (first page only)."""
-        pages = self.fetched_pages
-        if pages and isinstance(pages[0], dict):
-            return pages[0].get('url') or pages[0].get('retrieved_url')
-        return None
-
 
 @dataclass(repr=False)
 class FileSearchReturnPart(BuiltinToolReturnPart):
-    """A return part for file search tool results with normalized accessor properties."""
+    """A return part for file search tool results.
 
-    content: dict[str, Any] | list[Any] | str
-    """The file search result content."""
+    The content field contains provider-specific data. See FileSearchReturnContent
+    and FileSearchResult for the unified schema of possible fields.
+    """
+
+    content: FileSearchReturnContent | list[FileSearchResult]
+    """The file search result content. Dict format (OpenAI) or list format (Google)."""
 
     part_kind: Literal['file-search-return'] = 'file-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def results(self) -> list[dict[str, Any]]:
-        """Get the search results, normalized across providers."""
-        if isinstance(self.content, list):
-            return cast(list[dict[str, Any]], self.content)
-        if isinstance(self.content, dict) and 'results' in self.content:
-            results = self.content['results']
-            return cast(list[dict[str, Any]], results) if isinstance(results, list) else []
-        return []
-
-    @property
-    def status(self) -> str | None:
-        """Get the search status."""
-        if isinstance(self.content, dict) and 'status' in self.content:
-            return self.content['status']
-        return None
-
 
 @dataclass(repr=False)
 class ImageGenerationReturnPart(BuiltinToolReturnPart):
-    """A return part for image generation tool results (metadata only, image is in FilePart)."""
+    """A return part for image generation tool results (metadata only, image is in FilePart).
 
-    content: dict[str, Any] | str
-    """The image generation result content (metadata, not the image itself)."""
+    The content field contains generation metadata. See ImageGenerationReturnContent
+    for the unified schema of possible fields.
+    """
+
+    content: ImageGenerationReturnContent
+    """The image generation result content (metadata). The actual image is in FilePart."""
 
     part_kind: Literal['image-generation-return'] = 'image-generation-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
-
-    @property
-    def status(self) -> str | None:
-        """Get the generation status."""
-        if isinstance(self.content, dict) and 'status' in self.content:
-            return self.content['status']
-        return None
-
-    @property
-    def revised_prompt(self) -> str | None:
-        """Get the revised prompt used for generation."""
-        if isinstance(self.content, dict):
-            return self.content.get('revised_prompt')
-        return None
-
-    @property
-    def image_size(self) -> str | None:
-        """Get the size of the generated image."""
-        if isinstance(self.content, dict):
-            return self.content.get('size')
-        return None
-
-    @property
-    def quality(self) -> str | None:
-        """Get the quality setting used for generation."""
-        if isinstance(self.content, dict):
-            return self.content.get('quality')
-        return None
-
-    @property
-    def background(self) -> str | None:
-        """Get the background setting used for generation."""
-        if isinstance(self.content, dict):
-            return self.content.get('background')
-        return None
 
 
 # Mapping from tool_name to specialized return part class for migration
