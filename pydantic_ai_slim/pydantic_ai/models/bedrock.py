@@ -535,15 +535,15 @@ class BedrockConverseModel(Model):
         # Add thinking config from unified settings if not already set via additional_model_requests_fields
         if 'thinking' not in additional_model_requests_fields:
             thinking_config = self._resolve_thinking_config(settings)
-            if thinking_config is not None:  # pragma: no cover
-                additional_model_requests_fields['thinking'] = thinking_config  # pragma: no cover
+            if thinking_config is not None:
+                additional_model_requests_fields['thinking'] = thinking_config
         if additional_model_requests_fields:
             params['additionalModelRequestFields'] = additional_model_requests_fields
-        if model_settings:  # pragma: no cover
-            if prompt_variables := model_settings.get('bedrock_prompt_variables', None):  # pragma: no cover
-                params['promptVariables'] = prompt_variables  # pragma: no cover
-            if service_tier := model_settings.get('bedrock_service_tier', None):  # pragma: no cover
-                params['serviceTier'] = service_tier  # pragma: no cover
+        if model_settings:
+            if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
+                params['promptVariables'] = prompt_variables
+            if service_tier := model_settings.get('bedrock_service_tier', None):
+                params['serviceTier'] = service_tier
 
         try:
             if stream:
