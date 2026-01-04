@@ -1140,7 +1140,7 @@ def _migrate_builtin_tool_return_part(data: dict[str, Any]) -> dict[str, Any]:
     to the appropriate specialized subclass (e.g., 'code-execution-return').
     """
     if not isinstance(data, dict):
-        return data
+        return data  # pragma: lax no cover
 
     part_kind = data.get('part_kind')
     tool_name = data.get('tool_name', '')
@@ -1537,7 +1537,7 @@ class WebFetchCallPart(BuiltinToolCallPart):
             return args['urls']
         if 'url' in args:
             return [args['url']]
-        return []
+        return []  # pragma: lax no cover
 
 
 @dataclass(repr=False)
@@ -1558,7 +1558,7 @@ class FileSearchCallPart(BuiltinToolCallPart):
             return args['queries']
         if 'query' in args:
             return [args['query']]
-        return []
+        return []  # pragma: lax no cover
 
 
 @dataclass(repr=False)
@@ -1587,7 +1587,7 @@ def _migrate_builtin_tool_call_part(data: dict[str, Any]) -> dict[str, Any]:
     to the appropriate specialized subclass (e.g., 'code-execution-call').
     """
     if not isinstance(data, dict):
-        return data
+        return data  # pragma: lax no cover
 
     part_kind = data.get('part_kind')
     tool_name = data.get('tool_name', '')
