@@ -2883,7 +2883,55 @@ I should search for San Francisco weather today to get the most current informat
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content=[
+                        content={
+                            'status': 'completed',
+                            'sources': [
+                                {
+                                    'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                                    'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
+                                },
+                                {
+                                    'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                                    'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                                },
+                                {
+                                    'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
+                                    'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
+                                },
+                                {
+                                    'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
+                                    'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
+                                },
+                                {
+                                    'title': 'National Weather Service',
+                                    'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
+                                },
+                                {
+                                    'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
+                                    'url': 'https://www.nbcbayarea.com/weather/',
+                                },
+                                {
+                                    'title': 'San Francisco, CA Current Weather - The Weather Network',
+                                    'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                                },
+                                {
+                                    'title': 'San Francisco, CA Weather Conditions | Weather Underground',
+                                    'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
+                                },
+                                {
+                                    'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                                    'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
+                                },
+                                {
+                                    'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                                    'url': 'https://abc7news.com/weather/',
+                                },
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details=[
                             {
                                 'encrypted_content': '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',
                                 'page_age': '6 days ago',
@@ -2955,9 +3003,6 @@ I should search for San Francisco weather today to get the most current informat
                                 'url': 'https://abc7news.com/weather/',
                             },
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
@@ -3089,7 +3134,55 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content=[
+                        content={
+                            'status': 'completed',
+                            'sources': [
+                                {
+                                    'title': 'Weather Forecast and Conditions for Mexico City, Mexico - The Weather Channel | Weather.com',
+                                    'url': 'https://weather.com/weather/today/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07',
+                                },
+                                {
+                                    'title': 'Mexico City, México City, Mexico Weather Forecast | AccuWeather',
+                                    'url': 'https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560',
+                                },
+                                {
+                                    'title': 'Weather Forecast and Conditions for Cuauhtémoc, Mexico - The Weather Channel | Weather.com',
+                                    'url': 'https://weather.com/weather/today/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757',
+                                },
+                                {
+                                    'title': 'Mexico City, CMX, MX Current Weather - The Weather Network',
+                                    'url': 'https://www.theweathernetwork.com/en/city/mx/ciudad-de-mexico/mexico-city/current?_guid_iss_=1',
+                                },
+                                {
+                                    'title': 'Mexico City, Mexico 10-Day Weather Forecast | Weather Underground',
+                                    'url': 'https://www.wunderground.com/forecast/mx/mexico-city',
+                                },
+                                {
+                                    'title': 'Mexico City, Mexico Weather Conditions | Weather Underground',
+                                    'url': 'https://www.wunderground.com/weather/mx/mexico-city',
+                                },
+                                {
+                                    'title': 'Weather for Mexico City, Ciudad de México, Mexico',
+                                    'url': 'https://www.timeanddate.com/weather/mexico/mexico-city',
+                                },
+                                {
+                                    'title': '10-Day Weather Forecast for Mexico City, Mexico - The Weather Channel | weather.com',
+                                    'url': 'https://weather.com/weather/tenday/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07',
+                                },
+                                {
+                                    'title': 'Yr - Mexico City - Hourly weather forecast',
+                                    'url': 'https://www.yr.no/en/forecast/hourly-table/2-3530597/Mexico/Mexico%20City/Mexico%20City?i=0',
+                                },
+                                {
+                                    'title': '10-Day Weather Forecast for Cuauhtémoc, Mexico - The Weather Channel | weather.com',
+                                    'url': 'https://weather.com/weather/tenday/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757',
+                                },
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details=[
                             {
                                 'encrypted_content': 'Ep0CCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKSpZSDsbC0fPFBG3xoM2Cx78uv1J8+l1WlWIjCPL2yv7yaO53W47CXK97kQIPmcbsiEHdqduElmIEXKJUFRTk4GUOP5H7CX60H13KUqoAGlYHFawXYvQjhznURM8uj/PkiWZvMaaY8GYwpS4yGWJHaA2nYTOu1DouzaQDKI7UUSOXVfDt5vg3c7o6ROWI/MAdX76foBAjXlo+BNPcDfpeS8QRrGIMVKICr15Mynyxiw++oxnzkKVT1OJhqTvCO1EiY9RW8rtSimXcCbNC6JUmzMmUH9I3Y9Eys33i8tewEf7jWu8Gowcy5RD8bpq4+XGAM=',
                                 'page_age': '1 month ago',
@@ -3161,9 +3254,6 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                                 'url': 'https://weather.com/weather/tenday/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757',
                             },
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
@@ -3308,7 +3398,55 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content=[
+                        content={
+                            'status': 'completed',
+                            'sources': [
+                                {
+                                    'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                                    'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
+                                },
+                                {
+                                    'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                                    'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                                },
+                                {
+                                    'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
+                                    'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
+                                },
+                                {
+                                    'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
+                                    'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
+                                },
+                                {
+                                    'title': 'National Weather Service',
+                                    'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
+                                },
+                                {
+                                    'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
+                                    'url': 'https://www.nbcbayarea.com/weather/',
+                                },
+                                {
+                                    'title': 'San Francisco, CA Current Weather - The Weather Network',
+                                    'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                                },
+                                {
+                                    'title': 'San Francisco, CA Weather Conditions | Weather Underground',
+                                    'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
+                                },
+                                {
+                                    'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                                    'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
+                                },
+                                {
+                                    'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                                    'url': 'https://abc7news.com/weather/',
+                                },
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details=[
                             {
                                 'encrypted_content': 'EroTCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGwpqkFZ9MrXRilipBoMkaFQrDK2VBha5sdoIjDvKSy6OkyPcFjuZ5KLzUqVR96F1F7CMrc/ON8ZDG1+CbRPNE/JvbWdVA6JiBvF9ZAqvRK8Q57eDwlaDNidwAd2cnmQUIBGEDvYySUWwLvemlQGAdurhHZR8W5942iwICdA/PHtIX36y4yKZOF5u2lpB0N82TkccXarRKuv8uM6TgviUiePChpTLppaX3s+kU0457sxeXhFr2bGfgPnEAi0IrowzrgBapC18xmKBjmm9gdXMWJPEd7TQBDsZeswc5SDtZRwq+FFZc2PAWwWkGb34s/ajuoyriQ64qJurFaQrHPgsqaoV4MLhFbvWnwsm+TeezWUx3c0HK8s+mBPn+qrvUC/ovEzfSCqhwxHgmT7o14wh2lNZpOwpv38GDNoEu0MYmSFwwKpZrlTKqUxf0C7wxdCWUnW9hllCTWzKJb2iguPF/UPgkLCZt9Gcxfe/H3Pk6PCYVhWD47XREAfGqooRj93LjrScuWB3NZ7D4ac0m2JPIyuxG3kAxbi9L4U+Tuu4eVVYV8jAMyXGfDPbEUPM6AEOeFHx0fN8Uj3evebglsoAniV3MS3Ql6CW+JA0B1ueHNMokWrnHbpohfwHSb4t8KIzVqVyXayfFKqH4HsN25hk7AqJUWg3Wv0whhVNYqNmUm8eBKE2NsHCZvkfI5Om3nfCBuCVM9eMtQUtKfm7JTT1SzxfwGdKIM8s1RKiEXyyON9A+9pBOdo3WY7d00Ndg29VRxZ3poyuLouURYbYlWokfJO+GVCjhegq7gRO6MQtTbrTlWToSMfTGjxCDmSxS+4puD924HWZ7T1341aBvQ2Ywb0pzbKdpAEkW/uheGvUfnACgM/S9sH+BObK8vwwJ68VlH8UBc1KLGz3WcxDYKQlFp9Gwmh2tdCnZ6qDlS47TYSL7k5n7s/US+T0nfPTdv3FQ6fXh18EQl1gmqgOqlLUb6hdxF7GOtq4cKnn+pWTBNXlgNu11hB9zGDYRhN7n3qZfRzjsfX+T4wdgzhpdNfvuyP3qhMueypPaULU0dKToGxwAvio4klOrxlyNIMgYnQYBZCvfElq7eX+CTCXTOED8OYE1kwA6pAlS4fyt8SQ7DO2P4M5kZnXjjlNn7kvCBkqt6AzOevtxlmKyggsSpwJVtmryGAVbxozEWm2soEqenzVdpoUzaX42d/kDA7RJIuIc80CposF/70oe7FbNKSBj+rAGWsu/1qi2o/mMnleJRat9dCZrjYOvJZ5gWwpusQ/rH07bWJH4OpZtpmTpGu08G1TIkipqwKD5mBRiKSZf/D6hpCM2HA4M9ypvxC8OC2Fy8RHSXuKMiD95hnVLnGvgPNfYCXOJU3pVzIH2s1G+a4AKFUxiqyvJgxiBDFevLL9gcI5hympWXYDgLIuTTxoHsC0l+YjYfz1Co8vyfToHniNkJn5sNte7fYFhwDXUgbL3L/epi8vICgv0R6HcT4F6sFF+x4pSX4U1AE3VlFZ8yGZHI4/Ohj4enGqpibS+zKl0W4Hyzx8LjYQLwI4TUTdOumK5zg9UJ+bhOoxMFy7XNZAhapXWvpiNNjMi55OiM4tuFmc3tPi1BRBd65WBiLfexj7z4XFnVDrO/RFwIPp6DUzWSjpUe2tg3/D2mHMQvn065OcFJWmXLpXPJhw4LvtZ2pJ7T3i5Wnq8piKUPsz7B6gq0uJnxMAgrikZHcTATRLRDHFPo7R1W3VprbzXVFPhbqMwEPjo/YBB8GZAVr4bu4fX+Ki75hZSdaZsGegPwlspG49yaCnKSBlAhR/XCT8Nlt/dLp766uJGOekRqWCkH9j4+aNyvY7z1g9JfFT5yZFXeFAWG6epiWkj6jjkhSNUXTXkk3EXQQXFE1EJjLMifG35DvUdsCT0tOpcWNe5qZqSRnMEsfahky+VZTBRhOyOFH7RsFYGs5PG3Khcm5Is+AFbLB2GEJLQQ1l+u0zEo+RkDNWmVipLEw+Lk+vUqU2rg5erCkf0b6/xSm+2RpLL4YqEJ8yT+TfO/O80nMNUn1d2ghpwC3MpWzyYVFzOiIxtUGu2d6EjFO/3zwI0PkMlTyyTFo0JMMa5VFd4nPbq/dfEZoruGMN2mHLAd4gp6Er8Qy99v59bK/XESqKCYcR0MRhJ6/y0EHBCRAOVzb8A/Vx8SFQvDHwyb0l5u8q3Pcbn64tQ+oDiUFgHGCVVKcHnH94/l8yy/pUSAHrV0N8/VDGFZ6APE+MWH5zpZG8OBADCMwI4Hev3HNy3dzQ6PpDwMQJN8BfcAcvlxrJqVVjbIUhWF5M5CiG2C+2ICZb1TEiTtp8GMPqY1XQsHq22PVC2bR4k+u4CQ9NBmY5cXnUYRtMeDJyWalLX97p42yAF66GiqGGEoRpQV/r++X2ukoolSwDkh1RwvkZUVWf3oP7TwFLzZ1qGKfBo+hN7YPTJIOGpeqSmdnqf17jQMWiSvyYpFphcqEUZchJwCzge/Q+HJ+ScHQ31lt56WVIoNCspyQA98ICCZIuarlKElAEaUVF6y5Cjb2+9ZXgw/l2RUpIBnIS2SJZE0p9PKVC6NsxlkpGJmNeWnnfBS+UvOL+5OrM1j1sGm2MKUn1HuvKKtkvttbIgZozaLR2CMu/+hIw24ox7HthbquDZj0u8zac+Pth9bS03kkydOZ7PHyAeOTB4zndFdMlgmmOyEURJ8ENup6njscv9hV7j2235kcQaL77phvu5xnWL1qsEOcSgRgBsWx9oAAaVij1hR0H/YZNiqX7fLqORaTThKf1lvy4AX9WfkgVima8jyu6Jx6jwOoN/vJV/Ulu8bQBWjp2kgYJxKkQcwGmhIaKCwtCyyagLHNfCjBlyF7yffkFCWHcn0z0rTo/pTutLh0HOKgj2+gOlG2hWSu0AV4zTMJxCvIcP2q0zReQ1SracIHp/j0WJU0LDgvnYmLkwLuyghIjMvy7O8yiUaFExVKKYIVeBu7Miy9T5oz+unvs/wARHfomL1d1W32ZDgpmAHg3GyP9d3DotODvUJMSWL1YSoWQbzWhOmhlB0GalzjQx1n9OJLRCGFSPGZD+l+0PnLk0xUyI5aDr59G4c1/LvVH0NiVTDQo7o8qLwBb7PrJgyerVNM9nT87zlRI471KTsdg3uP0sEt4LY7OqXmHlAU0KHZA7vTZwaOQb9iku+4A0GyTxG/icQ8jjAgOlkhdDVxPSC1xMkNyAKrCCnAhbVAAisfTDEV3mZi9AUqqL0DMD86916gHC6nGAM=',
                                 'page_age': '6 days ago',
@@ -3380,9 +3518,6 @@ I should search for current weather in San Francisco. I'll include "today" in th
                                 'url': 'https://abc7news.com/weather/',
                             },
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(
                         content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
@@ -3395,7 +3530,55 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content=[
+                        content={
+                            'status': 'completed',
+                            'sources': [
+                                {
+                                    'title': 'San Francisco weather in September 2025 | Weather25.com',
+                                    'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
+                                },
+                                {
+                                    'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
+                                    'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
+                                },
+                                {
+                                    'title': 'San Francisco, CA Monthly Weather | AccuWeather',
+                                    'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
+                                },
+                                {
+                                    'title': 'Weather San Francisco in September 2025: Temperature & Climate',
+                                    'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
+                                },
+                                {
+                                    'title': 'San Francisco weather in September 2025 | California',
+                                    'url': 'https://www.weather2travel.com/california/san-francisco/september/',
+                                },
+                                {
+                                    'title': 'San Francisco, Weather for September, USA',
+                                    'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
+                                },
+                                {
+                                    'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
+                                    'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
+                                },
+                                {
+                                    'title': 'September 2025 Weather - San Francisco',
+                                    'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
+                                },
+                                {
+                                    'title': 'San Francisco Weather in September | Thomas Cook',
+                                    'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
+                                },
+                                {
+                                    'title': 'Here’s when S.F. weather could hit 90 degrees next week',
+                                    'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
+                                },
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details=[
                             {
                                 'encrypted_content': 'Eq4DCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDPwU0Py1Q9iYNDDdhoM2qNBTnxjtd4cRn9VIjC/dZ8Ce/L8p7E9+XDGXxJOo08FcIolDYKMESXmzZ4qpTujOuYI3WINvKibmIIvpgMqsQLSU9R+vb7BJhe7mgv03VKaUqcSqu1/GtEQ2guIaydusW+HcIvamqUX9f69j/g31g7qJyK2JD26s3KEdFAqzjS7ttSXF0s5BAgIkBXn5eV/FFMxYGMiY0t3EDBM/9OOk7Of9I5RAbxYYPslJKsAovc8IuMIA/eLjYyM2wCpna+2g3VmPexJlJVJTdJPGH0Qup8HVHK3ZX563qPYXOJ2/D9ClF++e9h98EXBehmZlP/EU3zNmvX1P5XySAfILOJjiGszXjbER0E+cyY6qmJnzo8NgazPJXh+byIwsPn/UN6eHFWcA1YRtpvMzrx9Hr+AZSNhce4/Kwpwx65H5jJdY5UXDpIDXKoQf3PyaSSN9M3mcq07YgALVHBnHkldU06/472LRs+3psQaIGAwzWgeLWUW6xgD',
                                 'page_age': None,
@@ -3462,14 +3645,11 @@ I should search for current weather in San Francisco. I'll include "today" in th
                             {
                                 'encrypted_content': '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',
                                 'page_age': '4 days ago',
-                                'title': IsStr(),
+                                'title': 'Here’s when S.F. weather could hit 90 degrees next week',
                                 'type': 'web_search_result',
                                 'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                             },
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
@@ -3678,7 +3858,55 @@ I should search for current weather in San Francisco. I'll include "today" in th
                 index=2,
                 part=WebSearchReturnPart(
                     tool_name='web_search',
-                    content=[
+                    content={
+                        'status': 'completed',
+                        'sources': [
+                            {
+                                'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
+                            },
+                            {
+                                'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                                'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                            },
+                            {
+                                'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
+                                'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
+                            },
+                            {
+                                'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
+                                'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
+                            },
+                            {
+                                'title': 'National Weather Service',
+                                'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
+                            },
+                            {
+                                'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
+                                'url': 'https://www.nbcbayarea.com/weather/',
+                            },
+                            {
+                                'title': 'San Francisco, CA Current Weather - The Weather Network',
+                                'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                            },
+                            {
+                                'title': 'San Francisco, CA Weather Conditions | Weather Underground',
+                                'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
+                            },
+                            {
+                                'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                                'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
+                            },
+                            {
+                                'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                                'url': 'https://abc7news.com/weather/',
+                            },
+                        ],
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details=[
                         {
                             'encrypted_content': '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',
                             'page_age': '6 days ago',
@@ -3750,9 +3978,6 @@ I should search for current weather in San Francisco. I'll include "today" in th
                             'url': 'https://abc7news.com/weather/',
                         },
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 ),
                 previous_part_kind='web-search-call',
             ),
@@ -3832,7 +4057,55 @@ I should search for current weather in San Francisco. I'll include "today" in th
                 index=5,
                 part=WebSearchReturnPart(
                     tool_name='web_search',
-                    content=[
+                    content={
+                        'status': 'completed',
+                        'sources': [
+                            {
+                                'title': 'San Francisco weather in September 2025 | Weather25.com',
+                                'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
+                            },
+                            {
+                                'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
+                                'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
+                            },
+                            {
+                                'title': 'San Francisco, CA Monthly Weather | AccuWeather',
+                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
+                            },
+                            {
+                                'title': 'Weather San Francisco in September 2025: Temperature & Climate',
+                                'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
+                            },
+                            {
+                                'title': 'San Francisco weather in September 2025 | California',
+                                'url': 'https://www.weather2travel.com/california/san-francisco/september/',
+                            },
+                            {
+                                'title': 'San Francisco, Weather for September, USA',
+                                'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
+                            },
+                            {
+                                'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
+                                'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
+                            },
+                            {
+                                'title': 'September 2025 Weather - San Francisco',
+                                'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
+                            },
+                            {
+                                'title': 'San Francisco Weather in September | Thomas Cook',
+                                'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
+                            },
+                            {
+                                'title': 'Here’s when S.F. weather could hit 90 degrees next week',
+                                'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
+                            },
+                        ],
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details=[
                         {
                             'encrypted_content': 'Eq4DCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDPwU0Py1Q9iYNDDdhoM2qNBTnxjtd4cRn9VIjC/dZ8Ce/L8p7E9+XDGXxJOo08FcIolDYKMESXmzZ4qpTujOuYI3WINvKibmIIvpgMqsQLSU9R+vb7BJhe7mgv03VKaUqcSqu1/GtEQ2guIaydusW+HcIvamqUX9f69j/g31g7qJyK2JD26s3KEdFAqzjS7ttSXF0s5BAgIkBXn5eV/FFMxYGMiY0t3EDBM/9OOk7Of9I5RAbxYYPslJKsAovc8IuMIA/eLjYyM2wCpna+2g3VmPexJlJVJTdJPGH0Qup8HVHK3ZX563qPYXOJ2/D9ClF++e9h98EXBehmZlP/EU3zNmvX1P5XySAfILOJjiGszXjbER0E+cyY6qmJnzo8NgazPJXh+byIwsPn/UN6eHFWcA1YRtpvMzrx9Hr+AZSNhce4/Kwpwx65H5jJdY5UXDpIDXKoQf3PyaSSN9M3mcq07YgALVHBnHkldU06/472LRs+3psQaIGAwzWgeLWUW6xgD',
                             'page_age': None,
@@ -3904,9 +4177,6 @@ I should search for current weather in San Francisco. I'll include "today" in th
                             'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                         },
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 ),
                 previous_part_kind='web-search-call',
             ),
@@ -4138,7 +4408,55 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=WebSearchReturnPart(
                     tool_name='web_search',
-                    content=[
+                    content={
+                        'status': 'completed',
+                        'sources': [
+                            {
+                                'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
+                            },
+                            {
+                                'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                                'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                            },
+                            {
+                                'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
+                                'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
+                            },
+                            {
+                                'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
+                                'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
+                            },
+                            {
+                                'title': 'National Weather Service',
+                                'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
+                            },
+                            {
+                                'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
+                                'url': 'https://www.nbcbayarea.com/weather/',
+                            },
+                            {
+                                'title': 'San Francisco, CA Current Weather - The Weather Network',
+                                'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                            },
+                            {
+                                'title': 'San Francisco, CA Weather Conditions | Weather Underground',
+                                'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
+                            },
+                            {
+                                'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                                'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
+                            },
+                            {
+                                'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                                'url': 'https://abc7news.com/weather/',
+                            },
+                        ],
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details=[
                         {
                             'encrypted_content': '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',
                             'page_age': '6 days ago',
@@ -4210,9 +4528,6 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                             'url': 'https://abc7news.com/weather/',
                         },
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
@@ -4226,7 +4541,55 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=WebSearchReturnPart(
                     tool_name='web_search',
-                    content=[
+                    content={
+                        'status': 'completed',
+                        'sources': [
+                            {
+                                'title': 'San Francisco weather in September 2025 | Weather25.com',
+                                'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
+                            },
+                            {
+                                'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
+                                'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
+                            },
+                            {
+                                'title': 'San Francisco, CA Monthly Weather | AccuWeather',
+                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
+                            },
+                            {
+                                'title': 'Weather San Francisco in September 2025: Temperature & Climate',
+                                'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
+                            },
+                            {
+                                'title': 'San Francisco weather in September 2025 | California',
+                                'url': 'https://www.weather2travel.com/california/san-francisco/september/',
+                            },
+                            {
+                                'title': 'San Francisco, Weather for September, USA',
+                                'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
+                            },
+                            {
+                                'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
+                                'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
+                            },
+                            {
+                                'title': 'September 2025 Weather - San Francisco',
+                                'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
+                            },
+                            {
+                                'title': 'San Francisco Weather in September | Thomas Cook',
+                                'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
+                            },
+                            {
+                                'title': 'Here’s when S.F. weather could hit 90 degrees next week',
+                                'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
+                            },
+                        ],
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details=[
                         {
                             'encrypted_content': 'Eq4DCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDPwU0Py1Q9iYNDDdhoM2qNBTnxjtd4cRn9VIjC/dZ8Ce/L8p7E9+XDGXxJOo08FcIolDYKMESXmzZ4qpTujOuYI3WINvKibmIIvpgMqsQLSU9R+vb7BJhe7mgv03VKaUqcSqu1/GtEQ2guIaydusW+HcIvamqUX9f69j/g31g7qJyK2JD26s3KEdFAqzjS7ttSXF0s5BAgIkBXn5eV/FFMxYGMiY0t3EDBM/9OOk7Of9I5RAbxYYPslJKsAovc8IuMIA/eLjYyM2wCpna+2g3VmPexJlJVJTdJPGH0Qup8HVHK3ZX563qPYXOJ2/D9ClF++e9h98EXBehmZlP/EU3zNmvX1P5XySAfILOJjiGszXjbER0E+cyY6qmJnzo8NgazPJXh+byIwsPn/UN6eHFWcA1YRtpvMzrx9Hr+AZSNhce4/Kwpwx65H5jJdY5UXDpIDXKoQf3PyaSSN9M3mcq07YgALVHBnHkldU06/472LRs+3psQaIGAwzWgeLWUW6xgD',
                             'page_age': None,
@@ -4298,9 +4661,6 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                             'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                         },
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 )
             ),
         ]
@@ -4353,6 +4713,310 @@ Let me fetch the page first.\
                     WebFetchReturnPart(
                         tool_name='web_fetch',
                         content={
+                            'status': 'completed',
+                            'pages': [
+                                {
+                                    'url': 'https://ai.pydantic.dev',
+                                    'content': {
+                                        'citations': None,
+                                        'source': {
+                                            'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
+                                            'media_type': 'text/plain',
+                                            'type': 'text',
+                                        },
+                                        'title': 'Pydantic AI',
+                                        'type': 'document',
+                                    },
+                                    'content_type': 'web_fetch_result',
+                                    'fetched_at': '2025-11-14T23:34:21.151000+00:00',
+                                }
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
                             'content': {
                                 'citations': None,
                                 'source': {
@@ -4648,9 +5312,6 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                             'type': 'web_fetch_result',
                             'url': 'https://ai.pydantic.dev',
                         },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(
                         content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
@@ -4717,6 +5378,310 @@ Let me fetch the page first.\
                     WebFetchReturnPart(
                         tool_name='web_fetch',
                         content={
+                            'status': 'completed',
+                            'pages': [
+                                {
+                                    'url': 'https://ai.pydantic.dev',
+                                    'content': {
+                                        'citations': None,
+                                        'source': {
+                                            'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
+                                            'media_type': 'text/plain',
+                                            'type': 'text',
+                                        },
+                                        'title': 'Pydantic AI',
+                                        'type': 'document',
+                                    },
+                                    'content_type': 'web_fetch_result',
+                                    'fetched_at': '2025-11-14T23:34:21.151000+00:00',
+                                }
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
                             'content': {
                                 'citations': None,
                                 'source': {
@@ -5012,9 +5977,6 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                             'type': 'web_fetch_result',
                             'url': 'https://ai.pydantic.dev',
                         },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(
                         content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
@@ -5163,6 +6125,310 @@ async def test_anthropic_web_fetch_tool_stream(
                     WebFetchReturnPart(
                         tool_name='web_fetch',
                         content={
+                            'status': 'completed',
+                            'pages': [
+                                {
+                                    'url': 'https://ai.pydantic.dev',
+                                    'content': {
+                                        'citations': None,
+                                        'source': {
+                                            'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
+                                            'media_type': 'text/plain',
+                                            'type': 'text',
+                                        },
+                                        'title': 'Pydantic AI',
+                                        'type': 'document',
+                                    },
+                                    'content_type': 'web_fetch_result',
+                                    'fetched_at': '2025-11-14T23:34:21.151000+00:00',
+                                }
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
                             'content': {
                                 'citations': None,
                                 'source': {
@@ -5458,9 +6724,6 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                             'type': 'web_fetch_result',
                             'url': 'https://ai.pydantic.dev',
                         },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(
                         content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
@@ -5551,6 +6814,310 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                 part=WebFetchReturnPart(
                     tool_name='web_fetch',
                     content={
+                        'status': 'completed',
+                        'pages': [
+                            {
+                                'url': 'https://ai.pydantic.dev',
+                                'content': {
+                                    'citations': None,
+                                    'source': {
+                                        'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
+                                        'media_type': 'text/plain',
+                                        'type': 'text',
+                                    },
+                                    'title': 'Pydantic AI',
+                                    'type': 'document',
+                                },
+                                'content_type': 'web_fetch_result',
+                                'fetched_at': '2025-11-14T23:34:21.151000+00:00',
+                            }
+                        ],
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={
                         'content': {
                             'citations': None,
                             'source': {
@@ -5846,9 +7413,6 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                         'type': 'web_fetch_result',
                         'url': 'https://ai.pydantic.dev',
                     },
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 ),
                 previous_part_kind='web-fetch-call',
             ),
@@ -6584,16 +8148,17 @@ print(f"3 * 12390 = {result}")\
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={
+                        content={'status': 'completed', 'exit_code': 0, 'output': '3 * 12390 = 37170\n'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
                             'stdout': '3 * 12390 = 37170\n',
                             'type': 'code_execution_result',
                         },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(content='3 * 12390 = 37170'),
                 ],
@@ -6653,16 +8218,17 @@ print(f"4 * 12390 = {result}")\
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={
+                        content={'status': 'completed', 'exit_code': 0, 'output': '4 * 12390 = 49560\n'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
                             'stdout': '4 * 12390 = 49560\n',
                             'type': 'code_execution_result',
                         },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(content='4 * 12390 = 49560'),
                 ],
@@ -6746,6 +8312,23 @@ This is a computational task that requires precise calculations, so I should use
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={
+                            'status': 'completed',
+                            'exit_code': 0,
+                            'output': """\
+Expression: 65465-6544 * 65464-6+1.02255
+Step 1 - Multiplication: 6544 * 65464 = 428396416
+Step 2 - First subtraction: 65465 - 428396416 = -428330951
+Step 3 - Second subtraction: -428330951 - 6 = -428330957
+Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
+
+Direct calculation: -428330955.97745
+Results match: True
+""",
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
@@ -6761,9 +8344,6 @@ Results match: True
 """,
                             'type': 'code_execution_result',
                         },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
@@ -7163,6 +8743,23 @@ This is a computational task that requires precise calculations, so I should use
                 part=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={
+                        'status': 'completed',
+                        'exit_code': 0,
+                        'output': """\
+Expression: 65465-6544 * 65464-6+1.02255
+Step 1 - Multiplication: 6544 * 65464 = 428396416
+Step 2 - First subtraction: 65465 - 428396416 = -428330951
+Step 3 - Second subtraction: -428330951 - 6 = -428330957
+Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
+
+Direct calculation: -428330955.97745
+Results match: True
+""",
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={
                         'content': [],
                         'return_code': 0,
                         'stderr': '',
@@ -7178,9 +8775,6 @@ Results match: True
 """,
                         'type': 'code_execution_result',
                     },
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 ),
                 previous_part_kind='code-execution-call',
             ),
@@ -7257,6 +8851,23 @@ Here's how it breaks down following the order of operations:
                 result=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={
+                        'status': 'completed',
+                        'exit_code': 0,
+                        'output': """\
+Expression: 65465-6544 * 65464-6+1.02255
+Step 1 - Multiplication: 6544 * 65464 = 428396416
+Step 2 - First subtraction: 65465 - 428396416 = -428330951
+Step 3 - Second subtraction: -428330951 - 6 = -428330957
+Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
+
+Direct calculation: -428330955.97745
+Results match: True
+""",
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={
                         'content': [],
                         'return_code': 0,
                         'stderr': '',
@@ -7272,9 +8883,6 @@ Results match: True
 """,
                         'type': 'code_execution_result',
                     },
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 )
             ),
         ]
@@ -7969,7 +9577,49 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                 index=1,
                 part=WebSearchReturnPart(
                     tool_name='web_search',
-                    content=[
+                    content={
+                        'status': 'completed',
+                        'sources': [
+                            {
+                                'title': 'World news - breaking news, video, headlines and opinion | CNN',
+                                'url': 'https://www.cnn.com/world',
+                            },
+                            {
+                                'title': 'Breaking News, World News and Video from Al Jazeera',
+                                'url': 'https://www.aljazeera.com/',
+                            },
+                            {
+                                'title': 'News: U.S. and World News Headlines : NPR',
+                                'url': 'https://www.npr.org/sections/news/',
+                            },
+                            {
+                                'title': 'NBC News - Breaking News & Top Stories - Latest World, US & Local News | NBC News',
+                                'url': 'https://www.nbcnews.com/',
+                            },
+                            {'title': 'Breaking News, Latest News and Videos | CNN', 'url': 'https://www.cnn.com/'},
+                            {
+                                'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
+                                'url': 'https://www.cbsnews.com/world/',
+                            },
+                            {
+                                'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
+                                'url': 'https://abcnews.go.com/International',
+                            },
+                            {'title': 'Google News', 'url': 'https://news.google.com/'},
+                            {
+                                'title': 'World News Headlines - US News and World Report',
+                                'url': 'https://www.usnews.com/news/world',
+                            },
+                            {
+                                'title': 'Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos',
+                                'url': 'https://www.foxnews.com/',
+                            },
+                        ],
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details=[
                         {
                             'encrypted_content': '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',
                             'page_age': '4 hours ago',
@@ -8041,9 +9691,6 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                             'url': 'https://www.foxnews.com/',
                         },
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 ),
                 previous_part_kind='web-search-call',
             ),
@@ -8107,7 +9754,49 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                 index=4,
                 part=WebSearchReturnPart(
                     tool_name='web_search',
-                    content=[
+                    content={
+                        'status': 'completed',
+                        'sources': [
+                            {'title': 'Breaking News, Latest News and Videos | CNN', 'url': 'https://edition.cnn.com/'},
+                            {
+                                'title': 'News: U.S. and World News Headlines : NPR',
+                                'url': 'https://www.npr.org/sections/news/',
+                            },
+                            {
+                                'title': 'ABC News – Breaking News, Latest News and Videos',
+                                'url': 'https://abcnews.go.com/',
+                            },
+                            {
+                                'title': 'Newspaper headlines: Thursday, August 14, 2025 - Adomonline.com',
+                                'url': 'https://www.adomonline.com/newspaper-headlines-thursday-august-14-2025/',
+                            },
+                            {
+                                'title': 'Global News - Breaking International News And Headlines | Inquirer.net',
+                                'url': 'https://globalnation.inquirer.net',
+                            },
+                            {'title': 'News – The White House', 'url': 'https://www.whitehouse.gov/news/'},
+                            {
+                                'title': 'Latest News: Top News, Breaking News, LIVE News Headlines from India & World | Business Standard',
+                                'url': 'https://www.business-standard.com/latest-news',
+                            },
+                            {
+                                'title': 'Ukraine News Today: Breaking Updates & Live Coverage - August 14, 2025 from Kyiv Post',
+                                'url': 'https://www.kyivpost.com/thread/58085',
+                            },
+                            {
+                                'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
+                                'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
+                            },
+                            {
+                                'title': 'Daily Show for July 14, 2025 | Democracy Now!',
+                                'url': 'https://www.democracynow.org/shows/2025/7/14',
+                            },
+                        ],
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details=[
                         {
                             'encrypted_content': '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',
                             'page_age': None,
@@ -8179,9 +9868,6 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                             'url': 'https://www.democracynow.org/shows/2025/7/14',
                         },
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 ),
                 previous_part_kind='web-search-call',
             ),
@@ -8425,7 +10111,49 @@ These stories represent major international diplomatic developments, significant
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=WebSearchReturnPart(
                     tool_name='web_search',
-                    content=[
+                    content={
+                        'status': 'completed',
+                        'sources': [
+                            {
+                                'title': 'World news - breaking news, video, headlines and opinion | CNN',
+                                'url': 'https://www.cnn.com/world',
+                            },
+                            {
+                                'title': 'Breaking News, World News and Video from Al Jazeera',
+                                'url': 'https://www.aljazeera.com/',
+                            },
+                            {
+                                'title': 'News: U.S. and World News Headlines : NPR',
+                                'url': 'https://www.npr.org/sections/news/',
+                            },
+                            {
+                                'title': 'NBC News - Breaking News & Top Stories - Latest World, US & Local News | NBC News',
+                                'url': 'https://www.nbcnews.com/',
+                            },
+                            {'title': 'Breaking News, Latest News and Videos | CNN', 'url': 'https://www.cnn.com/'},
+                            {
+                                'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
+                                'url': 'https://www.cbsnews.com/world/',
+                            },
+                            {
+                                'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
+                                'url': 'https://abcnews.go.com/International',
+                            },
+                            {'title': 'Google News', 'url': 'https://news.google.com/'},
+                            {
+                                'title': 'World News Headlines - US News and World Report',
+                                'url': 'https://www.usnews.com/news/world',
+                            },
+                            {
+                                'title': 'Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos',
+                                'url': 'https://www.foxnews.com/',
+                            },
+                        ],
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details=[
                         {
                             'encrypted_content': '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',
                             'page_age': '4 hours ago',
@@ -8497,9 +10225,6 @@ These stories represent major international diplomatic developments, significant
                             'url': 'https://www.foxnews.com/',
                         },
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
@@ -8513,7 +10238,49 @@ These stories represent major international diplomatic developments, significant
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=WebSearchReturnPart(
                     tool_name='web_search',
-                    content=[
+                    content={
+                        'status': 'completed',
+                        'sources': [
+                            {'title': 'Breaking News, Latest News and Videos | CNN', 'url': 'https://edition.cnn.com/'},
+                            {
+                                'title': 'News: U.S. and World News Headlines : NPR',
+                                'url': 'https://www.npr.org/sections/news/',
+                            },
+                            {
+                                'title': 'ABC News – Breaking News, Latest News and Videos',
+                                'url': 'https://abcnews.go.com/',
+                            },
+                            {
+                                'title': 'Newspaper headlines: Thursday, August 14, 2025 - Adomonline.com',
+                                'url': 'https://www.adomonline.com/newspaper-headlines-thursday-august-14-2025/',
+                            },
+                            {
+                                'title': 'Global News - Breaking International News And Headlines | Inquirer.net',
+                                'url': 'https://globalnation.inquirer.net',
+                            },
+                            {'title': 'News – The White House', 'url': 'https://www.whitehouse.gov/news/'},
+                            {
+                                'title': 'Latest News: Top News, Breaking News, LIVE News Headlines from India & World | Business Standard',
+                                'url': 'https://www.business-standard.com/latest-news',
+                            },
+                            {
+                                'title': 'Ukraine News Today: Breaking Updates & Live Coverage - August 14, 2025 from Kyiv Post',
+                                'url': 'https://www.kyivpost.com/thread/58085',
+                            },
+                            {
+                                'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
+                                'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
+                            },
+                            {
+                                'title': 'Daily Show for July 14, 2025 | Democracy Now!',
+                                'url': 'https://www.democracynow.org/shows/2025/7/14',
+                            },
+                        ],
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details=[
                         {
                             'encrypted_content': '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',
                             'page_age': None,
@@ -8585,9 +10352,6 @@ These stories represent major international diplomatic developments, significant
                             'url': 'https://www.democracynow.org/shows/2025/7/14',
                         },
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
                 )
             ),
         ]

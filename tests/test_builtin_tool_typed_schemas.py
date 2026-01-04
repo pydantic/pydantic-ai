@@ -295,7 +295,7 @@ class TestBackwardsCompatibility:
     """Test backwards compatibility with old serialized data."""
 
     def test_old_builtin_tool_return_part_migration_code_execution(self):
-        """Test that old part_kind='builtin-tool-return' migrates to specific subclass."""
+        """Test that old part_kind='builtin-tool-return' migrates to specific subclass and normalizes content."""
         old_data = {
             'parts': [
                 {
@@ -311,8 +311,14 @@ class TestBackwardsCompatibility:
         assert len(response.parts) == 1
         part = response.parts[0]
         assert isinstance(part, CodeExecutionReturnPart)
-        assert part.content.get('stdout') == 'Hello'
-        assert part.content.get('return_code') == 0
+        # Content is normalized to unified format
+        assert part.content.get('output') == 'Hello'
+        assert part.content.get('exit_code') == 0
+        assert part.content.get('status') == 'completed'
+        # Raw provider data is preserved in provider_details
+        assert part.provider_details is not None
+        assert part.provider_details.get('stdout') == 'Hello'
+        assert part.provider_details.get('return_code') == 0
 
     def test_old_builtin_tool_return_part_migration_web_search(self):
         """Test that old web search returns migrate correctly."""
@@ -387,7 +393,7 @@ class TestBackwardsCompatibility:
         assert type(part) is BuiltinToolReturnPart
 
     def test_url_context_migrates_to_web_fetch(self):
-        """Test that deprecated url_context tool migrates to WebFetchReturnPart."""
+        """Test that deprecated url_context tool migrates to WebFetchReturnPart and normalizes content."""
         old_data = {
             'parts': [
                 {
@@ -403,7 +409,14 @@ class TestBackwardsCompatibility:
         part = response.parts[0]
         assert isinstance(part, WebFetchReturnPart)
         assert isinstance(part.content, dict)
-        assert part.content.get('url') == 'https://example.com'
+        # Content is normalized to unified format with pages array
+        assert part.content.get('status') == 'completed'
+        assert len(part.content.get('pages', [])) == 1
+        assert part.content['pages'][0].get('url') == 'https://example.com'
+        assert part.content['pages'][0].get('content') == 'page content'
+        # Raw provider data is preserved in provider_details
+        assert part.provider_details is not None
+        assert part.provider_details.get('url') == 'https://example.com'
 
     def test_unknown_tool_stays_as_base_class(self):
         """Test that unknown tool names stay as base BuiltinToolReturnPart."""
@@ -427,7 +440,7 @@ class TestBackwardsCompatibility:
         part = CodeExecutionReturnPart(
             tool_name='code_execution',
             tool_call_id='test-id',
-            content={'stdout': 'Hello'},
+            content={'status': 'completed', 'output': 'Hello'},
         )
         response = ModelResponse(parts=[part])
         serialized = pydantic.TypeAdapter(ModelResponse).dump_python(response, mode='json')
@@ -438,7 +451,7 @@ class TestBackwardsCompatibility:
         original = CodeExecutionReturnPart(
             tool_name='code_execution',
             tool_call_id='test-id',
-            content={'stdout': 'Hello', 'return_code': 0},
+            content={'status': 'completed', 'output': 'Hello', 'exit_code': 0},
         )
         response = ModelResponse(parts=[original])
 
@@ -450,8 +463,9 @@ class TestBackwardsCompatibility:
 
         part = deserialized.parts[0]
         assert isinstance(part, CodeExecutionReturnPart)
-        assert part.content.get('stdout') == 'Hello'
-        assert part.content.get('return_code') == 0
+        assert part.content.get('output') == 'Hello'
+        assert part.content.get('exit_code') == 0
+        assert part.content.get('status') == 'completed'
 
 
 class TestIsinstanceChecks:

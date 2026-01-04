@@ -619,10 +619,11 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_0e3d55e9502941380068c4aaab56508195a1effa9583720d20',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -638,10 +639,11 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_0e3d55e9502941380068c4aab0c534819593df0190332e7aa3',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -660,10 +662,11 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_0e3d55e9502941380068c4aab597f48195ac7021b00e057308',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -682,10 +685,11 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_0e3d55e9502941380068c4aabe83a88195b7a5ec62ec10a26e',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -701,10 +705,11 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_0e3d55e9502941380068c4aac378308195aca61a302c5ebae6',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -720,10 +725,11 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_0e3d55e9502941380068c4aac9b92081958054d2ec8fabe63f',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -829,10 +835,11 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_028829e50fbcad090068c9c8306aec8195ae9451d32175ed69',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -894,10 +901,11 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_028829e50fbcad090068c9c83e3a648195a241c1a97eddfee8',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -969,10 +977,11 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_0b385a0fdc82fd920068c4aaf7037081978e951ac15bf07978',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -1045,10 +1054,11 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_0b4f29854724a3120068c4ab0f070c8191b903ff534320cb64',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     ThinkingPart(
                         content='',
@@ -1128,10 +1138,11 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
                     ),
                     ThinkingPart(
                         content='',
@@ -1216,10 +1227,11 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 index=2,
                 part=WebSearchReturnPart(
                     tool_name='web_search',
-                    content={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
+                    content={'status': 'completed', 'sources': []},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
                 ),
                 previous_part_kind='web-search-call',
             ),
@@ -1310,10 +1322,11 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=WebSearchReturnPart(
                     tool_name='web_search',
-                    content={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
+                    content={'status': 'completed', 'sources': []},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
                 )
             ),
         ]
@@ -1349,10 +1362,11 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
+                        content={'status': 'completed', 'sources': []},
                         tool_call_id='ws_00a60507bf41223d0068c9d31b6aec81a09d9e568afa7b59aa',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
                     ),
                     ThinkingPart(
                         content='',
@@ -2886,10 +2900,11 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={'status': 'completed', 'logs': ['-428330955.97745']},
+                        content={'status': 'completed', 'output': '-428330955.97745'},
                         tool_call_id='ci_68cdba5af39881a393a01eebb253854e09b7445677780c8f',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed', 'logs': ['-428330955.97745']},
                     ),
                     ThinkingPart(
                         content=IsStr(),
@@ -3015,10 +3030,11 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'output': ''},
                         tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     CodeExecutionCallPart(
                         tool_name='code_execution',
@@ -3028,10 +3044,11 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'output': ''},
                         tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     CodeExecutionCallPart(
                         tool_name='code_execution',
@@ -3041,10 +3058,11 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'output': ''},
                         tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     TextPart(
                         content=IsStr(),
@@ -3312,10 +3330,11 @@ I\
                 index=2,
                 part=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed'},
+                    content={'status': 'completed', 'output': ''},
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed'},
                 ),
                 previous_part_kind='code-execution-call',
             ),
@@ -3427,10 +3446,11 @@ I\
                 index=4,
                 part=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed'},
+                    content={'status': 'completed', 'output': ''},
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed'},
                 ),
                 previous_part_kind='code-execution-call',
             ),
@@ -3476,10 +3496,11 @@ I\
                 index=6,
                 part=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed'},
+                    content={'status': 'completed', 'output': ''},
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed'},
                 ),
                 previous_part_kind='code-execution-call',
             ),
@@ -3724,10 +3745,11 @@ I\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed'},
+                    content={'status': 'completed', 'output': ''},
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed'},
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
@@ -3741,10 +3763,11 @@ I\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed'},
+                    content={'status': 'completed', 'output': ''},
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed'},
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
@@ -3758,10 +3781,11 @@ I\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed'},
+                    content={'status': 'completed', 'output': ''},
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed'},
                 )
             ),
         ]
@@ -3994,10 +4018,11 @@ plt.show()\r
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={'status': 'completed', 'logs': ["'/mnt/data/y_equals_x_squared.png'"]},
+                        content={'status': 'completed', 'output': "'/mnt/data/y_equals_x_squared.png'"},
                         tool_call_id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed', 'logs': ["'/mnt/data/y_equals_x_squared.png'"]},
                     ),
                     TextPart(
                         content=IsStr(),
@@ -4145,6 +4170,18 @@ out_path\
                         tool_name='code_execution',
                         content={
                             'status': 'completed',
+                            'output': """\
+/tmp/ipykernel_11/962152713.py:40: UserWarning: You passed a edgecolor/edgecolors ('white') for an unfilled marker ('x').  Matplotlib is ignoring the edgecolor in favor of the facecolor.  This behavior may change in the future.
+  ax.scatter(x_int, y_int, s=60, color=neon_magenta, edgecolor='white', linewidth=0.6, zorder=4)
+
+'/mnt/data/y_equals_x_squared_futuristic.png'\
+""",
+                        },
+                        tool_call_id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
                             'logs': [
                                 """\
 /tmp/ipykernel_11/962152713.py:40: UserWarning: You passed a edgecolor/edgecolors ('white') for an unfilled marker ('x').  Matplotlib is ignoring the edgecolor in favor of the facecolor.  This behavior may change in the future.
@@ -4153,9 +4190,6 @@ out_path\
                                 "'/mnt/data/y_equals_x_squared_futuristic.png'",
                             ],
                         },
-                        tool_call_id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
                     ),
                     TextPart(
                         content="""\
@@ -4250,10 +4284,11 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
+                        content={'status': 'completed', 'output': "'/mnt/data/y_eq_x_squared_plot.png'"},
                         tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
                     ),
                     TextPart(
                         content=IsStr(),
@@ -5613,10 +5648,11 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 index=3,
                 part=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
+                    content={'status': 'completed', 'output': "'/mnt/data/y_eq_x_squared_plot.png'"},
                     tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
                 ),
                 previous_part_kind='file',
             ),
@@ -5682,10 +5718,11 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
+                    content={'status': 'completed', 'output': "'/mnt/data/y_eq_x_squared_plot.png'"},
                     tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
                 )
             ),
         ]
@@ -5751,6 +5788,13 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': 'Ultra-realistic 4K macro photograph of a leucistic axolotl underwater. Pink feathery external gills, wide curious eyes, slight smile. Soft, diffused natural light beams from above with gentle suspended particles, shallow depth of field and creamy bokeh. Smooth pale skin with subtle freckles, delicate toes resting on rounded river pebbles. Background of bluish-green water with aquatic plants and a hint of driftwood, calm and serene atmosphere. Centered composition, head slightly tilted toward the camera, sharp focus on eyes and gills, accurate axolotl anatomy, no extra limbs, no artifacts.',
+                        },
                     ),
                     TextPart(content='', id='msg_68cdc42eae2c81918eeacdbceb60d7fa08537600f5445fc6'),
                 ],
@@ -5828,6 +5872,13 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': 'Edit the previously generated ultra-realistic 4K axolotl macro: add a miniature colorful woven Mexican sombrero on the axolotl’s head, properly scaled, with a thin beige chin cord gently under the jaw, brim casting a soft shadow on its face. Keep the pink feathery gills unobstructed and in sharp focus; maintain the underwater setting with soft natural light beams from above, suspended particles, shallow depth of field and creamy bokeh, smooth pale freckled skin, delicate toes on rounded pebbles, bluish-green aquatic plants and a hint of driftwood. Sombrero details: vivid serape-style stripes (red, green, yellow, blue), decorative pom-pom trim on the brim edge, slightly wet texture with tiny clinging air bubbles. Centered composition, head slightly tilted toward the camera, sharp focus on eyes, gills, and hat, accurate axolotl anatomy, no extra limbs, no artifacts.',
+                        },
                     ),
                     TextPart(content='', id='msg_68cdc4c5951c8191ace8044f1e89571508537600f5445fc6'),
                 ],
@@ -5927,6 +5978,13 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                         tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1536',
+                            'revised_prompt': 'High-resolution photorealistic portrait of a leucistic pink axolotl underwater in a clear freshwater aquarium. The axolotl is centered in a 3/4 view, with feathery external gills gently fanned out, smooth pale pink skin with subtle speckling, and glossy dark eyes. Surround it with soft green aquatic plants, a piece of driftwood, and a sandy substrate. Tiny air bubbles drift upward. Lighting is soft and diffused with a gentle rim light highlighting the gill filaments; shallow depth of field with creamy bokeh. Ultra-detailed texture, natural color grading, 8k, crisp yet serene composition.',
+                        },
                     ),
                 ],
                 usage=RequestUsage(
@@ -6025,6 +6083,13 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={
+                        'status': 'completed',
+                        'background': 'opaque',
+                        'quality': 'high',
+                        'size': '1024x1536',
+                        'revised_prompt': 'High-resolution photorealistic portrait of a leucistic pink axolotl underwater in a clear freshwater aquarium. The axolotl is centered in a 3/4 view, with feathery external gills gently fanned out, smooth pale pink skin with subtle speckling, and glossy dark eyes. Surround it with soft green aquatic plants, a piece of driftwood, and a sandy substrate. Tiny air bubbles drift upward. Lighting is soft and diffused with a gentle rim light highlighting the gill filaments; shallow depth of field with creamy bokeh. Ultra-detailed texture, natural color grading, 8k, crisp yet serene composition.',
+                    },
                 ),
                 previous_part_kind='file',
             ),
@@ -6048,6 +6113,13 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={
+                        'status': 'completed',
+                        'background': 'opaque',
+                        'quality': 'high',
+                        'size': '1024x1536',
+                        'revised_prompt': 'High-resolution photorealistic portrait of a leucistic pink axolotl underwater in a clear freshwater aquarium. The axolotl is centered in a 3/4 view, with feathery external gills gently fanned out, smooth pale pink skin with subtle speckling, and glossy dark eyes. Surround it with soft green aquatic plants, a piece of driftwood, and a sandy substrate. Tiny air bubbles drift upward. Lighting is soft and diffused with a gentle rim light highlighting the gill filaments; shallow depth of field with creamy bokeh. Ultra-detailed texture, natural color grading, 8k, crisp yet serene composition.',
+                    },
                 )
             ),
         ]
@@ -6112,6 +6184,13 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Photorealistic close-up of a pink leucistic axolotl underwater in a clear freshwater aquarium, gently hovering above dark volcanic sand. The axolotl’s featherlike external gills are a vibrant coral pink with fine filaments, its small smiling mouth and beady black eyes visible. Translucent, slightly speckled skin with subtle iridescence. Soft, dappled caustic light ripples across its back from the water surface. Surrounding environment includes lush green aquatic plants (anubias, java fern) and smooth river stones. Slight particulate in the water for realism. Shot at eye level, 50mm macro feel, shallow depth of field with creamy bokeh background. Natural color grading, crisp details, high resolution.',
+                        },
                     ),
                     TextPart(content='', id='msg_68cdec605234819fab332bfc0ba35a5d079003437d26d0c0'),
                 ],
@@ -6174,6 +6253,13 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Ultra-detailed photorealistic image of a pink leucistic axolotl underwater in a crystal-clear freshwater aquarium, gently hovering above dark volcanic sand. The axolotl has coral-pink featherlike external gills with delicate filaments, a subtle smiling mouth, and glossy black eyes. Its translucent, slightly speckled skin shows a hint of iridescence. Soft dappled caustic light ripples across its back from the water surface. Surroundings include lush green aquatic plants (anubias, java fern) and smooth river stones. Fine particulate suspended in the water for realism. Shot at eye level with a 50mm macro feel, shallow depth of field and creamy bokeh background. Natural color grading, crisp details, high resolution.',
+                        },
                     ),
                     TextPart(content='', id='msg_68cdecb54530819f9e25118291f5d1fe079003437d26d0c0'),
                 ],
@@ -6285,6 +6371,13 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Photorealistic high-resolution image of a pink axolotl (Ambystoma mexicanum) in a clear freshwater aquarium. The axolotl is centered, facing slightly toward the camera, feathery external gills fanned out, small smile, speckled skin texture, and delicate toes. Natural soft diffused lighting from above with gentle water caustics on a light sand substrate. Background features softly blurred aquatic plants (anacharis) and smooth river stones with subtle bokeh. Water appears crystal clear with a few tiny suspended particles visible. Shallow depth of field, macro 50mm look, 4K detail, vibrant yet natural colors.',
+                        },
                     ),
                     TextPart(content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2'),
                 ],
@@ -6411,6 +6504,13 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Ultra-detailed photorealistic close-up of a pink leucistic axolotl swimming in a clear freshwater aquarium. Feathery external gills fanned out, tiny smile, speckled golden-black eyes, and smooth, slightly translucent skin with subtle freckles. Soft diffused lighting with gentle surface ripples and suspended water particles. Aquatic plants like java moss and anubias in the background, natural stones and fine sand substrate. Shallow depth of field, macro lens look, crisp focus on the face and gills, 8k resolution, high dynamic range, natural color grading.',
+                        },
                     ),
                     TextPart(
                         content='{"species":"Ambystoma mexicanum","name":"Axolotl"}',
@@ -6489,6 +6589,13 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                         tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Photorealistic close-up of a pink leucistic axolotl (Ambystoma mexicanum) in a crystal-clear freshwater aquarium. Details: feathery red external gills, smooth speckled skin, small black eyes, endearing “smile.” Composition: subject centered at a slight angle, shallow depth of field, soft rim lighting, gentle caustics on fine sand substrate, lush green aquatic plants (Anubias, Java moss) in the background, tiny air bubbles, clean glass. Aesthetic: 4K, high dynamic range, professional macro wildlife photography, natural colors, no text or watermark.',
+                        },
                     ),
                     TextPart(
                         content='{"species":"axolotl","name":"Axel"}',
@@ -6607,6 +6714,13 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Create a high-resolution, photorealistic image of an axolotl swimming in clear freshwater with soft natural lighting, visible external gills, speckled pink-white skin, and gentle ripples, shot at eye level.',
+                        },
                     ),
                     TextPart(content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332'),
                 ],
@@ -6685,6 +6799,13 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'A lifelike underwater photograph of a leucistic pink axolotl gliding through a freshwater tank, surrounded by bright green aquatic plants and smooth river stones. Shafts of sunlight filter through the water, tiny bubbles, shallow depth of field, highly detailed skin texture and feathery external gills, natural colors, ultra high resolution.',
+                        },
                     ),
                     ImageGenerationCallPart(
                         tool_name='image_generation',
@@ -6711,6 +6832,13 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': 'A cozy, softly lit underwater scene of a wild-type brown axolotl resting on sandy substrate beside a piece of driftwood and a small sprig of Java moss. Realistic detail, slight vignette, gentle ripples of caustic light on the sand, crisp focus on the axolotl’s face and gills, high resolution.',
+                        },
                     ),
                     TextPart(content='', id='msg_0b6169df6e16e9690068dd8163a99c8191ae96a95eaa8e6365'),
                 ],
@@ -6793,6 +6921,13 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         tool_call_id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': 'Photorealistic close-up of a pink leucistic axolotl underwater in a clear freshwater aquarium. Focus on its feathery external gills, soft smiling face, bead-like black eyes, and tiny forelimbs resting on smooth river stones. Soft diffused lighting with gentle rim light highlighting the translucent gill filaments. Shallow depth of field with creamy bokeh; a few subtle suspended particles in the water for realism. Background of natural aquatic plants in soft green-blue hues, slightly out of focus. Fine skin texture with subtle speckles, moist sheen. Ultra detailed, high resolution, 35mm macro look, no text, no watermark.',
+                        },
                     ),
                     TextPart(content='', id='msg_08acbdf1ae54befc0068dd9d468248819786f55b61db3a9a60'),
                 ],
@@ -8433,10 +8568,11 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                         ),
                         FileSearchReturnPart(
                             tool_name='file_search',
-                            content={'status': 'completed'},
+                            content={'status': 'completed', 'results': []},
                             tool_call_id='fs_0995dffd0769e0bd006931d72fecf48194bf314348aa6b2494',
                             timestamp=IsDatetime(),
                             provider_name='openai',
+                            provider_details={'status': 'completed'},
                         ),
                         TextPart(
                             content='The capital of France is Paris.',
@@ -8481,10 +8617,11 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                         ),
                         FileSearchReturnPart(
                             tool_name='file_search',
-                            content={'status': 'completed'},
+                            content={'status': 'completed', 'results': []},
                             tool_call_id='fs_019d8541afd6ed8d006931d7382ef481998c5cd3117a0ff8fe',
                             timestamp=IsDatetime(),
                             provider_name='openai',
+                            provider_details={'status': 'completed'},
                         ),
                         TextPart(
                             content='The Eiffel Tower is a famous landmark in Paris, the capital of France. It is widely recognized and serves as an iconic symbol of the city.',
@@ -8543,6 +8680,13 @@ def test_map_file_search_tool_call():
                 tool_name='file_search',
                 content={
                     'status': 'completed',
+                    'results': [{'score': 0.9, 'id': 'result-1'}],
+                },
+                tool_call_id='test-id',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={
+                    'status': 'completed',
                     'results': [
                         {
                             'attributes': None,
@@ -8556,9 +8700,6 @@ def test_map_file_search_tool_call():
                         }
                     ],
                 },
-                tool_call_id='test-id',
-                timestamp=IsDatetime(),
-                provider_name='openai',
             ),
         )
     )
@@ -8621,10 +8762,11 @@ async def test_openai_responses_model_file_search_tool_stream(
                         ),
                         FileSearchReturnPart(
                             tool_name='file_search',
-                            content={'status': 'completed'},
+                            content={'status': 'completed', 'results': []},
                             tool_call_id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
                             timestamp=IsDatetime(),
                             provider_name='openai',
+                            provider_details={'status': 'completed'},
                         ),
                         TextPart(
                             content='The capital of France is Paris.',
@@ -8675,10 +8817,11 @@ async def test_openai_responses_model_file_search_tool_stream(
                     index=1,
                     part=FileSearchReturnPart(
                         tool_name='file_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'results': []},
                         tool_call_id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     ),
                     previous_part_kind='file-search-call',
                 ),
@@ -8712,10 +8855,11 @@ async def test_openai_responses_model_file_search_tool_stream(
                 BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                     result=FileSearchReturnPart(
                         tool_name='file_search',
-                        content={'status': 'completed'},
+                        content={'status': 'completed', 'results': []},
                         tool_call_id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_details={'status': 'completed'},
                     )
                 ),
             ]
@@ -8784,6 +8928,20 @@ async def test_openai_responses_model_file_search_tool_with_results(
                                 'status': 'completed',
                                 'results': [
                                     {
+                                        'content': 'Paris is the capital of France. It is known for the Eiffel Tower.',
+                                        'filename': 'tmpd_9a5dki.txt',
+                                        'score': 0.9716,
+                                        'file_store': 'file-2b6dRdmXnzSrqiEbhVJZRU',
+                                    }
+                                ],
+                            },
+                            tool_call_id='fs_08aa886305ae5628006939ad6cfa30819a85b07d52d61eb121',
+                            timestamp=IsDatetime(),
+                            provider_name='openai',
+                            provider_details={
+                                'status': 'completed',
+                                'results': [
+                                    {
                                         'attributes': {},
                                         'file_id': 'file-2b6dRdmXnzSrqiEbhVJZRU',
                                         'filename': 'tmpd_9a5dki.txt',
@@ -8793,9 +8951,6 @@ async def test_openai_responses_model_file_search_tool_with_results(
                                     }
                                 ],
                             },
-                            tool_call_id='fs_08aa886305ae5628006939ad6cfa30819a85b07d52d61eb121',
-                            timestamp=IsDatetime(),
-                            provider_name='openai',
                         ),
                         TextPart(
                             content=IsStr(),
@@ -8879,10 +9034,11 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
                 ),
                 WebSearchReturnPart(
                     tool_name='web_search',
-                    content={'status': 'completed'},
+                    content={'status': 'completed', 'sources': []},
                     tool_call_id='web-search-1',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'status': 'completed'},
                 ),
             ],
             model_name='gpt-4o-123',

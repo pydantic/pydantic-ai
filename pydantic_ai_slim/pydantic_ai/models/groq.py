@@ -39,6 +39,7 @@ from ..messages import (
     UserPromptPart,
     WebSearchCallPart,
     WebSearchReturnPart,
+    normalize_web_search_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
@@ -690,9 +691,11 @@ def _map_executed_tool(
 ) -> tuple[WebSearchCallPart | None, WebSearchReturnPart | None]:
     if tool.type == 'search':
         if tool.search_results and (tool.search_results.images or tool.search_results.results):
-            results: dict[str, Any] = tool.search_results.model_dump(mode='json')
+            raw_results: dict[str, Any] = tool.search_results.model_dump(mode='json')
         else:
-            results = {'output': tool.output} if tool.output else {}
+            raw_results = {'output': tool.output} if tool.output else {}
+
+        normalized, provider_details = normalize_web_search_content(raw_results, 'groq')
 
         tool_call_id = tool_call_id or generate_tool_call_id()
         call_part = WebSearchCallPart(
@@ -703,13 +706,14 @@ def _map_executed_tool(
         )
         return_part = WebSearchReturnPart(
             tool_name=WebSearchTool.kind,
-            content=results,
+            content=normalized,
             provider_name=provider_name,
             tool_call_id=tool_call_id,
+            provider_details=provider_details,
         )
 
         if streaming:
-            if results:
+            if raw_results:
                 return None, return_part
             else:
                 return call_part, None

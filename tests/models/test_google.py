@@ -371,7 +371,7 @@ async def test_google_model_builtin_code_execution_stream(
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                        content={'status': 'completed', 'output': '-428330955.97745\n'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -391,7 +391,7 @@ print(result)\
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                        content={'status': 'completed', 'output': '-428330955.97745\n'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -458,7 +458,7 @@ print(result)\
                 index=1,
                 part=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'status': 'completed', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -503,7 +503,7 @@ print(result)\
                 index=3,
                 part=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'status': 'completed', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -533,7 +533,7 @@ print(result)\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'status': 'completed', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -557,7 +557,7 @@ print(result)\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=CodeExecutionReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'status': 'completed', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -1059,7 +1059,27 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content=[
+                        content={
+                            'status': 'completed',
+                            'sources': [
+                                {
+                                    'title': 'Weather information for San Francisco, CA, US',
+                                    'url': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                },
+                                {
+                                    'title': 'weather.gov',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_uqo2G5Goeww8iF1L_dYa2sqWGhzu_UnxEZd1gQ7ZNuXEVVVYEEYcx_La3kuODFm0dPUhHeF4qGP1c6kJ86i4SKfvRqFitMCvNiDx07eC5iM7axwepoTv3FeUdIRC-ou1P-6DDykZ4QzcxcrKISa_1Q==',
+                                },
+                                {
+                                    'title': 'wunderground.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFywixFZicmDjijfhfLNw8ya7XdqWR31aJp8CHyULLelG8bujH1TuqeP9RAhK6Pcm1qz11ujm2yM7gM5bJXDFsZwbsubub4cnUp5ixRaloJcjVrHkyd5RHblhkDDxHGiREV9BcuqeJovdr8qhtrCKMcvJk=',
+                                },
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_details=[
                             {
                                 'domain': None,
                                 'title': 'Weather information for San Francisco, CA, US',
@@ -1076,9 +1096,6 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                                 'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFywixFZicmDjijfhfLNw8ya7XdqWR31aJp8CHyULLelG8bujH1TuqeP9RAhK6Pcm1qz11ujm2yM7gM5bJXDFsZwbsubub4cnUp5ixRaloJcjVrHkyd5RHblhkDDxHGiREV9BcuqeJovdr8qhtrCKMcvJk=',
                             },
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
                     ),
                     TextPart(
                         content="""\
@@ -1140,7 +1157,27 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content=[
+                        content={
+                            'status': 'completed',
+                            'sources': [
+                                {
+                                    'title': 'theweathernetwork.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEvigSUuLwtMoqPNq2bvqCduH6yYQLKmhzoj0-SQbxBb2rs_ow380KClss6yfKqxmQ-3HIrmzasviLVdO2FhQ_uEIGfpv6-_r4XOSSLu57LKZgAFYTsswd5Q--VkuO2eEr4Vh8b0aK4KFi3Rt3k_r99frmOa-8mCHzWrXI_HeS58IvIpda0XNtWVEjg',
+                                },
+                                {
+                                    'title': 'wunderground.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFEXnJiWubQ1I2xMumZnSwxzZzhO_s2AdGg1yFakgO7GqJXU25aq3-Zl5xFEsUk9KpDtKUsS0NrBQxRNYCTkbKMknHSD5n8Yps9aAYvLOvyKgKPDFt4SkBkt1RO1nyPOweAzOzjPmnnd8AqBqOq',
+                                },
+                                {
+                                    'title': 'wunderground.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==',
+                                },
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_details=[
                             {
                                 'domain': None,
                                 'title': 'theweathernetwork.com',
@@ -1157,9 +1194,6 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                                 'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==',
                             },
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
                     ),
                     TextPart(
                         content="""\
@@ -1383,7 +1417,31 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content=[
+                        content={
+                            'status': 'completed',
+                            'sources': [
+                                {
+                                    'title': 'wunderground.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEQC0SXLaLGgcMFH_tEWkajsUbbqi5e41d5DCbU7UYn-07hCucenSJSG81JCNJHvCmvBBNLToqgi9ekV5gIRMRxWyuGtmwk6_mm9PkCXkma14WNA77Mop53-RlMrNGA0Pv1cWWsfjT2eO0TzYw=',
+                                },
+                                {
+                                    'title': 'wunderground.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHvVca9OLivHL55Skj5zYB3_Tz-N5Fqhjbq3NA61blVTqN54YtDSleJ9UIx6wsIAcCih6MGTG2GGnqXbcinemBrd66vI4a93SqCUUenrG2M9mzjdVShhGaW3hLtx8jGnNGiGVbg3i6EiHJWExkG',
+                                },
+                                {
+                                    'title': 'yahoo.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFTqbIT6r826Xu2U3cET_KtlwQe82Sf_LNSKFQKayYaymtY3qAbz6iIkbQxccEiSnFv-HmDVkk_ie97DIp9d3iw-PapYXUKqV3OA720KCi6KmqZ98zJkAxg-egXxD-PyHIkyaK5eBlCo5JLKDff_EhJchxZ',
+                                },
+                                {
+                                    'title': 'theweathernetwork.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGfewQ5Ayt0L90iNqoh_TfbKWfmLEfxHK2StObAJayvxDyyZnZN9RQce45e_lWWThsK4AqsqSRcHabKkQK8YMa1owQR8Bn6-ma7jiWhx8NN2d7Cu5diJcujVwyEbvTLS3ZlavVz8J6lXmUvDTVVDrVA4pKBYkz96YMy76lT1IJJzo4quSaVFhXjk1Y=',
+                                },
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_details=[
                             {
                                 'domain': None,
                                 'title': 'wunderground.com',
@@ -1405,9 +1463,6 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                                 'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGfewQ5Ayt0L90iNqoh_TfbKWfmLEfxHK2StObAJayvxDyyZnZN9RQce45e_lWWThsK4AqsqSRcHabKkQK8YMa1owQR8Bn6-ma7jiWhx8NN2d7Cu5diJcujVwyEbvTLS3ZlavVz8J6lXmUvDTVVDrVA4pKBYkz96YMy76lT1IJJzo4quSaVFhXjk1Y=',
                             },
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
                     ),
                     TextPart(
                         content="""\
@@ -1490,15 +1545,16 @@ async def test_google_model_web_fetch_tool(
                     ),
                     WebFetchReturnPart(
                         tool_name='web_fetch',
-                        content=[
+                        content={'status': 'completed', 'pages': [{'url': 'https://ai.pydantic.dev'}]},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_details=[
                             {
                                 'retrieved_url': 'https://ai.pydantic.dev',
                                 'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
                             }
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
                     ),
                     TextPart(
                         content='Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
@@ -1571,15 +1627,16 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     ),
                     WebFetchReturnPart(
                         tool_name='web_fetch',
-                        content=[
+                        content={'status': 'completed', 'pages': [{'url': 'https://ai.pydantic.dev'}]},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_details=[
                             {
                                 'retrieved_url': 'https://ai.pydantic.dev',
                                 'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
                             }
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
                     ),
                     TextPart(content=IsStr()),
                 ],
@@ -1631,15 +1688,16 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 index=1,
                 part=WebFetchReturnPart(
                     tool_name='web_fetch',
-                    content=[
+                    content={'status': 'completed', 'pages': [{'url': 'https://ai.pydantic.dev'}]},
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                    provider_details=[
                         {
                             'retrieved_url': 'https://ai.pydantic.dev',
                             'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
                         }
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google-gla',
                 ),
                 previous_part_kind='web-fetch-call',
             ),
@@ -1658,15 +1716,16 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=WebFetchReturnPart(
                     tool_name='web_fetch',
-                    content=[
+                    content={'status': 'completed', 'pages': [{'url': 'https://ai.pydantic.dev'}]},
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                    provider_details=[
                         {
                             'retrieved_url': 'https://ai.pydantic.dev',
                             'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
                         }
                     ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google-gla',
                 )
             ),
         ]
@@ -1719,12 +1778,16 @@ print(f"Today in Utrecht is {formatted_date}.")
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={
-                            'outcome': 'OUTCOME_OK',
+                            'status': 'completed',
                             'output': 'Today in Utrecht is Tuesday, September 16, 2025.\n',
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
+                        provider_details={
+                            'outcome': 'OUTCOME_OK',
+                            'output': 'Today in Utrecht is Tuesday, September 16, 2025.\n',
+                        },
                     ),
                     TextPart(content='Today in Utrecht is Tuesday, September 16, 2025.'),
                 ],
@@ -1776,10 +1839,14 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                     ),
                     CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': 'Tomorrow is Wednesday, September 17, 2025.\n'},
+                        content={'status': 'completed', 'output': 'Tomorrow is Wednesday, September 17, 2025.\n'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
+                        provider_details={
+                            'outcome': 'OUTCOME_OK',
+                            'output': 'Tomorrow is Wednesday, September 17, 2025.\n',
+                        },
                     ),
                     TextPart(content='Tomorrow is Wednesday, September 17, 2025.'),
                 ],
@@ -3638,7 +3705,24 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                     ),
                     WebSearchReturnPart(
                         tool_name='web_search',
-                        content=[
+                        content={
+                            'status': 'completed',
+                            'sources': [
+                                {
+                                    'title': 'accuweather.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQElsvx97FT3Kr__tvs8zIgS3C1znKqEOvuHdjyLe2WZZsJpbDDqn9gdF6rKV8KMZytsiWXCDcNwD5m0WvZzGWY6eVbnz0lxftYNTSNdXTiv1AtLrmw-NUcnITjEScK_JHJgnr9xmFapH9DXMGWWYKRSfcT3iy96J1gZeWjCBph5Sci23DAhzA==',
+                                },
+                                {
+                                    'title': 'weather-and-climate.com',
+                                    'url': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGlGJX9f12rrKOYrY71rszTFf5KghgToVKZckqRWzT-cjW-mYE_PV3xRbk0JxQxJS18rkCt-y8qwpB41BMYEuxLnkCSBapX5s-4-0pwPUimTjHK4W65OdkVtjTU5-wlHsAppBwdwXNDSmzXZNUYLE1N0R9SKhLeHVVj-2BYYeoO9GPH',
+                                },
+                                {'url': 'https://www.google.com/search?q=time+in+Mexico+City,+MX'},
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_details=[
                             {
                                 'domain': None,
                                 'title': 'accuweather.com',
@@ -3655,9 +3739,6 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                                 'uri': 'https://www.google.com/search?q=time+in+Mexico+City,+MX',
                             },
                         ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
                     ),
                     FilePart(
                         content=BinaryImage(
@@ -4382,14 +4463,22 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                         ),
                         FileSearchReturnPart(
                             tool_name='file_search',
-                            content=[
+                            content={
+                                'status': 'completed',
+                                'results': [
+                                    {
+                                        'content': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    }
+                                ],
+                            },
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='google-gla',
+                            provider_details=[
                                 {
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
                                 }
                             ],
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                            provider_name='google-gla',
                         ),
                         TextPart(
                             content='The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.'
@@ -4441,7 +4530,21 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                         ),
                         FileSearchReturnPart(
                             tool_name='file_search',
-                            content=[
+                            content={
+                                'status': 'completed',
+                                'results': [
+                                    {
+                                        'content': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    },
+                                    {
+                                        'content': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    },
+                                ],
+                            },
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='google-gla',
+                            provider_details=[
                                 {
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
                                 },
@@ -4449,9 +4552,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
                                 },
                             ],
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                            provider_name='google-gla',
                         ),
                         TextPart(
                             content="""\
@@ -4556,14 +4656,22 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         ),
                         FileSearchReturnPart(
                             tool_name='file_search',
-                            content=[
+                            content={
+                                'status': 'completed',
+                                'results': [
+                                    {
+                                        'content': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    }
+                                ],
+                            },
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='google-gla',
+                            provider_details=[
                                 {
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
                                 }
                             ],
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                            provider_name='google-gla',
                         ),
                     ],
                     usage=RequestUsage(
@@ -4628,12 +4736,20 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     index=2,
                     part=FileSearchReturnPart(
                         tool_name='file_search',
-                        content=[
-                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
-                        ],
+                        content={
+                            'status': 'completed',
+                            'results': [
+                                {
+                                    'content': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                }
+                            ],
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
+                        provider_details=[
+                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                        ],
                     ),
                     previous_part_kind='text',
                 ),
@@ -4648,12 +4764,20 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                     result=FileSearchReturnPart(
                         tool_name='file_search',
-                        content=[
-                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
-                        ],
+                        content={
+                            'status': 'completed',
+                            'results': [
+                                {
+                                    'content': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                }
+                            ],
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
+                        provider_details=[
+                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                        ],
                     )
                 ),
             ]

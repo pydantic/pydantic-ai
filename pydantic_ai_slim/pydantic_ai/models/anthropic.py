@@ -49,6 +49,9 @@ from ..messages import (
     WebFetchReturnPart,
     WebSearchCallPart,
     WebSearchReturnPart,
+    normalize_code_execution_content,
+    normalize_web_fetch_content,
+    normalize_web_search_content,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -1384,11 +1387,14 @@ web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockConte
 
 
 def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provider_name: str) -> WebSearchReturnPart:
+    raw_content = web_search_tool_result_content_ta.dump_python(item.content, mode='json')
+    normalized, provider_details = normalize_web_search_content(raw_content, 'anthropic')
     return WebSearchReturnPart(
         provider_name=provider_name,
         tool_name=WebSearchTool.kind,
-        content=web_search_tool_result_content_ta.dump_python(item.content, mode='json'),
+        content=normalized,
         tool_call_id=item.tool_use_id,
+        provider_details=provider_details,
     )
 
 
@@ -1400,21 +1406,26 @@ code_execution_tool_result_content_ta: TypeAdapter[BetaCodeExecutionToolResultBl
 def _map_code_execution_tool_result_block(
     item: BetaCodeExecutionToolResultBlock, provider_name: str
 ) -> CodeExecutionReturnPart:
+    raw_content = code_execution_tool_result_content_ta.dump_python(item.content, mode='json')
+    normalized, provider_details = normalize_code_execution_content(raw_content, 'anthropic')
     return CodeExecutionReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
+        content=normalized,
         tool_call_id=item.tool_use_id,
+        provider_details=provider_details,
     )
 
 
 def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider_name: str) -> WebFetchReturnPart:
+    raw_content = item.content.model_dump(mode='json')
+    normalized, provider_details = normalize_web_fetch_content(raw_content, 'anthropic')
     return WebFetchReturnPart(
         provider_name=provider_name,
         tool_name=WebFetchTool.kind,
-        # Store just the content field (BetaWebFetchBlock) which has {content, type, url, retrieved_at}
-        content=item.content.model_dump(mode='json'),
+        content=normalized,
         tool_call_id=item.tool_use_id,
+        provider_details=provider_details,
     )
 
 
