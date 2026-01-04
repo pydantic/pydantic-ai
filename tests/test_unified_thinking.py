@@ -823,14 +823,15 @@ class TestProfileThinkingCapabilities:
         assert profile.supports_thinking is False
 
     def test_deepseek_profile_thinking_support(self):
-        """DeepSeek profile should set thinking always enabled for R1 models."""
+        """DeepSeek profile should set thinking capabilities for R1 models."""
         from pydantic_ai.profiles.deepseek import deepseek_model_profile
 
-        # R1 models have thinking always enabled
+        # R1 models support thinking (but can be disabled via API)
         profile = deepseek_model_profile('deepseek-r1')
         assert profile is not None
         assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        # Note: DeepSeek R1 thinking CAN be disabled via thinking: {"type": "disabled"}
+        # so thinking_always_enabled should NOT be True
 
         # Non-R1 models don't support thinking
         profile = deepseek_model_profile('deepseek-chat')
@@ -1386,15 +1387,33 @@ class TestAdditionalProfileCapabilities:
         assert profile.supports_thinking is True
         assert profile.thinking_always_enabled is True
 
-        # QwQ models support thinking
+        # QwQ models support thinking (also thinking-only mode on Groq)
         profile = groq_model_profile('qwen-qwq-32b')
         assert profile is not None
         assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is True
 
         # Regular models don't support thinking
         profile = groq_model_profile('llama-3.1-8b-instant')
         assert profile is not None
         assert profile.supports_thinking is False
+
+    def test_mistral_profile_thinking_support(self):
+        """Mistral profile should set thinking capabilities for Magistral models."""
+        from pydantic_ai.profiles.mistral import mistral_model_profile
+
+        # Magistral models support thinking
+        profile = mistral_model_profile('magistral-medium')
+        assert profile is not None
+        assert profile.supports_thinking is True
+
+        profile = mistral_model_profile('magistral-small')
+        assert profile is not None
+        assert profile.supports_thinking is True
+
+        # Regular Mistral models don't have special thinking support
+        profile = mistral_model_profile('mistral-large')
+        assert profile is None  # Returns None for non-reasoning models
 
     def test_zai_profile_thinking_support(self):
         """ZAI profile should set thinking capabilities for GLM models."""

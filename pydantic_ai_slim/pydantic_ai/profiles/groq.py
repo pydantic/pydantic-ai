@@ -34,5 +34,6 @@ def groq_model_profile(model_name: str) -> ModelProfile:
     return GroqModelProfile(
         groq_always_has_web_search_builtin_tool=model_name.startswith('compound-'),
         supports_thinking=is_reasoning,
-        thinking_always_enabled=is_reasoning,  # DeepSeek R1 always thinks
+        # Groq's reasoning models (DeepSeek R1, QwQ) are "thinking-only mode" - cannot disable thinking
+        thinking_always_enabled=is_reasoning,
     )
