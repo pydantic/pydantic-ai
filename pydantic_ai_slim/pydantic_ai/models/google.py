@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import re
-from ._warnings import warn_setting_mapped
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -357,6 +356,8 @@ class GoogleModel(Model):
         is_pro = 'pro' in model_lower
 
         if effort == 'medium' and is_pro:
+            from ._warnings import warn_setting_mapped
+
             warn_setting_mapped(
                 setting_name='effort',
                 setting_value='medium',
