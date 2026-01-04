@@ -78,6 +78,7 @@ try:
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
         FunctionDeclarationDict,
+        FunctionResponsePartDict,
         GenerateContentConfigDict,
         GenerateContentResponse,
         GenerationConfigDict,
@@ -635,39 +636,61 @@ class GoogleModel(Model):
                     elif isinstance(part, ToolReturnPart):
                         # Check if content contains MultiModalContent for Gemini 3+ models
                         if self.profile.supports_tool_multimedia_output and isinstance(part.content, MultiModalContent):
-                            # For multimodal tool returns, include both the response and the multimedia content as parts
+                            # For multimodal tool returns, nest the multimedia content within functionResponse
+                            display_name = f'file_{part.tool_call_id}'
+                            multimedia_parts = await self._map_multimedia_content(
+                                part.content, display_name=display_name
+                            )
                             message_parts.append(
                                 {
                                     'function_response': {
                                         'name': part.tool_name,
-                                        'response': {'result': 'ok'},  # Simple acknowledgment
+                                        'response': {'result': {'$ref': display_name}},
                                         'id': part.tool_call_id,
+                                        'parts': cast(list[FunctionResponsePartDict], multimedia_parts),
                                     }
                                 }
                             )
-                            # Add the multimedia content - reuse the same mapping logic as UserPromptPart
-                            message_parts.extend(await self._map_multimedia_content(part.content))
                         elif self.profile.supports_tool_multimedia_output and isinstance(part.content, list):
                             # Check if the list contains MultiModalContent
                             has_multimedia = any(isinstance(item, MultiModalContent) for item in part.content)  # type: ignore[misc]
                             if has_multimedia:
-                                # Add function response
+                                # Build response with references to multimodal items
+                                response_data: dict[str, Any] = {}
+                                multimedia_refs: list[dict[str, str]] = []
+                                text_items: list[str] = []
+                                nested_parts: list[PartDict] = []
+
+                                # Process items and generate display names
+                                item_index = 0
+                                for item in part.content:  # type: ignore[misc]
+                                    if isinstance(item, MultiModalContent):
+                                        display_name = f'file_{part.tool_call_id}_{item_index}'
+                                        multimedia_refs.append({'$ref': display_name})
+                                        nested_parts.extend(
+                                            await self._map_multimedia_content(item, display_name=display_name)
+                                        )
+                                        item_index += 1
+                                    elif isinstance(item, str):
+                                        text_items.append(item)
+
+                                # Build the response structure
+                                if text_items:
+                                    response_data['text'] = ' '.join(text_items)
+                                if multimedia_refs:
+                                    response_data['files'] = multimedia_refs
+
+                                # Add function response with nested multimedia parts
                                 message_parts.append(
                                     {
                                         'function_response': {
                                             'name': part.tool_name,
-                                            'response': {'result': 'ok'},  # Simple acknowledgment
+                                            'response': response_data if response_data else {'result': 'ok'},
                                             'id': part.tool_call_id,
+                                            'parts': cast(list[FunctionResponsePartDict], nested_parts),
                                         }
                                     }
                                 )
-                                # Add each multimedia item
-                                for item in part.content:  # type: ignore[misc]
-                                    if isinstance(item, MultiModalContent):
-                                        message_parts.extend(await self._map_multimedia_content(item))
-                                    elif isinstance(item, str):
-                                        # Include text items in the response
-                                        message_parts.append({'text': item})
                             else:
                                 # No multimedia, use standard serialization
                                 message_parts.append(
@@ -784,13 +807,20 @@ class GoogleModel(Model):
                     assert_never(item)
         return content
 
-    async def _map_multimedia_content(self, item: MultiModalContent) -> list[PartDict]:
+    async def _map_multimedia_content(self, item: MultiModalContent, display_name: str | None = None) -> list[PartDict]:
         """Map a single MultiModalContent item to Google API format.
 
         This is extracted from _map_user_prompt to be reusable for tool returns.
+
+        Args:
+            item: The multimedia content to map
+            display_name: Optional display name for function response references (Gemini 3+).
+                         When provided, adds displayName to inline_data/file_data for $ref support.
         """
         if isinstance(item, BinaryContent):
             inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
+            if display_name is not None:
+                inline_data_dict['display_name'] = display_name
             result: PartDict = {'inline_data': inline_data_dict}
             if item.vendor_metadata:
                 result['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
@@ -799,6 +829,8 @@ class GoogleModel(Model):
             item.is_youtube or (item.url.startswith('gs://') and self.system == 'google-vertex')
         ):
             file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
+            if display_name is not None:
+                file_data_dict['display_name'] = display_name
             result: PartDict = {'file_data': file_data_dict}
             if item.vendor_metadata:
                 result['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
@@ -813,12 +845,16 @@ class GoogleModel(Model):
                     'data': downloaded_item['data'],
                     'mime_type': downloaded_item['data_type'],
                 }
+                if display_name is not None:
+                    inline_data['display_name'] = display_name
                 result: PartDict = {'inline_data': inline_data}
                 if isinstance(item, VideoUrl) and item.vendor_metadata:
                     result['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                 return [result]
             else:
                 file_data: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
+                if display_name is not None:
+                    file_data['display_name'] = display_name
                 result: PartDict = {'file_data': file_data}
                 if isinstance(item, VideoUrl) and item.vendor_metadata:
                     result['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
