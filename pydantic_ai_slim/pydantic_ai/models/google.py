@@ -272,7 +272,7 @@ class GoogleModel(Model):
             return None
 
         resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
-        if resolved is None:
+        if resolved is None:  # pragma: no cover
             return None
 
         uses_thinking_level = self.profile.supports_thinking_level

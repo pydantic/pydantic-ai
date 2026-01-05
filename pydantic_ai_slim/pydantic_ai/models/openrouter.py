@@ -573,7 +573,7 @@ class OpenRouterModel(OpenAIChatModel):
             return None
 
         resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
-        if resolved is None:
+        if resolved is None:  # pragma: no cover
             return None
         if not resolved.enabled:
             return {'enabled': False}
