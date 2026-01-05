@@ -345,7 +345,7 @@ def _wrap_provider_inits() -> Iterator[None]:
                 try:
                     _current_test_providers.get().add(self)
                 except LookupError:
-                    pass  # No test context (e.g., module-level imports)
+                    pass  # pragma: no cover
 
             return wrapper
 
