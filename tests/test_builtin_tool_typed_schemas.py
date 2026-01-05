@@ -887,3 +887,81 @@ class TestNormalizedProperty:
         assert 'size' not in normalized
         assert 'quality' not in normalized
         assert 'background' not in normalized
+
+    def test_image_generation_normalized_empty_dict(self):
+        """Test image generation with empty dict (branch coverage: 363->365 false branch)."""
+        # Empty dict - all if conditions are False
+        part = ImageGenerationReturnPart(
+            tool_name='image_generation',
+            tool_call_id='test-id',
+            content={},
+        )
+        normalized = part.normalized
+        assert normalized == {}
+
+    # --- Loop Branch Coverage Tests ---
+    # These test the loop-back branch when items exist but yield no extractable data
+
+    def test_web_search_list_items_no_extractable_fields(self):
+        """Test web_search list where items have no extractable fields (branch: 241->240)."""
+        # Items with unrecognized keys only - _extract_web_search_source returns {}
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content=[{'unknown_key': 'value'}, {'another_unknown': 'data'}],
+        )
+        normalized = part.normalized
+        # Loop iterates but no sources appended (empty dict is falsy)
+        assert normalized.get('sources') == []
+
+    def test_web_search_dict_sources_no_extractable_fields(self):
+        """Test web_search dict with sources that have no extractable fields (branch: 252->251)."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content={'sources': [{'unknown': 'value'}]},
+        )
+        normalized = part.normalized
+        assert normalized.get('sources') == []
+
+    def test_web_search_dict_results_no_extractable_fields(self):
+        """Test web_search dict with results that have no extractable fields (branch: 257->256)."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content={'results': [{'unknown': 'value'}]},
+        )
+        normalized = part.normalized
+        assert normalized.get('sources') == []
+
+    def test_web_fetch_list_items_no_extractable_fields(self):
+        """Test web_fetch list where items have no extractable fields (branch: 295->294)."""
+        part = WebFetchReturnPart(
+            tool_name='web_fetch',
+            tool_call_id='test-id',
+            content=[{'unknown_key': 'value'}, {'another_unknown': 'data'}],
+        )
+        normalized = part.normalized
+        # Loop iterates but no pages appended (empty dict is falsy)
+        assert normalized.get('pages') == []
+
+    def test_file_search_list_items_no_extractable_fields(self):
+        """Test file_search list where items have no extractable fields (branch: 336->335)."""
+        part = FileSearchReturnPart(
+            tool_name='file_search',
+            tool_call_id='test-id',
+            content=[{'unknown_key': 'value'}],
+        )
+        normalized = part.normalized
+        # Loop iterates but no results appended (empty dict is falsy)
+        assert normalized.get('results') == []
+
+    def test_file_search_dict_results_no_extractable_fields(self):
+        """Test file_search dict with results that have no extractable fields (branch: 346->345)."""
+        part = FileSearchReturnPart(
+            tool_name='file_search',
+            tool_call_id='test-id',
+            content={'results': [{'unknown': 'value'}]},
+        )
+        normalized = part.normalized
+        assert normalized.get('results') == []
