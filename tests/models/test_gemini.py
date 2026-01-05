@@ -561,6 +561,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -582,6 +583,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -595,6 +597,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -624,6 +627,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -644,6 +648,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -689,6 +694,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -711,6 +717,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -740,6 +747,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -899,6 +907,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -922,6 +931,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                         tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -942,6 +952,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -988,6 +999,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1015,6 +1027,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -1032,7 +1045,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 },
                 {'text': 'xxx'},
             ],
@@ -1049,7 +1062,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 }
             ],
         }
@@ -1201,12 +1214,13 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=74, details={'thoughts_tokens': 64, 'text_prompt_tokens': 33}
+                    input_tokens=33, output_tokens=155, details={'thoughts_tokens': 145, 'text_prompt_tokens': 33}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1219,53 +1233,32 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
+                        content='See file 241a70',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1c8566:',
+                            'This is file 241a70:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(content='6'),
                     TextPart(
-                        content="""\
- 1c8566
-The image shows a **kiwi** fruit that has been sliced in half.
-
-You can see:
-*   The **bright green flesh**.
-*   The ring of tiny **black seeds**.
-*   The **white core** in the center.
-*   The fuzzy **brown skin** around the outside.
-
-It's positioned against a plain white background.\
-"""
-                    ),
-                    TextPart(
-                        content="""\
-The fruit in the image is a **kiwi** (specifically, a sliced green kiwifruit).
-
-You can clearly identify it by its signature features:
-*   **Green flesh** with a radial pattern.
-*   A ring of small **black seeds**.
-*   A cream-colored **white core** in the center.
-*   Fuzzy **brown skin** visible on the exterior edge.\
-"""
+                        content='The fruit in the image is a **kiwi** (specifically, a cross-section showing its green flesh, black seeds, and white core).'
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1185,
-                    output_tokens=552,
-                    details={'thoughts_tokens': 381, 'image_prompt_tokens': 1107, 'text_prompt_tokens': 78},
+                    input_tokens=1166,
+                    output_tokens=215,
+                    details={'thoughts_tokens': 184, 'image_prompt_tokens': 1088, 'text_prompt_tokens': 78},
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1373,9 +1366,7 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
     assert result.output == snapshot('Your Chinese zodiac is Dragon.\n')
 
     result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
-    assert result.output == snapshot(
-        'I am sorry, I cannot provide you with your Chinese zodiac sign because you are not old enough. You must be at least 18 years old.'
-    )
+    assert result.output == snapshot('I am sorry, I cannot fulfill this request. The age needs to be greater than 18.')
 
 
 @pytest.mark.vcr()
@@ -1388,6 +1379,7 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1437,9 +1429,7 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         return 20.0
 
     result = await agent.run('What is the temperature in Tokyo?')
-    assert result.output == snapshot(
-        'I was not able to get the temperature in Tokyo. There seems to be an issue with the way the location is being processed by the tool.'
-    )
+    assert result.output == snapshot('I need the latitude and longitude for Tokyo. Can you please provide them?')
 
 
 @pytest.mark.vcr()
@@ -1467,6 +1457,7 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1508,7 +1499,10 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1528,6 +1522,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1542,7 +1537,10 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1554,6 +1552,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1627,6 +1626,7 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
                 parts=[
                     UserPromptPart(content=['What is the main content of this URL?', url], timestamp=IsDatetime()),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1712,6 +1712,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1735,6 +1736,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1764,6 +1766,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -1796,6 +1799,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1819,6 +1823,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1848,6 +1853,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -1879,6 +1885,7 @@ IT'S THE CAPITAL OF MEXICO AND ONE OF THE LARGEST METROPOLITAN AREAS IN THE WORL
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1952,6 +1959,7 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2005,6 +2013,7 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2059,6 +2068,7 @@ async def test_gemini_prompted_output(allow_model_requests: None, gemini_api_key
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2109,6 +2119,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2132,6 +2143,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2176,6 +2188,7 @@ async def test_gemini_prompted_output_multiple(allow_model_requests: None, gemin
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(

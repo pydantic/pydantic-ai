@@ -72,6 +72,7 @@ if TYPE_CHECKING:
         PromptVariableValuesTypeDef,
         ReasoningContentBlockOutputTypeDef,
         S3LocationTypeDef,
+        ServiceTierTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
@@ -229,6 +230,12 @@ class BedrockModelSettings(ModelSettings, total=False):
     Note: Uses 1 of Bedrock's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
     See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
+
+    bedrock_service_tier: ServiceTierTypeDef
+    """Setting for optimizing performance and cost
+
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html>.
     """
 
 
@@ -398,11 +405,15 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
+        input_tokens = response['usage']['inputTokens']
+        output_tokens = response['usage']['outputTokens']
+        cache_read_tokens = response['usage'].get('cacheReadInputTokens', 0)
+        cache_write_tokens = response['usage'].get('cacheWriteInputTokens', 0)
         u = usage.RequestUsage(
-            input_tokens=response['usage']['inputTokens'],
-            output_tokens=response['usage']['outputTokens'],
-            cache_read_tokens=response['usage'].get('cacheReadInputTokens', 0),
-            cache_write_tokens=response['usage'].get('cacheWriteInputTokens', 0),
+            input_tokens=input_tokens + cache_write_tokens + cache_read_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
@@ -481,6 +492,8 @@ class BedrockConverseModel(Model):
                 params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
+            if service_tier := model_settings.get('bedrock_service_tier', None):
+                params['serviceTier'] = service_tier
 
         try:
             if stream:
@@ -981,11 +994,15 @@ class BedrockStreamedResponse(StreamedResponse):
         return self._timestamp
 
     def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
+        input_tokens = metadata['usage']['inputTokens']
+        output_tokens = metadata['usage']['outputTokens']
+        cache_read_tokens = metadata['usage'].get('cacheReadInputTokens', 0)
+        cache_write_tokens = metadata['usage'].get('cacheWriteInputTokens', 0)
         return usage.RequestUsage(
-            input_tokens=metadata['usage']['inputTokens'],
-            output_tokens=metadata['usage']['outputTokens'],
-            cache_read_tokens=metadata['usage'].get('cacheReadInputTokens', 0),
-            cache_write_tokens=metadata['usage'].get('cacheWriteInputTokens', 0),
+            input_tokens=input_tokens + cache_write_tokens + cache_read_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
 
 

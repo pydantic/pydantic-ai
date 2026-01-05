@@ -320,3 +320,10 @@ The original graph API (documented in the [main graph page](../../graph.md)) use
 - Less object-oriented, more functional style
 
 Both APIs are fully supported and can even be integrated together when needed.
+
+## Persistence and Resumability
+
+!!! info "No Native Persistence"
+    Unlike the [original Graph API](../../graph.md#state-persistence), the beta graph API does not include built-in state persistence. This is due to the [complexity of achieving consistent snapshotting with parallel execution](https://github.com/pydantic/pydantic-ai/issues/530#issuecomment-3504609992).
+
+For workflows that need to preserve progress across failures, restarts, or long-running operations, use one of the supported [durable execution](../../durable_execution/overview.md) solutions.

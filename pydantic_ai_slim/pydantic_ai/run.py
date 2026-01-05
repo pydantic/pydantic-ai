@@ -64,6 +64,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             timestamp=datetime.datetime(...),
                         )
                     ],
+                    timestamp=datetime.datetime(...),
                     run_id='...',
                 )
             ),
@@ -243,6 +244,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                     timestamp=datetime.datetime(...),
                                 )
                             ],
+                            timestamp=datetime.datetime(...),
                             run_id='...',
                         )
                     ),
@@ -282,6 +284,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._graph_run.state.metadata
 
     @property
     def run_id(self) -> str:
@@ -421,6 +428,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._state.metadata
 
     @property
     def run_id(self) -> str:

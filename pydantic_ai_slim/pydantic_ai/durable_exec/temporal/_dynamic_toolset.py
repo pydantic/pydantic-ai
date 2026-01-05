@@ -101,7 +101,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         return [self.get_tools_activity, self.call_tool_activity]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().get_tools(ctx)
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
@@ -122,7 +122,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.tool_activity_config.get(name)

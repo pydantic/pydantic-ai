@@ -95,7 +95,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         return [self.get_tools_activity, self.call_tool_activity]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().get_tools(ctx)
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
@@ -116,7 +116,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> CallToolResult:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
