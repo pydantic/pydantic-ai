@@ -29,167 +29,7 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 # =============================================================================
-# TypedDict schemas for builtin tool return content
-# =============================================================================
-# These TypedDicts define the unified content structure for each builtin tool
-# return part. Fields are all optional (total=False) because different providers
-# populate different subsets of fields.
-
-
-class CodeExecutionReturnContent(TypedDict, total=False):
-    """Unified content schema for code execution results across providers.
-
-    Different providers use different fields:
-    - Anthropic: type, stdout, stderr, return_code, content
-    - Google: outcome, output
-    - OpenAI: status, logs
-    """
-
-    # Anthropic fields
-    type: str
-    """Discriminator field (e.g., 'code_execution_result')."""
-    stdout: str
-    """Standard output from code execution (Anthropic)."""
-    stderr: str
-    """Standard error from code execution (Anthropic)."""
-    return_code: int
-    """Process exit code (Anthropic)."""
-    content: list[Any]
-    """Additional content objects (Anthropic, typically empty)."""
-    # Google fields
-    outcome: str
-    """Execution outcome status (e.g., 'OUTCOME_OK', 'OUTCOME_TIMEOUT') (Google)."""
-    output: str
-    """Execution output (Google)."""
-    # OpenAI fields
-    status: str
-    """Execution status (e.g., 'completed') (OpenAI)."""
-    logs: list[str]
-    """Output lines from execution (OpenAI)."""
-
-
-class WebSearchSource(TypedDict, total=False):
-    """A single web search result source.
-
-    Fields vary by provider - OpenAI uses 'url', Google uses 'uri'.
-    """
-
-    title: str
-    """Title of the search result."""
-    url: str
-    """URL of the search result (OpenAI, Anthropic)."""
-    uri: str
-    """URI of the search result (Google uses 'uri' instead of 'url')."""
-    snippet: str
-    """Snippet/preview text from the result."""
-    relevance_score: float
-    """Relevance score of the result."""
-
-
-class WebSearchReturnContent(TypedDict, total=False):
-    """Unified content schema for web search results.
-
-    OpenAI returns dict with 'status' and 'sources' keys.
-    Google/Anthropic may return list directly - use WebSearchSource list type.
-    """
-
-    status: str
-    """Search status (e.g., 'completed') (OpenAI)."""
-    sources: list[WebSearchSource]
-    """List of search result sources (OpenAI dict format)."""
-
-
-class WebFetchPage(TypedDict, total=False):
-    """A single fetched web page result.
-
-    Fields vary by provider - Anthropic uses 'url', Google uses 'retrieved_url'.
-    """
-
-    content: str
-    """The fetched page content/text."""
-    url: str
-    """URL of the fetched page (Anthropic)."""
-    retrieved_url: str
-    """Retrieved URL (Google uses 'retrieved_url' instead of 'url')."""
-    type: str
-    """MIME type of the content (e.g., 'text/html')."""
-    retrieved_at: str
-    """ISO timestamp when the page was fetched."""
-
-
-class WebFetchReturnContent(TypedDict, total=False):
-    """Unified content schema for web fetch results.
-
-    Anthropic returns single dict, Google returns list - use WebFetchPage list type.
-    """
-
-    content: str
-    """The fetched page content/text (single page format)."""
-    url: str
-    """URL of the fetched page (Anthropic)."""
-    retrieved_url: str
-    """Retrieved URL (Google)."""
-    type: str
-    """MIME type of the content."""
-    retrieved_at: str
-    """ISO timestamp when the page was fetched."""
-
-
-class FileSearchResult(TypedDict, total=False):
-    """A single file search result.
-
-    OpenAI includes detailed file metadata, Google includes store context.
-    """
-
-    id: str
-    """Result ID (OpenAI)."""
-    file_id: str
-    """File ID (OpenAI)."""
-    filename: str
-    """Filename (OpenAI)."""
-    score: float
-    """Relevance score."""
-    text: str
-    """Matched text content."""
-    content: str
-    """Content of the result."""
-    file_search_store: str
-    """File search store identifier (Google)."""
-
-
-class FileSearchReturnContent(TypedDict, total=False):
-    """Unified content schema for file search results.
-
-    OpenAI returns dict with 'status' and 'results' keys.
-    Google returns list directly - use FileSearchResult list type.
-    """
-
-    status: str
-    """Search status (e.g., 'completed') (OpenAI)."""
-    results: list[FileSearchResult]
-    """List of search results (OpenAI dict format)."""
-
-
-class ImageGenerationReturnContent(TypedDict, total=False):
-    """Unified content schema for image generation results (OpenAI only).
-
-    Note: The actual image is returned as a separate FilePart, not in content.
-    """
-
-    status: str
-    """Generation status (e.g., 'completed')."""
-    revised_prompt: str
-    """The actual prompt used for generation (may differ from input)."""
-    size: str
-    """Image dimensions (e.g., '1024x1024')."""
-    quality: str
-    """Quality setting (e.g., 'high', 'standard')."""
-    background: str
-    """Background setting (e.g., 'opaque', 'transparent')."""
-
-
-# =============================================================================
-# UNIFIED/NORMALIZED SCHEMAS
+# NORMALIZED SCHEMAS FOR BUILTIN TOOL RETURN CONTENT
 # =============================================================================
 # These TypedDicts define a provider-agnostic, normalized format for builtin tool
 # results. Use the `.normalized` property on return parts to access data in this
@@ -1395,9 +1235,6 @@ class CodeExecutionReturnPart(BuiltinToolReturnPart):
     for provider-agnostic access with unified field names.
     """
 
-    content: CodeExecutionReturnContent | dict[str, Any]
-    """The raw code execution result content from the provider."""
-
     part_kind: Literal['code-execution-return'] = 'code-execution-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -1417,9 +1254,6 @@ class WebSearchReturnPart(BuiltinToolReturnPart):
     The content field contains raw provider-specific data. Use the `normalized` property
     for provider-agnostic access with unified field names.
     """
-
-    content: WebSearchReturnContent | list[WebSearchSource] | dict[str, Any] | list[dict[str, Any]]
-    """The raw web search result content from the provider."""
 
     part_kind: Literal['web-search-return'] = 'web-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1442,9 +1276,6 @@ class WebFetchReturnPart(BuiltinToolReturnPart):
     for provider-agnostic access with unified field names.
     """
 
-    content: WebFetchReturnContent | list[WebFetchPage] | dict[str, Any] | list[dict[str, Any]]
-    """The raw web fetch result content from the provider."""
-
     part_kind: Literal['web-fetch-return'] = 'web-fetch-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -1466,9 +1297,6 @@ class FileSearchReturnPart(BuiltinToolReturnPart):
     for provider-agnostic access with unified field names.
     """
 
-    content: FileSearchReturnContent | list[FileSearchResult] | dict[str, Any] | list[dict[str, Any]]
-    """The raw file search result content from the provider."""
-
     part_kind: Literal['file-search-return'] = 'file-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -1489,9 +1317,6 @@ class ImageGenerationReturnPart(BuiltinToolReturnPart):
     The content field contains raw provider-specific data. Use the `normalized` property
     for provider-agnostic access with unified field names.
     """
-
-    content: ImageGenerationReturnContent | dict[str, Any]
-    """The raw image generation result content from the provider (metadata only)."""
 
     part_kind: Literal['image-generation-return'] = 'image-generation-return'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Part type identifier, this is available on all parts as a discriminator."""
