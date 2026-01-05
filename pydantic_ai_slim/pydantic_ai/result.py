@@ -80,13 +80,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             except ValidationError:
                 pass
 
-        # Yield final validation and cache the result
-        response = self.response
-        if self._raw_stream_response.final_result_event is not None and (
-            not last_response or response.parts != last_response.parts
-        ):
-            # Final validation (allow_partial=False)
-            self._cached_output = await self.validate_response_output(response, allow_partial=False)
+        if self._raw_stream_response.final_result_event is not None:
+            response = self.response
+            # Final validation (with default allow_partial=False, which is sent into output validators/functions)
+            self._cached_output = await self.validate_response_output(response)
             yield deepcopy(self._cached_output)
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
