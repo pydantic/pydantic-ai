@@ -780,6 +780,8 @@ class BedrockConverseModel(Model):
             # Audio not supported in Bedrock tool results, only in user messages
             # See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html
             return None
+        else:
+            assert_never(file)
 
     @staticmethod
     async def _map_user_prompt(  # noqa: C901
