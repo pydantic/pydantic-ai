@@ -2361,10 +2361,8 @@ async def test_bedrock_unified_thinking_config_in_request_params(bedrock_provide
     settings_with_thinking = BedrockModelSettings(thinking=True)
 
     # This call will go through _messages_create and should add thinking to additionalModelRequestFields
-    result = await agent.run('Hello', model_settings=settings_with_thinking)
+    await agent.run('Hello', model_settings=settings_with_thinking)
 
     # Verify the captured parameters include thinking config
     assert 'additionalModelRequestFields' in captured_params
-    assert captured_params['additionalModelRequestFields'] == {
-        'thinking': {'type': 'enabled', 'budget_tokens': 4096}
-    }
+    assert captured_params['additionalModelRequestFields'] == {'thinking': {'type': 'enabled', 'budget_tokens': 4096}}
