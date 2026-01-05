@@ -2,6 +2,7 @@ import json
 import re
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import pytest
@@ -39,7 +40,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -55,6 +56,7 @@ from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsNow, IsStr, TestEn
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
@@ -383,7 +385,6 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
     )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
 ):
@@ -749,7 +750,6 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_model_instructions(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
@@ -1425,7 +1425,6 @@ def test_model_profile_strict_not_supported():
     )
 
 
-@pytest.mark.vcr()
 async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIResponsesModelSettings(temperature=0.5))
@@ -1435,7 +1434,6 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
     )
 
 
-@pytest.mark.vcr()
 async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-5-pro', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
@@ -1443,7 +1441,6 @@ async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
     assert result.output == snapshot('Mexico City (Ciudad de México).')
 
 
-@pytest.mark.vcr()
 async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1544,7 +1541,6 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-@pytest.mark.vcr()
 async def test_text_output_function(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1630,7 +1626,6 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
     )
 
 
-@pytest.mark.vcr()
 async def test_native_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1719,7 +1714,6 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-@pytest.mark.vcr()
 async def test_native_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1810,7 +1804,6 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
     )
 
 
-@pytest.mark.vcr()
 async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1897,7 +1890,6 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-@pytest.mark.vcr()
 async def test_prompted_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1988,7 +1980,6 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_verbosity(allow_model_requests: None, openai_api_key: str):
     """Test that verbosity setting is properly passed to the OpenAI API"""
     # Following GPT-5 + verbosity documentation pattern
@@ -2002,7 +1993,6 @@ async def test_openai_responses_verbosity(allow_model_requests: None, openai_api
     assert result.output == snapshot('4')
 
 
-@pytest.mark.vcr()
 async def test_openai_previous_response_id(allow_model_requests: None, openai_api_key: str):
     """Test if previous responses are detected via previous_response_id in settings"""
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
@@ -2013,7 +2003,6 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     assert result.output == snapshot('sesame')
 
 
-@pytest.mark.vcr()
 async def test_openai_previous_response_id_auto_mode(allow_model_requests: None, openai_api_key: str):
     """Test if invalid previous response id is ignored when history contains non-OpenAI responses"""
     history = [
@@ -7997,7 +7986,6 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: None, openrouter_api_key: str):
     """Test streaming raw CoT content from gpt-oss via OpenRouter.
 
@@ -8397,33 +8385,20 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
     )
 
 
-@pytest.mark.vcr()
-async def test_openai_responses_model_file_search_tool(allow_model_requests: None, openai_api_key: str):
-    import asyncio
-    import os
-    import tempfile
-
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-    from pydantic_ai.providers.openai import OpenAIProvider
-
+async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_model_requests: None, openai_api_key: str):
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
-        test_file_path = f.name
+    test_file_path = tmp_path / 'file.txt'
+    test_file_path.touch()
+    test_file_path.write_text('Paris is the capital of France. It is known for the Eiffel Tower.')
 
     file = None
     vector_store = None
     try:
-        with open(test_file_path, 'rb') as f:
-            file = await async_client.files.create(file=f, purpose='assistants')
+        file = await async_client.files.create(file=test_file_path, purpose='assistants')
 
         vector_store = await async_client.vector_stores.create(name='test-file-search')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-
-        await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
@@ -8528,7 +8503,6 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
         )
 
     finally:
-        os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
@@ -8588,34 +8562,22 @@ def test_map_file_search_tool_call():
     )
 
 
-@pytest.mark.vcr()
-async def test_openai_responses_model_file_search_tool_stream(allow_model_requests: None, openai_api_key: str):
-    import asyncio
-    import os
-    import tempfile
-    from typing import Any
-
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-    from pydantic_ai.providers.openai import OpenAIProvider
-
+async def test_openai_responses_model_file_search_tool_stream(
+    tmp_path: Path, allow_model_requests: None, openai_api_key: str
+):
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
-        test_file_path = f.name
+    test_file_path = tmp_path / 'file.txt'
+    test_file_path.touch()
+    test_file_path.write_text('Paris is the capital of France. It is known for the Eiffel Tower.')
 
     file = None
     vector_store = None
     try:
-        with open(test_file_path, 'rb') as f:
-            file = await async_client.files.create(file=f, purpose='assistants')
+        file = await async_client.files.create(file=test_file_path, purpose='assistants')
 
         vector_store = await async_client.vector_stores.create(name='test-file-search-stream')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-
-        await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
@@ -8758,27 +8720,18 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
         )
 
     finally:
-        os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
-@pytest.mark.vcr()
-async def test_openai_responses_model_file_search_tool_with_results(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_model_file_search_tool_with_results(
+    tmp_path: Path, allow_model_requests: None, openai_api_key: str
+):
     """Test that openai_include_file_search_results setting includes file search results in the response."""
-    import asyncio
-    import os
-    import tempfile
-
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
-        test_file_path = f.name
+    test_file_path = tmp_path / 'file.txt'
+    test_file_path.touch()
+    test_file_path.write_text('Paris is the capital of France. It is known for the Eiffel Tower.')
 
     file = None
     vector_store = None
@@ -8788,8 +8741,6 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
 
         vector_store = await async_client.vector_stores.create(name='test-file-search-with-results')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-
-        await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
@@ -8863,7 +8814,6 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
         )
 
     finally:
-        os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
