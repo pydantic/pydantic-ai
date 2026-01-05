@@ -743,11 +743,19 @@ class Model(ABC):
     def model_name(self) -> str:
         """The model name."""
         raise NotImplementedError()
-    
+
     @property
     @abstractmethod
     def fully_qualified_model_name(self) -> str:
-        """The model name with provider prefix."""
+        """Return the model name qualified with the provider prefix.
+
+        For example, "openai:gpt-4" instead of just "gpt-4".
+        This is useful for external code that needs to identify both
+        the model and its provider.
+
+        Returns:
+            The fully qualified model name in the format "{provider}:{model_name}".
+        """
         raise NotImplementedError()
 
     @property
