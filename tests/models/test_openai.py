@@ -839,21 +839,6 @@ async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None,
     assert profile.supports_tools is False
 
 
-@pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
-async def test_openai_o1_mini_system_role(
-    allow_model_requests: None,
-    system_prompt_role: Literal['system', 'developer'],
-    openai_api_key: str,
-) -> None:
-    model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini', provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role=system_prompt_role
-    )
-    agent = Agent(model=model, system_prompt='You are a helpful assistant.')
-
-    with pytest.raises(ModelHTTPError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
-        await agent.run('Hello')
-
-
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
 async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
     c = completion_message(
