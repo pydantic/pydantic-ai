@@ -744,12 +744,14 @@ class AnthropicModel(Model):
                                     tool_result_content.append(
                                         BetaImageBlockParam(source={'type': 'url', 'url': file.url}, type='image')
                                     )
-                            elif isinstance(file, (DocumentUrl, AudioUrl, VideoUrl)):
+                            elif isinstance(file, DocumentUrl | AudioUrl | VideoUrl):
                                 # Documents/audio/video not supported in tool_result, add to separate user message
                                 user_prompt = UserPromptPart(content=[file])
                                 async for block in self._map_user_prompt(user_prompt):
-                                    if not isinstance(block, CachePoint):
+                                    if not isinstance(block, CachePoint):  # pragma: no branch
                                         unsupported_files.append(block)
+                            else:
+                                assert_never(file)
 
                         tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),

@@ -737,7 +737,8 @@ class GoogleModel(Model):
                 if isinstance(file, VideoUrl) and file.vendor_metadata:
                     part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
                 return part_dict  # pragma: lax no cover
-        return None
+        else:
+            assert_never(file)
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
         if isinstance(part.content, str):

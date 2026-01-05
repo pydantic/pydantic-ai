@@ -2532,7 +2532,7 @@ async def test_empty_tool_result_json_format(allow_model_requests: None):
     )
 
 
-async def test_image_url_s3_tool_return(bedrock_provider: BedrockProvider):
+async def test_image_url_s3_tool_return(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that ImageUrl with S3 URL in tool returns uses S3 location source."""
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     now = datetime.datetime.now()
@@ -2577,7 +2577,7 @@ async def test_image_url_s3_tool_return(bedrock_provider: BedrockProvider):
     )
 
 
-async def test_image_url_s3_with_bucket_owner(bedrock_provider: BedrockProvider):
+async def test_image_url_s3_with_bucket_owner(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that S3 URL with bucketOwner query param includes bucket owner in location."""
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     now = datetime.datetime.now()
