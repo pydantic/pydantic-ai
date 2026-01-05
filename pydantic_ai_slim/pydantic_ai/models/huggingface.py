@@ -160,6 +160,11 @@ class HuggingFaceModel(Model):
         return self._model_name
 
     @property
+    def fully_qualified_model_name(self) -> str:
+        """The model name with provider prefix."""
+        return f'{self._provider.name}:{self.model_name}'
+
+    @property
     def system(self) -> str:
         """The system / model provider."""
         return self._provider.name

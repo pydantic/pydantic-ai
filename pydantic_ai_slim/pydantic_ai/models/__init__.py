@@ -743,6 +743,12 @@ class Model(ABC):
     def model_name(self) -> str:
         """The model name."""
         raise NotImplementedError()
+    
+    @property
+    @abstractmethod
+    def fully_qualified_model_name(self) -> str:
+        """The model name with provider prefix."""
+        raise NotImplementedError()
 
     @property
     def label(self) -> str:
