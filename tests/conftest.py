@@ -308,28 +308,69 @@ def vcr_config():
 
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
-    """Track and close cached httpx clients created during each test.
+    """Track and close cached httpx clients and SDK wrapper clients created during each test.
 
     Prevents reusing AsyncClient instances across tests (and event loops),
     which can cause 'Event loop is closed' errors, without touching prod code.
+
+    Also closes SDK wrapper clients (AsyncOpenAI, AsyncAnthropic, etc.) before
+    closing the underlying httpx clients to prevent ResourceWarnings from SDK
+    destructors running after the httpx client is already closed.
     """
-    created_clients: set[httpx.AsyncClient] = set()
+    from pydantic_ai.providers import Provider
+
+    created_httpx_clients: set[httpx.AsyncClient] = set()
+    created_providers: set[Provider[Any]] = set()
 
     # Patch the cached factory to record returned clients while preserving caching.
-    original_cached_func = pydantic_ai.models._cached_async_http_client  # type: ignore[reportPrivateUsage]
+    original_cached_func = pydantic_ai.models._cached_async_http_client  # pyright: ignore[reportPrivateUsage]
 
-    def tracked_cached_async_http_client(*args: Any, **kwargs: Any):
+    def tracked_cached_async_http_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
         client = original_cached_func(*args, **kwargs)
-        created_clients.add(client)
+        created_httpx_clients.add(client)
         return client
 
     monkeypatch.setattr(pydantic_ai.models, '_cached_async_http_client', tracked_cached_async_http_client)
 
+    # Get all Provider subclasses recursively
+    def get_all_provider_subclasses() -> set[type[Provider[Any]]]:
+        subclasses: set[type[Provider[Any]]] = set()
+        to_check: list[type[Provider[Any]]] = list(Provider.__subclasses__())
+        while to_check:
+            cls: type[Provider[Any]] = to_check.pop()
+            if cls not in subclasses:
+                subclasses.add(cls)
+                to_check.extend(cls.__subclasses__())
+        return subclasses
+
+    # Wrap each provider class's __init__ to track instances
+    for cls in get_all_provider_subclasses():
+        original_init = cls.__init__
+
+        def make_wrapper(orig_init: Callable[..., None]) -> Callable[..., None]:
+            def wrapper(self: Provider[Any], *args: Any, **kwargs: Any) -> None:
+                orig_init(self, *args, **kwargs)
+                created_providers.add(self)
+
+            return wrapper
+
+        monkeypatch.setattr(cls, '__init__', make_wrapper(original_init))
+
     yield
 
-    # Close only the clients that were actually created/accessed in this test
-    for client in created_clients:
-        await client.aclose()
+    # Close SDK wrapper clients first to prevent ResourceWarnings from destructors
+    for provider in created_providers:
+        sdk_client = getattr(provider, '_client', None)
+        if sdk_client is not None and hasattr(sdk_client, 'close'):
+            try:
+                await sdk_client.close()
+            except Exception:
+                pass
+
+    # Then close any httpx clients not already closed by SDK wrappers
+    for client in created_httpx_clients:
+        if not client.is_closed:
+            await client.aclose()
 
     # Ensure no stale cached clients persist between tests (new event loop per test)
     original_cached_func.cache_clear()
