@@ -65,7 +65,7 @@ from .request_types import (
 from .response_types import BaseChunk
 
 if TYPE_CHECKING:
-    from typing_extensions import TypeIs
+    pass
 
 
 __all__ = ['VercelAIAdapter']
@@ -208,8 +208,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # The call and return metadata are combined in the output part.
                             # So we extract and return them to the respective parts
                             call_meta = return_meta = {}
+                            has_tool_output = isinstance(part, (ToolOutputAvailablePart, ToolOutputErrorPart))
 
-                            if _is_tool_output_part(part):
+                            if has_tool_output:
                                 loaded_call_meta, loaded_return_meta = cls._load_builtin_tool_meta(provider_meta)
                                 call_meta = loaded_call_meta or {}
                                 return_meta = loaded_return_meta or {}
@@ -225,7 +226,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 )
                             )
 
-                            if _is_tool_output_part(part):
+                            if has_tool_output:
                                 output: Any | None = None
                                 if isinstance(part, ToolOutputAvailablePart):
                                     output = part.output
@@ -541,9 +542,3 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 assert_never(item)
 
     return ui_parts
-
-
-def _is_tool_output_part(
-    part: ToolUIPart | DynamicToolUIPart,
-) -> TypeIs[ToolOutputAvailablePart | ToolOutputErrorPart]:  # pragma: no cover
-    return isinstance(part, (ToolOutputAvailablePart, ToolOutputErrorPart))
