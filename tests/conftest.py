@@ -361,6 +361,9 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
     # Close SDK wrapper clients first to prevent ResourceWarnings from destructors
     for provider in created_providers:
         sdk_client = getattr(provider, '_client', None)
+        # Skip httpx.AsyncClient - we handle those in the next loop with aclose()
+        if isinstance(sdk_client, httpx.AsyncClient):
+            continue
         if sdk_client is not None and hasattr(sdk_client, 'close'):
             try:
                 await sdk_client.close()
