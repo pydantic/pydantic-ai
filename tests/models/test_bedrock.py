@@ -2289,3 +2289,82 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
             {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},
         ]
     )
+
+
+async def test_bedrock_unified_thinking_config_in_request_params(bedrock_provider: BedrockProvider):
+    """Test that unified thinking settings are correctly added to additionalModelRequestFields.
+
+    This test verifies the integration of unified thinking settings into the actual API call
+    parameters in _messages_create (line 518 in bedrock.py).
+    """
+    from types import SimpleNamespace
+
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.profiles.anthropic import ANTHROPIC_EFFORT_TO_BUDGET
+
+    # Create a thinking-capable profile
+    thinking_profile = ModelProfile(
+        supports_thinking=True,
+        default_thinking_budget=4096,
+        effort_to_budget_map=ANTHROPIC_EFFORT_TO_BUDGET,
+    )
+
+    # Track the parameters passed to converse
+    captured_params: dict[str, Any] = {}
+
+    class _MockBedrockClient:
+        """Mock client that captures converse parameters and returns a valid response."""
+
+        def __init__(self):
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.mock')
+
+        def converse(self, **params: Any) -> dict[str, Any]:
+            captured_params.update(params)
+            # Return a minimal valid response
+            return {
+                'output': {'message': {'role': 'assistant', 'content': [{'text': 'Test response'}]}},
+                'usage': {'inputTokens': 10, 'outputTokens': 5},
+                'stopReason': 'end_turn',
+                'ResponseMetadata': {'RequestId': 'test-request-id'},
+            }
+
+    class _MockBedrockProvider(Provider[Any]):
+        def __init__(self, client: _MockBedrockClient):
+            self._client = client
+
+        @property
+        def name(self) -> str:
+            return 'bedrock-mock'
+
+        @property
+        def base_url(self) -> str:
+            return 'https://bedrock.mock'  # pragma: no cover
+
+        @property
+        def client(self) -> _MockBedrockClient:
+            return self._client
+
+        def model_profile(self, model_name: str):
+            return thinking_profile  # pragma: no cover
+
+    # Create the model with the mock provider
+    mock_client = _MockBedrockClient()
+    mock_provider = _MockBedrockProvider(mock_client)
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250514-v1:0',
+        provider=mock_provider,
+        profile=thinking_profile,
+    )
+
+    # Run the model with unified thinking settings
+    agent = Agent(model=model)
+    settings_with_thinking = BedrockModelSettings(thinking=True)
+
+    # This call will go through _messages_create and should add thinking to additionalModelRequestFields
+    result = await agent.run('Hello', model_settings=settings_with_thinking)
+
+    # Verify the captured parameters include thinking config
+    assert 'additionalModelRequestFields' in captured_params
+    assert captured_params['additionalModelRequestFields'] == {
+        'thinking': {'type': 'enabled', 'budget_tokens': 4096}
+    }
