@@ -29,7 +29,7 @@ from . import _output, _system_prompt, exceptions, messages as _messages, models
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
-from .settings import ModelSettings
+from .settings import ModelSettings, ModelSettingsPrepareFunc
 from .tools import (
     BuiltinToolFunc,
     DeferredToolCallResult,
@@ -151,6 +151,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
+    prepare_model_settings: ModelSettingsPrepareFunc[DepsT] | None = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -525,6 +526,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = await _prepare_request_parameters(ctx)
 
         model_settings = ctx.deps.model_settings
+        if ctx.deps.prepare_model_settings is not None:
+            prepared = await ctx.deps.prepare_model_settings(run_context, model_settings)
+            if prepared is not None:
+                model_settings = prepared
+
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar
 
 from httpx import Timeout
 from typing_extensions import TypedDict
+
+if TYPE_CHECKING:
+    from ._run_context import RunContext
+
+AgentDepsT = TypeVar('AgentDepsT')
 
 ToolChoiceScalar = Literal['none', 'required', 'auto']
 
@@ -224,6 +230,34 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Outlines (all providers)
     """
+
+
+ModelSettingsPrepareFunc: TypeAlias = Callable[
+    ['RunContext[AgentDepsT]', ModelSettings | None],
+    Awaitable[ModelSettings | None],
+]
+"""A function that prepares model settings before each model request.
+
+This hook is called before every request to the model, allowing dynamic control
+over settings like `tool_choice` based on the current step or message history.
+
+Example:
+    ```python
+    async def require_tool_first(
+        ctx: RunContext, settings: ModelSettings | None
+    ) -> ModelSettings | None:
+        if ctx.run_step == 1:
+            return {'tool_choice': ['search']}
+        return None
+    ```
+
+Args:
+    ctx: The run context with access to run_step, messages, deps, etc.
+    settings: The currently merged model settings (model + agent + run).
+
+Returns:
+    Modified ModelSettings to use, or None to keep settings unchanged.
+"""
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:

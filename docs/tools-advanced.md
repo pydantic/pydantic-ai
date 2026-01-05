@@ -351,22 +351,91 @@ You can use `prepare_tools` to:
 
 If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool `prepare` is applied first to each tool, and then `prepare_tools` is called with the resulting list of tool definitions.
 
-## Tool Choice {#tool-choice}
+## Dynamic Model Settings {#prepare-model-settings}
 
-The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSettings] controls which tools the model can use during a request. This is useful for disabling tools, forcing tool use, or restricting which tools are available.
+The `prepare_model_settings` hook allows you to dynamically modify [`ModelSettings`][pydantic_ai.settings.ModelSettings] before each model request. This is the recommended way to control settings like `tool_choice` based on the current step or message history.
 
-!!! warning "Per-Run Setting"
-    This feature is a stepping-stone to expanded functionality, like forcing an agent to call tools at specific steps.
-    Used directly, the `tool_choice` setting applies to **every model request** in an agent run:
+```python {title="prepare_model_settings_example.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.settings import ModelSettings
 
-    - `'required'` forces a tool call at every step, not just the first
-    - `['tool_a']` restricts to that tool for the entire run, preventing completion if the agent needs output tools
 
-    If you want to use it for per-request control, use [direct model requests](direct.md) or the `prepare_tools` function above.
+async def require_search_first(
+    ctx: RunContext[None], settings: ModelSettings | None
+) -> ModelSettings | None:
+    """Force search tool on first request only."""
+    if ctx.run_step == 1:
+        return {'tool_choice': ['search']}
+    return None  # No change on subsequent requests
+
+
+agent = Agent(
+    'openai:gpt-4o',
+    prepare_model_settings=require_search_first,
+)
+
+
+@agent.tool_plain
+def search(query: str) -> str:
+    """Search for information."""
+    return f'Results for: {query}'
+
+
+# Step 1: Model is forced to call search
+# Step 2+: Model can respond directly or use other tools
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+```
+
+The hook receives:
+
+- **`ctx.run_step`**: Current step number (1-indexed, increments with each model request)
+- **`ctx.messages`**: Message history up to this point
+- **`ctx.deps`**: Your user dependencies
+- **`settings`**: Currently merged settings (from model, agent, and run)
+
+Return `None` to keep settings unchanged, or a new [`ModelSettings`][pydantic_ai.settings.ModelSettings] dict to override.
+
+See [`ModelSettingsPrepareFunc`][pydantic_ai.settings.ModelSettingsPrepareFunc] for the full type signature.
+
+### Example: Conditional Tool Choice Based on History
+
+```python {title="prepare_model_settings_history.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import ModelResponse, ToolReturnPart
+from pydantic_ai.settings import ModelSettings
+
+
+async def require_tool_until_context(
+    ctx: RunContext[None], settings: ModelSettings | None
+) -> ModelSettings | None:
+    """Force tool use until we have tool results in history."""
+    has_tool_results = any(
+        isinstance(msg, ModelResponse)
+        and any(isinstance(part, ToolReturnPart) for part in msg.parts)
+        for msg in ctx.messages
+    )
+    if not has_tool_results:
+        return {'tool_choice': 'required'}
+    return None
+
+
+agent = Agent(
+    'openai:gpt-4o',
+    prepare_model_settings=require_tool_until_context,
+)
+```
+
+### Tool Choice Setting {#tool-choice}
+
+The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSettings] controls which tools the model can use during a request. It's designed to be used with `prepare_model_settings` for dynamic per-step control, but can also be passed directly via `model_settings` for [direct model requests](direct.md) where you control each request individually.
+
+!!! note "Static vs Dynamic Usage"
+    When passed directly via `model_settings` on an agent run, `tool_choice` applies to **every** model request in that run. For per-step control (e.g., force tool on first request only), use `prepare_model_settings` as shown above.
 
 Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)), and **output tools** (internal tools used for [structured output](output.md#tool-output)). The `tool_choice` setting controls function tools; output tools are handled by the framework.
 
-### Options
+#### Options
 
 | Value | Description |
 |-------|-------------|
@@ -376,32 +445,7 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | `['tool_a', ...]` | Restrict to specific function tools by name. Output tools excluded. |
 | [`ToolsPlusOutput`][pydantic_ai.settings.ToolsPlusOutput]`(function_tools=['...'])` | Restrict function tools while keeping output tools available. |
 
-### Example
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
-
-agent = Agent(TestModel())
-
-
-@agent.tool_plain
-def get_weather(city: str) -> str:
-    return f'Sunny in {city}'
-
-
-@agent.tool_plain
-def get_time(city: str) -> str:
-    return f'12:00 in {city}'
-
-
-# Pass tool_choice via model_settings
-result = agent.run_sync('Hello', model_settings={'tool_choice': 'none'})
-result = agent.run_sync('Hello', model_settings={'tool_choice': 'required'})
-result = agent.run_sync('Hello', model_settings={'tool_choice': ['get_weather']})
-```
-
-### Provider Support
+#### Provider Support
 
 All providers support `'auto'` and `'none'`. Key differences for other options:
 
