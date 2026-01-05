@@ -3261,6 +3261,7 @@ async def test_streamed_run_result_sync():
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3294,6 +3295,7 @@ def test_stream_output_after_get_output_sync():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3319,6 +3321,7 @@ def test_stream_output_after_get_output_sync():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -3335,4 +3338,82 @@ def test_run_stream_sync_instrumentation(capfire: CaptureLogfire):
     output = [c for c in result.stream_output()]
     assert output == snapshot(['success (no tool calls)'])
 
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot()
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+        [
+            {
+                'name': 'chat test',
+                'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 2000000000,
+                'end_time': 3000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'chat',
+                    'gen_ai.system': 'test',
+                    'gen_ai.request.model': 'test',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'prompted_output_template': None,
+                        'allow_text_output': True,
+                        'allow_image_output': False,
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'chat test',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}],
+                    'gen_ai.output.messages': [
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]}
+                    ],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    },
+                    'gen_ai.usage.input_tokens': 51,
+                    'gen_ai.usage.output_tokens': 4,
+                    'gen_ai.response.model': 'test',
+                },
+            },
+            {
+                'name': 'agent run',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 5000000000,
+                'attributes': {
+                    'model_name': 'test',
+                    'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
+                    'logfire.msg': 'agent run',
+                    'logfire.span_type': 'span',
+                    'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
+                    'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'pydantic_ai.all_messages': {'type': 'array'},
+                            'final_result': {'type': 'object'},
+                        },
+                    },
+                    'logfire.level_num': 17,
+                },
+                'events': [
+                    {
+                        'name': 'exception',
+                        'timestamp': 4000000000,
+                        'attributes': {
+                            'exception.type': 'RuntimeError',
+                            'exception.message': 'Attempted to exit cancel scope in a different task than it was entered in',
+                            'exception.stacktrace': 'RuntimeError: Attempted to exit cancel scope in a different task than it was entered in',
+                            'exception.escaped': 'False',
+                        },
+                    }
+                ],
+            },
+        ]
+    )

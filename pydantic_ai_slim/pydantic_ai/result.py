@@ -826,7 +826,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     @property
     def metadata(self) -> dict[str, Any] | None:
         """Metadata associated with this agent run, if configured."""
-        return self._streamed_run_result.metadata
+        return self._async_to_sync(lambda result: result.metadata)
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
