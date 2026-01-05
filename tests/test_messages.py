@@ -535,6 +535,7 @@ def test_file_part_serialization_roundtrip():
                 'provider_response_id': None,
                 'finish_reason': None,
                 'run_id': None,
+                'span_id': None,
                 'metadata': None,
             }
         ]

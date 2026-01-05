@@ -543,6 +543,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         response.run_id = response.run_id or ctx.state.run_id
+
+        # Copy span_id from response to request since both messages were created under the same span.
+        if response.span_id:
+            self.request.span_id = response.span_id
+
         # Update usage
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch

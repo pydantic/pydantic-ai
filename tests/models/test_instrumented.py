@@ -1710,3 +1710,85 @@ def test_cache_point_in_user_prompt():
             }
         ]
     )
+
+
+async def test_instrumented_model_sets_span_id_on_response(capfire: CaptureLogfire):
+    """Test that InstrumentedModel sets span_id on the ModelResponse."""
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime()),
+    ]
+    response = await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    # Verify span_id is set on the response
+    assert response.span_id is not None
+    assert len(response.span_id) == 16  # 16-character hex string
+
+
+async def test_instrumented_model_span_id_not_set_with_noop_tracer():
+    """Test that span_id is None when using NoOpTracerProvider."""
+    model = InstrumentedModel(
+        MyModel(),
+        InstrumentationSettings(tracer_provider=NoOpTracerProvider()),
+    )
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime()),
+    ]
+    response = await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    # With NoOpTracerProvider, span context is invalid so span_id should be None
+    assert response.span_id is None
+
+
+async def test_instrumented_model_stream_sets_span_id(capfire: CaptureLogfire):
+    """Test that InstrumentedModel sets span_id on the ModelResponse when streaming."""
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime()),
+    ]
+    async with model.request_stream(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as response_stream:
+        async for _ in response_stream:
+            pass
+        response = response_stream.get()
+
+    # Verify span_id is set on the streamed response
+    assert response.span_id is not None
+    assert len(response.span_id) == 16
+
+
+async def test_instrumented_model_stream_span_id_not_set_with_noop_tracer():
+    """Test that span_id is None when streaming with NoOpTracerProvider."""
+    model = InstrumentedModel(
+        MyModel(),
+        InstrumentationSettings(tracer_provider=NoOpTracerProvider()),
+    )
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime()),
+    ]
+    async with model.request_stream(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as response_stream:
+        async for _ in response_stream:
+            pass
+        response = response_stream.get()
+
+    # With NoOpTracerProvider, span context is invalid so span_id should be None
+    assert response.span_id is None

@@ -17,7 +17,7 @@ from opentelemetry._logs import (
     get_logger_provider,  # pyright: ignore [reportPrivateImportUsage]
 )
 from opentelemetry.metrics import MeterProvider, get_meter_provider
-from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.trace import Span, Tracer, TracerProvider, format_span_id, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
@@ -368,7 +368,7 @@ class InstrumentedModel(WrapperModel):
             model_settings,
             model_request_parameters,
         )
-        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
+        with self._instrument(messages, prepared_settings, prepared_parameters) as (finish, _):
             response = await self.wrapped.request(messages, model_settings, model_request_parameters)
             finish(response, prepared_parameters)
             return response
@@ -385,12 +385,16 @@ class InstrumentedModel(WrapperModel):
             model_settings,
             model_request_parameters,
         )
-        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
+        with self._instrument(messages, prepared_settings, prepared_parameters) as (finish, span_id):
             response_stream: StreamedResponse | None = None
             try:
                 async with self.wrapped.request_stream(
                     messages, model_settings, model_request_parameters, run_context
                 ) as response_stream:
+                    # Set span_id on the stream so it's included in ModelResponse from
+                    # StreamedResponse.get()
+                    if span_id:
+                        response_stream.span_id = span_id
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
@@ -402,7 +406,7 @@ class InstrumentedModel(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> Iterator[Callable[[ModelResponse, ModelRequestParameters], None]]:
+    ) -> Iterator[tuple[Callable[[ModelResponse, ModelRequestParameters], None], str | None]]:
         operation = 'chat'
         span_name = f'{operation} {self.model_name}'
         # TODO Missing attributes:
@@ -428,8 +432,15 @@ class InstrumentedModel(WrapperModel):
         record_metrics: Callable[[], None] | None = None
         try:
             with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+                # Get span_id to associate with ModelResponse
+                span_context = span.get_span_context()
+                span_id = format_span_id(span_context.span_id) if span_context.is_valid else None
 
                 def finish(response: ModelResponse, parameters: ModelRequestParameters):
+                    # Set span_id on the response
+                    if span_id:
+                        response.span_id = span_id
+
                     # FallbackModel updates these span attributes.
                     attributes.update(getattr(span, 'attributes', {}))
                     request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
@@ -478,7 +489,7 @@ class InstrumentedModel(WrapperModel):
                     span.set_attributes(attributes_to_set)
                     span.update_name(f'{operation} {request_model}')
 
-                yield finish
+                yield finish, span_id
         finally:
             if record_metrics:
                 # We only want to record metrics after the span is finished,

@@ -72,7 +72,10 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 pytestmark = pytest.mark.anyio
 
@@ -4830,6 +4833,7 @@ def test_binary_content_serializable():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'span_id': None,
                 'metadata': None,
             },
             {
@@ -4855,6 +4859,7 @@ def test_binary_content_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'span_id': None,
                 'metadata': None,
             },
         ]
@@ -4894,6 +4899,7 @@ def test_image_url_serializable_missing_media_type():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'span_id': None,
                 'metadata': None,
             },
             {
@@ -4919,6 +4925,7 @@ def test_image_url_serializable_missing_media_type():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'span_id': None,
                 'metadata': None,
             },
         ]
@@ -4965,6 +4972,7 @@ def test_image_url_serializable():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'span_id': None,
                 'metadata': None,
             },
             {
@@ -4990,6 +4998,7 @@ def test_image_url_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'span_id': None,
                 'metadata': None,
             },
         ]
@@ -5512,6 +5521,7 @@ def test_tool_call_with_validation_value_error_serializable():
             'instructions': None,
             'kind': 'request',
             'run_id': IsStr(),
+            'span_id': None,
             'metadata': None,
         }
     )
@@ -7524,3 +7534,70 @@ async def test_dynamic_tool_in_run_call():
     assert isinstance(tool, WebSearchTool)
     assert tool.user_location is not None
     assert tool.user_location.get('city') == 'Berlin'
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_agent_span_id_propagation(capfire: 'CaptureLogfire'):
+    """Test that span_id is set on both ModelRequest and ModelResponse when instrumentation is enabled."""
+    agent = Agent('test', instrument=True)
+
+    result = agent.run_sync('Hello')
+
+    messages = result.new_messages()
+    assert len(messages) == 2
+
+    request = messages[0]
+    response = messages[1]
+
+    assert isinstance(request, ModelRequest)
+    assert isinstance(response, ModelResponse)
+
+    # Both should have span_id set and they should match
+    assert request.span_id is not None
+    assert response.span_id is not None
+    assert request.span_id == response.span_id
+    assert len(request.span_id) == 16  # 16-character hex string
+
+
+def test_agent_span_id_not_set_without_instrumentation():
+    """Test that span_id is None when instrumentation is not enabled."""
+    agent = Agent('test')
+
+    result = agent.run_sync('Hello')
+
+    messages = result.new_messages()
+    assert len(messages) == 2
+
+    request = messages[0]
+    response = messages[1]
+
+    assert isinstance(request, ModelRequest)
+    assert isinstance(response, ModelResponse)
+
+    # Without instrumentation, span_id should be None
+    assert request.span_id is None
+    assert response.span_id is None
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_agent_span_id_propagation_streaming(capfire: 'CaptureLogfire'):
+    """Test that span_id is set correctly when streaming."""
+    agent = Agent('test', instrument=True)
+
+    async with agent.run_stream('Hello') as run:
+        async for _ in run.stream_text():
+            pass
+
+    messages = run.new_messages()
+    assert len(messages) == 2
+
+    request = messages[0]
+    response = messages[1]
+
+    assert isinstance(request, ModelRequest)
+    assert isinstance(response, ModelResponse)
+
+    # Both should have span_id set and they should match
+    assert request.span_id is not None
+    assert response.span_id is not None
+    assert request.span_id == response.span_id

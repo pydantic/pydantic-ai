@@ -1009,6 +1009,9 @@ class ModelRequest:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    span_id: str | None = None
+    """The unique identifier of the OpenTelemetry span corresponding to this message."""
+
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
@@ -1275,6 +1278,9 @@ class ModelResponse:
 
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
+
+    span_id: str | None = None
+    """The unique identifier of the OpenTelemetry span corresponding to this message."""
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
