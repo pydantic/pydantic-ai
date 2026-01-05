@@ -6,7 +6,9 @@ specific LLM being used.
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import base64
+import threading
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -1161,37 +1163,82 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
+# Cache for httpx.AsyncClient instances, keyed by (loop_id, provider, timeout, connect).
+# Each event loop gets its own cached client to avoid 'bound to a different event loop' errors.
+# See: https://github.com/pydantic/pydantic-ai/issues/3240
+_http_client_cache: dict[tuple[int, str | None, int, int], httpx.AsyncClient] = {}
+_http_client_cache_lock = threading.Lock()
+
+
+def _get_current_loop_id() -> int | None:
+    """Get the ID of the currently running event loop, or None if no loop is running."""
+    try:
+        loop = asyncio.get_running_loop()
+        return id(loop)
+    except RuntimeError:
+        return None
+
+
 def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
-    """Cached HTTPX async client that creates a separate client for each provider.
+    """Cached HTTPX async client that creates a separate client for each provider and event loop.
 
-    The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
-    requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
+    The client is cached based on the provider parameter AND the current event loop.
+    If provider is None, it's used for non-provider specific requests (like downloading images).
+    Multiple agents and calls can share the same client when they use the same provider
+    within the same event loop.
 
-    Each client will get its own transport with its own connection pool. The default pool size is defined by `httpx.DEFAULT_LIMITS`.
+    Each client will get its own transport with its own connection pool.
+    The default pool size is defined by `httpx.DEFAULT_LIMITS`.
 
-    There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
-    described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
-    examples, it's very useful not to.
+    When used in environments with multiple event loops (Celery workers, Google Cloud Run
+    Functions with concurrency), a separate client is maintained for each event loop to
+    avoid 'bound to a different event loop' errors.
+
+    There are good reasons why in production you should use a `httpx.AsyncClient` as an
+    async context manager as described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026),
+    but when experimenting or showing examples, it's very useful not to.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    if client.is_closed:  # pragma: no cover
-        # This happens if the context manager is used, so we need to create a new client.
-        # Since there is no API from `functools.cache` to clear the cache for a specific
-        #  key, clear the entire cache here as a workaround.
-        _cached_async_http_client.cache_clear()
-        client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    return client
+    return _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
 
 
-@cache
 def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        timeout=httpx.Timeout(timeout=timeout, connect=connect),
-        headers={'User-Agent': get_user_agent()},
-    )
+    """Get or create a cached httpx.AsyncClient for the current event loop."""
+    loop_id = _get_current_loop_id()
+
+    # If no loop is running, create a new uncached client
+    if loop_id is None:
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout=timeout, connect=connect),
+            headers={'User-Agent': get_user_agent()},
+        )
+
+    cache_key = (loop_id, provider, timeout, connect)
+
+    with _http_client_cache_lock:
+        if cache_key in _http_client_cache:
+            client = _http_client_cache[cache_key]
+            if not client.is_closed:
+                return client
+            del _http_client_cache[cache_key]
+
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout=timeout, connect=connect),
+            headers={'User-Agent': get_user_agent()},
+        )
+        _http_client_cache[cache_key] = client
+        return client
+
+
+def clear_cached_http_clients() -> None:
+    """Clear all cached HTTP clients.
+
+    This is primarily useful for testing to ensure clean state between tests.
+    """
+    with _http_client_cache_lock:
+        _http_client_cache.clear()
 
 
 DataT = TypeVar('DataT', str, bytes)

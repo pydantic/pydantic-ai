@@ -332,7 +332,7 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
         await client.aclose()
 
     # Ensure no stale cached clients persist between tests (new event loop per test)
-    original_cached_func.cache_clear()
+    pydantic_ai.models.clear_cached_http_clients()
 
 
 @pytest.fixture(scope='session')
