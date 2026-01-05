@@ -728,3 +728,162 @@ class TestNormalizedProperty:
         assert first == second
         assert first.get('status') == 'completed'
         assert first.get('output') == 'test'
+
+    # --- Branch Coverage Tests (for 100% branch coverage) ---
+
+    def test_web_search_normalized_source_without_title_or_url(self):
+        """Test source extraction with minimal fields (branch coverage: 213->216, 216->218)."""
+        # Source with only snippet - no title, no url/uri
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content={'sources': [{'snippet': 'Just a snippet'}]},
+        )
+        normalized = part.normalized
+        sources = normalized.get('sources', [])
+        assert len(sources) == 1
+        # Should have snippet but no title or url
+        assert sources[0].get('snippet') == 'Just a snippet'
+        assert 'title' not in sources[0]
+        assert 'url' not in sources[0]
+
+    def test_web_search_normalized_empty_list(self):
+        """Test normalized with empty source list (branch coverage: 241->240)."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content=[],  # Empty list
+        )
+        normalized = part.normalized
+        assert normalized.get('sources') == []
+
+    def test_web_search_normalized_dict_empty_sources(self):
+        """Test normalized with dict containing empty sources (branch coverage: 252->251)."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content={'status': 'completed', 'sources': []},  # Empty sources
+        )
+        normalized = part.normalized
+        assert normalized.get('status') == 'completed'
+        assert normalized.get('sources') == []
+
+    def test_web_search_normalized_dict_empty_results(self):
+        """Test normalized with dict containing empty results (branch coverage: 257->256)."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content={'results': []},  # Empty results (Groq format)
+        )
+        normalized = part.normalized
+        assert normalized.get('sources') == []
+
+    def test_web_search_normalized_dict_no_sources_or_output(self):
+        """Test normalized with dict but no sources/results/output (branch coverage: 260->263)."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content={'status': 'completed'},  # No sources, results, or output
+        )
+        normalized = part.normalized
+        assert normalized.get('status') == 'completed'
+        assert normalized.get('sources') == []
+
+    def test_web_fetch_normalized_page_minimal_fields(self):
+        """Test page extraction with minimal fields (branch coverage: 282->284, 284->286)."""
+        # Page with just fetched_at - no url, no content
+        part = WebFetchReturnPart(
+            tool_name='web_fetch',
+            tool_call_id='test-id',
+            content={'fetched_at': '2024-01-15T10:00:00Z'},
+        )
+        normalized = part.normalized
+        pages = normalized.get('pages', [])
+        assert len(pages) == 1
+        assert pages[0].get('fetched_at') == '2024-01-15T10:00:00Z'
+        assert 'url' not in pages[0]
+        assert 'content' not in pages[0]
+
+    def test_web_fetch_normalized_empty_list(self):
+        """Test normalized with empty page list (branch coverage: 295->294)."""
+        part = WebFetchReturnPart(
+            tool_name='web_fetch',
+            tool_call_id='test-id',
+            content=[],  # Empty list
+        )
+        normalized = part.normalized
+        assert normalized.get('pages') == []
+
+    def test_web_fetch_normalized_dict_no_extractable_data(self):
+        """Test normalized with dict containing no extractable page data (branch coverage: 299->302)."""
+        part = WebFetchReturnPart(
+            tool_name='web_fetch',
+            tool_call_id='test-id',
+            content={'unrelated_field': 'value'},  # No url, content, type, or fetched_at
+        )
+        normalized = part.normalized
+        pages = normalized.get('pages', [])
+        # Empty dict is falsy, so no page entry is added
+        assert len(pages) == 0
+
+    def test_file_search_normalized_result_minimal_fields(self):
+        """Test file search result with minimal fields (branch coverage for file search)."""
+        # Result with only id - missing filename, content, score, file_store
+        part = FileSearchReturnPart(
+            tool_name='file_search',
+            tool_call_id='test-id',
+            content={'results': [{'file_id': 'id-only'}]},
+        )
+        normalized = part.normalized
+        results = normalized.get('results', [])
+        assert len(results) == 1
+        assert results[0].get('id') == 'id-only'
+        assert 'filename' not in results[0]
+        assert 'content' not in results[0]
+
+    def test_file_search_normalized_empty_list(self):
+        """Test normalized with empty results list (branch coverage: list loop)."""
+        part = FileSearchReturnPart(
+            tool_name='file_search',
+            tool_call_id='test-id',
+            content=[],  # Empty list
+        )
+        normalized = part.normalized
+        assert normalized.get('results') == []
+
+    def test_file_search_normalized_dict_empty_results(self):
+        """Test normalized with dict containing empty results (branch coverage: results loop)."""
+        part = FileSearchReturnPart(
+            tool_name='file_search',
+            tool_call_id='test-id',
+            content={'status': 'completed', 'results': []},
+        )
+        normalized = part.normalized
+        assert normalized.get('status') == 'completed'
+        assert normalized.get('results') == []
+
+    def test_file_search_normalized_dict_no_results_key(self):
+        """Test normalized with dict but no results key (branch coverage: else path)."""
+        part = FileSearchReturnPart(
+            tool_name='file_search',
+            tool_call_id='test-id',
+            content={'status': 'completed'},  # No results key
+        )
+        normalized = part.normalized
+        assert normalized.get('status') == 'completed'
+        assert normalized.get('results') == []
+
+    def test_image_generation_normalized_minimal_fields(self):
+        """Test image generation with minimal fields (branch coverage: 363->365)."""
+        # Only status - missing revised_prompt, size, quality, background
+        part = ImageGenerationReturnPart(
+            tool_name='image_generation',
+            tool_call_id='test-id',
+            content={'status': 'completed'},
+        )
+        normalized = part.normalized
+        assert normalized.get('status') == 'completed'
+        assert 'revised_prompt' not in normalized
+        assert 'size' not in normalized
+        assert 'quality' not in normalized
+        assert 'background' not in normalized
