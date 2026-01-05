@@ -22,6 +22,11 @@ from pydantic_ai.messages import (
     ImageGenerationReturnContent,
     ImageGenerationReturnPart,
     ModelResponse,
+    NormalizedCodeExecutionContent,
+    NormalizedFileSearchContent,
+    NormalizedImageGenerationContent,
+    NormalizedWebFetchContent,
+    NormalizedWebSearchContent,
     WebFetchCallPart,
     WebFetchPage,
     WebFetchReturnContent,
@@ -571,3 +576,262 @@ class TestTypedDictSchemas:
         )
         assert part.content.get('status') == 'completed'
         assert part.content.get('revised_prompt') is None  # Optional field
+
+
+class TestNormalizedProperty:
+    """Test the `normalized` property for provider-agnostic content access."""
+
+    # --- Code Execution Tests ---
+
+    def test_code_execution_normalized_anthropic(self):
+        """Test normalized property with Anthropic code execution content."""
+        # Raw Anthropic format
+        part = CodeExecutionReturnPart(
+            tool_name='code_execution',
+            tool_call_id='test-id',
+            content={'stdout': 'Hello, World!\n', 'stderr': '', 'return_code': 0},
+        )
+        # Raw content unchanged (backward compat)
+        assert part.content.get('stdout') == 'Hello, World!\n'
+
+        # Normalized access
+        normalized: NormalizedCodeExecutionContent = part.normalized
+        assert normalized['status'] == 'completed'
+        assert normalized['output'] == 'Hello, World!\n'
+        assert normalized.get('error') == ''
+        assert normalized.get('exit_code') == 0
+
+    def test_code_execution_normalized_anthropic_failed(self):
+        """Test normalized property with failed Anthropic code execution."""
+        part = CodeExecutionReturnPart(
+            tool_name='code_execution',
+            tool_call_id='test-id',
+            content={'stdout': '', 'stderr': 'Error: division by zero', 'return_code': 1},
+        )
+        normalized = part.normalized
+        assert normalized['status'] == 'failed'
+        assert normalized['output'] == ''
+        assert normalized.get('error') == 'Error: division by zero'
+        assert normalized.get('exit_code') == 1
+
+    def test_code_execution_normalized_google(self):
+        """Test normalized property with Google code execution content."""
+        part = CodeExecutionReturnPart(
+            tool_name='code_execution',
+            tool_call_id='test-id',
+            content={'outcome': 'OUTCOME_OK', 'output': 'Result: 42'},
+        )
+        # Raw content unchanged
+        assert part.content.get('outcome') == 'OUTCOME_OK'
+
+        # Normalized access
+        normalized = part.normalized
+        assert normalized['status'] == 'completed'
+        assert normalized['output'] == 'Result: 42'
+
+    def test_code_execution_normalized_google_timeout(self):
+        """Test normalized property with timed out Google code execution."""
+        part = CodeExecutionReturnPart(
+            tool_name='code_execution',
+            tool_call_id='test-id',
+            content={'outcome': 'OUTCOME_TIMEOUT', 'output': ''},
+        )
+        normalized = part.normalized
+        assert normalized['status'] == 'timeout'
+
+    def test_code_execution_normalized_openai(self):
+        """Test normalized property with OpenAI code execution content."""
+        part = CodeExecutionReturnPart(
+            tool_name='code_execution',
+            tool_call_id='test-id',
+            content={'status': 'completed', 'logs': ['Line 1', 'Line 2', 'Line 3']},
+        )
+        # Raw content unchanged
+        assert part.content.get('logs') == ['Line 1', 'Line 2', 'Line 3']
+
+        # Normalized access
+        normalized = part.normalized
+        assert normalized['status'] == 'completed'
+        assert normalized['output'] == 'Line 1\nLine 2\nLine 3'
+
+    # --- Web Search Tests ---
+
+    def test_web_search_normalized_openai_dict(self):
+        """Test normalized property with OpenAI dict-style web search content."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content={
+                'status': 'completed',
+                'sources': [
+                    {'title': 'Example', 'url': 'https://example.com', 'snippet': 'A snippet'},
+                    {'title': 'Test', 'url': 'https://test.com'},
+                ],
+            },
+        )
+        # Raw content unchanged
+        assert part.content.get('status') == 'completed'
+
+        # Normalized access
+        normalized: NormalizedWebSearchContent = part.normalized
+        assert normalized['status'] == 'completed'
+        assert len(normalized['sources']) == 2
+        assert normalized['sources'][0]['url'] == 'https://example.com'
+        assert normalized['sources'][0]['title'] == 'Example'
+
+    def test_web_search_normalized_google_list(self):
+        """Test normalized property with Google list-style web search content."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content=[
+                {'title': 'Result 1', 'uri': 'https://example1.com', 'snippet': 'Snippet 1'},
+                {'title': 'Result 2', 'uri': 'https://example2.com'},
+            ],
+        )
+        # Raw content unchanged
+        assert part.content[0].get('uri') == 'https://example1.com'
+
+        # Normalized access (uri -> url)
+        normalized = part.normalized
+        assert normalized['status'] == 'completed'
+        assert len(normalized['sources']) == 2
+        assert normalized['sources'][0]['url'] == 'https://example1.com'
+        assert normalized['sources'][1]['url'] == 'https://example2.com'
+
+    # --- Web Fetch Tests ---
+
+    def test_web_fetch_normalized_anthropic(self):
+        """Test normalized property with Anthropic web fetch content."""
+        part = WebFetchReturnPart(
+            tool_name='web_fetch',
+            tool_call_id='test-id',
+            content={
+                'url': 'https://example.com',
+                'content': 'Page content here...',
+                'type': 'text/html',
+            },
+        )
+        # Raw content unchanged
+        assert part.content.get('url') == 'https://example.com'
+
+        # Normalized access
+        normalized: NormalizedWebFetchContent = part.normalized
+        assert normalized['status'] == 'completed'
+        assert len(normalized['pages']) == 1
+        assert normalized['pages'][0]['url'] == 'https://example.com'
+        assert normalized['pages'][0]['content'] == 'Page content here...'
+
+    def test_web_fetch_normalized_google_list(self):
+        """Test normalized property with Google list-style web fetch content."""
+        part = WebFetchReturnPart(
+            tool_name='web_fetch',
+            tool_call_id='test-id',
+            content=[
+                {'retrieved_url': 'https://example1.com', 'content': 'Content 1'},
+                {'retrieved_url': 'https://example2.com', 'content': 'Content 2'},
+            ],
+        )
+        # Raw content unchanged (retrieved_url)
+        assert part.content[0].get('retrieved_url') == 'https://example1.com'
+
+        # Normalized access (retrieved_url -> url)
+        normalized = part.normalized
+        assert len(normalized['pages']) == 2
+        assert normalized['pages'][0]['url'] == 'https://example1.com'
+        assert normalized['pages'][1]['url'] == 'https://example2.com'
+
+    # --- File Search Tests ---
+
+    def test_file_search_normalized_openai_dict(self):
+        """Test normalized property with OpenAI file search content."""
+        part = FileSearchReturnPart(
+            tool_name='file_search',
+            tool_call_id='test-id',
+            content={
+                'status': 'completed',
+                'results': [
+                    {'file_id': 'file-123', 'filename': 'doc.pdf', 'score': 0.95, 'text': 'Match'},
+                ],
+            },
+        )
+        # Raw content unchanged
+        assert part.content.get('status') == 'completed'
+
+        # Normalized access (file_id -> id, text -> content)
+        normalized: NormalizedFileSearchContent = part.normalized
+        assert normalized['status'] == 'completed'
+        assert len(normalized['results']) == 1
+        assert normalized['results'][0]['id'] == 'file-123'
+        assert normalized['results'][0]['filename'] == 'doc.pdf'
+        assert normalized['results'][0]['content'] == 'Match'
+
+    def test_file_search_normalized_list(self):
+        """Test normalized property with list-style file search content."""
+        part = FileSearchReturnPart(
+            tool_name='file_search',
+            tool_call_id='test-id',
+            content=[
+                {'file_search_store': 'store-1', 'text': 'Context 1'},
+                {'file_search_store': 'store-2', 'text': 'Context 2'},
+            ],
+        )
+        # Raw content unchanged
+        assert part.content[0].get('file_search_store') == 'store-1'
+
+        # Normalized access
+        normalized = part.normalized
+        assert len(normalized['results']) == 2
+        assert normalized['results'][0]['file_store'] == 'store-1'
+        assert normalized['results'][0]['content'] == 'Context 1'
+
+    # --- Image Generation Tests ---
+
+    def test_image_generation_normalized(self):
+        """Test normalized property with image generation content."""
+        part = ImageGenerationReturnPart(
+            tool_name='image_generation',
+            tool_call_id='test-id',
+            content={
+                'status': 'completed',
+                'revised_prompt': 'A beautiful sunset',
+                'size': '1024x1024',
+                'quality': 'high',
+            },
+        )
+        # Raw content unchanged
+        assert part.content.get('revised_prompt') == 'A beautiful sunset'
+
+        # Normalized access (same fields for image_generation)
+        normalized: NormalizedImageGenerationContent = part.normalized
+        assert normalized['status'] == 'completed'
+        assert normalized.get('revised_prompt') == 'A beautiful sunset'
+        assert normalized.get('size') == '1024x1024'
+
+    # --- Edge Cases ---
+
+    def test_normalized_empty_content(self):
+        """Test normalized property handles empty content gracefully."""
+        part = CodeExecutionReturnPart(
+            tool_name='code_execution',
+            tool_call_id='test-id',
+            content={},
+        )
+        normalized = part.normalized
+        # Should return minimal valid structure
+        assert normalized['status'] == 'unknown'
+        assert normalized['output'] == ''
+
+    def test_normalized_is_idempotent(self):
+        """Test that calling normalized multiple times returns consistent results."""
+        part = CodeExecutionReturnPart(
+            tool_name='code_execution',
+            tool_call_id='test-id',
+            content={'stdout': 'test', 'return_code': 0},
+        )
+        # Multiple calls should return equivalent results
+        first = part.normalized
+        second = part.normalized
+        assert first == second
+        assert first['status'] == 'completed'
+        assert first['output'] == 'test'
