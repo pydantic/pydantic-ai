@@ -965,6 +965,50 @@ class TestPartialOutput:
             ],
         )
 
+    async def test_stream_output_partial_then_final_validation(self):
+        """Test that stream_output() calls validators with partial_output=True during streaming, then False at the end.
+
+        This verifies the critical invariant: output validators/functions are called multiple times with
+        partial_output=True as chunks arrive, followed by exactly one call with partial_output=False
+        for final validation. The final yield may have the same content as the last partial yield,
+        but the validation semantics differ (partial validation may accept incomplete data).
+        """
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 21')}
+            yield {0: DeltaToolCall(json_args=', "b": "f')}
+            yield {0: DeltaToolCall(json_args='oo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=ToolOutput(process_foo, name='my_output'))
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+        assert outputs[-1] == Foo(a=42, b='FOO')
+
+        # Verify the pattern: multiple True calls, exactly one False call at the end
+        partial_output_flags = [partial for _, partial in call_log]
+        assert partial_output_flags[-1] is False, 'Last call must have partial_output=False'
+        assert all(flag is True for flag in partial_output_flags[:-1]), (
+            'All calls except last must have partial_output=True'
+        )
+        assert len([f for f in partial_output_flags if f is False]) == 1, 'Exactly one partial_output=False call'
+
+        # The full call log shows progressive partial outputs followed by final validation
+        assert call_log == snapshot(
+            [
+                (Foo(a=21, b='f'), True),
+                (Foo(a=21, b='foo'), True),
+                (Foo(a=21, b='foo'), False),  # Final validation - same content, different validation mode
+            ]
+        )
+
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_agent.py::TestPartialOutput` as well

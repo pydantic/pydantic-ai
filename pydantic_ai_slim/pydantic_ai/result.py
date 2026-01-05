@@ -82,7 +82,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         if self._raw_stream_response.final_result_event is not None:
             response = self.response
-            # Final validation (with default allow_partial=False, which is sent into output validators/functions)
+            # Final validation with allow_partial=False (the default).
+            # We always yield the final result even if the content matches the last partial yield, because:
+            # 1. Output validators/functions receive partial_output=False only on this final call
+            # 2. Partial validation may succeed where full validation fails (e.g., missing required fields)
+            # 3. Users can rely on the last yielded item being the fully validated output
             self._cached_output = await self.validate_response_output(response)
             yield deepcopy(self._cached_output)
 
