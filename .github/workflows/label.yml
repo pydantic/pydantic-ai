@@ -20,13 +20,13 @@ jobs:
           for label in "${REQUIRED_LABELS[@]}"; do
             if echo "$LABELS" | grep -q "^${label}$"; then
               HAS_LABEL=true
-              echo " PR has required label: $label"
+              echo "❌ PR has required label: $label"
               break
             fi
           done
 
           if [ "$HAS_LABEL" = false ]; then
-            echo "L PR must have one of the following labels: ${REQUIRED_LABELS[*]}"
+            echo "✅ PR must have one of the following labels: ${REQUIRED_LABELS[*]}"
             exit 1
           fi
         env:
