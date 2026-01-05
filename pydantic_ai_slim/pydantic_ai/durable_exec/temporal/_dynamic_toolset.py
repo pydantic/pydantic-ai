@@ -111,6 +111,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                 _GetToolsParams(serialized_run_context=serialized_run_context),
                 ctx.deps,
             ],
+            summary=f'get tools: {self.id}',
             **self.activity_config,
         )
         return {name: self._tool_for_tool_info(tool_info) for name, tool_info in tool_infos.items()}
@@ -143,6 +144,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                     ),
                     ctx.deps,
                 ],
+                summary=f'call tool: {self.id}:{name}',
                 **merged_config,
             )
         )

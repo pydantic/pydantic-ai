@@ -89,6 +89,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     ),
                     ctx.deps,
                 ],
+                summary=f'call tool: {self.id}:{name}',
                 **tool_activity_config,
             )
         )

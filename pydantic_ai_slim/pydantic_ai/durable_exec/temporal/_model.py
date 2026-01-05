@@ -185,6 +185,7 @@ class TemporalModel(WrapperModel):
                 ),
                 deps,
             ],
+            summary=f'request model: {model_id or f"{self.system}:{self.model_name}"}',
             **self.activity_config,
         )
 
@@ -228,6 +229,7 @@ class TemporalModel(WrapperModel):
                 ),
                 run_context.deps,
             ],
+            summary=f'request model: {model_id or f"{self.system}:{self.model_name}"} (stream)',
             **self.activity_config,
         )
         yield TemporalStreamedResponse(model_request_parameters, response)

@@ -105,6 +105,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
                 _GetToolsParams(serialized_run_context=serialized_run_context),
                 ctx.deps,
             ],
+            summary=f'get tools: {self.id}',
             **self.activity_config,
         )
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
@@ -133,6 +134,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
                     ),
                     ctx.deps,
                 ],
+                summary=f'call tool: {self.id}:{name}',
                 **tool_activity_config,
             )
         )

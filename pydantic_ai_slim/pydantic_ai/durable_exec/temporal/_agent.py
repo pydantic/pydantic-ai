@@ -240,6 +240,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     ),
                     ctx.deps,
                 ],
+                summary=f'handle event: {event.event_kind}',
                 **self.activity_config,
             )
 
