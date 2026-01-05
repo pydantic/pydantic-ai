@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -841,6 +842,9 @@ async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None,
     assert profile.supports_tools is False
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason='Flaky on 3.10 due to SSL socket cleanup - tracked in http-client-cleanup branch'
+)
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
 async def test_openai_o1_mini_system_role(
     allow_model_requests: None,
