@@ -23,8 +23,7 @@ repos:
     rev: 0.6.8
     hooks:
       - id: fix-smartquotes
-        # Exclude cassettes and test files with inline snapshots containing real API data
-        exclude: "cassettes/|tests/models/test_anthropic\\.py|tests/models/test_openai_responses\\.py"
+        exclude: "cassettes/"
       - id: fix-spaces
         exclude: "cassettes/"
       - id: fix-ligatures
