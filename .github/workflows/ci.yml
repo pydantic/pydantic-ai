@@ -250,6 +250,33 @@ jobs:
           path: htmlcov
           include-hidden-files: true
 
+  check-pr-labels:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Check PR has required label
+        run: |
+          LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
+          REQUIRED_LABELS=("bug" "feature" "documentation" "chore")
+
+          HAS_LABEL=false
+          for label in "${REQUIRED_LABELS[@]}"; do
+            if echo "$LABELS" | grep -q "^${label}$"; then
+              HAS_LABEL=true
+              echo "✅ PR has required label: $label"
+              break
+            fi
+          done
+
+          if [ "$HAS_LABEL" = false ]; then
+            echo "❌ PR must have one of the following labels: ${REQUIRED_LABELS[*]}"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
@@ -261,6 +288,7 @@ jobs:
       - test-lowest-versions
       - test-examples
       - coverage
+      - check-pr-labels
     runs-on: ubuntu-latest
 
     steps:
@@ -268,6 +296,7 @@ jobs:
         uses: re-actors/alls-green@release/v1
         with:
           jobs: ${{ toJSON(needs) }}
+          allowed-skips: check-pr-labels
 
   deploy-docs:
     needs: [check]
