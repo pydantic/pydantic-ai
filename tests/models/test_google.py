@@ -88,6 +88,7 @@ with try_import() as imports_successful:
         HarmCategory,
         MediaModality,
         ModalityTokenCount,
+        Part,
     )
 
     from pydantic_ai.models.google import (
@@ -96,6 +97,7 @@ with try_import() as imports_successful:
         GoogleModelSettings,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
+        _process_part,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
@@ -5607,3 +5609,22 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
             }
         ]
     )
+
+
+def test_process_part_with_provider_details_but_empty_provider_name():
+    """Test that _process_part handles provider_details without provider_name.
+
+    This tests the branch where thought_signature creates provider_details,
+    but provider_name is empty string (falsy), so provider_name should not be set on the item.
+    """
+    # Create a Part with thought_signature (which sets provider_details) and text
+    part = Part(text='test response', thought_signature=b'test_signature')
+
+    # Call _process_part with empty provider_name
+    item, code_execution_tool_call_id = _process_part(part, None, '')
+
+    # Verify provider_details is set but provider_name is not
+    assert item == snapshot(
+        TextPart(content='test response', provider_details={'thought_signature': 'dGVzdF9zaWduYXR1cmU='})
+    )
+    assert code_execution_tool_call_id is None
