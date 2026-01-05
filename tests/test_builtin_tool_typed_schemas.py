@@ -401,10 +401,21 @@ class TestNormalizedProperty:
 
         # Normalized access
         normalized: NormalizedCodeExecutionContent = part.normalized
-        assert normalized['status'] == 'completed'
-        assert normalized['output'] == 'Hello, World!\n'
+        assert normalized.get('status') == 'completed'
+        assert normalized.get('output') == 'Hello, World!\n'
         assert normalized.get('error') == ''
         assert normalized.get('exit_code') == 0
+
+    def test_code_execution_normalized_anthropic_no_return_code(self):
+        """Test normalized property with Anthropic format missing return_code (line 181)."""
+        part = CodeExecutionReturnPart(
+            tool_name='code_execution',
+            tool_call_id='test-id',
+            content={'stdout': 'output', 'stderr': ''},  # No return_code
+        )
+        normalized = part.normalized
+        assert normalized.get('status') == 'unknown'
+        assert normalized.get('output') == 'output'
 
     def test_code_execution_normalized_anthropic_failed(self):
         """Test normalized property with failed Anthropic code execution."""
@@ -414,8 +425,8 @@ class TestNormalizedProperty:
             content={'stdout': '', 'stderr': 'Error: division by zero', 'return_code': 1},
         )
         normalized = part.normalized
-        assert normalized['status'] == 'failed'
-        assert normalized['output'] == ''
+        assert normalized.get('status') == 'failed'
+        assert normalized.get('output') == ''
         assert normalized.get('error') == 'Error: division by zero'
         assert normalized.get('exit_code') == 1
 
@@ -431,8 +442,8 @@ class TestNormalizedProperty:
 
         # Normalized access
         normalized = part.normalized
-        assert normalized['status'] == 'completed'
-        assert normalized['output'] == 'Result: 42'
+        assert normalized.get('status') == 'completed'
+        assert normalized.get('output') == 'Result: 42'
 
     def test_code_execution_normalized_google_timeout(self):
         """Test normalized property with timed out Google code execution."""
@@ -442,7 +453,7 @@ class TestNormalizedProperty:
             content={'outcome': 'OUTCOME_TIMEOUT', 'output': ''},
         )
         normalized = part.normalized
-        assert normalized['status'] == 'timeout'
+        assert normalized.get('status') == 'timeout'
 
     def test_code_execution_normalized_openai(self):
         """Test normalized property with OpenAI code execution content."""
@@ -456,8 +467,8 @@ class TestNormalizedProperty:
 
         # Normalized access
         normalized = part.normalized
-        assert normalized['status'] == 'completed'
-        assert normalized['output'] == 'Line 1\nLine 2\nLine 3'
+        assert normalized.get('status') == 'completed'
+        assert normalized.get('output') == 'Line 1\nLine 2\nLine 3'
 
     # --- Web Search Tests ---
 
@@ -479,10 +490,53 @@ class TestNormalizedProperty:
 
         # Normalized access
         normalized: NormalizedWebSearchContent = part.normalized
-        assert normalized['status'] == 'completed'
-        assert len(normalized['sources']) == 2
-        assert normalized['sources'][0]['url'] == 'https://example.com'
-        assert normalized['sources'][0]['title'] == 'Example'
+        assert normalized.get('status') == 'completed'
+        sources = normalized.get('sources', [])
+        assert len(sources) == 2
+        assert sources[0].get('url') == 'https://example.com'
+        assert sources[0].get('title') == 'Example'
+
+    def test_web_search_normalized_with_relevance_score(self):
+        """Test normalized property with relevance_score field (line 233)."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content=[
+                {'title': 'Result', 'url': 'https://example.com', 'relevance_score': 0.95},
+            ],
+        )
+        normalized = part.normalized
+        sources = normalized.get('sources', [])
+        assert len(sources) == 1
+        assert sources[0].get('relevance_score') == 0.95
+
+    def test_web_search_normalized_groq_results_format(self):
+        """Test normalized property with Groq results array format (lines 251-254)."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content={
+                'results': [
+                    {'title': 'Groq Result', 'url': 'https://groq.com', 'snippet': 'Text'},
+                ],
+            },
+        )
+        normalized = part.normalized
+        sources = normalized.get('sources', [])
+        assert len(sources) == 1
+        assert sources[0].get('url') == 'https://groq.com'
+
+    def test_web_search_normalized_groq_output_fallback(self):
+        """Test normalized property with Groq output string fallback (lines 255-257)."""
+        part = WebSearchReturnPart(
+            tool_name='web_search',
+            tool_call_id='test-id',
+            content={'output': 'Plain text search result from Groq'},
+        )
+        normalized = part.normalized
+        sources = normalized.get('sources', [])
+        assert len(sources) == 1
+        assert sources[0].get('snippet') == 'Plain text search result from Groq'
 
     def test_web_search_normalized_google_list(self):
         """Test normalized property with Google list-style web search content."""
@@ -499,10 +553,11 @@ class TestNormalizedProperty:
 
         # Normalized access (uri -> url)
         normalized = part.normalized
-        assert normalized['status'] == 'completed'
-        assert len(normalized['sources']) == 2
-        assert normalized['sources'][0]['url'] == 'https://example1.com'
-        assert normalized['sources'][1]['url'] == 'https://example2.com'
+        assert normalized.get('status') == 'completed'
+        sources = normalized.get('sources', [])
+        assert len(sources) == 2
+        assert sources[0].get('url') == 'https://example1.com'
+        assert sources[1].get('url') == 'https://example2.com'
 
     # --- Web Fetch Tests ---
 
@@ -522,10 +577,27 @@ class TestNormalizedProperty:
 
         # Normalized access
         normalized: NormalizedWebFetchContent = part.normalized
-        assert normalized['status'] == 'completed'
-        assert len(normalized['pages']) == 1
-        assert normalized['pages'][0]['url'] == 'https://example.com'
-        assert normalized['pages'][0]['content'] == 'Page content here...'
+        assert normalized.get('status') == 'completed'
+        pages = normalized.get('pages', [])
+        assert len(pages) == 1
+        assert pages[0].get('url') == 'https://example.com'
+        assert pages[0].get('content') == 'Page content here...'
+
+    def test_web_fetch_normalized_with_timestamp(self):
+        """Test normalized property with fetched_at timestamp (line 285)."""
+        part = WebFetchReturnPart(
+            tool_name='web_fetch',
+            tool_call_id='test-id',
+            content={
+                'url': 'https://example.com',
+                'content': 'Content',
+                'retrieved_at': '2024-01-15T10:30:00Z',
+            },
+        )
+        normalized = part.normalized
+        pages = normalized.get('pages', [])
+        assert len(pages) == 1
+        assert pages[0].get('fetched_at') == '2024-01-15T10:30:00Z'
 
     def test_web_fetch_normalized_google_list(self):
         """Test normalized property with Google list-style web fetch content."""
@@ -542,9 +614,10 @@ class TestNormalizedProperty:
 
         # Normalized access (retrieved_url -> url)
         normalized = part.normalized
-        assert len(normalized['pages']) == 2
-        assert normalized['pages'][0]['url'] == 'https://example1.com'
-        assert normalized['pages'][1]['url'] == 'https://example2.com'
+        pages = normalized.get('pages', [])
+        assert len(pages) == 2
+        assert pages[0].get('url') == 'https://example1.com'
+        assert pages[1].get('url') == 'https://example2.com'
 
     # --- File Search Tests ---
 
@@ -565,11 +638,12 @@ class TestNormalizedProperty:
 
         # Normalized access (file_id -> id, text -> content)
         normalized: NormalizedFileSearchContent = part.normalized
-        assert normalized['status'] == 'completed'
-        assert len(normalized['results']) == 1
-        assert normalized['results'][0]['id'] == 'file-123'
-        assert normalized['results'][0]['filename'] == 'doc.pdf'
-        assert normalized['results'][0]['content'] == 'Match'
+        assert normalized.get('status') == 'completed'
+        results = normalized.get('results', [])
+        assert len(results) == 1
+        assert results[0].get('id') == 'file-123'
+        assert results[0].get('filename') == 'doc.pdf'
+        assert results[0].get('content') == 'Match'
 
     def test_file_search_normalized_list(self):
         """Test normalized property with list-style file search content."""
@@ -586,9 +660,10 @@ class TestNormalizedProperty:
 
         # Normalized access
         normalized = part.normalized
-        assert len(normalized['results']) == 2
-        assert normalized['results'][0]['file_store'] == 'store-1'
-        assert normalized['results'][0]['content'] == 'Context 1'
+        results = normalized.get('results', [])
+        assert len(results) == 2
+        assert results[0].get('file_store') == 'store-1'
+        assert results[0].get('content') == 'Context 1'
 
     # --- Image Generation Tests ---
 
@@ -609,9 +684,22 @@ class TestNormalizedProperty:
 
         # Normalized access (same fields for image_generation)
         normalized: NormalizedImageGenerationContent = part.normalized
-        assert normalized['status'] == 'completed'
+        assert normalized.get('status') == 'completed'
         assert normalized.get('revised_prompt') == 'A beautiful sunset'
         assert normalized.get('size') == '1024x1024'
+
+    def test_image_generation_normalized_with_background(self):
+        """Test normalized property with background field (line 366)."""
+        part = ImageGenerationReturnPart(
+            tool_name='image_generation',
+            tool_call_id='test-id',
+            content={
+                'status': 'completed',
+                'background': 'transparent',
+            },
+        )
+        normalized = part.normalized
+        assert normalized.get('background') == 'transparent'
 
     # --- Edge Cases ---
 
@@ -624,8 +712,8 @@ class TestNormalizedProperty:
         )
         normalized = part.normalized
         # Should return minimal valid structure
-        assert normalized['status'] == 'unknown'
-        assert normalized['output'] == ''
+        assert normalized.get('status') == 'unknown'
+        assert normalized.get('output') == ''
 
     def test_normalized_is_idempotent(self):
         """Test that calling normalized multiple times returns consistent results."""
@@ -638,5 +726,5 @@ class TestNormalizedProperty:
         first = part.normalized
         second = part.normalized
         assert first == second
-        assert first['status'] == 'completed'
-        assert first['output'] == 'test'
+        assert first.get('status') == 'completed'
+        assert first.get('output') == 'test'

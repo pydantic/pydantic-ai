@@ -207,6 +207,21 @@ def normalize_code_execution_content(raw: dict[str, Any]) -> NormalizedCodeExecu
     return normalized
 
 
+def _extract_web_search_source(item: dict[str, Any]) -> NormalizedWebSearchSource:
+    """Extract a normalized web search source from a provider-specific item."""
+    source: NormalizedWebSearchSource = {}
+    if title := item.get('title'):
+        source['title'] = title
+    # Normalize uri -> url
+    if url := item.get('url') or item.get('uri'):
+        source['url'] = url
+    if snippet := item.get('snippet'):
+        source['snippet'] = snippet
+    if (score := item.get('relevance_score')) is not None:
+        source['relevance_score'] = score
+    return source
+
+
 def normalize_web_search_content(
     raw: dict[str, Any] | list[dict[str, Any]],
 ) -> NormalizedWebSearchContent:
@@ -220,37 +235,26 @@ def normalize_web_search_content(
     """
     normalized: NormalizedWebSearchContent = {'status': 'completed', 'sources': []}
 
-    def _extract_source(item: dict[str, Any]) -> NormalizedWebSearchSource:
-        source: NormalizedWebSearchSource = {}
-        if title := item.get('title'):
-            source['title'] = title
-        # Normalize uri -> url
-        if url := item.get('url') or item.get('uri'):
-            source['url'] = url
-        if snippet := item.get('snippet'):
-            source['snippet'] = snippet
-        if (score := item.get('relevance_score')) is not None:
-            source['relevance_score'] = score
-        return source
-
     if isinstance(raw, list):
         # Google/Anthropic: list of sources directly
         for item in raw:
-            if source := _extract_source(item):
+            if source := _extract_web_search_source(item):
                 normalized['sources'].append(source)
     else:
         # Dict format
         if status := raw.get('status'):
-            normalized['status'] = 'completed' if status == 'completed' else 'failed' if status == 'failed' else 'unknown'
+            normalized['status'] = (
+                'completed' if status == 'completed' else 'failed' if status == 'failed' else 'unknown'
+            )
         # OpenAI: sources array
         if sources := raw.get('sources'):
             for item in sources:
-                if source := _extract_source(item):
+                if source := _extract_web_search_source(item):
                     normalized['sources'].append(source)
         # Groq: results array
         elif results := raw.get('results'):
             for item in results:
-                if source := _extract_source(item):
+                if source := _extract_web_search_source(item):
                     normalized['sources'].append(source)
         # Groq fallback: output string
         elif output := raw.get('output'):
@@ -334,7 +338,9 @@ def normalize_file_search_content(
     else:
         # OpenAI: dict with status and results
         if status := raw.get('status'):
-            normalized['status'] = 'completed' if status == 'completed' else 'failed' if status == 'failed' else 'unknown'
+            normalized['status'] = (
+                'completed' if status == 'completed' else 'failed' if status == 'failed' else 'unknown'
+            )
         if results := raw.get('results'):
             for item in results:
                 if result := _extract_result(item):
