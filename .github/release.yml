@@ -1,12 +1,12 @@
 changelog:
   exclude:
     labels:
-      - documentation
+      - docs
       - chore
   categories:
-    - title: 🐛 Bug Fixes
-      labels:
-        - bug
     - title: 🚀 Features
       labels:
         - feature
+    - title: 🐛 Bug Fixes
+      labels:
+        - bug
