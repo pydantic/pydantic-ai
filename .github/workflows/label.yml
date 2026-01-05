@@ -14,7 +14,7 @@ jobs:
       - name: Check PR has required label
         run: |
           LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
-          REQUIRED_LABELS=("bug" "feature" "documentation" "chore")
+          REQUIRED_LABELS=("bug" "feature" "docs" "chore")
 
           HAS_LABEL=false
           for label in "${REQUIRED_LABELS[@]}"; do
