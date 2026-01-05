@@ -1687,6 +1687,7 @@ async def test_document_url_text_force_download() -> None:
         assert mock_download.call_args[0][0].url == 'https://example.com/doc.txt'
 
 
+@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
 ):
@@ -1778,6 +1779,7 @@ async def test_image_as_binary_content_tool_response(
     )
 
 
+@pytest.mark.vcr()
 async def test_document_as_binary_content_tool_response(
     allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
 ):
@@ -1867,6 +1869,7 @@ async def test_document_as_binary_content_tool_response(
     )
 
 
+@pytest.mark.vcr()
 async def test_document_url_tool_response(allow_model_requests: None, anthropic_api_key: str):
     """Test that DocumentUrl returned from tools is sent as separate user message."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -1968,6 +1971,7 @@ The document appears to be a single-page PDF used likely for testing or demonstr
     )
 
 
+@pytest.mark.vcr()
 async def test_image_url_tool_response(allow_model_requests: None, anthropic_api_key: str):
     """Test that ImageUrl returned from tools is sent natively in tool_result."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))

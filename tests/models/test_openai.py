@@ -1258,6 +1258,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
     )
 
 
+@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
 ):

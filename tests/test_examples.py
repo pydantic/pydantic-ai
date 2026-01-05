@@ -573,7 +573,7 @@ def _has_multimodal_content(part: ToolReturnPart, content_type: type) -> bool:
         return True
     if isinstance(part.content, list):
         return any(isinstance(item, content_type) for item in part.content)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-    return False
+    return False  # pragma: no cover
 
 
 async def model_logic(  # noqa: C901

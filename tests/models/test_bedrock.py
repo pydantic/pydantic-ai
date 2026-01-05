@@ -10,6 +10,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     BinaryContent,
+    BinaryImage,
     CachePoint,
     DocumentUrl,
     FinalResultEvent,
@@ -2477,7 +2478,7 @@ async def test_empty_tool_result_text_format(bedrock_provider: BedrockProvider):
     )
 
 
-async def test_empty_tool_result_json_format():
+async def test_empty_tool_result_json_format(allow_model_requests: None):
     """Test that empty tool result uses json format fallback when profile uses json format."""
     from pydantic_ai.providers.bedrock import BedrockModelProfile
 
@@ -2712,5 +2713,75 @@ async def test_video_url_s3_tool_return(bedrock_provider: BedrockProvider):
                     }
                 ],
             }
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, image_content: BinaryContent
+):
+    """VCR test: Tool returning image is handled natively in toolResult."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content=IsStr()),
+                    ToolCallPart(
+                        tool_name='get_image',
+                        args={},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name='us.amazon.nova-pro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url=IsStr(),
+                provider_details=IsInstance(dict),  # pyright: ignore[reportUnknownArgumentType]
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name='us.amazon.nova-pro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url=IsStr(),
+                provider_details=IsInstance(dict),  # pyright: ignore[reportUnknownArgumentType]
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
         ]
     )

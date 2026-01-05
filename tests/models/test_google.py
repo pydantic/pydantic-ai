@@ -5454,3 +5454,97 @@ async def test_user_prompt_file_filtered_when_map_returns_none(
             }
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, google_provider: GoogleProvider, image_content: BinaryContent
+):
+    """VCR test: Tool returning image is handled natively in function_response."""
+
+    class ImageDescription(TypedDict):
+        description: str
+
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(model, output_type=ImageDescription)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        """Get the image to describe."""
+        return image_content
+
+    result = await agent.run('describe the image from get_image')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='describe the image from get_image',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_image',
+                        args={},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url=IsStr(),
+                provider_details=IsInstance(dict),  # pyright: ignore[reportUnknownArgumentType]
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'description': IsStr()},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url=IsStr(),
+                provider_details=IsInstance(dict),  # pyright: ignore[reportUnknownArgumentType]
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
