@@ -243,6 +243,10 @@ over settings like `tool_choice` based on the current step or message history.
 
 Example:
     ```python
+    from pydantic_ai import RunContext
+    from pydantic_ai.settings import ModelSettings
+
+
     async def require_tool_first(
         ctx: RunContext, settings: ModelSettings | None
     ) -> ModelSettings | None:

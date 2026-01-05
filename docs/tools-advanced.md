@@ -385,6 +385,7 @@ def search(query: str) -> str:
 # Step 2+: Model can respond directly or use other tools
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
+#> The capital of France is Paris.
 ```
 
 The hook receives:
