@@ -24,6 +24,8 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
+    UnexpectedModelBehavior,
     UserPromptPart,
     VideoUrl,
 )
@@ -676,6 +678,142 @@ def test_binary_content_validation_with_optional_identifier():
             'identifier': 'foo',
         }
     )
+
+
+def test_tool_call_part_delta_apply_to_tool_call_part_delta():
+    """Test applying ToolCallPartDelta to another ToolCallPartDelta."""
+
+    # Test applying delta with tool_name_delta
+    original_delta = ToolCallPartDelta(tool_name_delta='get_')
+    delta_with_name = ToolCallPartDelta(tool_name_delta='weather')
+    result = delta_with_name.apply(original_delta)
+    assert isinstance(result, ToolCallPart)
+    assert result.tool_name == 'get_weather'
+
+    # Test applying delta with string args_delta (JSON)
+    original_delta = ToolCallPartDelta(args_delta='{"city":')
+    delta_with_args = ToolCallPartDelta(args_delta=' "SF"}')
+    result = delta_with_args.apply(original_delta)
+    assert isinstance(result, ToolCallPartDelta)
+    assert result.args_delta == '{"city": "SF"}'
+
+    # Test applying delta with dict args_delta
+    original_delta = ToolCallPartDelta(args_delta={'city': 'SF'})
+    delta_with_args = ToolCallPartDelta(args_delta={'country': 'USA'})
+    result = delta_with_args.apply(original_delta)
+    assert isinstance(result, ToolCallPartDelta)
+    assert result.args_delta == {'city': 'SF', 'country': 'USA'}
+
+    # Test error: applying JSON delta to dict args
+    original_delta = ToolCallPartDelta(args_delta={'city': 'SF'})
+    delta_with_json = ToolCallPartDelta(args_delta='{"country": "USA"}')
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot apply JSON deltas to non-JSON tool arguments'):
+        delta_with_json.apply(original_delta)
+
+    # Test error: applying dict delta to string args
+    original_delta = ToolCallPartDelta(args_delta='{"city": "SF"}')
+    delta_with_dict = ToolCallPartDelta(args_delta={'country': 'USA'})
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot apply dict deltas to non-dict tool arguments'):
+        delta_with_dict.apply(original_delta)
+
+    # Test applying delta with tool_call_id
+    original_delta = ToolCallPartDelta(args_delta='{}')
+    delta_with_id = ToolCallPartDelta(tool_call_id='call_123')
+    result = delta_with_id.apply(original_delta)
+    assert isinstance(result, ToolCallPartDelta)
+    assert result.tool_call_id == 'call_123'
+
+    # Test applying delta with provider_name
+    original_delta = ToolCallPartDelta(args_delta='{}')
+    delta_with_provider = ToolCallPartDelta(provider_name='openai')
+    result = delta_with_provider.apply(original_delta)
+    assert isinstance(result, ToolCallPartDelta)
+    assert result.provider_name == 'openai'
+
+    # Test applying delta with provider_details
+    original_delta = ToolCallPartDelta(provider_details={'foo': 'bar'})
+    delta_with_details = ToolCallPartDelta(provider_details={'baz': 'qux'})
+    result = delta_with_details.apply(original_delta)
+    assert isinstance(result, ToolCallPartDelta)
+    assert result.provider_details == {'foo': 'bar', 'baz': 'qux'}
+
+    # Test that delta with tool_name_delta creates a ToolCallPart
+    original_delta = ToolCallPartDelta(
+        tool_name_delta='get_weather',
+        args_delta='{"city": "SF"}',
+        tool_call_id='call_123',
+        provider_name='openai',
+        provider_details={'model': 'gpt-4'},
+    )
+    empty_delta = ToolCallPartDelta()
+    result = empty_delta.apply(original_delta)
+    assert result == snapshot(
+        ToolCallPart(
+            tool_name='get_weather',
+            args='{"city": "SF"}',
+            tool_call_id='call_123',
+            provider_name='openai',
+            provider_details={'model': 'gpt-4'},
+        )
+    )
+
+
+def test_tool_call_part_delta_apply_to_tool_call_part():
+    """Test applying ToolCallPartDelta to ToolCallPart."""
+
+    # Test applying delta with tool_name_delta
+    original_part = ToolCallPart(tool_name='get_', args='{}', tool_call_id='call_123')
+    delta_with_name = ToolCallPartDelta(tool_name_delta='weather')
+    result = delta_with_name.apply(original_part)
+    assert isinstance(result, ToolCallPart)
+    assert result.tool_name == 'get_weather'
+
+    # Test applying delta with string args_delta (JSON)
+    original_part = ToolCallPart(tool_name='test', args='{"city":', tool_call_id='call_123')
+    delta_with_args = ToolCallPartDelta(args_delta=' "SF"}')
+    result = delta_with_args.apply(original_part)
+    assert isinstance(result, ToolCallPart)
+    assert result.args == '{"city": "SF"}'
+
+    # Test applying delta with dict args_delta
+    original_part = ToolCallPart(tool_name='test', args={'city': 'SF'}, tool_call_id='call_123')
+    delta_with_args = ToolCallPartDelta(args_delta={'country': 'USA'})
+    result = delta_with_args.apply(original_part)
+    assert isinstance(result, ToolCallPart)
+    assert result.args == {'city': 'SF', 'country': 'USA'}
+
+    # Test error: applying JSON delta to dict args
+    original_part = ToolCallPart(tool_name='test', args={'city': 'SF'}, tool_call_id='call_123')
+    delta_with_json = ToolCallPartDelta(args_delta='{"country": "USA"}')
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot apply JSON deltas to non-JSON tool arguments'):
+        delta_with_json.apply(original_part)
+
+    # Test error: applying dict delta to string args
+    original_part = ToolCallPart(tool_name='test', args='{"city": "SF"}', tool_call_id='call_123')
+    delta_with_dict = ToolCallPartDelta(args_delta={'country': 'USA'})
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot apply dict deltas to non-dict tool arguments'):
+        delta_with_dict.apply(original_part)
+
+    # Test applying delta with tool_call_id
+    original_part = ToolCallPart(tool_name='test', args='{}', tool_call_id='call_old')
+    delta_with_id = ToolCallPartDelta(tool_call_id='call_new')
+    result = delta_with_id.apply(original_part)
+    assert isinstance(result, ToolCallPart)
+    assert result.tool_call_id == 'call_new'
+
+    # Test applying delta with provider_name
+    original_part = ToolCallPart(tool_name='test', args='{}', tool_call_id='call_123')
+    delta_with_provider = ToolCallPartDelta(provider_name='openai')
+    result = delta_with_provider.apply(original_part)
+    assert isinstance(result, ToolCallPart)
+    assert result.provider_name == 'openai'
+
+    # Test applying delta with provider_details
+    original_part = ToolCallPart(tool_name='test', args='{}', tool_call_id='call_123', provider_details={'foo': 'bar'})
+    delta_with_details = ToolCallPartDelta(provider_details={'baz': 'qux'})
+    result = delta_with_details.apply(original_part)
+    assert isinstance(result, ToolCallPart)
+    assert result.provider_details == {'foo': 'bar', 'baz': 'qux'}
 
 
 def test_binary_content_from_path(tmp_path: Path):
