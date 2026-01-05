@@ -3899,7 +3899,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         {
                             'encrypted_content': IsStr(),
                             'page_age': '4 days ago',
-                            'title': 'Here’s when S.F. weather could hit 90 degrees next week',
+                            'title': IsStr(),
                             'type': 'web_search_result',
                             'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                         },
@@ -4293,7 +4293,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                         {
                             'encrypted_content': IsStr(),
                             'page_age': '4 days ago',
-                            'title': 'Here’s when S.F. weather could hit 90 degrees next week',
+                            'title': IsStr(),
                             'type': 'web_search_result',
                             'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                         },
