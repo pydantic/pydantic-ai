@@ -519,7 +519,7 @@ class BedrockConverseModel(Model):
         if additional_model_requests_fields:
             params['additionalModelRequestFields'] = additional_model_requests_fields
         if model_settings:
-            if prompt_variables := model_settings.get('bedrock_prompt_variables', None):  # pragma: no cover
+            if prompt_variables := model_settings.get('bedrock_prompt_variables', None):  # pragma: no branch
                 params['promptVariables'] = prompt_variables
             if service_tier := model_settings.get('bedrock_service_tier', None):
                 params['serviceTier'] = service_tier
