@@ -242,6 +242,9 @@ filterwarnings = [
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+    # pytest-xdist infrastructure (Unix domain sockets for IPC, worker event loops)
+    "ignore:unclosed <socket:ResourceWarning",
+    "ignore:unclosed event loop:ResourceWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
