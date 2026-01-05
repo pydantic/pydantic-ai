@@ -9,6 +9,7 @@ import secrets
 import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -25,6 +26,7 @@ from vcr import VCR, request as vcr_request
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.models import Model
+from pydantic_ai.providers import Provider
 
 __all__ = (
     'IsDatetime',
@@ -306,6 +308,56 @@ def vcr_config():
     }
 
 
+# ContextVar for per-test provider tracking (async-safe)
+_current_test_providers: ContextVar[set[Provider[Any]]] = ContextVar('test_providers')
+
+# Store original __init__ methods for cleanup at session end
+_original_provider_inits: dict[type[Provider[Any]], Callable[..., None]] = {}
+
+
+def _get_all_provider_subclasses() -> set[type[Provider[Any]]]:
+    """Get all Provider subclasses recursively."""
+    subclasses: set[type[Provider[Any]]] = set()
+    to_check: list[type[Provider[Any]]] = list(Provider.__subclasses__())
+    while to_check:
+        cls: type[Provider[Any]] = to_check.pop()
+        if cls not in subclasses:
+            subclasses.add(cls)
+            to_check.extend(cls.__subclasses__())
+    return subclasses
+
+
+@pytest.fixture(scope='session', autouse=True)
+def _wrap_provider_inits() -> Iterator[None]:
+    """Wrap all Provider.__init__ methods once per session.
+
+    This is a performance optimization: instead of wrapping ~28 provider classes
+    per test (~3500 tests = 98,000 wrappings), we wrap once at session start.
+    Per-test tracking uses ContextVar set by close_cached_httpx_client fixture.
+    """
+    for cls in _get_all_provider_subclasses():
+        original_init = cls.__init__
+        _original_provider_inits[cls] = original_init
+
+        def make_wrapper(orig_init: Callable[..., None]) -> Callable[..., None]:
+            def wrapper(self: Provider[Any], *args: Any, **kwargs: Any) -> None:
+                orig_init(self, *args, **kwargs)
+                try:
+                    _current_test_providers.get().add(self)
+                except LookupError:
+                    pass  # No test context (e.g., module-level imports)
+
+            return wrapper
+
+        cls.__init__ = make_wrapper(original_init)
+
+    yield
+
+    # Restore original __init__ methods at session end
+    for cls, orig_init in _original_provider_inits.items():
+        cls.__init__ = orig_init
+
+
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
     """Track and close cached httpx clients and SDK wrapper clients created during each test.
@@ -316,11 +368,13 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
     Also closes SDK wrapper clients (AsyncOpenAI, AsyncAnthropic, etc.) before
     closing the underlying httpx clients to prevent ResourceWarnings from SDK
     destructors running after the httpx client is already closed.
-    """
-    from pydantic_ai.providers import Provider
 
+    Provider instance tracking uses ContextVar set here, with __init__ wrapping
+    done once per session by _wrap_provider_inits fixture.
+    """
     created_httpx_clients: set[httpx.AsyncClient] = set()
     created_providers: set[Provider[Any]] = set()
+    token = _current_test_providers.set(created_providers)
 
     # Patch the cached factory to record returned clients while preserving caching.
     original_cached_func = pydantic_ai.models._cached_async_http_client  # pyright: ignore[reportPrivateUsage]
@@ -331,30 +385,6 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
         return client
 
     monkeypatch.setattr(pydantic_ai.models, '_cached_async_http_client', tracked_cached_async_http_client)
-
-    # Get all Provider subclasses recursively
-    def get_all_provider_subclasses() -> set[type[Provider[Any]]]:
-        subclasses: set[type[Provider[Any]]] = set()
-        to_check: list[type[Provider[Any]]] = list(Provider.__subclasses__())
-        while to_check:
-            cls: type[Provider[Any]] = to_check.pop()
-            if cls not in subclasses:
-                subclasses.add(cls)
-                to_check.extend(cls.__subclasses__())
-        return subclasses
-
-    # Wrap each provider class's __init__ to track instances
-    for cls in get_all_provider_subclasses():
-        original_init = cls.__init__
-
-        def make_wrapper(orig_init: Callable[..., None]) -> Callable[..., None]:
-            def wrapper(self: Provider[Any], *args: Any, **kwargs: Any) -> None:
-                orig_init(self, *args, **kwargs)
-                created_providers.add(self)
-
-            return wrapper
-
-        monkeypatch.setattr(cls, '__init__', make_wrapper(original_init))
 
     yield
 
@@ -377,6 +407,9 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
 
     # Ensure no stale cached clients persist between tests (new event loop per test)
     original_cached_func.cache_clear()
+
+    # Reset ContextVar for this test
+    _current_test_providers.reset(token)
 
 
 @pytest.fixture(scope='session')
