@@ -105,13 +105,14 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             return await super().get_tools(ctx)
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        activity_config: ActivityConfig = {'summary': f'get tools: {self.id}', **self.activity_config}
         tool_infos = await workflow.execute_activity(
             activity=self.get_tools_activity,
             args=[
                 _GetToolsParams(serialized_run_context=serialized_run_context),
                 ctx.deps,
             ],
-            **self.activity_config,
+            **activity_config,
         )
         return {name: self._tool_for_tool_info(tool_info) for name, tool_info in tool_infos.items()}
 
@@ -129,7 +130,11 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         if tool_activity_config is False:  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        merged_config = self.activity_config | (tool_activity_config or {})
+        activity_config: ActivityConfig = {
+            'summary': f'call tool: {self.id}:{name}',
+            **self.activity_config,
+            **(tool_activity_config or {}),
+        }
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(
             await workflow.execute_activity(
@@ -143,7 +148,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                     ),
                     ctx.deps,
                 ],
-                **merged_config,
+                **activity_config,
             )
         )
 
