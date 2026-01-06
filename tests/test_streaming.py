@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from inline_snapshot import snapshot
-from logfire.testing import CaptureLogfire
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
