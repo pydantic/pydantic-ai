@@ -263,7 +263,7 @@ CASES = [
     # a tool conversation (first request with tool_choice='auto' succeeds and returns tool call,
     # but the follow-up request with tool result fails). Other backends (novita, nscale) either
     # don't support tool calling or return 400 errors. See test_together_500_on_tool_continuation.
-    Case('huggingface-auto-uses-tool', 'huggingface', 'auto', snapshot(), expected_tool_choice_in_request='auto', skip_reason='Together backend 500s on tool continuation'),
+    Case('huggingface-auto-uses-tool', 'huggingface', 'auto', snapshot([]), expected_tool_choice_in_request='auto', skip_reason='Together backend 500s on tool continuation'),
     Case('openai_responses-auto-uses-tool', 'openai_responses', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='auto'),
 
     # === tool_choice='none' - Function tools disabled, text response ===
