@@ -1217,7 +1217,14 @@ def _cached_async_http_client(provider: str | None, timeout: int = 600, connect:
 
     cache_key = (loop_id, provider, timeout, connect)
 
+    # Fast path: lock-free read for cache hits (safe due to Python's GIL)
+    client = _http_client_cache.get(cache_key)
+    if client is not None and not client.is_closed:
+        return client
+
+    # Slow path: acquire lock for cache miss or closed client replacement
     with _http_client_cache_lock:
+        # Double-check after acquiring lock (another thread may have created it)
         if cache_key in _http_client_cache:
             client = _http_client_cache[cache_key]
             if not client.is_closed:

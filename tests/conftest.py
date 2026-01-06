@@ -312,6 +312,9 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
 
     Prevents reusing AsyncClient instances across tests (and event loops),
     which can cause 'Event loop is closed' errors, without touching prod code.
+
+    Optimized to only perform cleanup when clients were actually created,
+    avoiding overhead for tests that don't use HTTP clients.
     """
     created_clients: set[httpx.AsyncClient] = set()
 
@@ -327,12 +330,12 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
 
     yield
 
-    # Close only the clients that were actually created/accessed in this test
-    for client in created_clients:
-        await client.aclose()
-
-    # Ensure no stale cached clients persist between tests (new event loop per test)
-    pydantic_ai.models.clear_cached_http_clients()
+    # Only perform cleanup if any clients were actually created
+    if created_clients:
+        for client in created_clients:
+            await client.aclose()
+        # Ensure no stale cached clients persist between tests (new event loop per test)
+        pydantic_ai.models.clear_cached_http_clients()
 
 
 @pytest.fixture(scope='session')
