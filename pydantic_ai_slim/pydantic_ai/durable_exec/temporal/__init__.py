@@ -16,7 +16,7 @@ from ...exceptions import UserError
 from ._agent import TemporalAgent
 from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext
-from ._toolset import TemporalWrapperToolset
+from ._toolset import TemporalWrapperToolset, temporalize_toolset
 from ._workflow import PydanticAIWorkflow
 
 __all__ = [
@@ -26,6 +26,7 @@ __all__ = [
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
+    'temporalize_toolset',
     'PydanticAIWorkflow',
 ]
 
