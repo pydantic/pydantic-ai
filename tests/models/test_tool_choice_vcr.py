@@ -186,8 +186,8 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
         if req.method == 'POST':
             request = req
             break
-    if request is None:
-        return None  # pragma: no cover
+    if request is None:  # pragma: no cover
+        return None
     # VCR stores body as bytes/string, need to parse JSON
     body_bytes = request.body
     if body_bytes is None:
@@ -195,8 +195,8 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
 
     try:
         body: dict[str, Any] = json.loads(body_bytes) if isinstance(body_bytes, (str, bytes)) else body_bytes
-    except (json.JSONDecodeError, TypeError):
-        return None  # pragma: no cover
+    except (json.JSONDecodeError, TypeError):  # pragma: no cover
+        return None
 
     if provider == 'google':
         tool_config: dict[str, Any] = body.get('toolConfig', {})
@@ -214,8 +214,8 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
             return 'auto'
         elif 'any' in tool_choice:
             return 'any'
-        elif 'tool' in tool_choice:
-            return tool_choice['tool'].get('name')  # pragma: no cover
+        elif 'tool' in tool_choice:  # pragma: no cover
+            return tool_choice['tool'].get('name')
         return None  # pragma: no cover
     else:
         # OpenAI, Groq, Mistral, HuggingFace use tool_choice directly
@@ -366,8 +366,8 @@ def should_skip_case(case: Case) -> str | None:
     if callable(is_available):
         if not is_available():
             return f'{case.provider} not installed'  # pragma: no cover
-    elif not is_available:
-        return f'{case.provider} not installed'  # pragma: no cover
+    elif not is_available:  # pragma: no cover
+        return f'{case.provider} not installed'
 
     return None
 
