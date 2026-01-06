@@ -3275,6 +3275,43 @@ async def test_streamed_run_result_sync():
         )
 
 
+async def test_streamed_run_result_sync_context_manager_with_direct_result():
+    """Test that StreamedRunResultSync context manager works with a direct StreamedRunResult."""
+    m = TestModel(custom_output_text='Hello world')
+
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        output = await result.get_output()
+        assert output == snapshot('Hello world')
+        # Create sync wrapper with direct StreamedRunResult (not an async generator)
+        result_sync = StreamedRunResultSync(result)
+        # Use context manager pattern - this exercises the branch where _stream is not set
+        with result_sync:
+            assert result_sync.all_messages() == snapshot(
+                [
+                    ModelRequest(
+                        parts=[
+                            UserPromptPart(
+                                content='Hello',
+                                timestamp=IsNow(tz=timezone.utc),
+                            )
+                        ],
+                        timestamp=IsNow(tz=timezone.utc),
+                        run_id=IsStr(),
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='Hello world')],
+                        usage=RequestUsage(input_tokens=51, output_tokens=2),
+                        model_name='test',
+                        timestamp=IsNow(tz=timezone.utc),
+                        provider_name='test',
+                        run_id=IsStr(),
+                    ),
+                ]
+            )
+
+
 def test_stream_output_after_get_output_sync():
     m = TestModel()
 
