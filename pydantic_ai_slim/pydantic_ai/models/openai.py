@@ -773,15 +773,8 @@ class OpenAIChatModel(Model):
         if validated_tool_choice in ('auto', 'none'):
             tool_choice = validated_tool_choice
         elif validated_tool_choice == 'required':
-            if openai_profile.openai_supports_tool_choice_required:
-                tool_choice = 'required'
-            else:
-                warnings.warn(
-                    f"tool_choice='required' is not supported by model {self.model_name!r}, falling back to 'auto'",
-                    UserWarning,
-                    stacklevel=6,
-                )
-                tool_choice = 'auto'
+            tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
+            _warn_tool_choice_required_fallback(self.model_name, openai_profile, model_settings)
         elif isinstance(validated_tool_choice, tuple):
             tool_names, tool_choice_mode = validated_tool_choice
             tool_choice = ChatCompletionAllowedToolChoiceParam(
@@ -1550,15 +1543,8 @@ class OpenAIResponsesModel(Model):
         if validated_tool_choice in ('auto', 'none'):
             tool_choice = validated_tool_choice
         elif validated_tool_choice == 'required':
-            if openai_profile.openai_supports_tool_choice_required:
-                tool_choice = 'required'
-            else:
-                warnings.warn(
-                    f"tool_choice='required' is not supported by model {self.model_name!r}, falling back to 'auto'",
-                    UserWarning,
-                    stacklevel=6,
-                )
-                tool_choice = 'auto'
+            tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
+            _warn_tool_choice_required_fallback(self.model_name, openai_profile, model_settings)
         elif isinstance(validated_tool_choice, tuple):
             tool_names, tool_choice_mode = validated_tool_choice
             tool_choice = ToolChoiceAllowedParam(
@@ -2621,6 +2607,22 @@ def _map_logprobs(
         }
         for lp in logprobs
     ]
+
+
+def _warn_tool_choice_required_fallback(
+    model_name: str,
+    openai_profile: OpenAIModelProfile,
+    model_settings: ModelSettings | None,
+) -> None:
+    """Warn if user explicitly set tool_choice='required' but model doesn't support it."""
+    if not openai_profile.openai_supports_tool_choice_required:
+        explicit_choice = (model_settings or {}).get('tool_choice')
+        if explicit_choice == 'required':
+            warnings.warn(
+                f"tool_choice='required' is not supported by model {model_name!r}, falling back to 'auto'",
+                UserWarning,
+                stacklevel=7,
+            )
 
 
 def _map_usage(

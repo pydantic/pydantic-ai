@@ -3699,7 +3699,7 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')])
 
     tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    assert tools == []
     assert image_config == {'aspect_ratio': '16:9'}
 
 
@@ -3709,7 +3709,7 @@ async def test_google_image_generation_resolution(google_provider: GoogleProvide
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='2K')])
 
     tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    assert tools == []
     assert image_config == {'image_size': '2K'}
 
 
@@ -3719,7 +3719,7 @@ async def test_google_image_generation_resolution_with_aspect_ratio(google_provi
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
 
     tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    assert tools == []
     assert image_config == {'aspect_ratio': '16:9', 'image_size': '4K'}
 
 
@@ -3750,7 +3750,7 @@ async def test_google_image_generation_tool_output_format(
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    assert tools == []
     assert image_config == {'output_mime_type': 'image/png'}
 
 
@@ -3777,7 +3777,7 @@ async def test_google_image_generation_tool_output_compression(
     # Test explicit value
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
     tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    assert tools == []
     assert image_config == {'output_compression_quality': 85, 'output_mime_type': 'image/jpeg'}
 
     # Test None (omitted)
@@ -3858,7 +3858,7 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     )
 
     tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    assert tools == []
     assert image_config == {
         'aspect_ratio': '16:9',
         'image_size': '2K',
