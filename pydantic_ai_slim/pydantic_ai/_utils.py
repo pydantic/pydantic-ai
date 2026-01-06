@@ -545,3 +545,31 @@ def get_event_loop():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+@asynccontextmanager
+async def asynccontextmanager_from_generator(gen: AsyncIterator[T]) -> AsyncIterator[T]:
+    """Convert an async generator that yields once into an async context manager.
+
+    This is useful for consuming an async generator that wraps an async context
+    manager (like `_consume_stream` in run_stream_sync).
+
+    Usage:
+        async def my_generator():
+            async with some_context_manager() as value:
+                yield value
+
+        async with asynccontextmanager_from_generator(my_generator()) as value:
+            # use value
+            pass
+        # Generator cleanup happens here
+    """
+    value = await anext(gen)
+    try:
+        yield value
+    finally:
+        # Exhaust the generator to trigger cleanup
+        try:
+            await anext(gen)
+        except StopAsyncIteration:
+            pass

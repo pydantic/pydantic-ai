@@ -3334,8 +3334,8 @@ def test_run_stream_sync_instrumentation(capfire: CaptureLogfire):
 
     agent = Agent(m, instrument=True)
 
-    result = agent.run_stream_sync('Hello')
-    output = [c for c in result.stream_output()]
+    with agent.run_stream_sync('Hello') as result:
+        output = [c for c in result.stream_output()]
     assert output == snapshot(['success (no tool calls)'])
 
     assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
@@ -3384,15 +3384,20 @@ def test_run_stream_sync_instrumentation(capfire: CaptureLogfire):
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 5000000000,
+                'end_time': 4000000000,
                 'attributes': {
                     'model_name': 'test',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
-                    'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
-                    'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}],
+                    'final_result': 'success (no tool calls)',
+                    'gen_ai.usage.input_tokens': 51,
+                    'gen_ai.usage.output_tokens': 4,
+                    'pydantic_ai.all_messages': [
+                        {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]},
+                    ],
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
@@ -3400,20 +3405,7 @@ def test_run_stream_sync_instrumentation(capfire: CaptureLogfire):
                             'final_result': {'type': 'object'},
                         },
                     },
-                    'logfire.level_num': 17,
                 },
-                'events': [
-                    {
-                        'name': 'exception',
-                        'timestamp': 4000000000,
-                        'attributes': {
-                            'exception.type': 'RuntimeError',
-                            'exception.message': 'Attempted to exit cancel scope in a different task than it was entered in',
-                            'exception.stacktrace': 'RuntimeError: Attempted to exit cancel scope in a different task than it was entered in',
-                            'exception.escaped': 'False',
-                        },
-                    }
-                ],
             },
         ]
     )

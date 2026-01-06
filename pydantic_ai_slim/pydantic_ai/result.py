@@ -622,9 +622,29 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
 @dataclass(init=False)
 class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
-    """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods."""
+    """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods.
+
+    This class should be used as a context manager to ensure proper cleanup of resources
+    and correct OpenTelemetry instrumentation:
+
+    ```python
+    with agent.run_stream_sync('Hello') as result:
+        for chunk in result.stream_output():
+            print(chunk)
+    ```
+
+    When used as a context manager, all streamed data is collected when entering the context.
+    This ensures OpenTelemetry spans are properly closed with all attributes.
+
+    Note: Using `run_stream_sync` without the context manager pattern will still work for
+    basic streaming, but OpenTelemetry spans may have incomplete attributes.
+    """
 
     _streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT] | None = None
+    _context_entered: bool = field(default=False, init=False)
+    _cached_output: list[OutputDataT] | None = field(default=None, init=False)
+    _cached_text: list[str] | None = field(default=None, init=False)
+    _cached_responses: list[tuple[_messages.ModelResponse, bool]] | None = field(default=None, init=False)
 
     def __init__(
         self,
@@ -635,6 +655,38 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
             self._streamed_run_result = streamed_run_result
         else:
             self._stream = streamed_run_result
+        self._context_entered = False
+        self._cached_output = None
+        self._cached_text = None
+        self._cached_responses = None
+
+    def __enter__(self) -> StreamedRunResultSync[AgentDepsT, OutputDataT]:
+        """Enter the context manager, collecting all streamed data.
+
+        When using the context manager pattern, all stream data is collected immediately
+        to ensure the async context manager lifecycle (including OTel spans) completes
+        within a single event loop context.
+        """
+        if not hasattr(self, '_stream'):
+            # Already have a direct StreamedRunResult, nothing to do
+            self._context_entered = True
+            return self
+
+        async def collect_all() -> None:
+            """Collect all stream data within a single async context."""
+            async with _utils.asynccontextmanager_from_generator(self._stream) as result:
+                self._streamed_run_result = result
+                # Collect output data
+                self._cached_output = [item async for item in result.stream_output()]
+
+        _utils.get_event_loop().run_until_complete(collect_all())
+        self._context_entered = True
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        """Exit the context manager. Cleanup has already been handled in __enter__."""
+        # All cleanup is done in __enter__ since we collect everything there
+        pass
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of messages.
@@ -717,6 +769,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the response data.
         """
+        # If data was pre-collected via context manager, return cached data
+        if self._cached_output is not None:
+            return iter(self._cached_output)
         return self._async_iterator_to_sync(lambda result: result.stream_output(debounce_by=debounce_by))
 
     def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
