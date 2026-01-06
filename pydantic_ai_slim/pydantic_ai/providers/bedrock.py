@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
@@ -74,6 +74,10 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
 BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
 
 
+def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
+    return replace(profile or BedrockModelProfile(), supported_builtin_tools=frozenset())
+
+
 class BedrockProvider(Provider[BaseClient]):
     """Provider for AWS Bedrock."""
 
@@ -96,20 +100,14 @@ class BedrockProvider(Provider[BaseClient]):
                 bedrock_send_back_thinking_parts=True,
                 bedrock_supports_prompt_caching=True,
                 bedrock_supports_tool_caching=True,
-            )
-            .update(anthropic_model_profile(model_name))
-            .update(ModelProfile(supported_builtin_tools=frozenset())),
-            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json')
-            .update(mistral_model_profile(model_name))
-            .update(ModelProfile(supported_builtin_tools=frozenset())),
-            'cohere': cohere_model_profile,
+            ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
+            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
+                _without_builtin_tools(mistral_model_profile(model_name))
+            ),
+            'cohere': lambda model_name: _without_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
-            'meta': lambda model_name: BedrockModelProfile()
-            .update(meta_model_profile(model_name))
-            .update(ModelProfile(supported_builtin_tools=frozenset())),
-            'deepseek': lambda model_name: BedrockModelProfile()
-            .update(bedrock_deepseek_model_profile(model_name))
-            .update(ModelProfile(supported_builtin_tools=frozenset())),
+            'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
+            'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
         }
 
         # Split the model name into parts

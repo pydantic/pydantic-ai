@@ -103,7 +103,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
 
     cohere_profile = provider.model_profile('cohere.command-text-v14')
     cohere_model_profile_mock.assert_called_with('command-text')
-    assert cohere_profile is None
+    assert cohere_profile is not None
+    assert cohere_profile.supported_builtin_tools == frozenset()
 
     deepseek_profile = provider.model_profile('deepseek.deepseek-r1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')

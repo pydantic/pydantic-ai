@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec, TypedDict, assert_never
 
 from pydantic_ai import (
     AudioUrl,
@@ -164,58 +164,17 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'tool_use': 'tool_call',
 }
 
-_BEDROCK_TO_PYDANTIC_BUILTIN_TOOL_MAP: dict[str, str] = {
-    'nova_code_interpreter': CodeExecutionTool.kind,
+
+class _BedrockBuiltinTool(TypedDict):
+    name: str
+    result_type: str
+
+
+_BUILTIN_TOOL_TO_BEDROCK: dict[str, _BedrockBuiltinTool] = {
+    CodeExecutionTool.kind: {'name': 'nova_code_interpreter', 'result_type': 'nova_code_interpreter_result'}
 }
-_BEDROCK_TO_PYDANTIC_TOOL_RESULT_TYPE_MAP: dict[str, str] = {
-    'nova_code_interpreter_result': CodeExecutionTool.kind,
-}
-
-
-def map_pydantic_builtin_tool_name(bedrock_tool_name: str) -> str:
-    """Maps Bedrock "system" tool names to Pydantic AI builtin tool names."""
-    if pydantic_tool_name := _BEDROCK_TO_PYDANTIC_BUILTIN_TOOL_MAP.get(bedrock_tool_name):
-        return pydantic_tool_name
-    raise NotImplementedError(
-        f"Bedrock system tool '{bedrock_tool_name}' is not supported yet. If it should be, please file an issue."
-    )
-
-
-def map_bedrock_builtin_tool_name(pydantic_tool_name: str) -> str:
-    """Maps Pydantic AI builtin tool names to Bedrock "system" tool names."""
-    if bedrock_tool_name := next(
-        (br for br, pd in _BEDROCK_TO_PYDANTIC_BUILTIN_TOOL_MAP.items() if pd == pydantic_tool_name),
-        None,
-    ):
-        return bedrock_tool_name
-
-    raise NotImplementedError(
-        f"Pydantic AI builtin tool '{pydantic_tool_name}' is not supported yet. If it should be, please file an issue."
-    )
-
-
-def map_pydantic_builtin_tool_name_by_result_type(bedrock_tool_result_type: str | None) -> str:
-    """Gets pydantic tool name given a Bedrock toolResult.type."""
-    bedrock_tool_result_type = bedrock_tool_result_type or 'missing_type'
-    if pydantic_tool_name := _BEDROCK_TO_PYDANTIC_TOOL_RESULT_TYPE_MAP.get(bedrock_tool_result_type):
-        return pydantic_tool_name
-    raise NotImplementedError(
-        f"Bedrock tool result type '{bedrock_tool_result_type}' is not supported yet. "
-        f'If it should be, please file an issue.'
-    )
-
-
-def map_bedrock_tool_result_type(pydantic_tool_name: str) -> str:
-    """Gets Bedrock toolResult.type given a Pydantic AI builtin tool name."""
-    if bedrock_tool_result_type := next(
-        (bd for bd, pd in _BEDROCK_TO_PYDANTIC_TOOL_RESULT_TYPE_MAP.items() if pd == pydantic_tool_name),
-        None,
-    ):
-        return bedrock_tool_result_type
-
-    raise NotImplementedError(
-        f"Pydantic AI builtin tool '{pydantic_tool_name}' is not supported yet. If it should be, please file an issue."
-    )
+_BEDROCK_TO_BUILTIN: dict[str, str] = {bbt['name']: kind for kind, bbt in _BUILTIN_TOOL_TO_BEDROCK.items()}
+_RESULT_TYPE_TO_BUILTIN_TOOL = {bbt['result_type']: kind for kind, bbt in _BUILTIN_TOOL_TO_BEDROCK.items()}
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -465,9 +424,9 @@ class BedrockConverseModel(Model):
                         items.append(
                             BuiltinToolCallPart(
                                 provider_name=self.system,
-                                tool_name=map_pydantic_builtin_tool_name(tool_use['name']),
-                                args=tool_use.get('input'),
-                                tool_call_id=tool_use.get('toolUseId'),
+                                tool_name=_BEDROCK_TO_BUILTIN[tool_use['name']],
+                                args=tool_use['input'],
+                                tool_call_id=tool_use['toolUseId'],
                             )
                         )
                     else:
@@ -482,7 +441,7 @@ class BedrockConverseModel(Model):
                     items.append(
                         BuiltinToolReturnPart(
                             provider_name=self.system,
-                            tool_name=map_pydantic_builtin_tool_name_by_result_type(tool_result.get('type')),
+                            tool_name=_RESULT_TYPE_TO_BUILTIN_TOOL[tool_result.get('type', '')],
                             content=tool_result.get('content'),
                             tool_call_id=tool_result.get('toolUseId'),
                             provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
@@ -611,17 +570,19 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    def _add_builtin_tools(self, tools: list[ToolTypeDef], model_request_parameters: ModelRequestParameters) -> None:
-        for tool in model_request_parameters.builtin_tools:
-            tools.append({'systemTool': {'name': map_bedrock_builtin_tool_name(tool.kind)}})
-
     def _map_tool_config(
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
         tools = self._get_tools(model_request_parameters)
-        self._add_builtin_tools(tools, model_request_parameters)
+        for tool in model_request_parameters.builtin_tools:
+            if bedrock_tool := _BUILTIN_TOOL_TO_BEDROCK.get(tool.kind):
+                tools.append({'systemTool': {'name': bedrock_tool['name']}})
+            else:
+                raise NotImplementedError(
+                    f"Builtin tool '{tool.kind}' is not supported yet. If it should be, please file an issue."
+                )
 
         if not tools:
             return None
@@ -740,7 +701,7 @@ class BedrockConverseModel(Model):
                         if item.provider_name == self.system:
                             server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
                                 'toolUseId': _utils.guard_tool_call_id(t=item),
-                                'name': map_bedrock_builtin_tool_name(item.tool_name),
+                                'name': _BUILTIN_TOOL_TO_BEDROCK[item.tool_name]['name'],
                                 'input': item.args_as_dict(),
                                 'type': 'server_tool_use',
                             }
@@ -750,7 +711,7 @@ class BedrockConverseModel(Model):
                             tool_result: ToolResultBlockOutputTypeDef = {
                                 'toolUseId': _utils.guard_tool_call_id(t=item),
                                 'content': item.content,
-                                'type': map_bedrock_tool_result_type(item.tool_name),
+                                'type': _BUILTIN_TOOL_TO_BEDROCK[item.tool_name]['result_type'],
                             }
                             if item.provider_details and 'status' in item.provider_details:
                                 tool_result['status'] = item.provider_details['status']
@@ -1044,27 +1005,25 @@ class BedrockStreamedResponse(StreamedResponse):
                         tool_name = tool_use_start['name']
                         if tool_use_start.get('type') == 'server_tool_use':
                             part = BuiltinToolCallPart(
-                                tool_name=map_pydantic_builtin_tool_name(tool_name),
+                                tool_name=_BEDROCK_TO_BUILTIN[tool_name],
                                 tool_call_id=tool_id,
                                 provider_name=self.provider_name,
                             )
                             yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
-                        else:
-                            maybe_event = self._parts_manager.handle_tool_call_delta(
-                                vendor_part_id=index,
-                                tool_name=tool_name,
-                                args=None,
-                                tool_call_id=tool_id,
-                            )
-                            if maybe_event:  # pragma: no branch
-                                yield maybe_event
+                        elif maybe_event := self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=index,
+                            tool_name=tool_name,
+                            args=None,
+                            tool_call_id=tool_id,
+                        ):  # pragma: no branch
+                            yield maybe_event
                     elif 'toolResult' in start:  # pragma: no branch
                         tool_result_start = start['toolResult']
                         tool_id = tool_result_start['toolUseId']
 
                         return_part = BuiltinToolReturnPart(
                             provider_name=self.provider_name,
-                            tool_name=map_pydantic_builtin_tool_name_by_result_type(tool_result_start.get('type')),
+                            tool_name=_RESULT_TYPE_TO_BUILTIN_TOOL[tool_result_start.get('type', '')],
                             content=[],
                             tool_call_id=tool_id,
                             provider_details={'status': tool_result_start['status']}

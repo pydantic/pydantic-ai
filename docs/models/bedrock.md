@@ -254,7 +254,7 @@ Nova 2.0 models support built-in tools; see the [Nova 2.0 documentation](https:/
 
 ### Example
 
-```python {title="bedrock_nova2_code_execution.py" test="skip"}
+```python
 from pydantic_ai import Agent, CodeExecutionTool
 
 agent = Agent(
@@ -264,8 +264,8 @@ agent = Agent(
 
 result = agent.run_sync('What is 42 * 1984?')
 print(result.output)
+#> 42 × 1984 = **83,328**.
 
-# > 42 × 1984 = **83,328**.
 ```
 
 ## `provider` argument

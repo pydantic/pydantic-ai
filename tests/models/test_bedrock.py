@@ -2342,7 +2342,7 @@ async def test_bedrock_map_tool_config_with_unsupported_builtin_tool(bedrock_pro
 
     with pytest.raises(
         NotImplementedError,
-        match="Pydantic AI builtin tool 'mcp_server' is not supported yet. If it should be, please file an issue.",
+        match="Builtin tool 'mcp_server' is not supported yet. If it should be, please file an issue.",
     ):
         model._map_tool_config(params, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
@@ -2561,7 +2561,6 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
     )
 
 
-@pytest.mark.filterwarnings('ignore::pytest.PytestUnraisableExceptionWarning')
 async def test_bedrock_model_multi_turn_code_execution(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
