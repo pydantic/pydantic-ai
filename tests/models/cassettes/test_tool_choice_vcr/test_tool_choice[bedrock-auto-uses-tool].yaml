@@ -7,7 +7,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZDBmNjJmNjYtOTZjOS00Zjg3LTg5NTMtYmM2ZDA1Njk1YWRl
+        OWM1NDE0ZjktMmFhMi00NzBlLWI0NWEtZWRlMjIwMmMwZWU5
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -28,7 +28,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1752
+        latencyMs: 1859
       output:
         message:
           content:
@@ -36,7 +36,7 @@ interactions:
               input:
                 city: Paris
               name: get_weather
-              toolUseId: tooluse_BASe_eO9Qy2o9bTTf_0UnQ
+              toolUseId: tooluse_N5JIdpjYR1anqTJEBH4T7g
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -54,8 +54,8 @@ interactions:
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Paris?"}]}, {"role": "assistant", "content":
-      [{"toolUse": {"toolUseId": "tooluse_BASe_eO9Qy2o9bTTf_0UnQ", "name": "get_weather", "input": {"city": "Paris"}}}]},
-      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_BASe_eO9Qy2o9bTTf_0UnQ", "content": [{"text": "Sunny,
+      [{"toolUse": {"toolUseId": "tooluse_N5JIdpjYR1anqTJEBH4T7g", "name": "get_weather", "input": {"city": "Paris"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_N5JIdpjYR1anqTJEBH4T7g", "content": [{"text": "Sunny,
       22C in Paris"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec":
       {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}},
       "required": ["city"], "type": "object"}}, "description": "Get the current weather for a city."}}], "toolChoice": {"auto":
@@ -63,7 +63,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NWVkYzgwNTEtNTRkOC00MDVmLWI3ZTAtOWRiNDQyOTE2NzI0
+        ZWU3NTFhYzItZmRkYS00OWUwLTk4ZTAtMjRmODk5NjEyNDQ4
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -84,7 +84,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1587
+        latencyMs: 2098
       output:
         message:
           content:

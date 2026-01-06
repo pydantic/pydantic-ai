@@ -9,7 +9,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YTJlNGJmMzQtMjk2Yy00Zjg4LWFjOGUtNTk3Y2E2NjZhOTg5
+        OTE0NTlmNjctZmM4ZS00NGFkLTk5ZDktOWI3NmUwOGM0YzMy
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -25,27 +25,27 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1101'
+      - '1166'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 3817
+        latencyMs: 5038
       output:
         message:
           content:
           - toolUse:
               input:
                 city: Paris
-                summary: Paris is the capital and most populous city of France, known as the "City of Light" (La Ville Lumière).
-                  It is renowned for its rich history, art, architecture, and culture. Major landmarks include the Eiffel
-                  Tower, Louvre Museum, Notre-Dame Cathedral, Arc de Triomphe, and the Champs-Élysées. Paris is a global center
-                  for art, fashion, gastronomy, and culture, and is divided into 20 arrondissements. The city sits on the
-                  Seine River and has been a major European city for centuries, playing a crucial role in politics, economics,
-                  and the arts. It attracts millions of tourists annually and is home to world-class museums, restaurants,
-                  and historic sites.
+                summary: Paris is the capital and most populous city of France, located in the north-central part of the country
+                  along the Seine River. Known as the "City of Light" (La Ville Lumière), Paris is renowned for its art, fashion,
+                  gastronomy, and culture. The city is home to iconic landmarks including the Eiffel Tower, the Louvre Museum
+                  (the world's largest art museum), Notre-Dame Cathedral, the Arc de Triomphe, and the Champs-Élysées. Paris
+                  has been a major center of commerce, education, entertainment, and arts for centuries, and continues to
+                  be one of the world's most visited cities. It's famous for its café culture, haute couture fashion houses,
+                  and its influence on philosophy, literature, and the arts throughout history.
               name: final_result
-              toolUseId: tooluse_tT69j5RUQsGvIdTgUUGJYQ
+              toolUseId: tooluse_el5o7JcSQ5ib70W_uP9aUA
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -55,9 +55,9 @@ interactions:
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
         inputTokens: 742
-        outputTokens: 209
+        outputTokens: 217
         serverToolUsage: {}
-        totalTokens: 951
+        totalTokens: 959
     status:
       code: 200
       message: OK

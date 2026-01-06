@@ -57,7 +57,6 @@ with try_import() as google_available:
 
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel
-    from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as huggingface_available:
     from pydantic_ai.models.huggingface import HuggingFaceModel
@@ -151,7 +150,7 @@ PROVIDER_MODELS: dict[str, tuple[str, Callable[[], bool]]] = {
 }
 
 
-def get_model(provider: str, api_keys: dict[str, str]) -> Model:
+def get_model(provider: str, api_keys: dict[str, str], bedrock_provider: Any = None) -> Model:
     """Create a model instance for the given provider."""
     model_name, _ = PROVIDER_MODELS[provider]
 
@@ -168,7 +167,8 @@ def get_model(provider: str, api_keys: dict[str, str]) -> Model:
     elif provider == 'google':
         return GoogleModel(model_name, provider=GoogleProvider(api_key=api_keys['google']))
     elif provider == 'bedrock':
-        return BedrockConverseModel(model_name, provider=BedrockProvider(region_name='us-east-2'))
+        assert bedrock_provider is not None, 'bedrock_provider fixture required for bedrock tests'
+        return BedrockConverseModel(model_name, provider=bedrock_provider)
     elif provider == 'huggingface':
         return HuggingFaceModel(
             model_name, provider=HuggingFaceProvider(api_key=api_keys['huggingface'], provider_name='together')
@@ -184,7 +184,14 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
     if not cassette.requests:
         return None
 
-    request = cassette.requests[0]
+    # Find the POST request (skip any GET requests like HuggingFace's provider mapping)
+    request = None
+    for req in cassette.requests:
+        if req.method == 'POST':
+            request = req
+            break
+    if request is None:
+        return None
     # VCR stores body as bytes/string, need to parse JSON
     body_bytes = request.body
     if body_bytes is None:
@@ -381,7 +388,9 @@ def api_keys(
 
 
 @pytest.mark.parametrize('case', CASES, ids=lambda c: c.id)
-async def test_tool_choice(case: Case, api_keys: dict[str, str], allow_model_requests: None, vcr: Any):
+async def test_tool_choice(
+    case: Case, api_keys: dict[str, str], bedrock_provider: Any, allow_model_requests: None, vcr: Any
+):
     """Test tool_choice behavior across providers.
 
     This test verifies:
@@ -395,7 +404,7 @@ async def test_tool_choice(case: Case, api_keys: dict[str, str], allow_model_req
     if skip_reason:
         pytest.skip(skip_reason)
 
-    model = get_model(case.provider, api_keys)
+    model = get_model(case.provider, api_keys, bedrock_provider)
     settings: ModelSettings = {'tool_choice': case.tool_choice}
 
     import warnings

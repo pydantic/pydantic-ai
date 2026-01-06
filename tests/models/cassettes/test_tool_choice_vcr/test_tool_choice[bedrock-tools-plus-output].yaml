@@ -9,7 +9,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        OTU2MmU0MWUtMzdiZi00ZDg1LWI1MmItMzAxNTA3ZWE5NTli
+        NjkxNDkyZmQtODcwNy00ZWIxLTk5MGEtZmRhNjBkZjc5MTRh
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -30,7 +30,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1632
+        latencyMs: 1685
       output:
         message:
           content:
@@ -38,7 +38,7 @@ interactions:
               input:
                 city: Paris
               name: get_weather
-              toolUseId: tooluse_J_MN-ZX5TWSFCbXDx54HiA
+              toolUseId: tooluse_j6_Z9cL-Rg2Ue3uOujYaBg
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -56,8 +56,8 @@ interactions:
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Paris and summarize"}]}, {"role": "assistant",
-      "content": [{"toolUse": {"toolUseId": "tooluse_J_MN-ZX5TWSFCbXDx54HiA", "name": "get_weather", "input": {"city": "Paris"}}}]},
-      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_J_MN-ZX5TWSFCbXDx54HiA", "content": [{"text": "Sunny,
+      "content": [{"toolUse": {"toolUseId": "tooluse_j6_Z9cL-Rg2Ue3uOujYaBg", "name": "get_weather", "input": {"city": "Paris"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_j6_Z9cL-Rg2Ue3uOujYaBg", "content": [{"text": "Sunny,
       22C in Paris"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec":
       {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}},
       "required": ["city"], "type": "object"}}, "description": "Get the current weather for a city."}}, {"toolSpec": {"name":
@@ -67,7 +67,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ODczZDY1NTgtZmU3MC00MTdlLWEzN2QtZDE1OWFlN2U0MDky
+        NjA1OGE1MGUtYzNkNi00ZWQ2LTgxMDktYTBhNWVhZDM3ZDMy
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -83,22 +83,22 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '573'
+      - '585'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2037
+        latencyMs: 2242
       output:
         message:
           content:
           - toolUse:
               input:
                 city: Paris
-                summary: The weather in Paris is currently sunny with a pleasant temperature of 22°C (72°F), perfect for outdoor
-                  activities and sightseeing.
+                summary: The weather in Paris is sunny with a pleasant temperature of 22°C (approximately 72°F), making it
+                  ideal for outdoor activities and sightseeing.
               name: final_result
-              toolUseId: tooluse_Od5YeumDToSO1IdWNRqJPg
+              toolUseId: tooluse_03JWvO0lSzimivOAuh2BJg
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -108,9 +108,9 @@ interactions:
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
         inputTokens: 813
-        outputTokens: 84
+        outputTokens: 87
         serverToolUsage: {}
-        totalTokens: 897
+        totalTokens: 900
     status:
       code: 200
       message: OK

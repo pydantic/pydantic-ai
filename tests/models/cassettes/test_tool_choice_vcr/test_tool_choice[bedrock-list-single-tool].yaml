@@ -8,7 +8,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NTdiNzNjMjUtZTAxNS00YzQyLWI3MWYtNzk2NGRmZDdhNWQ5
+        NDA5NzQyMTktYWNiZC00NjA5LTkxMDMtNTgwNTA2NDRiZWJj
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -29,7 +29,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1711
+        latencyMs: 1859
       output:
         message:
           content:
@@ -37,7 +37,7 @@ interactions:
               input:
                 city: Paris
               name: get_weather
-              toolUseId: tooluse_-p7DrnwHTaaPr8qY6lMp2A
+              toolUseId: tooluse_rLFZ0trYSIuXhrvpez_IMw
               type: tool_use
           role: assistant
       stopReason: tool_use
