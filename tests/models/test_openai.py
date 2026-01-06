@@ -3858,7 +3858,7 @@ async def test_openai_tool_choice_required_fallback_warning(allow_model_requests
     model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     def get_weather(city: str) -> str:
-        return f'Weather in {city}'
+        return f'Weather in {city}'  # pragma: no cover
 
     agent = Agent(model, tools=[get_weather])
 

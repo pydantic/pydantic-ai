@@ -84,12 +84,7 @@ def get_weather(city: str) -> str:
 
 def get_time(timezone: str) -> str:
     """Get the current time in a timezone."""
-    return f'14:30 in {timezone}'
-
-
-def get_population(city: str) -> str:
-    """Get the population of a city."""
-    return f'{city} has 1 million people'
+    return f'14:30 in {timezone}'  # pragma: no cover
 
 
 class CityInfo(BaseModel):
@@ -175,7 +170,7 @@ def get_model(provider: str, api_keys: dict[str, str], bedrock_provider: Any = N
             model_name, provider=HuggingFaceProvider(api_key=api_keys['huggingface'], provider_name='together')
         )
     else:
-        raise ValueError(f'Unknown provider: {provider}')
+        raise ValueError(f'Unknown provider: {provider}')  # pragma: no cover
 
 
 def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
@@ -183,7 +178,7 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
     import json
 
     if not cassette.requests:
-        return None
+        return None  # pragma: no cover
 
     # Find the POST request (skip any GET requests like HuggingFace's provider mapping)
     request = None
@@ -192,16 +187,16 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
             request = req
             break
     if request is None:
-        return None
+        return None  # pragma: no cover
     # VCR stores body as bytes/string, need to parse JSON
     body_bytes = request.body
     if body_bytes is None:
-        return None
+        return None  # pragma: no cover
 
     try:
         body: dict[str, Any] = json.loads(body_bytes) if isinstance(body_bytes, (str, bytes)) else body_bytes
     except (json.JSONDecodeError, TypeError):
-        return None
+        return None  # pragma: no cover
 
     if provider == 'google':
         tool_config: dict[str, Any] = body.get('toolConfig', {})
@@ -211,7 +206,7 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
         tc = body.get('tool_choice', {})
         if isinstance(tc, dict):
             return tc.get('type')  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        return tc
+        return tc  # pragma: no cover
     elif provider == 'bedrock':
         tool_config = body.get('toolConfig', {})
         tool_choice = tool_config.get('toolChoice', {})
@@ -220,8 +215,8 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
         elif 'any' in tool_choice:
             return 'any'
         elif 'tool' in tool_choice:
-            return tool_choice['tool'].get('name')
-        return None
+            return tool_choice['tool'].get('name')  # pragma: no cover
+        return None  # pragma: no cover
     else:
         # OpenAI, Groq, Mistral, HuggingFace use tool_choice directly
         return body.get('tool_choice')
@@ -370,9 +365,9 @@ def should_skip_case(case: Case) -> str | None:
     _, is_available = PROVIDER_MODELS.get(case.provider, (None, lambda: False))
     if callable(is_available):
         if not is_available():
-            return f'{case.provider} not installed'
+            return f'{case.provider} not installed'  # pragma: no cover
     elif not is_available:
-        return f'{case.provider} not installed'
+        return f'{case.provider} not installed'  # pragma: no cover
 
     return None
 
