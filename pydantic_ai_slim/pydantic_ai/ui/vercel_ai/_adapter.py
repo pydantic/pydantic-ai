@@ -230,7 +230,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 output: Any | None = None
                                 if isinstance(part, ToolOutputAvailablePart):
                                     output = part.output
-                                elif isinstance(part, ToolOutputErrorPart):
+                                elif isinstance(part, ToolOutputErrorPart):  # pragma: no branch
                                     output = {'error_text': part.error_text, 'is_error': True}
                                 builder.add(
                                     BuiltinToolReturnPart(
