@@ -6,15 +6,28 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from yaml import Dumper
+    from yaml import Dumper, SafeLoader
 else:
     try:
-        from yaml import CDumper as Dumper
+        from yaml import CDumper as Dumper, CSafeLoader as SafeLoader
     except ImportError:  # pragma: no cover
-        from yaml import Dumper
+        from yaml import Dumper, SafeLoader
 
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
 FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
+ALLOWED_HEADER_PREFIXES = {
+    # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
+    'x-xet-',
+}
+ALLOWED_HEADERS = {
+    # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
+    'x-repo-commit',
+    'x-linked-size',
+    'x-linked-etag',
+    # required for test_google_model_file_search_tool
+    'x-goog-upload-url',
+    'x-goog-upload-status',
+}
 
 
 class LiteralDumper(Dumper):
@@ -35,7 +48,7 @@ LiteralDumper.add_representer(str, str_presenter)
 
 
 def deserialize(cassette_string: str):
-    cassette_dict = yaml.safe_load(cassette_string)
+    cassette_dict = yaml.load(cassette_string, Loader=SafeLoader)
     for interaction in cassette_dict['interactions']:
         for kind, data in interaction.items():
             parsed_body = data.pop('parsed_body', None)
@@ -55,7 +68,11 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
             headers = {k: v for k, v in headers.items() if k not in FILTERED_HEADERS}
             # filter headers by prefix
             headers = {
-                k: v for k, v in headers.items() if not any(k.startswith(prefix) for prefix in FILTERED_HEADER_PREFIXES)
+                k: v
+                for k, v in headers.items()
+                if not any(k.startswith(prefix) for prefix in FILTERED_HEADER_PREFIXES)
+                or k in ALLOWED_HEADERS
+                or any(k.startswith(prefix) for prefix in ALLOWED_HEADER_PREFIXES)
             }
             # update headers on source object
             data['headers'] = headers
@@ -76,7 +93,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     del data['body']
             if content_type == ['application/x-www-form-urlencoded']:
                 query_params = urllib.parse.parse_qs(data['body'])
-                for key in ['client_secret', 'refresh_token']:  # pragma: no cover
+                for key in ['client_id', 'client_secret', 'refresh_token']:  # pragma: no cover
                     if key in query_params:
                         query_params[key] = ['scrubbed']
                         data['body'] = urllib.parse.urlencode(query_params)

@@ -11,12 +11,20 @@ from .agent import (
 )
 from .builtin_tools import (
     CodeExecutionTool,
+    FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    UrlContextTool,
+    UrlContextTool,  # pyright: ignore[reportDeprecated]
+    WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
+)
+from .embeddings import (
+    Embedder,
+    EmbeddingModel,
+    EmbeddingResult,
+    EmbeddingSettings,
 )
 from .exceptions import (
     AgentRunError,
@@ -24,6 +32,7 @@ from .exceptions import (
     CallDeferred,
     FallbackExceptionGroup,
     IncompleteToolCall,
+    ModelAPIError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -121,11 +130,17 @@ __all__ = (
     'UserPromptNode',
     'capture_run_messages',
     'InstrumentationSettings',
+    # embeddings
+    'Embedder',
+    'EmbeddingModel',
+    'EmbeddingSettings',
+    'EmbeddingResult',
     # exceptions
     'AgentRunError',
     'CallDeferred',
     'ApprovalRequired',
     'ModelRetry',
+    'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
@@ -212,13 +227,15 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'CodeExecutionTool',
+    'FileSearchTool',
+    'ImageGenerationTool',
+    'MCPServerTool',
+    'MemoryTool',
+    'UrlContextTool',
+    'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
-    'UrlContextTool',
-    'CodeExecutionTool',
-    'ImageGenerationTool',
-    'MemoryTool',
-    'MCPServerTool',
     # output
     'ToolOutput',
     'NativeOutput',

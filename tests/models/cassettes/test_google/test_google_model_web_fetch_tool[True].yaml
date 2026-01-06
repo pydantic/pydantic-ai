@@ -1,0 +1,76 @@
+interactions:
+- request:
+    body: '{"contents": [{"parts": [{"text": "What is the first sentence on the page
+      https://ai.pydantic.dev? Reply with only the sentence."}], "role": "user"}],
+      "systemInstruction": {"parts": [{"text": "You are a helpful chatbot."}], "role":
+      "user"}, "tools": [{"urlContext": {}}], "generationConfig": {}}'
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '295'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    body:
+      string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\"\
+        : [\n          {\n            \"text\": \"Pydantic AI is a Python agent framework\
+        \ designed to make it less painful to build production grade applications\
+        \ with Generative AI.\"\n          }\n        ],\n        \"role\": \"model\"\
+        \n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n     \
+        \ \"groundingMetadata\": {\n        \"groundingChunks\": [\n          {\n\
+        \            \"web\": {\n              \"uri\": \"https://ai.pydantic.dev\"\
+        ,\n              \"title\": \"Pydantic AI\"\n            }\n          }\n\
+        \        ],\n        \"groundingSupports\": [\n          {\n            \"\
+        segment\": {\n              \"endIndex\": 131,\n              \"text\": \"\
+        Pydantic AI is a Python agent framework designed to make it less painful to\
+        \ build production grade applications with Generative AI.\"\n            },\n\
+        \            \"groundingChunkIndices\": [\n              0\n            ]\n\
+        \          }\n        ]\n      },\n      \"urlContextMetadata\": {\n     \
+        \   \"urlMetadata\": [\n          {\n            \"retrievedUrl\": \"https://ai.pydantic.dev\"\
+        ,\n            \"urlRetrievalStatus\": \"URL_RETRIEVAL_STATUS_SUCCESS\"\n\
+        \          }\n        ]\n      }\n    }\n  ],\n  \"usageMetadata\": {\n  \
+        \  \"promptTokenCount\": 32,\n    \"candidatesTokenCount\": 41,\n    \"totalTokenCount\"\
+        : 2515,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"\
+        TEXT\",\n        \"tokenCount\": 32\n      }\n    ],\n    \"toolUsePromptTokenCount\"\
+        : 2395,\n    \"toolUsePromptTokensDetails\": [\n      {\n        \"modality\"\
+        : \"TEXT\",\n        \"tokenCount\": 2395\n      }\n    ],\n    \"thoughtsTokenCount\"\
+        : 47\n  },\n  \"modelVersion\": \"gemini-2.5-flash\",\n  \"responseId\": \"\
+        qgqkaI-iDLrTjMcP0bP24A4\"\n}\n"
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Type:
+      - application/json; charset=UTF-8
+      Date:
+      - Tue, 19 Aug 2025 05:24:58 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=9182
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+      content-length:
+      - '1627'
+    status:
+      code: 200
+      message: OK
+version: 1

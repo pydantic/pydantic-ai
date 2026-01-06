@@ -14,6 +14,7 @@ from typing_extensions import assert_never, overload
 from .. import _utils, usage
 from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
+from ..builtin_tools import AbstractBuiltinTool
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -201,6 +202,13 @@ class FunctionModel(Model):
         """The system / model provider."""
         return self._system
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """FunctionModel supports all builtin tools for testing flexibility."""
+        from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
+
+        return SUPPORTED_BUILTIN_TOOLS
+
 
 @dataclass(frozen=True, kw_only=True)
 class AgentInfo:
@@ -212,8 +220,8 @@ class AgentInfo:
     function_tools: list[ToolDefinition]
     """The function tools available on this agent.
 
-    These are the tools registered via the [`tool`][pydantic_ai.Agent.tool] and
-    [`tool_plain`][pydantic_ai.Agent.tool_plain] decorators.
+    These are the tools registered via the [`tool`][pydantic_ai.agent.Agent.tool] and
+    [`tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorators.
     """
     allow_text_output: bool
     """Whether a plain text output is allowed."""
@@ -309,13 +317,13 @@ class FunctionStreamedResponse(StreamedResponse):
                         if delta.content:  # pragma: no branch
                             response_tokens = _estimate_string_tokens(delta.content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        for e in self._parts_manager.handle_thinking_delta(
+                        for event in self._parts_manager.handle_thinking_delta(
                             vendor_part_id=dtc_index,
                             content=delta.content,
                             signature=delta.signature,
                             provider_name='function' if delta.signature else None,
                         ):
-                            yield e
+                            yield event
                     elif isinstance(delta, DeltaToolCall):
                         if delta.json_args:
                             response_tokens = _estimate_string_tokens(delta.json_args)
@@ -349,6 +357,11 @@ class FunctionStreamedResponse(StreamedResponse):
     @property
     def provider_name(self) -> None:
         """Get the provider name."""
+        return None
+
+    @property
+    def provider_url(self) -> None:
+        """Get the provider base URL."""
         return None
 
     @property

@@ -1,25 +1,38 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, deprecated
 
 __all__ = (
     'AbstractBuiltinTool',
     'WebSearchTool',
     'WebSearchUserLocation',
     'CodeExecutionTool',
+    'WebFetchTool',
     'UrlContextTool',
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
+    'FileSearchTool',
+    'BUILTIN_TOOL_TYPES',
+    'DEPRECATED_BUILTIN_TOOLS',
+    'SUPPORTED_BUILTIN_TOOLS',
 )
 
-_BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
+BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
+"""Registry of all builtin tool types, keyed by their kind string.
+
+This dict is populated automatically via `__init_subclass__` when tool classes are defined.
+"""
+
+ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
+"""Supported aspect ratios for image generation tools."""
 
 
 @dataclass(kw_only=True)
@@ -42,9 +55,17 @@ class AbstractBuiltinTool(ABC):
         """
         return self.kind
 
+    @property
+    def label(self) -> str:
+        """Human-readable label for UI display.
+
+        Subclasses should override this to provide a meaningful label.
+        """
+        return self.kind.replace('_', ' ').title()
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        _BUILTIN_TOOL_TYPES[cls.kind] = cls
+        BUILTIN_TOOL_TYPES[cls.kind] = cls
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -53,7 +74,7 @@ class AbstractBuiltinTool(ABC):
         if cls is not AbstractBuiltinTool:
             return handler(cls)
 
-        tools = _BUILTIN_TOOL_TYPES.values()
+        tools = BUILTIN_TOOL_TYPES.values()
         if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:
@@ -166,16 +187,76 @@ class CodeExecutionTool(AbstractBuiltinTool):
 
 
 @dataclass(kw_only=True)
-class UrlContextTool(AbstractBuiltinTool):
+class WebFetchTool(AbstractBuiltinTool):
     """Allows your agent to access contents from URLs.
+
+    The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
 
     Supported by:
 
+    * Anthropic
     * Google
     """
 
-    kind: str = 'url_context'
+    max_uses: int | None = None
+    """If provided, the tool will stop fetching URLs after the given number of uses.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    allowed_domains: list[str] | None = None
+    """If provided, only these domains will be fetched.
+
+    With Anthropic, you can only use one of `blocked_domains` or `allowed_domains`, not both.
+
+    Supported by:
+
+    * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
+    """
+
+    blocked_domains: list[str] | None = None
+    """If provided, these domains will never be fetched.
+
+    With Anthropic, you can only use one of `blocked_domains` or `allowed_domains`, not both.
+
+    Supported by:
+
+    * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
+    """
+
+    enable_citations: bool = False
+    """If True, enables citations for fetched content.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    max_content_tokens: int | None = None
+    """Maximum content length in tokens for fetched content.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    kind: str = 'web_fetch'
     """The kind of tool."""
+
+
+@deprecated('Use `WebFetchTool` instead.')
+@dataclass(kw_only=True)
+class UrlContextTool(WebFetchTool):
+    """Deprecated alias for WebFetchTool. Use WebFetchTool instead.
+
+    Overrides kind to 'url_context' so old serialized payloads with {"kind": "url_context", ...}
+    can be deserialized to UrlContextTool for backward compatibility.
+    """
+
+    kind: str = 'url_context'
+    """The kind of tool (deprecated value for backward compatibility)."""
 
 
 @dataclass(kw_only=True)
@@ -214,12 +295,14 @@ class ImageGenerationTool(AbstractBuiltinTool):
     * OpenAI Responses
     """
 
-    output_compression: int = 100
+    output_compression: int | None = None
     """Compression level for the output image.
 
     Supported by:
 
-    * OpenAI Responses. Only supported for 'png' and 'webp' output formats.
+    * OpenAI Responses. Only supported for 'jpeg' and 'webp' output formats. Default: 100.
+    * Google (Vertex AI only). Only supported for 'jpeg' output format. Default: 75.
+      Setting this will default `output_format` to 'jpeg' if not specified.
     """
 
     output_format: Literal['png', 'webp', 'jpeg'] | None = None
@@ -228,6 +311,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses. Default: 'png'.
+    * Google (Vertex AI only). Default: 'png', or 'jpeg' if `output_compression` is set.
     """
 
     partial_images: int = 0
@@ -247,12 +331,20 @@ class ImageGenerationTool(AbstractBuiltinTool):
     * OpenAI Responses
     """
 
-    size: Literal['1024x1024', '1024x1536', '1536x1024', 'auto'] = 'auto'
+    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '1K', '2K', '4K'] | None = None
     """The size of the generated image.
+
+    * OpenAI Responses: 'auto' (default: model selects the size based on the prompt), '1024x1024', '1024x1536', '1536x1024'
+    * Google (Gemini 3 Pro Image and later): '1K' (default), '2K', '4K'
+    """
+
+    aspect_ratio: ImageAspectRatio | None = None
+    """The aspect ratio to use for generated images.
 
     Supported by:
 
-    * OpenAI Responses
+    * Google image-generation models (Gemini)
+    * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
     """
 
     kind: str = 'image_generation'
@@ -333,9 +425,46 @@ class MCPServerTool(AbstractBuiltinTool):
     def unique_id(self) -> str:
         return ':'.join([self.kind, self.id])
 
+    @property
+    def label(self) -> str:
+        return f'MCP: {self.id}'
+
+
+@dataclass(kw_only=True)
+class FileSearchTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to search through uploaded files using vector search.
+
+    This tool provides a fully managed Retrieval-Augmented Generation (RAG) system that handles
+    file storage, chunking, embedding generation, and context injection into prompts.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Google (Gemini)
+    """
+
+    file_store_ids: Sequence[str]
+    """The file store IDs to search through.
+
+    For OpenAI, these are the IDs of vector stores created via the OpenAI API.
+    For Google, these are file search store names that have been uploaded and processed via the Gemini Files API.
+    """
+
+    kind: str = 'file_search'
+    """The kind of tool."""
+
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
     if isinstance(tool_data, dict):
         return tool_data.get('kind', AbstractBuiltinTool.kind)
     else:
         return tool_data.kind
+
+
+DEPRECATED_BUILTIN_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset({UrlContextTool})  # pyright: ignore[reportDeprecated]
+"""Set of deprecated builtin tool IDs that should not be offered in new UIs."""
+
+SUPPORTED_BUILTIN_TOOLS = frozenset(cls for cls in BUILTIN_TOOL_TYPES.values() if cls not in DEPRECATED_BUILTIN_TOOLS)
+"""Get the set of all builtin tool types (excluding deprecated tools)."""
+
+BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset({MCPServerTool, MemoryTool})

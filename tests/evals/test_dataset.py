@@ -4,11 +4,10 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
 import yaml
-from _pytest.python_api import RaisesContext
 from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
@@ -763,6 +762,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
             'my chat span',
             **{  # type: ignore
                 'gen_ai.operation.name': 'chat',
+                'gen_ai.request.model': 'gpt-5-mini',
                 'gen_ai.usage.input_tokens': 1,
                 'gen_ai.usage.details.special_tokens': 2,
                 'other_attribute': 3,
@@ -836,9 +836,9 @@ async def test_deserializing_without_name(
     example_dataset.to_file(yaml_path)
 
     # Rewrite the file _without_ a name to test deserializing a name-less file
-    obj = yaml.safe_load(yaml_path.read_text())
+    obj = yaml.safe_load(yaml_path.read_text(encoding='utf-8'))
     obj.pop('name', None)
-    yaml_path.write_text(yaml.dump(obj))
+    yaml_path.write_text(yaml.dump(obj), encoding='utf-8')
 
     # Test loading results in the name coming from the filename stem
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
@@ -858,7 +858,7 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     assert loaded_dataset.cases[0].name == 'case1'
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
 
-    raw = json.loads(json_path.read_text())
+    raw = json.loads(json_path.read_text(encoding='utf-8'))
     schema = raw['$schema']
     assert isinstance(schema, str)
     assert (tmp_path / schema).exists()
@@ -964,7 +964,7 @@ async def test_from_text_failure():
         ],
         'evaluators': ['NotAnEvaluator'],
     }
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
     assert exc_info.value == HasRepr(
         repr(
@@ -994,7 +994,7 @@ async def test_from_text_failure():
         ],
         'evaluators': ['LLMJudge'],
     }
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
     assert exc_info.value == HasRepr(  # pragma: lax no cover
         repr(

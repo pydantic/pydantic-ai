@@ -1,4 +1,5 @@
 import uuid
+from datetime import timezone
 
 import anyio
 import httpx
@@ -21,7 +22,7 @@ from pydantic_ai import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsStr, try_import
+from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
@@ -515,8 +516,14 @@ async def test_a2a_error_handling():
             task_id = result['id']
 
             # Wait for task to fail
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
+            max_attempts = 50  # 5 seconds total
+            for _ in range(max_attempts):
+                task = await a2a_client.get_task(task_id)
+                if 'result' in task and task['result']['status']['state'] == 'failed':
+                    break
+                await anyio.sleep(0.1)
+            else:  # pragma: no cover
+                raise AssertionError(f'Task did not fail within {max_attempts * 0.1} seconds')
 
             assert 'result' in task
             assert task['result']['status']['state'] == 'failed'
@@ -573,6 +580,7 @@ async def test_a2a_multiple_tasks_same_context():
                 [
                     ModelRequest(
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
                     )
                 ]
@@ -612,6 +620,7 @@ async def test_a2a_multiple_tasks_same_context():
                 [
                     ModelRequest(
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
                     ),
                     ModelResponse(
@@ -635,6 +644,7 @@ async def test_a2a_multiple_tasks_same_context():
                             ),
                             UserPromptPart(content='Second message', timestamp=IsDatetime()),
                         ],
+                        timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
                     ),
                 ]

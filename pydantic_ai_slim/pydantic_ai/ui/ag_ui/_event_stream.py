@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from typing import Final
 
+from ..._utils import now_utc
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -26,7 +27,7 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
-from .. import SSE_CONTENT_TYPE, UIEventStream
+from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 
 try:
     from ag_ui.core import (
@@ -86,10 +87,22 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     def encode_event(self, event: BaseEvent) -> str:
         return self._event_encoder.encode(event)
 
+    @staticmethod
+    def _get_timestamp() -> int:
+        return int(now_utc().timestamp() * 1_000)
+
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[BaseEvent]:
+        """Override to set timestamps on all AG-UI events."""
+        async for agui_event in super().handle_event(event):
+            if agui_event.timestamp is None:
+                agui_event.timestamp = self._get_timestamp()
+            yield agui_event
+
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         yield RunStartedEvent(
             thread_id=self.run_input.thread_id,
             run_id=self.run_input.run_id,
+            timestamp=self._get_timestamp(),
         )
 
     async def before_response(self) -> AsyncIterator[BaseEvent]:
@@ -104,11 +117,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield RunFinishedEvent(
                 thread_id=self.run_input.thread_id,
                 run_id=self.run_input.run_id,
+                timestamp=self._get_timestamp(),
             )
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         self._error = True
-        yield RunErrorEvent(message=str(error))
+        yield RunErrorEvent(message=str(error), timestamp=self._get_timestamp())
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
         if follows_text:

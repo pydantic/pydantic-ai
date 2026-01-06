@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.beta.graph import EndMarker, GraphRun, GraphTask, JoinItem
+from pydantic_graph.beta.graph import EndMarker, GraphRun, GraphTaskRequest, JoinItem
 from pydantic_graph.beta.step import NodeStep
 
 from . import (
@@ -64,6 +64,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             timestamp=datetime.datetime(...),
                         )
                     ],
+                    timestamp=datetime.datetime(...),
                     run_id='...',
                 )
             ),
@@ -181,7 +182,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return self._task_to_node(task)
 
     def _task_to_node(
-        self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTask]
+        self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         if isinstance(task, Sequence) and len(task) == 1:
             first_task = task[0]
@@ -197,8 +198,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             return End(task.value)
         raise exceptions.AgentRunError(f'Unexpected node: {task}')  # pragma: no cover
 
-    def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTask:
-        return GraphTask(NodeStep(type(node)).id, inputs=node, fork_stack=())
+    def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTaskRequest:
+        return GraphTaskRequest(NodeStep(type(node)).id, inputs=node, fork_stack=())
 
     async def next(
         self,
@@ -243,6 +244,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                     timestamp=datetime.datetime(...),
                                 )
                             ],
+                            timestamp=datetime.datetime(...),
                             run_id='...',
                         )
                     ),
@@ -282,6 +284,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._graph_run.state.metadata
 
     @property
     def run_id(self) -> str:
@@ -421,6 +428,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._state.metadata
 
     @property
     def run_id(self) -> str:

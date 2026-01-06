@@ -23,7 +23,7 @@ Examples of all three are shown below.
 
 Each MCP server instance is a [toolset](../toolsets.md) and can be registered with an [`Agent`][pydantic_ai.Agent] using the `toolsets` argument.
 
-You can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager to open and close connections to all registered servers (and in the case of stdio servers, start and stop the subprocesses) around the context where they'll be used in agent runs. You can also use [`async with server`][pydantic_ai.mcp.MCPServer.__aenter__] to manage the connection or subprocess of a specific server, for example if you'd like to use it with multiple agents. If you don't explicitly enter one of these context managers to set up the server, this will be done automatically when it's needed (e.g. to list the available tools or call a specific tool), but it's more efficient to do so around the entire context where you expect the servers to be used.
+You can use the [`async with agent`][pydantic_ai.agent.Agent.__aenter__] context manager to open and close connections to all registered servers (and in the case of stdio servers, start and stop the subprocesses) around the context where they'll be used in agent runs. You can also use [`async with server`][pydantic_ai.mcp.MCPServer.__aenter__] to manage the connection or subprocess of a specific server, for example if you'd like to use it with multiple agents. If you don't explicitly enter one of these context managers to set up the server, this will be done automatically when it's needed (e.g. to list the available tools or call a specific tool), but it's more efficient to do so around the entire context where you expect the servers to be used.
 
 ### Streamable HTTP Client
 
@@ -134,25 +134,21 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 MCP also offers [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
 
-In this example [mcp-run-python](https://github.com/pydantic/mcp-run-python) is used as the MCP server.
+In this example we use a simple MCP server that provides weather tools.
 
 ```python {title="mcp_stdio_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
-server = MCPServerStdio(  # (1)!
-    'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
-)
+server = MCPServerStdio('python', args=['mcp_server.py'], timeout=10)
 agent = Agent('openai:gpt-5', toolsets=[server])
 
 
 async def main():
-    result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+    result = await agent.run('What is the weather in Paris?')
     print(result.output)
-    #> There are 9,208 days between January 1, 2000, and March 18, 2025.
+    #> The weather in Paris is sunny and 26 degrees Celsius.
 ```
-
-1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
 
 ## Loading MCP Servers from Configuration
 
@@ -168,8 +164,12 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 {
   "mcpServers": {
     "python-runner": {
-      "command": "uv",
-      "args": ["run", "mcp-run-python", "stdio"]
+        "command": "uv",
+        "args": ["run", "mcp-run-python", "stdio"]
+    },
+    "weather": {
+      "command": "python",
+      "args": ["mcp_server.py"]
     },
     "weather-api": {
       "url": "http://localhost:3001/sse"
@@ -338,9 +338,93 @@ calculator_server = MCPServerSSE(
 agent = Agent('openai:gpt-5', toolsets=[weather_server, calculator_server])
 ```
 
+## Server Instructions
+
+MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These instructions are accessible via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the server connection is established.
+
+```python {title="mcp_server_instructions.py"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
+agent = Agent('openai:gpt-5', toolsets=[server])
+
+@agent.instructions
+async def mcp_server_instructions():
+    return server.instructions  # (1)!
+
+async def main():
+    result = await agent.run('What is 7 plus 5?')
+    print(result.output)
+    #> The answer is 12.
+```
+
+1. The server connection is guaranteed to be established by this point, so `server.instructions` is available.
+
 ## Tool metadata
 
 MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta`, `annotations`, and `output_schema` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions.
+
+## Resources
+
+MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concepts/resources) - files, data, or content that can be accessed by the client. Resources in MCP are application-driven, with host applications determining how to incorporate context manually, based on their needs. This means they will _not_ be exposed to the LLM automatically (unless a tool returns a `ResourceLink` or `EmbeddedResource`).
+
+Pydantic AI provides methods to discover and read resources from MCP servers:
+
+- [`list_resources()`][pydantic_ai.mcp.MCPServer.list_resources] - List all available resources on the server
+- [`list_resource_templates()`][pydantic_ai.mcp.MCPServer.list_resource_templates] - List resource templates with parameter placeholders
+- [`read_resource(uri)`][pydantic_ai.mcp.MCPServer.read_resource] - Read the contents of a specific resource by URI
+
+Resources are automatically converted: text content is returned as `str`, and binary content is returned as [`BinaryContent`][pydantic_ai.messages.BinaryContent].
+
+Before consuming resources, we need to run a server that exposes some:
+
+```python {title="mcp_resource_server.py"}
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP('Pydantic AI MCP Server')
+log_level = 'unset'
+
+
+@mcp.resource('resource://user_name.txt', mime_type='text/plain')
+async def user_name_resource() -> str:
+    return 'Alice'
+
+
+if __name__ == '__main__':
+    mcp.run()
+```
+
+Then we can create the client:
+
+```python {title="mcp_resources.py", requires="mcp_resource_server.py"}
+import asyncio
+
+from pydantic_ai.mcp import MCPServerStdio
+
+
+async def main():
+    server = MCPServerStdio('python', args=['-m', 'mcp_resource_server'])
+
+    async with server:
+        # List all available resources
+        resources = await server.list_resources()
+        for resource in resources:
+            print(f' - {resource.name}: {resource.uri} ({resource.mime_type})')
+            #>  - user_name_resource: resource://user_name.txt (text/plain)
+
+        # Read a text resource
+        user_name = await server.read_resource('resource://user_name.txt')
+        print(f'Text content: {user_name}')
+        #> Text content: Alice
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+_(This example is complete, it can be run "as is")_
+
 
 ## Custom TLS / SSL configuration
 
@@ -389,6 +473,31 @@ async def main():
    request. Anything supported by **httpx** (`verify`, `cert`, custom
    proxies, timeouts, etc.) therefore applies to all MCP traffic.
 
+## Client Identification
+
+When connecting to an MCP server, you can optionally specify an [Implementation](https://modelcontextprotocol.io/specification/2025-11-25/schema#implementation) object as client information that will be sent to the server during initialization. This is useful for:
+
+- Identifying your application in server logs
+- Allowing servers to provide custom behavior based on the client
+- Debugging and monitoring MCP connections
+- Version-specific feature negotiation
+
+All MCP client classes ([`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio], [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP], and [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE]) support the `client_info` parameter:
+
+```python {title="mcp_client_with_name.py"}
+from mcp import types as mcp_types
+
+from pydantic_ai.mcp import MCPServerSSE
+
+server = MCPServerSSE(
+    'http://localhost:3001/sse',
+    client_info=mcp_types.Implementation(
+        name='MyApplication',
+        version='2.1.0',
+    ),
+)
+```
+
 ## MCP Sampling
 
 !!! info "What is MCP Sampling?"
@@ -424,7 +533,7 @@ Pydantic AI supports sampling as both a client and server. See the [server](./se
 
 Sampling is automatically supported by Pydantic AI agents when they act as a client.
 
-To be able to use sampling, an MCP server instance needs to have a [`sampling_model`][pydantic_ai.mcp.MCPServer.sampling_model] set. This can be done either directly on the server using the constructor keyword argument or the property, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.Agent.set_mcp_sampling_model] to set the agent's model or one specified as an argument as the sampling model on all MCP servers registered with that agent.
+To be able to use sampling, an MCP server instance needs to have a [`sampling_model`][pydantic_ai.mcp.MCPServer.sampling_model] set. This can be done either directly on the server using the constructor keyword argument or the property, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.agent.Agent.set_mcp_sampling_model] to set the agent's model or one specified as an argument as the sampling model on all MCP servers registered with that agent.
 
 Let's say we have an MCP server that wants to use sampling (in this case to generate an SVG as per the tool arguments).
 
@@ -455,9 +564,9 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
         path = Path(f'{subject}_{style}.svg')
         # remove triple backticks if the svg was returned within markdown
         if m := re.search(r'^```\w*$(.+?)```$', result.content.text, re.S | re.M):
-            path.write_text(m.group(1))
+            path.write_text(m.group(1), encoding='utf-8')
         else:
-            path.write_text(result.content.text)
+            path.write_text(result.content.text, encoding='utf-8')
         return f'See {path}'
 
 

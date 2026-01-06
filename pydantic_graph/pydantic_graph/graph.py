@@ -167,7 +167,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     ) -> GraphRunResult[StateT, RunEndT]:
         """Synchronously run the graph.
 
-        This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
+        This is a convenience method that wraps [`self.run`][pydantic_graph.graph.Graph.run] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
         Args:

@@ -19,6 +19,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
+from pydantic_ai.messages import ModelResponseStreamEvent
 
 from .conftest import IsStr
 
@@ -469,10 +470,11 @@ def test_handle_thinking_delta_no_content_or_signature():
     for _ in manager.handle_thinking_delta(vendor_part_id='thinking', content='initial', signature=None):
         pass
 
-    # Try to update with no content or signature - should raise error
-    with pytest.raises(UnexpectedModelBehavior, match='Cannot update a ThinkingPart with no content or signature'):
-        for _ in manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None):
-            pass
+    # Updating with no content, signature, or provider_details emits no event
+    events: list[ModelResponseStreamEvent] = []
+    for event in manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None):
+        events.append(event)
+    assert events == []
 
 
 def test_handle_part():

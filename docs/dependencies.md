@@ -44,7 +44,7 @@ async def main():
 ```
 
 1. Define a dataclass to hold dependencies.
-2. Pass the dataclass type to the `deps_type` argument of the [`Agent` constructor][pydantic_ai.Agent.__init__]. **Note**: we're passing the type here, NOT an instance, this parameter is not actually used at runtime, it's here so we can get full type checking of the agent.
+2. Pass the dataclass type to the `deps_type` argument of the [`Agent` constructor][pydantic_ai.agent.Agent.__init__]. **Note**: we're passing the type here, NOT an instance, this parameter is not actually used at runtime, it's here so we can get full type checking of the agent.
 3. When running the agent, pass an instance of the dataclass to the `deps` parameter.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -91,7 +91,7 @@ async def main():
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. [`RunContext`][pydantic_ai.tools.RunContext] may optionally be passed to a [`system_prompt`][pydantic_ai.Agent.system_prompt] function as the only argument.
+1. [`RunContext`][pydantic_ai.tools.RunContext] may optionally be passed to a [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] function as the only argument.
 2. [`RunContext`][pydantic_ai.tools.RunContext] is parameterized with the type of the dependencies, if this type is incorrect, static type checkers will raise an error.
 3. Access dependencies through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
 4. Access dependencies through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
@@ -218,8 +218,8 @@ async def main():
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. To pass `RunContext` to a tool, use the [`tool`][pydantic_ai.Agent.tool] decorator.
-2. `RunContext` may optionally be passed to a [`output_validator`][pydantic_ai.Agent.output_validator] function as the first argument.
+1. To pass `RunContext` to a tool, use the [`tool`][pydantic_ai.agent.Agent.tool] decorator.
+2. `RunContext` may optionally be passed to a [`output_validator`][pydantic_ai.agent.Agent.output_validator] function as the first argument.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -230,7 +230,7 @@ When testing agents, it's useful to be able to customise dependencies.
 While this can sometimes be done by calling the agent directly within unit tests, we can also override dependencies
 while calling application code which in turn calls the agent.
 
-This is done via the [`override`][pydantic_ai.Agent.override] method on the agent.
+This is done via the [`override`][pydantic_ai.agent.Agent.override] method on the agent.
 
 ```python {title="joke_app.py"}
 from dataclasses import dataclass

@@ -1,0 +1,108 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '160'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: ''
+        role: user
+      instructions: Generate a short article about artificial intelligence in 3 sentences.
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2047'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-ajisbeelkk2rx7pyndmnsvib
+      openai-processing-ms:
+      - '2424'
+      openai-project:
+      - proj_9ZxiyOCRVOhB09iY8TYBDFKd
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1764173381
+      error: null
+      id: resp_0636aec793848ce100692726455a88819194cf7957cb4f6f01
+      incomplete_details: null
+      instructions: Generate a short article about artificial intelligence in 3 sentences.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Artificial intelligence (AI) is revolutionizing industries by enhancing efficiency and enabling innovations
+            across sectors such as healthcare, finance, and transportation. By utilizing machine learning and deep learning
+            algorithms, AI systems are capable of analyzing vast amounts of data to make predictions, automate tasks, and
+            personalize user experiences. As AI technology continues to evolve, it raises important considerations regarding
+            ethics, privacy, and the future of work, prompting ongoing discussions about its societal impact.
+          type: output_text
+        id: msg_0636aec793848ce1006927264652488191a54bb5448e9407a3
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 23
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 88
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 111
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
+from pydantic._internal._typing_extra import get_function_type_hints
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar
 
@@ -264,6 +265,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 )
 
             return NativeOutputSchema(
+                template=output.template,
                 processor=cls._build_processor(
                     flattened_outputs,
                     name=output.name,
@@ -438,27 +440,6 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
 @dataclass(init=False)
 class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
     processor: BaseObjectOutputProcessor[OutputDataT]
-
-    def __init__(
-        self, *, processor: BaseObjectOutputProcessor[OutputDataT], allows_deferred_tools: bool, allows_image: bool
-    ):
-        super().__init__(
-            text_processor=processor,
-            object_def=processor.object_def,
-            allows_deferred_tools=allows_deferred_tools,
-            allows_image=allows_image,
-        )
-        self.processor = processor
-
-
-class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
-    @property
-    def mode(self) -> OutputMode:
-        return 'native'
-
-
-@dataclass(init=False)
-class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     template: str | None
 
     def __init__(
@@ -470,15 +451,13 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         allows_image: bool,
     ):
         super().__init__(
-            processor=PromptedOutputProcessor(processor),
+            text_processor=processor,
+            object_def=processor.object_def,
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
+        self.processor = processor
         self.template = template
-
-    @property
-    def mode(self) -> OutputMode:
-        return 'prompted'
 
     @classmethod
     def build_instructions(cls, template: str, object_def: OutputObjectDefinition) -> str:
@@ -494,12 +473,18 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 
         return template.format(schema=json.dumps(schema))
 
-    def instructions(self, default_template: str) -> str:  # pragma: no cover
-        """Get instructions to tell model to output JSON matching the schema."""
-        template = self.template or default_template
-        object_def = self.object_def
-        assert object_def is not None
-        return self.build_instructions(template, object_def)
+
+class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+    @property
+    def mode(self) -> OutputMode:
+        return 'native'
+
+
+@dataclass(init=False)
+class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+    @property
+    def mode(self) -> OutputMode:
+        return 'prompted'
 
 
 @dataclass(init=False)
@@ -529,6 +514,7 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
@@ -540,28 +526,6 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
 @dataclass(kw_only=True)
 class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
     object_def: OutputObjectDefinition
-
-
-@dataclass(init=False)
-class PromptedOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
-    wrapped: BaseObjectOutputProcessor[OutputDataT]
-
-    def __init__(self, wrapped: BaseObjectOutputProcessor[OutputDataT]):
-        self.wrapped = wrapped
-        super().__init__(object_def=wrapped.object_def)
-
-    async def process(
-        self,
-        data: str,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        text = _utils.strip_markdown_fences(data)
-
-        return await self.wrapped.process(
-            text, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
-        )
 
 
 @dataclass(init=False)
@@ -638,6 +602,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str | dict[str, Any] | None,
+        *,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
@@ -653,8 +618,11 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         Returns:
             Either the validated output data (left) or a retry message (right).
         """
+        if isinstance(data, str):
+            data = _utils.strip_markdown_fences(data)
+
         try:
-            output = self.validate(data, allow_partial)
+            output = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -671,13 +639,19 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     def validate(
         self,
         data: str | dict[str, Any] | None,
+        *,
         allow_partial: bool = False,
+        validation_context: Any | None = None,
     ) -> dict[str, Any]:
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
         if isinstance(data, str):
-            return self.validator.validate_json(data or '{}', allow_partial=pyd_allow_partial)
+            return self.validator.validate_json(
+                data or '{}', allow_partial=pyd_allow_partial, context=validation_context
+            )
         else:
-            return self.validator.validate_python(data or {}, allow_partial=pyd_allow_partial)
+            return self.validator.validate_python(
+                data or {}, allow_partial=pyd_allow_partial, context=validation_context
+            )
 
     async def call(
         self,
@@ -796,12 +770,16 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         union_object = await self._union_processor.process(
-            data, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            data,
+            run_context=run_context,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
         )
 
         result = union_object.result
@@ -817,7 +795,10 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 raise
 
         return await processor.process(
-            inner_data, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            inner_data,
+            run_context=run_context,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
         )
 
 
@@ -825,7 +806,9 @@ class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
+        validation_context: Any | None = None,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -856,14 +839,22 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
+        validation_context: Any | None = None,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         args = {self._str_argument_name: data}
         data = await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
 
-        return await super().process(data, run_context, allow_partial, wrap_validation_errors)
+        return await super().process(
+            data,
+            run_context=run_context,
+            validation_context=validation_context,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+        )
 
 
 @dataclass(init=False)
@@ -1012,4 +1003,35 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
             outputs_flat.extend(union_types)
         else:
             outputs_flat.append(cast(_OutputSpecItem[T], output))
+    return outputs_flat
+
+
+def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
+    outputs: Sequence[OutputSpec[T]]
+    if isinstance(output_spec, Sequence):
+        outputs = output_spec
+    else:
+        outputs = (output_spec,)
+
+    outputs_flat: list[T | type[str]] = []
+    for output in outputs:
+        if isinstance(output, NativeOutput):
+            outputs_flat.extend(types_from_output_spec(output.outputs))
+        elif isinstance(output, PromptedOutput):
+            outputs_flat.extend(types_from_output_spec(output.outputs))
+        elif isinstance(output, TextOutput):
+            outputs_flat.append(str)
+        elif isinstance(output, ToolOutput):
+            outputs_flat.extend(types_from_output_spec(output.output))
+        elif union_types := _utils.get_union_args(output):
+            outputs_flat.extend(union_types)
+        elif inspect.isfunction(output) or inspect.ismethod(output):
+            type_hints = get_function_type_hints(output)
+            if return_annotation := type_hints.get('return', None):
+                outputs_flat.extend(types_from_output_spec(return_annotation))
+            else:
+                outputs_flat.append(str)
+        else:
+            outputs_flat.append(cast(T, output))
+
     return outputs_flat

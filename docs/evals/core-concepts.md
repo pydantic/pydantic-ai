@@ -6,8 +6,8 @@ This page explains the key concepts in Pydantic Evals and how they work together
 
 Pydantic Evals is built around these core concepts:
 
-- **[`Dataset`][pydantic_evals.Dataset]** - A static definition containing test cases and evaluators
-- **[`Case`][pydantic_evals.Case]** - A single test scenario with inputs and optional expected outputs
+- **[`Dataset`][pydantic_evals.dataset.Dataset]** - A static definition containing test cases and evaluators
+- **[`Case`][pydantic_evals.dataset.Case]** - A single test scenario with inputs and optional expected outputs
 - **[`Evaluator`][pydantic_evals.evaluators.Evaluator]** - Logic for scoring or validating outputs
 - **Experiment** - The act of running a task function against all cases in a dataset. (This corresponds to a call to `Dataset.evaluate`.)
 - **[`EvaluationReport`][pydantic_evals.reporting.EvaluationReport]** - The results from running an experiment
@@ -24,8 +24,8 @@ A helpful way to think about Pydantic Evals:
 
 | Unit Testing | Pydantic Evals |
 |--------------|----------------|
-| Test function | [`Case`][pydantic_evals.Case] + [`Evaluator`][pydantic_evals.evaluators.Evaluator] |
-| Test suite | [`Dataset`][pydantic_evals.Dataset] |
+| Test function | [`Case`][pydantic_evals.dataset.Case] + [`Evaluator`][pydantic_evals.evaluators.Evaluator] |
+| Test suite | [`Dataset`][pydantic_evals.dataset.Dataset] |
 | Running tests (`pytest`) | **Experiment** (`dataset.evaluate(task)`) |
 | Test report | [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] |
 | `assert` | Evaluator returning `bool` |
@@ -40,7 +40,7 @@ Just like you can run `pytest` multiple times on the same test suite, you can ru
 
 ## Dataset
 
-A [`Dataset`][pydantic_evals.Dataset] is a collection of test cases and evaluators that define an evaluation suite.
+A [`Dataset`][pydantic_evals.dataset.Dataset] is a collection of test cases and evaluators that define an evaluation suite.
 
 ```python
 from pydantic_evals import Case, Dataset
@@ -99,7 +99,7 @@ An **Experiment** is what happens when you execute a task function against all c
 
 ### Running an Experiment
 
-You run an experiment by calling [`evaluate()`][pydantic_evals.Dataset.evaluate] or [`evaluate_sync()`][pydantic_evals.Dataset.evaluate_sync] on a dataset:
+You run an experiment by calling [`evaluate()`][pydantic_evals.dataset.Dataset.evaluate] or [`evaluate_sync()`][pydantic_evals.dataset.Dataset.evaluate_sync] on a dataset:
 
 ```python
 from pydantic_evals import Case, Dataset
@@ -182,7 +182,7 @@ This allows you to:
 
 ## Case
 
-A [`Case`][pydantic_evals.Case] represents a single test scenario with specific inputs and optional expected outputs.
+A [`Case`][pydantic_evals.dataset.Case] represents a single test scenario with specific inputs and optional expected outputs.
 
 ```python
 from pydantic_evals import Case

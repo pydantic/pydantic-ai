@@ -18,10 +18,12 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelRequest,
     ModelResponse,
@@ -47,11 +49,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from groq import APIStatusError, AsyncGroq
+    from groq import APIConnectionError, APIStatusError, AsyncGroq
     from groq.types import chat
     from groq.types.chat.chat_completion import Choice
     from groq.types.chat.chat_completion_chunk import (
@@ -96,6 +98,7 @@ class MockGroq:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
+    base_url: str = 'https://api.groq.com'
 
     @cached_property
     def chat(self) -> Any:
@@ -166,29 +169,39 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='llama-3.3-70b-versatile-123',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='llama-3.3-70b-versatile-123',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -233,7 +246,8 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -245,9 +259,13 @@ async def test_request_structured_response(allow_model_requests: None):
                     )
                 ],
                 model_name='llama-3.3-70b-versatile-123',
-                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -258,9 +276,10 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -324,9 +343,10 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -339,9 +359,13 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='llama-3.3-70b-versatile-123',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -352,9 +376,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         content='Wrong location, please try again',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -367,9 +392,13 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='llama-3.3-70b-versatile-123',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -380,17 +409,22 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
                 model_name='llama-3.3-70b-versatile-123',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -496,7 +530,8 @@ async def test_stream_structured(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -508,8 +543,10 @@ async def test_stream_structured(allow_model_requests: None):
                     )
                 ],
                 model_name='llama-3.3-70b-versatile',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='x',
                 run_id=IsStr(),
             ),
@@ -519,9 +556,10 @@ async def test_stream_structured(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -585,7 +623,7 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
 ):
-    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('meta-llama/llama-4-maverick-17b-128e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -606,16 +644,18 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
-                usage=RequestUsage(input_tokens=192, output_tokens=8),
-                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='arq6emmq6')],
+                usage=RequestUsage(input_tokens=712, output_tokens=20),
+                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'tool_calls'},
-                provider_response_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
+                provider_url='https://api.groq.com',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-31dace36-574a-42ee-a89f-154b2881e090',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -623,28 +663,24 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
-                        tool_call_id='call_wkpd',
+                        content='See file 241a70',
+                        tool_call_id='arq6emmq6',
                         timestamp=IsDatetime(),
                     ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 1c8566:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    UserPromptPart(content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=RequestUsage(input_tokens=2552, output_tokens=11),
-                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                usage=RequestUsage(input_tokens=1501, output_tokens=11),
+                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
-                provider_response_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
+                provider_url='https://api.groq.com',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-5644262c-ce2b-40af-9408-21690b4619a8',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -694,6 +730,21 @@ def test_model_status_error(allow_model_requests: None) -> None:
     )
 
 
+def test_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockGroq.create_mock(
+        APIConnectionError(
+            message='Connection to https://api.groq.com timed out',
+            request=httpx.Request('POST', 'https://api.groq.com/v1/chat/completions'),
+        )
+    )
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'llama-3.3-70b-versatile'
+    assert 'Connection to https://api.groq.com timed out' in str(exc_info.value.message)
+
+
 async def test_init_with_provider():
     provider = GroqProvider(api_key='api-key')
     model = GroqModel('llama3-8b-8192', provider=provider)
@@ -717,6 +768,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -726,7 +778,11 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 model_name='llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -756,6 +812,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -994,7 +1051,11 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 model_name='groq/compound',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=timezone.utc),
+                },
                 provider_response_id='stub',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1026,6 +1087,7 @@ async def test_groq_model_web_search_tool_stream(allow_model_requests: None, gro
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1161,7 +1223,11 @@ search(What is the weather in San Francisco today?)
                 model_name='groq/compound',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 9, 17, 21, 20, 46, tzinfo=timezone.utc),
+                },
                 provider_response_id='stub',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1917,6 +1983,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
         [
             ModelRequest(
                 parts=[UserPromptPart(content='I want a recipe to cook Uruguayan alfajores.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
             ),
@@ -1926,7 +1993,11 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1943,6 +2014,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
         [
             ModelRequest(
                 parts=[UserPromptPart(content='I want a recipe to cook Uruguayan alfajores.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
             ),
@@ -1952,7 +2024,11 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1964,6 +2040,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
             ),
@@ -1973,7 +2050,11 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2007,6 +2088,7 @@ async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_ap
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
             ),
@@ -2092,7 +2174,11 @@ Enjoy your homemade Uruguayan alfajores!\
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-4ef92b12-fb9d-486f-8b98-af9b5ecac736',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3346,6 +3432,7 @@ Enjoy your homemade Uruguayan alfajores!\
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
             ),
@@ -3451,7 +3538,11 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-dd0af56b-f71d-4101-be2f-89efcf3f05ac',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5292,6 +5383,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
             ),
@@ -5306,6 +5398,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_url='https://api.groq.com',
                 finish_reason='error',
                 run_id=IsStr(),
             ),
@@ -5331,6 +5424,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
             ),
@@ -5349,7 +5443,11 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': datetime(2025, 9, 2, 21, 3, 54, tzinfo=timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -5363,6 +5461,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
             ),
@@ -5377,7 +5476,11 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 9, 2, 21, 3, 57, tzinfo=timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5413,6 +5516,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
             ),
@@ -5434,6 +5538,8 @@ We need to output the call.\
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'timestamp': datetime(2025, 9, 2, 21, 23, 3, tzinfo=timezone.utc)},
                 provider_response_id='chatcmpl-4e0ca299-7515-490a-a98a-16d7664d4fba',
                 run_id=IsStr(),
             ),
@@ -5459,6 +5565,7 @@ We need to output the call.\
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
             ),
@@ -5475,7 +5582,11 @@ We need to output the call.\
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': datetime(2025, 9, 2, 21, 23, 4, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-fffa1d41-1763-493a-9ced-083bd3f2d98b',
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -5489,6 +5600,7 @@ We need to output the call.\
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
             ),
@@ -5498,7 +5610,11 @@ We need to output the call.\
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 9, 2, 21, 23, 4, tzinfo=timezone.utc),
+                },
                 provider_response_id='chatcmpl-fe6b5685-166f-4c71-9cd7-3d5a97301bf1',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5540,6 +5656,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5553,7 +5670,11 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5583,6 +5704,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5596,7 +5718,11 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.groq.com',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),

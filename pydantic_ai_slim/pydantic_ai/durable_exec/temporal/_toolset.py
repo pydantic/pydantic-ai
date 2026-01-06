@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Discriminator, with_config
+from temporalio import workflow
 from temporalio.workflow import ActivityConfig
-from typing_extensions import assert_never
+from typing_extensions import Self, assert_never
 
-from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
+from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._run_context import TemporalRunContext
 
@@ -27,11 +29,13 @@ class CallToolParams:
 
 @dataclass
 class _ApprovalRequired:
+    metadata: dict[str, Any] | None = None
     kind: Literal['approval_required'] = 'approval_required'
 
 
 @dataclass
 class _CallDeferred:
+    metadata: dict[str, Any] | None = None
     kind: Literal['call_deferred'] = 'call_deferred'
 
 
@@ -71,14 +75,24 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         # Temporalized toolsets cannot be swapped out after the fact.
         return self
 
+    async def __aenter__(self) -> Self:
+        if not workflow.in_workflow():  # pragma: no cover
+            await self.wrapped.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        if not workflow.in_workflow():  # pragma: no cover
+            return await self.wrapped.__aexit__(*args)
+        return None
+
     async def _wrap_call_tool_result(self, coro: Awaitable[Any]) -> CallToolResult:
         try:
             result = await coro
             return _ToolReturn(result=result)
-        except ApprovalRequired:
-            return _ApprovalRequired()
-        except CallDeferred:
-            return _CallDeferred()
+        except ApprovalRequired as e:
+            return _ApprovalRequired(metadata=e.metadata)
+        except CallDeferred as e:
+            return _CallDeferred(metadata=e.metadata)
         except ModelRetry as e:
             return _ModelRetry(message=e.message)
 
@@ -86,13 +100,28 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         if isinstance(result, _ToolReturn):
             return result.result
         elif isinstance(result, _ApprovalRequired):
-            raise ApprovalRequired()
+            raise ApprovalRequired(metadata=result.metadata)
         elif isinstance(result, _CallDeferred):
-            raise CallDeferred()
+            raise CallDeferred(metadata=result.metadata)
         elif isinstance(result, _ModelRetry):
             raise ModelRetry(result.message)
         else:
             assert_never(result)
+
+    async def _call_tool_in_activity(
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+    ) -> CallToolResult:
+        """Call a tool inside an activity, re-validating args that were deserialized.
+
+        The tool args will already have been validated into their proper types in the `ToolManager`,
+        but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
+        """
+        args_dict = tool.args_validator.validate_python(tool_args)
+        return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
 
 
 def temporalize_toolset(
@@ -117,6 +146,18 @@ def temporalize_toolset(
         from ._function_toolset import TemporalFunctionToolset
 
         return TemporalFunctionToolset(
+            toolset,
+            activity_name_prefix=activity_name_prefix,
+            activity_config=activity_config,
+            tool_activity_config=tool_activity_config,
+            deps_type=deps_type,
+            run_context_type=run_context_type,
+        )
+
+    if isinstance(toolset, DynamicToolset):
+        from ._dynamic_toolset import TemporalDynamicToolset
+
+        return TemporalDynamicToolset(
             toolset,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config,

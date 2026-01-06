@@ -2,23 +2,30 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from base64 import b64decode
+from collections.abc import Mapping, Sequence
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
     Any,
+    cast,
 )
 
 from ... import ExternalToolset, ToolDefinition
 from ...messages import (
+    AudioUrl,
+    BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
+    ImageUrl,
     ModelMessage,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
@@ -26,12 +33,15 @@ from ...toolsets import AbstractToolset
 
 try:
     from ag_ui.core import (
+        ActivityMessage,
         AssistantMessage,
         BaseEvent,
+        BinaryInputContent,
         DeveloperMessage,
         Message,
         RunAgentInput,
         SystemMessage,
+        TextInputContent,
         Tool as AGUITool,
         ToolMessage,
         UserMessage,
@@ -107,56 +117,81 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     @cached_property
     def state(self) -> dict[str, Any] | None:
         """Frontend state from the AG-UI run input."""
-        return self.run_input.state
+        state = self.run_input.state
+        if state is None:
+            return None
+
+        if isinstance(state, Mapping) and not state:
+            return None
+
+        return cast('dict[str, Any]', state)
 
     @classmethod
-    def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:
+    def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:  # noqa: C901
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
-
         for msg in messages:
-            if isinstance(msg, UserMessage | SystemMessage | DeveloperMessage) or (
-                isinstance(msg, ToolMessage) and not msg.tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX)
-            ):
-                if isinstance(msg, UserMessage):
-                    builder.add(UserPromptPart(content=msg.content))
-                elif isinstance(msg, SystemMessage | DeveloperMessage):
-                    builder.add(SystemPromptPart(content=msg.content))
-                else:
-                    tool_call_id = msg.tool_call_id
-                    tool_name = tool_calls.get(tool_call_id)
-                    if tool_name is None:  # pragma: no cover
-                        raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
+            match msg:
+                case UserMessage(content=content):
+                    if isinstance(content, str):
+                        builder.add(UserPromptPart(content=content))
+                    else:
+                        user_prompt_content: list[Any] = []
+                        for part in content:
+                            match part:
+                                case TextInputContent(text=text):
+                                    user_prompt_content.append(text)
+                                case BinaryInputContent():
+                                    if part.url:
+                                        try:
+                                            binary_part = BinaryContent.from_data_uri(part.url)
+                                        except ValueError:
+                                            media_type_constructors = {
+                                                'image': ImageUrl,
+                                                'video': VideoUrl,
+                                                'audio': AudioUrl,
+                                            }
+                                            media_type_prefix = part.mime_type.split('/', 1)[0]
+                                            constructor = media_type_constructors.get(media_type_prefix, DocumentUrl)
+                                            binary_part = constructor(url=part.url, media_type=part.mime_type)
+                                    elif part.data:
+                                        binary_part = BinaryContent(
+                                            data=b64decode(part.data), media_type=part.mime_type
+                                        )
+                                    else:  # pragma: no cover
+                                        raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
+                                    user_prompt_content.append(binary_part)
+                                case _:  # pragma: no cover
+                                    raise ValueError(f'Unsupported user message part type: {type(part)}')
 
-                    builder.add(
-                        ToolReturnPart(
-                            tool_name=tool_name,
-                            content=msg.content,
-                            tool_call_id=tool_call_id,
-                        )
-                    )
+                        if user_prompt_content:  # pragma: no branch
+                            content_to_add = (
+                                user_prompt_content[0]
+                                if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
+                                else user_prompt_content
+                            )
+                            builder.add(UserPromptPart(content=content_to_add))
 
-            elif isinstance(msg, AssistantMessage) or (  # pragma: no branch
-                isinstance(msg, ToolMessage) and msg.tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX)
-            ):
-                if isinstance(msg, AssistantMessage):
-                    if msg.content:
-                        builder.add(TextPart(content=msg.content))
+                case SystemMessage(content=content) | DeveloperMessage(content=content):
+                    builder.add(SystemPromptPart(content=content))
 
-                    if msg.tool_calls:
-                        for tool_call in msg.tool_calls:
+                case AssistantMessage(content=content, tool_calls=tool_calls_list):
+                    if content:
+                        builder.add(TextPart(content=content))
+                    if tool_calls_list:
+                        for tool_call in tool_calls_list:
                             tool_call_id = tool_call.id
                             tool_name = tool_call.function.name
                             tool_calls[tool_call_id] = tool_name
 
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
-                                _, provider_name, tool_call_id = tool_call_id.split('|', 2)
+                                _, provider_name, original_id = tool_call_id.split('|', 2)
                                 builder.add(
                                     BuiltinToolCallPart(
                                         tool_name=tool_name,
                                         args=tool_call.function.arguments,
-                                        tool_call_id=tool_call_id,
+                                        tool_call_id=original_id,
                                         provider_name=provider_name,
                                     )
                                 )
@@ -168,20 +203,32 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                         args=tool_call.function.arguments,
                                     )
                                 )
-                else:
-                    tool_call_id = msg.tool_call_id
+                case ToolMessage() as tool_msg:
+                    tool_call_id = tool_msg.tool_call_id
                     tool_name = tool_calls.get(tool_call_id)
                     if tool_name is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
-                    _, provider_name, tool_call_id = tool_call_id.split('|', 2)
 
-                    builder.add(
-                        BuiltinToolReturnPart(
-                            tool_name=tool_name,
-                            content=msg.content,
-                            tool_call_id=tool_call_id,
-                            provider_name=provider_name,
+                    if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
+                        _, provider_name, original_id = tool_call_id.split('|', 2)
+                        builder.add(
+                            BuiltinToolReturnPart(
+                                tool_name=tool_name,
+                                content=tool_msg.content,
+                                tool_call_id=original_id,
+                                provider_name=provider_name,
+                            )
                         )
-                    )
+                    else:
+                        builder.add(
+                            ToolReturnPart(
+                                tool_name=tool_name,
+                                content=tool_msg.content,
+                                tool_call_id=tool_call_id,
+                            )
+                        )
+
+                case ActivityMessage():
+                    pass
 
         return builder.messages

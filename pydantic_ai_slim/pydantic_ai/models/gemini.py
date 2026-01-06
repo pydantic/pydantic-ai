@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import base64
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -148,8 +147,8 @@ class GeminiModel(Model):
 
     @property
     def base_url(self) -> str:
-        assert self._url is not None, 'URL not initialized'  # pragma: no cover
-        return self._url  # pragma: no cover
+        assert self._url is not None, 'URL not initialized'
+        return self._url
 
     @property
     def model_name(self) -> GeminiModelName:
@@ -240,7 +239,7 @@ class GeminiModel(Model):
 
             output_object = model_request_parameters.output_object
             assert output_object is not None
-            generation_config['response_schema'] = self._map_response_schema(output_object)
+            generation_config['response_json_schema'] = self._map_response_schema(output_object)
         elif model_request_parameters.output_mode == 'prompted' and not tools:
             generation_config['response_mime_type'] = 'application/json'
 
@@ -298,6 +297,7 @@ class GeminiModel(Model):
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
+            provider_url=self.base_url,
         )
 
     async def _process_streamed_response(
@@ -329,6 +329,7 @@ class GeminiModel(Model):
             _content=content,
             _stream=aiter_bytes,
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
         )
 
     async def _message_to_gemini_content(
@@ -363,7 +364,7 @@ class GeminiModel(Model):
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            sys_prompt_parts.insert(0, _GeminiTextPart(text=instructions))
+            sys_prompt_parts.append(_GeminiTextPart(text=instructions))
         return sys_prompt_parts, contents
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[_GeminiPartUnion]:
@@ -375,9 +376,8 @@ class GeminiModel(Model):
                 if isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
-                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     content.append(
-                        _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
+                        _GeminiInlineDataPart(inline_data={'data': item.base64, 'mime_type': item.media_type})
                     )
                 elif isinstance(item, VideoUrl) and item.is_youtube:
                     file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
@@ -453,6 +453,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _provider_name: str
+    _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -526,6 +527,11 @@ class GeminiStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
@@ -619,7 +625,7 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     stop_sequences: list[str]
     thinking_config: ThinkingConfig
     response_mime_type: str
-    response_schema: dict[str, Any]
+    response_json_schema: dict[str, Any]
 
 
 class _GeminiContent(TypedDict):
@@ -629,9 +635,21 @@ class _GeminiContent(TypedDict):
 
 def _content_model_response(m: ModelResponse) -> _GeminiContent:
     parts: list[_GeminiPartUnion] = []
+    function_call_requires_signature = True
     for item in m.parts:
         if isinstance(item, ToolCallPart):
-            parts.append(_function_call_part_from_call(item))
+            part = _function_call_part_from_call(item)
+            if function_call_requires_signature and not part.get('thought_signature'):
+                # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs:
+                # > You can set the following dummy signatures of either "context_engineering_is_the_way_to_go"
+                # > or "skip_thought_signature_validator"
+                # Per https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling:
+                # > You can set thought_signature to skip_thought_signature_validator
+                # We use "skip_thought_signature_validator" as it works for both Gemini API and Vertex AI.
+                part['thought_signature'] = b'skip_thought_signature_validator'
+            # Only the first function call requires a signature
+            function_call_requires_signature = False
+            parts.append(part)
         elif isinstance(item, ThinkingPart):
             # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
             # please open an issue. The below code is the code to send thinking to the provider.
@@ -690,6 +708,8 @@ class _GeminiThoughtPart(TypedDict):
 class _GeminiFunctionCallPart(_BasePart):
     function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
 
+    thought_signature: NotRequired[Annotated[bytes, pydantic.Field(alias='thoughtSignature')]]
+
 
 def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart:
     return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args_as_dict()))
@@ -700,6 +720,7 @@ def _process_response_from_parts(
     model_name: GeminiModelName,
     usage: usage.RequestUsage,
     vendor_id: str | None,
+    provider_url: str,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
@@ -718,7 +739,12 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, usage=usage, model_name=model_name, provider_response_id=vendor_id, provider_details=vendor_details
+        parts=items,
+        usage=usage,
+        model_name=model_name,
+        provider_response_id=vendor_id,
+        provider_details=vendor_details,
+        provider_url=provider_url,
     )
 
 
@@ -786,18 +812,12 @@ class _GeminiTools(TypedDict):
 class _GeminiFunction(TypedDict):
     name: str
     description: str
-    parameters: NotRequired[dict[str, Any]]
-    """
-    ObjectJsonSchema isn't really true since Gemini only accepts a subset of JSON Schema
-    <https://ai.google.dev/gemini-api/docs/function-calling#function_declarations>
-    and
-    <https://ai.google.dev/api/caching#FunctionDeclaration>
-    """
+    parameters_json_schema: NotRequired[dict[str, Any]]
 
 
 def _function_from_abstract_tool(tool: ToolDefinition) -> _GeminiFunction:
     json_schema = tool.parameters_json_schema
-    f = _GeminiFunction(name=tool.name, description=tool.description or '', parameters=json_schema)
+    f = _GeminiFunction(name=tool.name, description=tool.description or '', parameters_json_schema=json_schema)
     return f
 
 

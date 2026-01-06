@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 from collections.abc import Sequence
 from typing import Literal
@@ -89,7 +91,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                                     'user',
                                     mcp_types.ImageContent(
                                         type='image',
-                                        data=base64.b64decode(chunk.data).decode(),
+                                        data=chunk.base64,
                                         mimeType=chunk.media_type,
                                     ),
                                 )
@@ -107,7 +109,8 @@ def map_from_model_response(model_response: messages.ModelResponse) -> mcp_types
     for part in model_response.parts:
         if isinstance(part, messages.TextPart):
             text_parts.append(part.content)
-        # TODO(Marcelo): We should ignore ThinkingPart here.
+        elif isinstance(part, messages.ThinkingPart):
+            continue
         else:
             raise exceptions.UnexpectedModelBehavior(f'Unexpected part type: {type(part).__name__}, expected TextPart')
     return mcp_types.TextContent(type='text', text=''.join(text_parts))

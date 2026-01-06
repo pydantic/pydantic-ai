@@ -99,8 +99,8 @@ Output:
 
 Understanding a few core concepts will help you get the most out of Pydantic Evals:
 
-- **[`Dataset`][pydantic_evals.Dataset]** - A collection of test cases and (optional) evaluators
-- **[`Case`][pydantic_evals.Case]** - A single test scenario with inputs and optional expected outputs and case-specific evaluators
+- **[`Dataset`][pydantic_evals.dataset.Dataset]** - A collection of test cases and (optional) evaluators
+- **[`Case`][pydantic_evals.dataset.Case]** - A single test scenario with inputs and optional expected outputs and case-specific evaluators
 - **[`Evaluator`][pydantic_evals.evaluators.Evaluator]** - A function that scores or validates task outputs
 - **[`EvaluationReport`][pydantic_evals.reporting.EvaluationReport]** - Results from running an evaluation
 

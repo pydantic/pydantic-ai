@@ -1,0 +1,161 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '158'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be helpful.
+        role: system
+      - content: Tell me a joke.
+        role: user
+      model: google/gemini-2.0-flash-exp:free
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      error:
+        code: 429
+        message: Provider returned error
+        metadata:
+          provider_name: Google
+          raw: 'google/gemini-2.0-flash-exp:free is temporarily rate-limited upstream. Please retry shortly, or add your own
+            key to accumulate your rate limits: https://openrouter.ai/settings/integrations'
+      user_id: user_2wT5ElBE4Es3R4QrNLpZiXICmQP
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '158'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be helpful.
+        role: system
+      - content: Tell me a joke.
+        role: user
+      model: google/gemini-2.0-flash-exp:free
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      error:
+        code: 429
+        message: Provider returned error
+        metadata:
+          provider_name: Google
+          raw: 'google/gemini-2.0-flash-exp:free is temporarily rate-limited upstream. Please retry shortly, or add your own
+            key to accumulate your rate limits: https://openrouter.ai/settings/integrations'
+      user_id: user_2wT5ElBE4Es3R4QrNLpZiXICmQP
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '158'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be helpful.
+        role: system
+      - content: Tell me a joke.
+        role: user
+      model: google/gemini-2.0-flash-exp:free
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      error:
+        code: 429
+        message: Provider returned error
+        metadata:
+          provider_name: Google
+          raw: 'google/gemini-2.0-flash-exp:free is temporarily rate-limited upstream. Please retry shortly, or add your own
+            key to accumulate your rate limits: https://openrouter.ai/settings/integrations'
+      user_id: user_2wT5ElBE4Es3R4QrNLpZiXICmQP
+    status:
+      code: 429
+      message: Too Many Requests
+version: 1

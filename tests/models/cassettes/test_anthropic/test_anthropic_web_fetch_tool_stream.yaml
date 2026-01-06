@@ -1,0 +1,211 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '361'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: true
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - name: web_fetch
+        type: web_fetch_20250910
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-20250514","id":"msg_015eAVGKhBrs95jUkYb2BaDt","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":899,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard"}}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants"}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me to fetch"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the content"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" from the URL https"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"://ai.pydantic.dev"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" and provide"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" only"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the first sentence from"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that page."}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I need to use the web_fetch"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" tool to"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" get the content from"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" this URL."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE="}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk","name":"web_fetch","input":{}}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"url\": \""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"https://ai"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":".p"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"yd"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"antic.dev\"}"} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk","content":{"type":"web_fetch_result","url":"https://ai.pydantic.dev","retrieved_at":"2025-11-14T23:34:21.151000+00:00","content":{"type":"document","source":{"type":"text","media_type":"text/plain","data":"Pydantic AI\nGenAI Agent Framework, the Pydantic way\nPydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.\nFastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.\nYet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.\nWe built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.\nWhy use Pydantic AI\n-\nBuilt by the Pydantic Team:\n[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -\nModel-agnostic: Supports virtually every\n[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -\nSeamless Observability: Tightly\n[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -\nFully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and\n[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust \"if it compiles, it works\" feel. -\nPowerful Evals: Enables you to systematically test and\n[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -\nMCP, A2A, and UI: Integrates the\n[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -\nHuman-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls\n[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -\nDurable Execution: Enables you to build\n[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -\nStreamed Outputs: Provides the ability to\n[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -\nGraph Support: Provides a powerful way to define\n[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.\nRealistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!\nSign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:\nHello World Example\nHere's a minimal example of Pydantic AI:\n[Learn about Gateway](gateway)hello_world.py\nfrom pydantic_ai import Agent\nagent = Agent( # (1)!\n'gateway/anthropic:claude-sonnet-4-0',\ninstructions='Be concise, reply with one sentence.', # (2)!\n)\nresult = agent.run_sync('Where does \"hello world\" come from?') # (3)!\nprint(result.output)\n\"\"\"\nThe first known use of \"hello, world\" was in a 1974 textbook about the C programming language.\n\"\"\"\n- We configure the agent to use\n[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static\n[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.\nfrom pydantic_ai import Agent\nagent = Agent( # (1)!\n'anthropic:claude-sonnet-4-0',\ninstructions='Be concise, reply with one sentence.', # (2)!\n)\nresult = agent.run_sync('Where does \"hello world\" come from?') # (3)!\nprint(result.output)\n\"\"\"\nThe first known use of \"hello, world\" was in a 1974 textbook about the C programming language.\n\"\"\"\n- We configure the agent to use\n[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static\n[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.\n(This example is complete, it can be run \"as is\", assuming you've [installed the pydantic_ai package](install/))\nThe exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.\nNot very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.\nTools & Dependency Injection Example\nHere is a concise example using Pydantic AI to build a support agent for a bank:\n[Learn about Gateway](gateway)bank_support.py\nfrom dataclasses import dataclass\nfrom pydantic import BaseModel, Field\nfrom pydantic_ai import Agent, RunContext\nfrom bank_database import DatabaseConn\n@dataclass\nclass SupportDependencies: # (3)!\ncustomer_id: int\ndb: DatabaseConn # (12)!\nclass SupportOutput(BaseModel): # (13)!\nsupport_advice: str = Field(description='Advice returned to the customer')\nblock_card: bool = Field(description=\"Whether to block the customer's card\")\nrisk: int = Field(description='Risk level of query', ge=0, le=10)\nsupport_agent = Agent( # (1)!\n'gateway/openai:gpt-5', # (2)!\ndeps_type=SupportDependencies,\noutput_type=SupportOutput, # (9)!\ninstructions=( # (4)!\n'You are a support agent in our bank, give the '\n'customer support and judge the risk level of their query.'\n),\n)\n@support_agent.instructions # (5)!\nasync def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:\ncustomer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)\nreturn f\"The customer's name is {customer_name!r}\"\n@support_agent.tool # (6)!\nasync def customer_balance(\nctx: RunContext[SupportDependencies], include_pending: bool\n) -> float:\n\"\"\"Returns the customer's current account balance.\"\"\" # (7)!\nreturn await ctx.deps.db.customer_balance(\nid=ctx.deps.customer_id,\ninclude_pending=include_pending,\n)\n... # (11)!\nasync def main():\ndeps = SupportDependencies(customer_id=123, db=DatabaseConn())\nresult = await support_agent.run('What is my balance?', deps=deps) # (8)!\nprint(result.output) # (10)!\n\"\"\"\nsupport_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1\n\"\"\"\nresult = await support_agent.run('I just lost my card!', deps=deps)\nprint(result.output)\n\"\"\"\nsupport_advice=\"I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions.\" block_card=True risk=8\n\"\"\"\n- This\n[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]\n. - Here we configure the agent to use\n[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The\nSupportDependencies\ndataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static\n[instructions](agents/#instructions)can be registered with theto the agent.instructions\nkeyword argument - Dynamic\n[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions\nargument, which is parameterized with theRunContext\ndeps_type\nfrom above. If the type annotation here is wrong, static type checkers will catch it. - The\ndecorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool\n, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext\n- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are\n[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a\nSupportOutput\n. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a\nSupportOutput\n, since the agent is generic, it'll also be typed as aSupportOutput\nto aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.\n- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.\n- This\n[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.\nfrom dataclasses import dataclass\nfrom pydantic import BaseModel, Field\nfrom pydantic_ai import Agent, RunContext\nfrom bank_database import DatabaseConn\n@dataclass\nclass SupportDependencies: # (3)!\ncustomer_id: int\ndb: DatabaseConn # (12)!\nclass SupportOutput(BaseModel): # (13)!\nsupport_advice: str = Field(description='Advice returned to the customer')\nblock_card: bool = Field(description=\"Whether to block the customer's card\")\nrisk: int = Field(description='Risk level of query', ge=0, le=10)\nsupport_agent = Agent( # (1)!\n'openai:gpt-5', # (2)!\ndeps_type=SupportDependencies,\noutput_type=SupportOutput, # (9)!\ninstructions=( # (4)!\n'You are a support agent in our bank, give the '\n'customer support and judge the risk level of their query.'\n),\n)\n@support_agent.instructions # (5)!\nasync def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:\ncustomer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)\nreturn f\"The customer's name is {customer_name!r}\"\n@support_agent.tool # (6)!\nasync def customer_balance(\nctx: RunContext[SupportDependencies], include_pending: bool\n) -> float:\n\"\"\"Returns the customer's current account balance.\"\"\" # (7)!\nreturn await ctx.deps.db.customer_balance(\nid=ctx.deps.customer_id,\ninclude_pending=include_pending,\n)\n... # (11)!\nasync def main():\ndeps = SupportDependencies(customer_id=123, db=DatabaseConn())\nresult = await support_agent.run('What is my balance?', deps=deps) # (8)!\nprint(result.output) # (10)!\n\"\"\"\nsupport_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1\n\"\"\"\nresult = await support_agent.run('I just lost my card!', deps=deps)\nprint(result.output)\n\"\"\"\nsupport_advice=\"I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions.\" block_card=True risk=8\n\"\"\"\n- This\n[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]\n. - Here we configure the agent to use\n[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The\nSupportDependencies\ndataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static\n[instructions](agents/#instructions)can be registered with theto the agent.instructions\nkeyword argument - Dynamic\n[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions\nargument, which is parameterized with theRunContext\ndeps_type\nfrom above. If the type annotation here is wrong, static type checkers will catch it. - The\ndecorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool\n, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext\n- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are\n[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a\nSupportOutput\n. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a\nSupportOutput\n, since the agent is generic, it'll also be typed as aSupportOutput\nto aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.\n- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.\n- This\n[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.\nComplete bank_support.py\nexample\nThe code included here is incomplete for the sake of brevity (the definition of DatabaseConn\nis missing); you can find the complete bank_support.py\nexample [here](examples/bank-support/).\nInstrumentation with Pydantic Logfire\nEven a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.\nTo do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:\n[Learn about Gateway](gateway)bank_support_with_logfire.py\n...\nfrom pydantic_ai import Agent, RunContext\nfrom bank_database import DatabaseConn\nimport logfire\nlogfire.configure() # (1)!\nlogfire.instrument_pydantic_ai() # (2)!\nlogfire.instrument_asyncpg() # (3)!\n...\nsupport_agent = Agent(\n'gateway/openai:gpt-5',\ndeps_type=SupportDependencies,\noutput_type=SupportOutput,\nsystem_prompt=(\n'You are a support agent in our bank, give the '\n'customer support and judge the risk level of their query.'\n),\n)\n- Configure the Logfire SDK, this will fail if project is not set up.\n- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the\nto the agent.instrument=True\nkeyword argument - In our demo,\nDatabaseConn\nusesto connect to a PostgreSQL database, soasyncpg\nis used to log the database queries.logfire.instrument_asyncpg()\n...\nfrom pydantic_ai import Agent, RunContext\nfrom bank_database import DatabaseConn\nimport logfire\nlogfire.configure() # (1)!\nlogfire.instrument_pydantic_ai() # (2)!\nlogfire.instrument_asyncpg() # (3)!\n...\nsupport_agent = Agent(\n'openai:gpt-5',\ndeps_type=SupportDependencies,\noutput_type=SupportOutput,\nsystem_prompt=(\n'You are a support agent in our bank, give the '\n'customer support and judge the risk level of their query.'\n),\n)\n- Configure the Logfire SDK, this will fail if project is not set up.\n- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the\nto the agent.instrument=True\nkeyword argument - In our demo,\nDatabaseConn\nusesto connect to a PostgreSQL database, soasyncpg\nis used to log the database queries.logfire.instrument_asyncpg()\nThat's enough to get the following view of your agent in action:\nSee [Monitoring and Performance](logfire/) to learn more.\nllms.txt\nThe Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.\nThis format is defined in Markdown and suited for LLMs and AI coding assistants and agents.\nTwo formats are available:\n: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt\n[here](https://llmstxt.org/#format).: Similar to thellms-full.txt\nllms.txt\nfile, but every link content is included. Note that this file may be too large for some LLMs.\nAs of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.\nNext Steps\nTo try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).\nRead the [docs](agents/) to learn more about building applications with Pydantic AI.\nRead the [API Reference](api/agent/) to understand Pydantic AI's interface.\nJoin [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions."},"title":"Pydantic AI"}}} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"P"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"ydantic AI is a"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Python"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" agent"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" framework"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" designe"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"d to help"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" you quickly"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":","}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" confi"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"dently,"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" and pain"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"lessly build production"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" grade"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" applications"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" an"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"d workflows"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" with"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Gener"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"ative AI."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":7244,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":153,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":1}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      retry-after:
+      - '15'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...
