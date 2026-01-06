@@ -174,7 +174,7 @@ class PartialEndTag(PartialThinkingTag):
             return self.respective_opening_tag + self.buffer
 
     def validate_new_content(self, new_content: str, trim_whitespace: bool = False) -> EndTagValidation:
-        if trim_whitespace and not self.has_previous_part:  # pragma: no cover
+        if trim_whitespace and not self.has_previous_part:
             new_content = new_content.lstrip()
 
         if not new_content:
@@ -278,8 +278,7 @@ class ModelResponsePartsManager:
 
     def _stop_tracking_partial_tag(self, partial_tag: PartialStartTag | PartialEndTag) -> None:
         """Stop tracking a partial tag."""
-        if partial_tag in self._partial_tags_list:  # pragma: no cover
-            # this is a defensive check in case we try to remove a tag that wasn't tracked
+        if partial_tag in self._partial_tags_list:
             self._partial_tags_list.remove(partial_tag)
 
     def _get_active_partial_tag(
