@@ -19,7 +19,6 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
-from pydantic_ai.messages import ModelResponseStreamEvent
 
 from .conftest import IsStr
 
@@ -73,30 +72,64 @@ def test_handle_tool_call_deltas():
     assert manager.get_parts() == snapshot([])
 
     # Now that we have a tool name, we can produce a part:
-    event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name='tool', args=None, tool_call_id='call')
+    event = manager.handle_tool_call_delta(
+        vendor_part_id='first',
+        tool_name='tool',
+        args=None,
+        tool_call_id='call',
+        provider_details={'foo': 'bar'},
+    )
     assert event == snapshot(
         PartStartEvent(
             index=0,
-            part=ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id='call', part_kind='tool-call'),
+            part=ToolCallPart(
+                tool_name='tool',
+                args='{"arg1":',
+                tool_call_id='call',
+                part_kind='tool-call',
+                provider_details={'foo': 'bar'},
+            ),
             event_kind='part_start',
         )
     )
     assert manager.get_parts() == snapshot(
-        [ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id='call', part_kind='tool-call')]
+        [
+            ToolCallPart(
+                tool_name='tool',
+                args='{"arg1":',
+                tool_call_id='call',
+                part_kind='tool-call',
+                provider_details={'foo': 'bar'},
+            ),
+        ]
     )
 
-    event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name='1', args=None, tool_call_id=None)
+    event = manager.handle_tool_call_delta(
+        vendor_part_id='first', tool_name='1', args=None, tool_call_id=None, provider_details={'baz': 'qux'}
+    )
     assert event == snapshot(
         PartDeltaEvent(
             index=0,
             delta=ToolCallPartDelta(
-                tool_name_delta='1', args_delta=None, tool_call_id='call', part_delta_kind='tool_call'
+                tool_name_delta='1',
+                args_delta=None,
+                tool_call_id='call',
+                part_delta_kind='tool_call',
+                provider_details={'baz': 'qux'},
             ),
             event_kind='part_delta',
         )
     )
     assert manager.get_parts() == snapshot(
-        [ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id='call', part_kind='tool-call')]
+        [
+            ToolCallPart(
+                tool_name='tool1',
+                args='{"arg1":',
+                tool_call_id='call',
+                part_kind='tool-call',
+                provider_details={'foo': 'bar', 'baz': 'qux'},
+            ),
+        ]
     )
 
     event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name=None, args='"value1"}', tool_call_id=None)
@@ -115,6 +148,7 @@ def test_handle_tool_call_deltas():
                 tool_name='tool1',
                 args='{"arg1":"value1"}',
                 tool_call_id='call',
+                provider_details={'foo': 'bar', 'baz': 'qux'},
                 part_kind='tool-call',
             )
         ]
@@ -471,9 +505,7 @@ def test_handle_thinking_delta_no_content_or_signature():
         pass
 
     # Updating with no content, signature, or provider_details emits no event
-    events: list[ModelResponseStreamEvent] = []
-    for event in manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None):
-        events.append(event)
+    events = list(manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None))
     assert events == []
 
 

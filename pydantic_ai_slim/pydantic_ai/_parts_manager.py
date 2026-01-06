@@ -52,6 +52,7 @@ this includes ToolCallPartDelta's in addition to the more fully-formed ModelResp
 """
 
 PartT = TypeVar('PartT', bound=ModelResponsePart)
+ManagedPartT = TypeVar('ManagedPartT', bound=ManagedPart)
 
 
 @dataclass
@@ -259,6 +260,15 @@ class ModelResponsePartsManager:
             return self._parts[part_index], part_index
         return None, None
 
+    def _latest_part_if_of_type(self, *part_types: type[ManagedPartT]) -> tuple[ManagedPartT, int] | None:
+        """Get the latest part and its index if it's an instance of the given type(s)."""
+        if self._parts:
+            part_index = len(self._parts) - 1
+            latest_part = self._parts[part_index]
+            if isinstance(latest_part, part_types):
+                return latest_part, part_index
+        return None
+
     def _get_partial_by_part_index(self, part_index: int) -> PartialStartTag | PartialEndTag | None:
         """Get a partial thinking tag by its associated part index."""
         for tag in self._partial_tags_list:
@@ -358,7 +368,7 @@ class ModelResponsePartsManager:
         - C1: Thinking tags are only processed when `thinking_tags` is provided.
         - C2: Opening thinking tags are only recognized at the start of a content chunk.
         - C3.0: Closing thinking tags are recognized anywhere within a content chunk.
-            - C3.1: Any text following a closing thinking tag in the same content chunk is treated as a new TextPart.
+            - C3.1: Any text following a closing thinking tag in the same content chunk is treated as a new `TextPart`.
 
         ### Supported edge cases of embedded thinking:
         - Thinking tags may arrive split across multiple content chunks. E.g., '<thi' in one chunk and 'nk>' in the next.
@@ -370,8 +380,8 @@ class ModelResponsePartsManager:
         Args:
             vendor_part_id: The ID the vendor uses to identify this piece
                 of text. If None, a new part will be created unless the latest part is already
-                a TextPart.
-            content: The text content to append to the appropriate TextPart.
+                a `TextPart`.
+            content: The text content to append to the appropriate `TextPart`.
             id: An optional id for the text part.
             provider_details: Optional provider-specific details to attach to the text part.
             thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
@@ -383,7 +393,7 @@ class ModelResponsePartsManager:
             - `None` if no new event is emitted (e.g., the first text part was all whitespace).
 
         Raises:
-            UnexpectedModelBehavior: If attempting to apply text content to a part that is not a TextPart.
+            UnexpectedModelBehavior: If attempting to apply text content to a part that is not a `TextPart`.
         """
         existing_part: _ExistingPart[TextPart] | _ExistingPart[ThinkingPart] | None = None
 
@@ -425,7 +435,7 @@ class ModelResponsePartsManager:
         # from here on we handle embedded thinking
         partial_tag = self._get_active_partial_tag(existing_part, vendor_part_id)
 
-        # 6. Handle based on current state
+        # handle part based on current state
         if existing_part is not None and isinstance(existing_part.part, ThinkingPart):
             # Must be closing a ThinkingPart
             thinking_part_existing = cast(_ExistingPart[ThinkingPart], existing_part)
@@ -751,11 +761,7 @@ class ModelResponsePartsManager:
         existing_thinking_part_and_index: tuple[ThinkingPart, int] | None = None
 
         if vendor_part_id is None:
-            if self._parts:
-                part_index = len(self._parts) - 1
-                latest_part = self._parts[part_index]
-                if isinstance(latest_part, ThinkingPart):
-                    existing_thinking_part_and_index = latest_part, part_index
+            existing_thinking_part_and_index = self._latest_part_if_of_type(ThinkingPart)
         else:
             existing_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
             if part_index is not None:
@@ -837,11 +843,13 @@ class ModelResponsePartsManager:
         )
 
         if vendor_part_id is None:
-            if tool_name is None and self._parts:
-                part_index = len(self._parts) - 1
-                latest_part = self._parts[part_index]
-                if isinstance(latest_part, ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta):
-                    existing_matching_part_and_index = latest_part, part_index
+            # vendor_part_id is None, so check if the latest part is a matching tool call or delta to update
+            # When the vendor_part_id is None, if the tool_name is _not_ None, assume this should be a new part rather
+            # than a delta on an existing one. We can change this behavior in the future if necessary for some model.
+            if tool_name is None:
+                existing_matching_part_and_index = self._latest_part_if_of_type(
+                    ToolCallPart, BuiltinToolCallPart, ToolCallPartDelta
+                )
         else:
             existing_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
             if part_index is not None:
@@ -866,8 +874,10 @@ class ModelResponsePartsManager:
             self._parts[part_index] = updated_part
             if isinstance(updated_part, ToolCallPart | BuiltinToolCallPart):
                 if isinstance(existing_part, ToolCallPartDelta):
+                    # We just upgraded a delta to a full part, so emit a PartStartEvent
                     return PartStartEvent(index=part_index, part=updated_part)
                 else:
+                    # We updated an existing part, so emit a PartDeltaEvent
                     if updated_part.tool_call_id and not delta.tool_call_id:
                         delta = replace(delta, tool_call_id=updated_part.tool_call_id)
                     return PartDeltaEvent(index=part_index, delta=delta)
