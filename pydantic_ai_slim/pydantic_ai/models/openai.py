@@ -1802,8 +1802,8 @@ class OpenAIResponsesModel(Model):
                                 WebSearchTool.kind: web_search_item,
                                 FileSearchTool.kind: file_search_item,
                             }
-                            if status and (_item := kind_to_item.get(item.tool_name)) is not None:
-                                _item['status'] = status
+                            if status and (builtin_item := kind_to_item.get(item.tool_name)) is not None:
+                                builtin_item['status'] = status
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass

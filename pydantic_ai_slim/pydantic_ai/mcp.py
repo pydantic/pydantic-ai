@@ -371,7 +371,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
 
-    # TODO(David) v2: enforce the arguments to be passed as keyword arguments only
+    # TODO (v2): enforce the arguments to be passed as keyword arguments only
     def __init__(
         self,
         tool_prefix: str | None = None,
