@@ -2250,13 +2250,7 @@ async def test_tool_approval_no_approvals_extracted():
 
 async def test_run_stream_with_explicit_deferred_tool_results():
     """Test that run_stream accepts explicit deferred_tool_results parameter."""
-
-    async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
-    ) -> AsyncIterator[DeltaToolCalls | str]:
-        yield 'Done'
-
-    agent = Agent(model=FunctionModel(stream_function=stream_function))
+    agent = Agent(model=TestModel())
 
     request = SubmitMessage(
         id='foo',
