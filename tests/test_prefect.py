@@ -6,9 +6,11 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import MagicMock
+from urllib.parse import urlparse
 
+import httpcore
 import pytest
 from pydantic import BaseModel
 
@@ -74,9 +76,45 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
-    # TODO(Marcelo): We are temporarily disabling it. We should enable them again.
-    pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
 ]
+
+LOCALHOST_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0'}
+
+
+def _is_localhost_request(request: httpcore.Request) -> bool:
+    return urlparse(bytes(request.url).decode('ascii')).hostname in LOCALHOST_HOSTS
+
+
+@pytest.fixture(autouse=True, scope='module')
+def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
+    try:
+        import vcr.stubs.httpcore_stubs as httpcore_stubs
+    except ImportError:  # pragma: no cover
+        yield
+        return
+
+    orig_async = httpcore_stubs.vcr_handle_async_request  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    orig_sync = httpcore_stubs.vcr_handle_request  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+    def _wrap(orig: Any) -> Any:
+        def patched(cassette: Any, real_handle: Any) -> Any:
+            vcr_wrapper: Any = orig(cassette, real_handle)
+
+            def wrapper(self: Any, req: httpcore.Request) -> Any:
+                return real_handle(self, req) if _is_localhost_request(req) else vcr_wrapper(self, req)
+
+            return wrapper
+
+        return patched
+
+    httpcore_stubs.vcr_handle_async_request = _wrap(orig_async)
+    httpcore_stubs.vcr_handle_request = _wrap(orig_sync)
+    try:
+        yield
+    finally:
+        httpcore_stubs.vcr_handle_async_request = orig_async
+        httpcore_stubs.vcr_handle_request = orig_sync
+
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
