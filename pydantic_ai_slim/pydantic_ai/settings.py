@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 from httpx import Timeout
 from typing_extensions import TypedDict
@@ -260,6 +260,6 @@ def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | 
                 result[key] = base_value | override_value
             else:
                 result[key] = override_value
-        return result
+        return cast(ModelSettings, result)
     else:
         return base or overrides
