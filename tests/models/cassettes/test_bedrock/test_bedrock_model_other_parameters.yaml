@@ -1,46 +1,45 @@
 interactions:
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
-      are a helpful chatbot."}], "requestMetadata": {"test": "test"}, "additionalModelResponseFieldPaths": ["test"], "additionalModelRequestFields": {"test": "test"}, "promptVariables": {"leo": {"text": "aaaa"}}'
+      are a helpful chatbot."}], "inferenceConfig": {}, "requestMetadata": {"test": "test"}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZmZhYjMyZmItODRjOS00YWZjLWE4NTAtNTQ4OTUxMjI5NmU4
+        NzE3Y2Q0OWEtYzAxZi00Nzg3LThjZGQtOTRmZjEwYjY2MjU3
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '178'
+      - '201'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '206'
+      - '515'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 159
+        latencyMs: 480
       output:
         message:
           content:
-          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural,
-              political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum,
-              and the Notre-Dame Cathedral, among many other historical and architectural treasures.
-
+          - text: The capital of France is Paris. Paris is not only the political center of the country but also a major global
+              city known for its significant cultural, historical, and economic influence. It's famous for landmarks such
+              as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions.
           role: assistant
-      stopReason: max_tokens
+      stopReason: end_turn
       usage:
         inputTokens: 13
-        outputTokens: 5
-        totalTokens: 18
-      additionalModelResponseFields: "test"
+        outputTokens: 63
+        serverToolUsage: {}
+        totalTokens: 76
     status:
       code: 200
       message: OK

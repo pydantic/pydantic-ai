@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-import datetime
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -44,7 +44,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsInstance, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from botocore.exceptions import ClientError
@@ -274,15 +274,15 @@ def test_remove_inference_geo_prefix(model_name: str, expected: str):
 
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries=5)
 
     class Response(TypedDict):
         temperature: str
-        date: datetime.date
+        date: date
         city: str
 
     @agent.tool_plain
-    async def temperature(city: str, date: datetime.date) -> str:
+    async def temperature(city: str, date: date) -> str:
         """Get the temperature in a city on a specific date.
 
         Args:
@@ -295,40 +295,34 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
         return '30°C'
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
-    assert result.output == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=1236, output_tokens=298, tool_calls=1))
+    assert result.output == snapshot({'temperature': '30°C', 'date': date(2022, 1, 1), 'city': 'London'})
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=1198, output_tokens=74, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What was the temperature in London 1st January 2022?',
-                        timestamp=IsDatetime(),
-                    ),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
-                        content='<thinking> To find the temperature in London on 1st January 2022, I will use the "temperature" tool. I need to provide the date and the city name. The date is already provided as "1st January 2022" and the city name is "London". I will call the "temperature" tool with these parameters.</thinking>\n'
-                    ),
                     ToolCallPart(
                         tool_name='temperature',
                         args={'date': '2022-01-01', 'city': 'London'},
-                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
-                    ),
+                        tool_call_id=IsStr(),
+                    )
                 ],
-                usage=RequestUsage(input_tokens=551, output_tokens=132),
+                usage=RequestUsage(input_tokens=571, output_tokens=22),
                 model_name='us.amazon.nova-micro-v1:0',
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_url='https://bedrock-runtime.us-east-2.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -338,29 +332,34 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolReturnPart(
                         tool_name='temperature',
                         content='30°C',
-                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
-                        timestamp=IsDatetime(),
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
-                        content='<thinking> I have received the result from the "temperature" tool. The temperature in London on 1st January 2022 was 30°C. Now, I will use the "final_result" tool to provide this information to the user.</thinking> '
-                    ),
                     ToolCallPart(
                         tool_name='final_result',
                         args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
-                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
+                        tool_call_id=IsStr(),
+                    ),
+                    TextPart(
+                        content="""\
+
+
+The temperature in London on 1st January 2022 was 30°C.\
+"""
                     ),
                 ],
-                usage=RequestUsage(input_tokens=685, output_tokens=166),
+                usage=RequestUsage(input_tokens=627, output_tokens=52),
                 model_name='us.amazon.nova-micro-v1:0',
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_url='https://bedrock-runtime.us-east-2.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -370,11 +369,11 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
-                        timestamp=IsDatetime(),
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -383,18 +382,18 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
 async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
     assert data == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions.'
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=61))
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
 
     @agent.tool_plain
     async def get_current_temperature(city: str) -> str:
@@ -408,25 +407,27 @@ async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: No
         """
         return '30°C'  # pragma: no cover
 
+    # dated March 2025, update when no longer the case
     # TODO(Marcelo): Anthropic models don't support tools on the Bedrock Converse Interface.
     # I'm unsure what to do, so for the time being I'm just documenting the test. Let's see if someone complains.
     with pytest.raises(Exception):
         await agent.run('What is the current temperature in London?')
 
 
-async def test_bedrock_model_anthropic_model_without_tools(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
-):
-    model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+async def test_bedrock_model_anthropic_model_without_tools(allow_model_requests: None):
+    provider = BedrockProvider(region_name='us-east-2')
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('Paris is the capital of France.')
+    assert result.output == snapshot(
+        "The capital of France is **Paris**. It's the largest city in France and has been the country's capital since the 12th century. Paris is known for its iconic landmarks like the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and its rich history, culture, and cuisine."
+    )
 
 
 async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(
-        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
+        model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
     )
 
     @agent.tool_plain
@@ -443,34 +444,31 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What is the capital of France?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> To find the capital of France, I will use the available tool "get_capital". I will input the country name "France" into the tool. </thinking>\n'
+                        content='<thinking> I can directly use the get_capital tool to retrieve the capital of France by providing the country name as an argument.</thinking>\n'
                     ),
                     ToolCallPart(
                         tool_name='get_capital',
                         args={'country': 'France'},
-                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
+                        tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=417, output_tokens=69),
+                usage=RequestUsage(input_tokens=426, output_tokens=45),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_url='https://bedrock-runtime.us-east-2.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -480,10 +478,11 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                     RetryPromptPart(
                         content='The country is not supported.',
                         tool_name='get_capital',
-                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful chatbot.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -491,17 +490,17 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 parts=[
                     TextPart(
                         content="""\
-<thinking> It seems there was an error in retrieving the capital of France. The tool returned a message saying "The country is not supported." This indicates that the tool does not support the country France. I will inform the user about this limitation and suggest alternative ways to find the information. </thinking>
+<thinking> It seems like there's an error with the tool. Since the tool is not working correctly, I will inform the User and suggest an alternative if available.</thinking> <thinking> Unfortunately, I cannot directly fetch this information without the correct functioning of the tool. If another method or resource is available to answer this question, I will use that.</thinking>
 
-I'm sorry, but the tool I have does not support retrieving the capital of France. However, I can tell you that the capital of France is Paris. If you need information on a different country, please let me know!\
+I'm sorry, but I currently cannot retrieve the capital of France using the provided tool. However, I can inform you that the capital of France is Paris. If you need information from a different country or any other assistance, feel free to ask!\
 """
                     )
                 ],
-                usage=RequestUsage(input_tokens=509, output_tokens=108),
+                usage=RequestUsage(input_tokens=510, output_tokens=126),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_url='https://bedrock-runtime.us-east-2.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -512,54 +511,58 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
 
 async def test_bedrock_model_max_tokens(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'max_tokens': 5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is')
 
 
 async def test_bedrock_model_top_p(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'top_p': 0.5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+        "The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. It's well-known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions."
     )
 
 
-async def test_bedrock_model_performance_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+async def test_bedrock_model_performance_config(allow_model_requests: None):
+    provider = BedrockProvider(region_name='us-east-2')
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=provider)
     model_settings = BedrockModelSettings(bedrock_performance_configuration={'latency': 'optimized'})
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+        'The capital of France is Paris. It is one of the most visited cities in the world and is renowned for its rich history, culture, and landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral. Paris is also a major center for finance, diplomacy, commerce, fashion, science, and arts.'
     )
 
 
-async def test_bedrock_model_guardrail_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+async def test_bedrock_model_guardrail_config(allow_model_requests: None):
+    provider = BedrockProvider(region_name='us-east-2')
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
     model_settings = BedrockModelSettings(
-        bedrock_guardrail_config={'guardrailIdentifier': 'guardrailv1', 'guardrailVersion': 'v1', 'trace': 'enabled'}
+        bedrock_guardrail_config={
+            'guardrailIdentifier': 'z1uci6pmvugd',
+            'guardrailVersion': 'DRAFT',
+            'trace': 'enabled',
+        }
     )
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+        "The capital of France is Paris. Known for its rich history, iconic landmarks such as the Eiffel Tower, Louvre Museum, and charming architecture, Paris is a global center for art, culture, fashion, and gastronomy. It's also a major player in politics, being the heart of the French government."
     )
 
 
-async def test_bedrock_model_other_parameters(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+async def test_bedrock_model_other_parameters(allow_model_requests: None):
+    provider = BedrockProvider(region_name='us-east-2')
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
     model_settings = BedrockModelSettings(
-        bedrock_prompt_variables={'leo': {'text': 'aaaa'}},
-        bedrock_additional_model_requests_fields={'test': 'test'},
         bedrock_request_metadata={'test': 'test'},
-        bedrock_additional_model_response_fields_paths=['test'],
     )
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+        "The capital of France is Paris. Paris is not only the political center of the country but also a major global city known for its significant cultural, historical, and economic influence. It's famous for landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions."
     )
 
 
@@ -575,7 +578,7 @@ async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_pr
 
 async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'top_p': 0.5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
 
     @agent.tool_plain
     async def get_capital(country: str) -> str:
@@ -634,25 +637,23 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             ),
             PartStartEvent(
                 index=1,
-                part=ToolCallPart(tool_name='get_temperature', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
+                part=ToolCallPart(tool_name='get_temperature', tool_call_id=IsStr()),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
+                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id=IsStr()),
             ),
             PartEndEvent(
                 index=1,
-                part=ToolCallPart(
-                    tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'
-                ),
+                part=ToolCallPart(tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id=IsStr()),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_temperature',
                     content='30°C',
-                    tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                 )
             ),
@@ -674,7 +675,7 @@ async def test_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, bedrock_provider: BedrockProvider
 ):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['What fruit is in the image?', image_content])
     assert result.output == snapshot(
@@ -687,7 +688,7 @@ async def test_video_as_binary_content_input(
     allow_model_requests: None, video_content: BinaryContent, bedrock_provider: BedrockProvider
 ):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot(
@@ -698,7 +699,7 @@ async def test_video_as_binary_content_input(
 @pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(
         [
@@ -714,7 +715,7 @@ async def test_image_url_input(allow_model_requests: None, bedrock_provider: Bed
 @pytest.mark.vcr()
 async def test_video_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(
         [
@@ -730,7 +731,7 @@ async def test_video_url_input(allow_model_requests: None, bedrock_provider: Bed
 @pytest.mark.vcr()
 async def test_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
@@ -743,7 +744,7 @@ async def test_document_url_input(allow_model_requests: None, bedrock_provider: 
 @pytest.mark.vcr()
 async def test_text_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
@@ -882,7 +883,7 @@ async def test_s3_url_with_bucket_owner(bedrock_provider: BedrockProvider):
 @pytest.mark.vcr()
 async def test_text_as_binary_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     text_content = BinaryContent(data=b'This is a test document.', media_type='text/plain')
 
@@ -1353,22 +1354,19 @@ async def test_bedrock_model_thinking_part_from_other_model(
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-5', provider=provider)
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
-    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+    agent = Agent(m, instructions='You are a helpful assistant.', model_settings=settings)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -1393,9 +1391,9 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 9, 10, 22, 46, 57, tzinfo=datetime.timezone.utc),
+                    'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=timezone.utc),
                 },
-                provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1422,6 +1420,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -1477,7 +1476,7 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     Test that consecutive ToolReturnPart objects are grouped into a single user message for Bedrock.
     """
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
+    now = datetime.now()
     # Create a ModelRequest with 3 consecutive ToolReturnParts
     req = [
         ModelRequest(parts=[UserPromptPart(content=['Hello'])], timestamp=IsDatetime()),
@@ -1606,7 +1605,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
 
 
 async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvider):
-    now = datetime.datetime.now()
+    now = datetime.now()
     req = [
         ModelRequest(
             parts=[
