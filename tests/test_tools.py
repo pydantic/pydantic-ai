@@ -6,11 +6,11 @@ from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
-from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
+from pytest import LogCaptureFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
