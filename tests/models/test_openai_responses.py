@@ -8753,3 +8753,82 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+async def test_openai_responses_text_annotations_non_streaming(allow_model_requests: None):
+    """Test that text annotations are included in provider_details when the setting is enabled."""
+    from openai.types.responses.response_output_text import AnnotationURLCitation
+
+    # Create a mock annotation
+    mock_annotation = AnnotationURLCitation(
+        type='url_citation',
+        start_index=0,
+        end_index=3,
+        url='https://example.com',
+        title='Example',
+    )
+
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_1',
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='Hello world [1]', type='output_text', annotations=[mock_annotation])],
+                    ),
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, instructions='Test agent')
+
+    # Test with annotations enabled
+    settings = OpenAIResponsesModelSettings(openai_include_web_search_content_annotations_raw=True)
+    result = await agent.run('Test', model_settings=settings)
+
+    assert len(result.all_messages()) == 2
+    response_msg = result.all_messages()[1]
+    assert isinstance(response_msg, ModelResponse)
+    assert len(response_msg.parts) == 1
+    text_part = response_msg.parts[0]
+    assert isinstance(text_part, TextPart)
+    assert text_part.content == 'Hello world [1]'
+    assert text_part.provider_details is not None
+    assert 'annotations' in text_part.provider_details
+    assert text_part.provider_details['annotations'] == [mock_annotation]
+
+    # Test with annotations disabled (default)
+    mock_client2 = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_2',
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='Hello world [1]', type='output_text', annotations=[mock_annotation])],
+                    ),
+                )
+            ]
+        )
+    )
+    model2 = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client2))
+    agent2 = Agent(model2, instructions='Test agent')
+
+    result2 = await agent2.run('Test')
+
+    response_msg2 = result2.all_messages()[1]
+    assert isinstance(response_msg2, ModelResponse)
+    text_part2 = response_msg2.parts[0]
+    assert isinstance(text_part2, TextPart)
+    assert text_part2.content == 'Hello world [1]'
+    # Annotations should not be present when setting is disabled
+    if text_part2.provider_details is not None:
+        assert 'annotations' not in text_part2.provider_details
