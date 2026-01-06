@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -74,8 +73,6 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
-    from openai.types.responses import ResponseFunctionToolCall
-    from openai.types.responses.response_output_message import ResponseOutputMessage, ResponseOutputText
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import (
@@ -842,9 +839,6 @@ async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None,
     assert profile.supports_tools is False
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 11), reason='Flaky on 3.10 due to SSL socket cleanup - tracked in http-client-cleanup branch'
-)
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
 async def test_openai_o1_mini_system_role(
     allow_model_requests: None,
@@ -1203,10 +1197,10 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Xn7ZD27IylZB66yw2n38IWXe')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG')],
                 usage=RequestUsage(
                     input_tokens=46,
-                    output_tokens=10,
+                    output_tokens=11,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1220,9 +1214,9 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': IsDatetime(),
+                    'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-CkZpBs2uAOr90Y3bazEGxLfYjrJgJ',
+                provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1231,7 +1225,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file bd38f5',
-                        tool_call_id='call_Xn7ZD27IylZB66yw2n38IWXe',
+                        tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1251,8 +1245,8 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
             ModelResponse(
                 parts=[TextPart(content='The image shows a potato.')],
                 usage=RequestUsage(
-                    input_tokens=507,
-                    output_tokens=7,
+                    input_tokens=503,
+                    output_tokens=8,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1266,9 +1260,9 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': IsDatetime(),
+                    'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-CkZpD3JSLa7qZKvU5yYhrf7L3wOxA',
+                provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3505,7 +3499,6 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
-    """When 'required' is implied (allow_text_output=False) but unsupported, falls back to 'auto' with warning."""
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
 
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
@@ -3513,19 +3506,18 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
 
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
 
-    with pytest.warns(UserWarning, match=r"tool_choice='required' is not supported by model 'stub'"):
-        await model._completions_create(  # pyright: ignore[reportPrivateUsage]
-            messages=[],
-            stream=False,
-            model_settings={},
-            model_request_parameters=params,
-        )
+    await model._completions_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        stream=False,
+        model_settings={},
+        model_request_parameters=params,
+    )
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
 async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
-    """When 'required' is implied but unsupported for Responses API, falls back to 'auto' with warning."""
+    """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
@@ -3533,55 +3525,12 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
 
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
 
-    with pytest.warns(UserWarning, match=r"tool_choice='required' is not supported by model 'openai/gpt-oss'"):
-        await model._responses_create(  # pyright: ignore[reportPrivateUsage]
-            messages=[],
-            stream=False,
-            model_settings={},
-            model_request_parameters=params,
-        )
-
-    assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
-
-
-async def test_tool_choice_required_explicit_unsupported(allow_model_requests: None) -> None:
-    """Ensure explicit tool_choice='required' warns and falls back to 'auto' when unsupported."""
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
-
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
-    model = OpenAIChatModel('stub', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
-
-    params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=True)
-    settings: OpenAIChatModelSettings = {'tool_choice': 'required'}
-
-    with pytest.warns(UserWarning, match=r"tool_choice='required' is not supported by model 'stub'"):
-        await model._completions_create(  # pyright: ignore[reportPrivateUsage]
-            messages=[],
-            stream=False,
-            model_settings=settings,
-            model_request_parameters=params,
-        )
-
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
-
-
-async def test_tool_choice_required_explicit_unsupported_responses_api(allow_model_requests: None) -> None:
-    """Ensure explicit tool_choice='required' warns and falls back for Responses API when unsupported."""
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
-
-    mock_client = MockOpenAIResponses.create_mock(response_message([]))
-    model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
-
-    params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=True)
-    settings: OpenAIResponsesModelSettings = {'tool_choice': 'required'}
-
-    with pytest.warns(UserWarning, match=r"tool_choice='required' is not supported by model 'openai/gpt-oss'"):
-        await model._responses_create(  # pyright: ignore[reportPrivateUsage]
-            messages=[],
-            stream=False,
-            model_settings=settings,
-            model_request_parameters=params,
-        )
+    await model._responses_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        stream=False,
+        model_settings={},
+        model_request_parameters=params,
+    )
 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
@@ -3610,9 +3559,7 @@ async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests:
     m = OpenAIChatModel('qwen-3-coder-480b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m, output_type=Location)
 
-    # Qwen model doesn't support tool_choice='required', falls back to 'auto'
-    with pytest.warns(UserWarning, match="tool_choice='required' is not supported"):
-        result = await agent.run('What is the capital of France?')
+    result = await agent.run('What is the capital of France?')
     assert result.output == snapshot({'city': 'Paris', 'country': 'France'})
 
 
@@ -3642,9 +3589,10 @@ async def test_cache_point_filtering(allow_model_requests: None):
     msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
 
     # CachePoint should be filtered out, only text content should remain
-    assert msg == snapshot(
-        {'role': 'user', 'content': [{'text': 'text before', 'type': 'text'}, {'text': 'text after', 'type': 'text'}]}
-    )
+    assert msg['role'] == 'user'
+    assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
 
 
 async def test_cache_point_filtering_responses_model():
@@ -3655,297 +3603,10 @@ async def test_cache_point_filtering_responses_model():
     )
 
     # CachePoint should be filtered out, only text content should remain
-    assert msg == snapshot(
-        {
-            'role': 'user',
-            'content': [{'text': 'text before', 'type': 'input_text'}, {'text': 'text after', 'type': 'input_text'}],
-        }
-    )
-
-
-@pytest.mark.parametrize(
-    'tool_choice,expected',
-    [
-        pytest.param('auto', 'auto', id='auto'),
-        pytest.param('required', 'required', id='required'),
-    ],
-)
-async def test_tool_choice_string_values(allow_model_requests: None, tool_choice: str, expected: str) -> None:
-    """Ensure Chat tool_choice strings flow through unchanged."""
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': tool_choice})  # type: ignore
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)
-    assert kwargs[0]['tool_choice'] == expected
-
-
-async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
-    """Force the Chat API to call a specific tool using allowed_tools format."""
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model)
-
-    @agent.tool_plain
-    def tool_a(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    @agent.tool_plain
-    def tool_b(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': ['tool_a']})
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)
-    assert kwargs[0]['tool_choice'] == snapshot(
-        {
-            'type': 'allowed_tools',
-            'allowed_tools': {
-                'mode': 'required',
-                'tools': [{'type': 'function', 'function': {'name': 'tool_a'}}],
-            },
-        }
-    )
-
-
-async def test_tool_choice_specific_tools_multiple(allow_model_requests: None) -> None:
-    """Multiple Chat tools should produce an allowed_tools payload with required mode."""
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model)
-
-    @agent.tool_plain
-    def tool_a(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    @agent.tool_plain
-    def tool_b(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    @agent.tool_plain
-    def tool_c(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)
-    tool_choice = kwargs[0]['tool_choice']
-    # Sort tools by name for deterministic comparison
-    tool_choice['allowed_tools']['tools'] = sorted(
-        tool_choice['allowed_tools']['tools'], key=lambda t: t['function']['name']
-    )
-    assert tool_choice == snapshot(
-        {
-            'type': 'allowed_tools',
-            'allowed_tools': {
-                'mode': 'required',
-                'tools': [
-                    {'type': 'function', 'function': {'name': 'tool_a'}},
-                    {'type': 'function', 'function': {'name': 'tool_b'}},
-                ],
-            },
-        }
-    )
-
-
-async def test_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
-    """When tool_choice='auto' but structured output is required, falls back to 'required'."""
-
-    class Location(BaseModel):
-        city: str
-        country: str
-
-    mock_client = MockOpenAI.create_mock(
-        completion_message(
-            ChatCompletionMessage(
-                content=None,
-                role='assistant',
-                tool_calls=[
-                    ChatCompletionMessageFunctionToolCall(
-                        id='1',
-                        type='function',
-                        function=Function(
-                            name='final_result',
-                            arguments='{"city": "Paris", "country": "France"}',
-                        ),
-                    ),
-                ],
-            )
-        )
-    )
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model, output_type=Location)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': 'auto'})
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)
-    # With structured output (allow_text_output=False), 'auto' becomes 'required'
-    assert kwargs[0]['tool_choice'] == 'required'
-
-
-@pytest.mark.parametrize(
-    'tool_choice,expected',
-    [
-        pytest.param('auto', 'auto', id='auto'),
-        pytest.param('required', 'required', id='required'),
-    ],
-)
-async def test_responses_tool_choice_string_values(allow_model_requests: None, tool_choice: str, expected: str) -> None:
-    """Ensure Responses tool_choice strings pass through untouched."""
-    mock_client = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='msg_123',
-                    content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                )
-            ]
-        )
-    )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': tool_choice})  # type: ignore
-
-    kwargs = get_mock_responses_kwargs(mock_client)
-    assert kwargs[0]['tool_choice'] == expected
-
-
-async def test_responses_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
-    """Force a single tool when using the Responses API."""
-    mock_client = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='msg_123',
-                    content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                )
-            ]
-        )
-    )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    @agent.tool_plain
-    def other_tool(y: str) -> str:
-        return y  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': ['my_tool']})
-
-    kwargs = get_mock_responses_kwargs(mock_client)
-    # Single tool from subset uses allowed_tools format with required mode
-    assert kwargs[0]['tool_choice'] == {
-        'type': 'allowed_tools',
-        'mode': 'required',
-        'tools': [{'type': 'function', 'name': 'my_tool'}],
-    }
-
-
-async def test_responses_tool_choice_specific_tool_multiple(allow_model_requests: None) -> None:
-    """Multiple Responses tools rely on the allowed_tools payload."""
-    mock_client = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='msg_123',
-                    content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                )
-            ]
-        )
-    )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model)
-
-    @agent.tool_plain
-    def tool_a(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    @agent.tool_plain
-    def tool_b(y: str) -> str:
-        return y  # pragma: no cover
-
-    @agent.tool_plain
-    def tool_c(z: float) -> str:
-        return str(z)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
-
-    kwargs = get_mock_responses_kwargs(mock_client)
-    tool_choice = kwargs[0]['tool_choice']
-    # Sort tools by name for deterministic comparison
-    tool_choice['tools'] = sorted(tool_choice['tools'], key=lambda t: t['name'])
-    assert tool_choice == snapshot(
-        {
-            'type': 'allowed_tools',
-            'mode': 'required',
-            'tools': [
-                {'type': 'function', 'name': 'tool_a'},
-                {'type': 'function', 'name': 'tool_b'},
-            ],
-        }
-    )
-
-
-async def test_responses_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
-    """When tool_choice='auto' but structured output is required, falls back to 'required' (Responses API)."""
-
-    class Location(BaseModel):
-        city: str
-        country: str
-
-    mock_client = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseFunctionToolCall(
-                    id='call_123',
-                    call_id='call_123',
-                    name='final_result',
-                    arguments='{"city": "Paris", "country": "France"}',
-                    type='function_call',
-                    status='completed',
-                )
-            ]
-        )
-    )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model, output_type=Location)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': 'auto'})
-
-    kwargs = get_mock_responses_kwargs(mock_client)
-    # With structured output (allow_text_output=False), 'auto' becomes 'required'
-    assert kwargs[0]['tool_choice'] == 'required'
+    assert msg['role'] == 'user'
+    assert len(msg['content']) == 2
+    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
 
 
 async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):

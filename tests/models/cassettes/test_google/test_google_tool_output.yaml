@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '705'
+      - '620'
       content-type:
       - application/json
       host:
@@ -19,9 +19,7 @@ interactions:
       - parts:
         - text: What is the largest city in the user country?
         role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
+      generationConfig: {}
       toolConfig:
         functionCallingConfig:
           allowedFunctionNames:
@@ -32,33 +30,32 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: get_user_country
-          parameters_json_schema:
-            additionalProperties: false
+          parameters:
             properties: {}
-            type: object
+            type: OBJECT
         - description: The final response which ends this conversation
           name: final_result
-          parameters_json_schema:
+          parameters:
             properties:
               city:
-                type: string
+                type: STRING
               country:
-                type: string
+                type: STRING
             required:
             - city
             - country
-            type: object
+            type: OBJECT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '734'
+      - '733'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=943
+      - gfet4t7; dur=581
       transfer-encoding:
       - chunked
       vary:
@@ -67,7 +64,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 2.3644883185625075e-06
+      - avgLogprobs: 5.670217797160149e-06
         content:
           parts:
           - functionCall:
@@ -76,17 +73,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: ihI3adbMKZCez7IPy9_U-Qg
+      responseId: LlteaIDvD9m7nvgPz5Sb0Aw
       usageMetadata:
         candidatesTokenCount: 5
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 5
-        promptTokenCount: 25
+        promptTokenCount: 33
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 25
-        totalTokenCount: 30
+          tokenCount: 33
+        totalTokenCount: 38
     status:
       code: 200
       message: OK
@@ -99,7 +96,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1086'
+      - '929'
       content-type:
       - application/json
       host:
@@ -113,20 +110,17 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_8f775a6033464e2f9d721abc0befe93a
+            id: pyd_ai_3fa5644dae1d4aad997ae39c70006fbd
             name: get_user_country
-          thoughtSignature: Y29udGV4dF9lbmdpbmVlcmluZ19pc190aGVfd2F5X3RvX2dv
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_8f775a6033464e2f9d721abc0befe93a
+            id: pyd_ai_3fa5644dae1d4aad997ae39c70006fbd
             name: get_user_country
             response:
               return_value: Mexico
         role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
+      generationConfig: {}
       toolConfig:
         functionCallingConfig:
           allowedFunctionNames:
@@ -137,22 +131,21 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: get_user_country
-          parameters_json_schema:
-            additionalProperties: false
+          parameters:
             properties: {}
-            type: object
+            type: OBJECT
         - description: The final response which ends this conversation
           name: final_result
-          parameters_json_schema:
+          parameters:
             properties:
               city:
-                type: string
+                type: STRING
               country:
-                type: string
+                type: STRING
             required:
             - city
             - country
-            type: object
+            type: OBJECT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
@@ -163,7 +156,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=830
+      - gfet4t7; dur=605
       transfer-encoding:
       - chunked
       vary:
@@ -183,17 +176,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: ixI3ae73LOjoz7IPgeK2yQg
+      responseId: LlteaOzCOPOdnvgPrJbnoQg
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 8
-        promptTokenCount: 39
+        promptTokenCount: 47
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 39
-        totalTokenCount: 47
+          tokenCount: 47
+        totalTokenCount: 55
     status:
       code: 200
       message: OK

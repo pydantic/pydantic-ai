@@ -66,7 +66,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..conftest import IsBytes, IsDatetime, IsInstance, IsNow, IsStr, try_import
@@ -76,7 +75,6 @@ with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
         FinishReason as GoogleFinishReason,
-        FunctionCallingConfigMode,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
@@ -1063,28 +1061,13 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                             },
                             {
                                 'domain': None,
-                                'title': 'cbsnews.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHs0KxAufAKly9TnNAnn-Baxlk1USk6vVjzW1FEEUCZKnE5eeatKXcIXJ4HZNDI7ROs1q3IuHTZp5bZwB3hc-u1sXnXI0rosZTNt-t6H9FTF9owH4M5u-54bnuL01OC1C3fEnU7MNRV',
+                                'title': 'weather.gov',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_uqo2G5Goeww8iF1L_dYa2sqWGhzu_UnxEZd1gQ7ZNuXEVVVYEEYcx_La3kuODFm0dPUhHeF4qGP1c6kJ86i4SKfvRqFitMCvNiDx07eC5iM7axwepoTv3FeUdIRC-ou1P-6DDykZ4QzcxcrKISa_1Q==',
                             },
                             {
                                 'domain': None,
                                 'title': 'wunderground.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGIi3F3lZlGrWP6vK_zucR90Esg-PCBYRgHOK0gvSIwbHM1jKGKhLwKbv-chvrUhyhc5IZ9XAjo59IBjM6Tk5p2qQK7QGW-WgFi0Nrus7IrBqgNJfWCAMTgqkde8RXWk-T2edNf90TJGVoJIKXhcuWxpuE=',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'accuweather.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFUEG5HLOGJoFbOTpesMFek1T82haMch6RGzVbNaG-m-B7mbwLkfb4pHpCE8CH_RHUMa5GKNPUxev47neFe9YXiKJdXKo4gMABpBHjb3AjAXg5UNoY3hvMfhBVw-mxSLTzHuRzdxvjgMpDbskeuMVt0jM543GJnG06EVVzeYm8UUemWTS2UJyE=',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'theweathernetwork.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHtG8yKh-VGE2kjUi05sHqdu5HUVFr6NUs9F3SdvzlnHjubasE5fLourWIMk6Wmgd6VFmAj8NcY3HNeFosMwnxMc3zyvlZ2V6gNDMFuGgJCofZD1vlE0t2vv4KFC13o1LnElXVvzht7u-6kfwQybN_57kHs63NjwCQLiYECj8Ub7yDRhCYAzCU=',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'weather.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHggnMLBYdYahOGPJ6dykd1mBx7bs82NTc6T-pndOKmIdb8s-3QQ2571SFt8NPG6_UstE9rYG5g2yegUOlsiREqykqesDB7UP58H3ApEe2hDCMTqSyRllMUusJecf2jVHF8kb2Y1rCBNkzaXKuhtxgx6OPvoaYNnYDhIo73',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFywixFZicmDjijfhfLNw8ya7XdqWR31aJp8CHyULLelG8bujH1TuqeP9RAhK6Pcm1qz11ujm2yM7gM5bJXDFsZwbsubub4cnUp5ixRaloJcjVrHkyd5RHblhkDDxHGiREV9BcuqeJovdr8qhtrCKMcvJk=',
                             },
                         ],
                         tool_call_id=IsStr(),
@@ -1093,24 +1076,26 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                     ),
                     TextPart(
                         content="""\
-**San Francisco Experiences a Mostly Cloudy Day with Mild Temperatures**
+## Weather in San Francisco is Mild and Partly Cloudy
 
-As of Monday in San Francisco, the weather is predominantly mostly cloudy with a current temperature of 51°F, which feels more like 49°F. Other reports describe the sky as partly cloudy. The forecast for the day indicates that cloudy conditions will persist with a slight 10% chance of rain.
+**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
 
-The high temperature for the day is expected to reach the low to mid-50s, with forecasts predicting a high of 54°F. The low for tonight is anticipated to be in the mid-40s, with some forecasts calling for a low of 45°F.
+According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
 
-Humidity levels are relatively high, reported at 77%. Winds are generally light, coming from the north at 5 to 10 mph. Visibility has been noted as being around 1.5 to 2 miles. There is also a possibility of dense fog in some areas.\
+As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
+
+Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.\
 """
                     ),
                 ],
                 usage=RequestUsage(
                     input_tokens=17,
-                    output_tokens=762,
+                    output_tokens=533,
                     details={
-                        'thoughts_tokens': 444,
-                        'tool_use_prompt_tokens': 103,
+                        'thoughts_tokens': 213,
+                        'tool_use_prompt_tokens': 119,
                         'text_prompt_tokens': 17,
-                        'text_tool_use_prompt_tokens': 103,
+                        'text_tool_use_prompt_tokens': 119,
                     },
                 ),
                 model_name='gemini-2.5-pro',
@@ -1118,7 +1103,7 @@ Humidity levels are relatively high, reported at 77%. Winds are generally light,
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='y1I3aaeTDvOLmtkPgevhkAE',
+                provider_response_id='btnJaOrqE4_6qtsP7bOboQs',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1143,7 +1128,7 @@ Humidity levels are relatively high, reported at 77%. Winds are generally light,
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'queries': ['weather in Mexico City today']},
+                        args={'queries': ['current weather in Mexico City']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
@@ -1152,23 +1137,18 @@ Humidity levels are relatively high, reported at 77%. Winds are generally light,
                         content=[
                             {
                                 'domain': None,
-                                'title': 'weatherbug.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGNALHx6WbEk-l7IywrVofZAc2f2B3liR_LzjbU-1am45jWx9hcx90BpU7s99-o3AlvyF3rFjbEUsCFf3iXkMtOTRQ6jXV-dANbcpH5Xay-cxn0bEap1w1Pc1LRW3vBu_SENFOfmxLEZ34c-OxqZ31RL75U6sjx2i4ZDkZ4PFh2AU96STIf3d1jHA==',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'accuweather.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH7JB3O5Oy3_PWu31FwdJElbZYSRGZeZWlIDXoEOtOaIQuIX_wPZaP8LyNT1K3_nPEGsobbg_tSkYiqLn_D1SD_-wGu0-RwwxF4bN8UcM5GCOMVdf7gI3a2WVyBBUL7_BPiW9Rrnf2eDjjOv0jtEIJw1tDGDvJh9R54phebi_Cls5aDD7ajlg==',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'accuweather.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGrARwtoF8hUa_8zy1oHzNBmQTFitFKcqATKStBQC2h_7YLvNzHVV4XzGridgTcihzPfjXUTW_0OZ0qs6iG_157KwIdS2ePZTccfXIQ3XdTii0DIT-4L-xmQl8dPpHm1Lmx1Q8XSiOJA55QXjvXsstMI3OJ8PyT8ewzhD136NdMbdPV0Ftp',
+                                'title': 'theweathernetwork.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEvigSUuLwtMoqPNq2bvqCduH6yYQLKmhzoj0-SQbxBb2rs_ow380KClss6yfKqxmQ-3HIrmzasviLVdO2FhQ_uEIGfpv6-_r4XOSSLu57LKZgAFYTsswd5Q--VkuO2eEr4Vh8b0aK4KFi3Rt3k_r99frmOa-8mCHzWrXI_HeS58IvIpda0XNtWVEjg',
                             },
                             {
                                 'domain': None,
                                 'title': 'wunderground.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHoTyQZHYOqP2WvRsPSvTGoKXpwgkZVJipTrznFmWt1mDux7eNnL5Wh46MfZ5CghEY7e7aIGejO5NvpK5DJQ2e3wV-smAcf2MYbm-4nIXi17hXJ6X4Rb7wXNGsD4GzyQe45Qcqqnt8xw39vUBut',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFEXnJiWubQ1I2xMumZnSwxzZzhO_s2AdGg1yFakgO7GqJXU25aq3-Zl5xFEsUk9KpDtKUsS0NrBQxRNYCTkbKMknHSD5n8Yps9aAYvLOvyKgKPDFt4SkBkt1RO1nyPOweAzOzjPmnnd8AqBqOq',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'wunderground.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==',
                             },
                         ],
                         tool_call_id=IsStr(),
@@ -1177,24 +1157,24 @@ Humidity levels are relatively high, reported at 77%. Winds are generally light,
                     ),
                     TextPart(
                         content="""\
-**Mexico City Sees a Mix of Clouds and Sun with Mild Temperatures**
+In Mexico City today, you can expect a day of mixed sun and clouds with a high likelihood of showers and thunderstorms, particularly in the afternoon and evening.
 
-Today in Mexico City, residents can expect partly to mostly cloudy skies with a high temperature reaching the upper 60s, with some forecasts predicting a high of 67°F or 68°F. There is a slight chance of showers, with precipitation probabilities ranging from 25% to 40%.
+Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenheit (around 17-18°C). As the day progresses, the temperature is expected to rise, reaching a high of around 73-75°F (approximately 23°C).
 
-Currently, the temperature is around 58°F, feeling like 58°F. The wind is relatively calm, coming from the north-northwest at approximately 6 mph. Humidity levels are at 56%.
+There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
 
-Tonight, the skies are expected to be partly cloudy with a low temperature in the upper 40s to low 50s. There is still a chance of rain showers this evening, clearing up overnight. The sun rose at 6:58 AM and is set to go down at 5:58 PM.\
+Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=223,
-                    output_tokens=700,
+                    input_tokens=209,
+                    output_tokens=623,
                     details={
-                        'thoughts_tokens': 169,
-                        'tool_use_prompt_tokens': 318,
-                        'text_prompt_tokens': 223,
-                        'text_tool_use_prompt_tokens': 318,
+                        'thoughts_tokens': 131,
+                        'tool_use_prompt_tokens': 286,
+                        'text_prompt_tokens': 209,
+                        'text_tool_use_prompt_tokens': 286,
                     },
                 ),
                 model_name='gemini-2.5-pro',
@@ -1202,7 +1182,7 @@ Tonight, the skies are expected to be partly cloudy with a low temperature in th
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='01I3ab71ENy4mtkPpNOJsQY',
+                provider_response_id='dtnJaKyTAri3qtsPu4imqQs',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2604,7 +2584,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=25, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 25}
+                    input_tokens=33, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 33}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2636,7 +2616,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=39, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 39}
+                    input_tokens=47, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 47}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3718,8 +3698,8 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')])
 
-    builtin_tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert builtin_tools == []
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
     assert image_config == {'aspect_ratio': '16:9'}
 
 
@@ -3728,7 +3708,7 @@ async def test_google_image_generation_resolution(google_provider: GoogleProvide
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='2K')])
 
-    tools, _, image_config = model._get_tool_config(params, {})  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'image_size': '2K'}
 
@@ -3738,7 +3718,7 @@ async def test_google_image_generation_resolution_with_aspect_ratio(google_provi
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
 
-    tools, _, image_config = model._get_tool_config(params, {})  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'aspect_ratio': '16:9', 'image_size': '4K'}
 
@@ -3749,7 +3729,7 @@ async def test_google_image_generation_unsupported_size_raises_error(google_prov
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='1024x1024')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_tool_config(params, {})  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_auto_size_raises_error(google_provider: GoogleProvider) -> None:
@@ -3758,7 +3738,7 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='auto')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_tool_config(params, {})  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_tool_output_format(
@@ -3770,7 +3750,7 @@ async def test_google_image_generation_tool_output_format(
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
+    assert tools is None
     assert image_config == {'output_mime_type': 'image/png'}
 
 
@@ -3797,7 +3777,7 @@ async def test_google_image_generation_tool_output_compression(
     # Test explicit value
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
     tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
+    assert tools is None
     assert image_config == {'output_compression_quality': 85, 'output_mime_type': 'image/jpeg'}
 
     # Test None (omitted)
@@ -3878,7 +3858,7 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     )
 
     tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
+    assert tools is None
     assert image_config == {
         'aspect_ratio': '16:9',
         'image_size': '2K',
@@ -5172,134 +5152,6 @@ def test_google_missing_tool_call_thought_signature():
             ],
         }
     )
-
-
-def test_tool_choice_string_value_auto(google_provider: GoogleProvider) -> None:
-    """Test that tool_choice='auto' includes all tools and maps to AUTO mode."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    settings: GoogleModelSettings = {'tool_choice': 'auto'}
-    tools, tool_config, _image_config = model._get_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    assert tools is not None
-    assert len(tools) == 1
-    assert tool_config is not None
-    fcc = tool_config.get('function_calling_config')
-    assert fcc == snapshot({'mode': FunctionCallingConfigMode.AUTO})
-
-
-def test_tool_choice_required_maps_to_any(google_provider: GoogleProvider) -> None:
-    """Test that 'required' filters to function tools only and maps to ANY mode."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    settings: GoogleModelSettings = {'tool_choice': 'required'}
-    tools, tool_config, _image_config = model._get_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    assert tools is not None
-    assert len(tools) == 1
-    assert tool_config is not None
-    fcc = tool_config.get('function_calling_config')
-    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY})
-
-
-def test_tool_choice_specific_tool_single_text_allowed(google_provider: GoogleProvider) -> None:
-    """Specific tool names use ANY mode with allowed_function_names to restrict tool selection."""
-    tool_a = ToolDefinition(
-        name='tool_a',
-        description='Test tool A',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    tool_b = ToolDefinition(
-        name='tool_b',
-        description='Test tool B',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(
-        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=True, output_tools=[]
-    )
-
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    settings: GoogleModelSettings = {'tool_choice': ['tool_a']}
-    tools, tool_config, _image_config = model._get_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    # All tools are sent (not filtered) for caching benefits
-    assert tools is not None
-    assert len(tools) == 2
-    # Selection is enforced via allowed_function_names in the config
-    assert tool_config is not None
-    fcc = tool_config.get('function_calling_config')
-    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['tool_a']})
-
-
-def test_tool_choice_specific_tool_single_text_not_allowed(google_provider: GoogleProvider) -> None:
-    """Specific tool names with allow_text_output=False uses ANY + allowed_function_names, sends all tools for cache."""
-    tool_a = ToolDefinition(
-        name='tool_a',
-        description='Test tool A',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    tool_b = ToolDefinition(
-        name='tool_b',
-        description='Test tool B',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(
-        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=False, output_tools=[]
-    )
-
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    settings: GoogleModelSettings = {'tool_choice': ['tool_a']}
-    tools, tool_config, _image_config = model._get_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    # All tools are sent (for cache efficiency), restricted by allowed_function_names
-    assert tools is not None
-    assert len(tools) == 2
-    func_names: list[str] = []
-    for t in tools:
-        decls = t.get('function_declarations')
-        if decls:  # pragma: no branch
-            name = decls[0].get('name')
-            if name:  # pragma: no branch
-                func_names.append(name)
-    assert 'tool_a' in func_names
-    assert 'tool_b' in func_names
-    # With allow_text_output=False, we use ANY mode with allowed_function_names to restrict
-    assert tool_config is not None
-    fcc = tool_config.get('function_calling_config')
-    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['tool_a']})
-
-
-def test_tool_choice_auto_with_required_output(google_provider: GoogleProvider) -> None:
-    """When tool_choice='auto' but output is required, falls back to ANY mode."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    # allow_text_output=False simulates structured output requirement
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
-
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    settings: GoogleModelSettings = {'tool_choice': 'auto'}
-    tools, tool_config, _image_config = model._get_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    assert tools is not None
-    assert tool_config is not None
-    # With allow_text_output=False, 'auto' becomes ANY to force tool use
-    fcc = tool_config.get('function_calling_config')
-    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY})
 
 
 async def test_google_streaming_tool_call_thought_signature(

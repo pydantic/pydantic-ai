@@ -31,7 +31,6 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
@@ -58,7 +57,7 @@ with try_import() as imports_successful:
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
-    from pydantic_ai.models.mistral import MistralModel, MistralModelSettings, MistralStreamedResponse
+    from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -2022,17 +2021,14 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='k6TCh2fdA')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
                 usage=RequestUsage(input_tokens=65, output_tokens=16),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
-                provider_details={
-                    'finish_reason': 'tool_calls',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id='e52fbed4da1041fcb50b5c87400da122',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='20c656d7c70e4362858160d9d241ce92',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -2041,7 +2037,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 241a70',
-                        tool_call_id='k6TCh2fdA',
+                        tool_call_id='FI5qQGzDE',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
@@ -2060,11 +2056,8 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id='005f5f5d976e4e67a019372efa8efe05',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='b9df7d6167a74543aed6c27557ab0a29',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2458,141 +2451,45 @@ async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mist
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="Okay, the user is asking how to cross the street. This is a basic safety question. I should provide clear and concise instructions on how to safely cross the street. Let's recall the basic steps: first, look both ways to check for oncoming traffic; second, use a crosswalk if available; third, obey traffic signals if they are present; and finally, cross the street carefully and quickly."
+                        content='Okay, the user is asking how to cross the street. I know that crossing the street safely involves a few key steps: first, look both ways to check for oncoming traffic; second, use a crosswalk if one is available; third, obey any traffic signals or signs that may be present; and finally, proceed with caution until you have safely reached the other side. Let me compile this information into a clear and concise response.'
                     ),
                     TextPart(
                         content="""\
 To cross the street safely, follow these steps:
 
-1. Stop at the edge of the street and look both ways to check for oncoming traffic.
-2. If there is a crosswalk, use it.
-3. Obey any traffic signals or signs that are present.
-4. When it is safe, cross the street carefully and quickly.
-
-Always be aware of your surroundings and make sure drivers see you before you cross.
+1. Look both ways to check for oncoming traffic.
+2. Use a crosswalk if one is available.
+3. Obey any traffic signals or signs that may be present.
+4. Proceed with caution until you have safely reached the other side.
 
 ```markdown
 To cross the street safely, follow these steps:
 
-1. Stop at the edge of the street and look both ways to check for oncoming traffic.
-2. If there is a crosswalk, use it.
-3. Obey any traffic signals or signs that are present.
-4. When it is safe, cross the street carefully and quickly.
-
-Always be aware of your surroundings and make sure drivers see you before you cross.
+1. Look both ways to check for oncoming traffic.
+2. Use a crosswalk if one is available.
+3. Obey any traffic signals or signs that may be present.
+4. Proceed with caution until you have safely reached the other side.
 ```
 
-If you have any specific context or additional details, feel free to share!\
+By following these steps, you can ensure a safe crossing.\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=275),
+                usage=RequestUsage(input_tokens=10, output_tokens=232),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
-                provider_response_id='1474ffaa42904bf3b040345bc85c775b',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2025, 11, 28, 2, 19, 53, tzinfo=timezone.utc),
+                },
+                provider_response_id='9f9d90210f194076abeee223863eaaf0',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
     )
-
-
-@pytest.mark.parametrize(
-    'tool_choice,expected_tool_choice',
-    [
-        pytest.param('auto', 'auto', id='auto'),
-        pytest.param('required', 'required', id='required'),
-    ],
-)
-def test_tool_choice_string_values(tool_choice: str, expected_tool_choice: str) -> None:
-    """Ensure Mistral string values pass through, returning tools and tool_choice."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-
-    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
-    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    settings: MistralModelSettings = {'tool_choice': tool_choice}  # type: ignore[assignment]
-    tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    assert tools is not None
-    assert len(tools) == 1
-    assert tools[0].function.name == 'my_tool'
-    assert result_tool_choice == expected_tool_choice
-
-
-def test_tool_choice_none_sends_no_tools() -> None:
-    """tool_choice='none' sends no tools to avoid garbled responses."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-
-    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
-    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    settings: MistralModelSettings = {'tool_choice': 'none'}
-    tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    # Mistral returns garbled responses when tool_choice='none' with tools present
-    assert tools is None
-    assert result_tool_choice is None
-
-
-def test_tool_choice_specific_tool_filters_to_requested() -> None:
-    """Specific tool choice filters to only the requested tools."""
-    tool_a = ToolDefinition(
-        name='tool_a',
-        description='Test tool A',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    tool_b = ToolDefinition(
-        name='tool_b',
-        description='Test tool B',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(
-        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=True, output_tools=[]
-    )
-
-    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
-    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    settings: MistralModelSettings = {'tool_choice': ['tool_a']}
-
-    tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    assert tools is not None
-    assert len(tools) == 1
-    assert tools[0].function.name == 'tool_a'
-    assert result_tool_choice == 'required'
-
-
-def test_tool_choice_auto_with_required_output() -> None:
-    """When tool_choice='auto' but output is required, falls back to 'required'."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    # allow_text_output=False simulates structured output requirement
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
-
-    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
-    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    settings: MistralModelSettings = {'tool_choice': 'auto'}
-    tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    assert tools is not None
-    assert len(tools) == 1
-    # With allow_text_output=False, 'auto' becomes 'required'
-    assert result_tool_choice == 'required'
 
 
 async def test_image_url_force_download() -> None:

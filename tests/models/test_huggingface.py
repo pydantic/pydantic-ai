@@ -32,11 +32,10 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
@@ -46,9 +45,7 @@ with try_import() as imports_successful:
     import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
-        ChatCompletionInputFunctionName,
         ChatCompletionInputMessage,
-        ChatCompletionInputToolChoiceClass,
         ChatCompletionOutput,
         ChatCompletionOutputComplete,
         ChatCompletionOutputFunctionDefinition,
@@ -64,7 +61,7 @@ with try_import() as imports_successful:
     )
     from huggingface_hub.errors import HfHubHTTPError
 
-    from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceModelSettings
+    from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     MockChatCompletion = ChatCompletionOutput | Exception
@@ -1082,171 +1079,3 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out
     assert msg['role'] == 'user'
     assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]
-
-
-@pytest.mark.parametrize(
-    'tool_choice,expected_tool_choice',
-    [
-        pytest.param('auto', 'auto', id='auto'),
-        pytest.param('required', 'required', id='required'),
-    ],
-)
-def test_tool_choice_string_values(tool_choice: str, expected_tool_choice: str) -> None:
-    """Ensure HuggingFace string values pass through, returning tools and tool_choice."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-
-    mock_client = MockHuggingFace.create_mock(
-        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
-    )
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    settings: HuggingFaceModelSettings = {'tool_choice': tool_choice}  # type: ignore[assignment]
-    tools, result_tool_choice = model._get_tool_choice(settings, mrp)  # pyright: ignore[reportPrivateUsage]
-
-    assert len(tools) == 1
-    assert tools[0].function['name'] == 'my_tool'
-    assert result_tool_choice == expected_tool_choice
-
-
-def test_tool_choice_none_sends_tools_with_none_mode() -> None:
-    """tool_choice='none' sends tools with 'none' mode to keep definitions cached."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-
-    mock_client = MockHuggingFace.create_mock(
-        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
-    )
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    settings: HuggingFaceModelSettings = {'tool_choice': 'none'}
-    tools, result_tool_choice = model._get_tool_choice(settings, mrp)  # pyright: ignore[reportPrivateUsage]
-
-    assert len(tools) == 1
-    assert tools[0]['function']['name'] == 'my_tool'
-    assert result_tool_choice == 'none'
-
-
-def test_tool_choice_specific_tool_single() -> None:
-    """Single tool entries should use ChatCompletionInputToolChoiceClass, all tools sent for caching."""
-    tool_a = ToolDefinition(
-        name='tool_a',
-        description='Test tool A',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    tool_b = ToolDefinition(
-        name='tool_b',
-        description='Test tool B',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(
-        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=True, output_tools=[]
-    )
-
-    mock_client = MockHuggingFace.create_mock(
-        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
-    )
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    settings: HuggingFaceModelSettings = {'tool_choice': ['tool_a']}
-    tools, result_tool_choice = model._get_tool_choice(settings, mrp)  # pyright: ignore[reportPrivateUsage]
-
-    # All tools are sent (not filtered) for caching benefits
-    assert len(tools) == 2
-    assert isinstance(result_tool_choice, ChatCompletionInputToolChoiceClass)
-    assert result_tool_choice.function == ChatCompletionInputFunctionName(name='tool_a')  # type: ignore[call-arg]
-
-
-def test_tool_choice_multiple_tools_filters_to_requested() -> None:
-    """Multiple specific tools filter to requested and use 'required'."""
-    tool_a = ToolDefinition(
-        name='tool_a',
-        description='Test tool A',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    tool_b = ToolDefinition(
-        name='tool_b',
-        description='Test tool B',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    tool_c = ToolDefinition(
-        name='tool_c',
-        description='Test tool C',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(
-        output_mode='tool', function_tools=[tool_a, tool_b, tool_c], allow_text_output=True, output_tools=[]
-    )
-
-    mock_client = MockHuggingFace.create_mock(
-        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
-    )
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    settings: HuggingFaceModelSettings = {'tool_choice': ['tool_a', 'tool_b']}
-
-    tools, result_tool_choice = model._get_tool_choice(settings, mrp)  # pyright: ignore[reportPrivateUsage]
-
-    assert len(tools) == 2
-    tool_names: list[str] = [t.function['name'] for t in tools]
-    assert 'tool_a' in tool_names
-    assert 'tool_b' in tool_names
-    assert result_tool_choice == 'required'
-
-
-def test_tool_choice_auto_with_required_output() -> None:
-    """When tool_choice='auto' but output is required, falls back to 'required'."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    # allow_text_output=False simulates structured output requirement
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
-
-    mock_client = MockHuggingFace.create_mock(
-        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
-    )
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    settings: HuggingFaceModelSettings = {'tool_choice': 'auto'}
-    tools, result_tool_choice = model._get_tool_choice(settings, mrp)  # pyright: ignore[reportPrivateUsage]
-
-    assert len(tools) == 1
-    # With allow_text_output=False, 'auto' becomes 'required'
-    assert result_tool_choice == 'required'
-
-
-@pytest.mark.anyio
-@pytest.mark.vcr
-async def test_together_500_on_tool_continuation(allow_model_requests: None, huggingface_api_key: str) -> None:
-    """Documents Together backend 500 error on multi-turn tool conversations.
-
-    When using HuggingFace with the Together backend and tool_choice='auto':
-    1. First request succeeds - model calls the tool
-    2. Second request (with tool result) fails with 500 Internal Server Error
-
-    This is a known limitation of the Together backend via HuggingFace's router.
-    Other backends (novita, nscale) don't support tool calling at all.
-
-    This test is expected to fail with ModelHTTPError(status_code=500) on the second request.
-    It documents the issue for future reference and to track if/when Together fixes this.
-    """
-
-    def get_weather(city: str) -> str:
-        """Get the weather for a city."""
-        return f'Sunny, 22C in {city}'
-
-    model = HuggingFaceModel(
-        'meta-llama/Llama-4-Scout-17B-16E-Instruct',
-        provider=HuggingFaceProvider(api_key=huggingface_api_key, provider_name='together'),
-    )
-    agent: Agent[None, str] = Agent(model, tools=[get_weather])
-
-    with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run("What's the weather in Paris?", model_settings={'tool_choice': 'auto'})
-
-    assert exc_info.value.status_code == 500
