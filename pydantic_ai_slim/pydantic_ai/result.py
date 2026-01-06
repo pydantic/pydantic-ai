@@ -681,10 +681,18 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
         async def collect_all() -> None:
             """Collect all stream data within a single async context."""
-            async with _utils.asynccontextmanager_from_generator(self._stream) as result:
-                self._streamed_run_result = result
+            # Get the StreamedRunResult from the generator
+            result = await anext(self._stream)
+            self._streamed_run_result = result
+            try:
                 # Collect output data
                 self._cached_output = [item async for item in result.stream_output()]
+            finally:
+                # Exhaust the generator to trigger cleanup (exits the async with in _consume_stream)
+                try:
+                    await anext(self._stream)
+                except StopAsyncIteration:
+                    pass
 
         _utils.get_event_loop().run_until_complete(collect_all())
         self._context_entered = True
