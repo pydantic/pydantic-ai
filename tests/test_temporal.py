@@ -3015,12 +3015,12 @@ class MockPayloadCodec(PayloadCodec):
 
     async def encode(
         self, payloads: Sequence[temporalio.api.common.v1.Payload]
-    ) -> list[temporalio.api.common.v1.Payload]:
+    ) -> list[temporalio.api.common.v1.Payload]:  # pragma: no cover
         return list(payloads)
 
     async def decode(
         self, payloads: Sequence[temporalio.api.common.v1.Payload]
-    ) -> list[temporalio.api.common.v1.Payload]:
+    ) -> list[temporalio.api.common.v1.Payload]:  # pragma: no cover
         return list(payloads)
 
 
