@@ -247,9 +247,19 @@ def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | 
     """Merge two sets of model settings, preferring the overrides.
 
     A common use case is: merge_model_settings(<agent settings>, <run settings>)
+
+    For nested dict values (like `thinking` or `extra_headers`), performs a shallow merge
+    so that override fields are applied on top of base fields rather than replacing entirely.
     """
-    # Note: we may want merge recursively if/when we add non-primitive values
     if base and overrides:
-        return base | overrides
+        result = dict(base)
+        for key, override_value in overrides.items():
+            base_value = result.get(key)
+            # Shallow merge for nested dicts (e.g., thinking, extra_headers)
+            if isinstance(base_value, dict) and isinstance(override_value, dict):
+                result[key] = base_value | override_value
+            else:
+                result[key] = override_value
+        return result
     else:
         return base or overrides

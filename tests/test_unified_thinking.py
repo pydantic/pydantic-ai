@@ -1459,3 +1459,146 @@ class TestThinkingModuleDirect:
 
         result = resolve_thinking_config(None, thinking_profile, 'test-model')
         assert result is None
+
+
+# ============================================================================
+# Model settings merge tests for thinking configuration
+# ============================================================================
+
+
+class TestMergeModelSettingsThinking:
+    """Tests for merge_model_settings with thinking configuration."""
+
+    def test_merge_thinking_dicts_shallow_merges(self):
+        """Merging two thinking dicts should shallow merge them, not replace."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {'thinking': {'enabled': True, 'budget_tokens': 4096}}
+        overrides: AnthropicModelSettings = {'thinking': {'budget_tokens': 2048}}
+
+        result = merge_model_settings(base, overrides)
+
+        # Should merge: override's budget_tokens + base's enabled
+        assert result is not None
+        assert result.get('thinking') == {'enabled': True, 'budget_tokens': 2048}
+
+    def test_merge_thinking_override_effort_preserves_enabled(self):
+        """Overriding effort should preserve enabled from base."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {'thinking': {'enabled': True, 'budget_tokens': 4096}}
+        overrides: AnthropicModelSettings = {'thinking': {'effort': 'high'}}
+
+        result = merge_model_settings(base, overrides)
+
+        # Should have both enabled from base and effort from override
+        assert result is not None
+        assert result.get('thinking') == {'enabled': True, 'budget_tokens': 4096, 'effort': 'high'}
+
+    def test_merge_thinking_bool_overrides_dict(self):
+        """Thinking bool should completely override thinking dict."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {'thinking': {'enabled': True, 'budget_tokens': 4096}}
+        overrides: AnthropicModelSettings = {'thinking': False}
+
+        result = merge_model_settings(base, overrides)
+
+        # Bool completely overrides dict
+        assert result is not None
+        assert result.get('thinking') is False
+
+    def test_merge_thinking_dict_overrides_bool(self):
+        """Thinking dict should completely override thinking bool."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {'thinking': True}
+        overrides: AnthropicModelSettings = {'thinking': {'budget_tokens': 2048}}
+
+        result = merge_model_settings(base, overrides)
+
+        # Dict completely overrides bool
+        assert result is not None
+        assert result.get('thinking') == {'budget_tokens': 2048}
+
+    def test_merge_extra_headers_shallow_merges(self):
+        """Merging extra_headers dicts should shallow merge them."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {'extra_headers': {'X-Custom': 'value', 'X-Debug': 'true'}}
+        overrides: AnthropicModelSettings = {'extra_headers': {'X-Custom': 'new-value'}}
+
+        result = merge_model_settings(base, overrides)
+
+        # Should merge: override's X-Custom + base's X-Debug
+        assert result is not None
+        assert result.get('extra_headers') == {'X-Custom': 'new-value', 'X-Debug': 'true'}
+
+    def test_merge_preserves_non_dict_settings(self):
+        """Non-dict settings should still use simple override behavior."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {'max_tokens': 1000, 'temperature': 0.5}
+        overrides: AnthropicModelSettings = {'max_tokens': 2000}
+
+        result = merge_model_settings(base, overrides)
+
+        # max_tokens overridden, temperature preserved
+        assert result is not None
+        assert result.get('max_tokens') == 2000
+        assert result.get('temperature') == 0.5
+
+    def test_merge_with_none_base(self):
+        """Merging with None base should return overrides."""
+        from pydantic_ai.settings import merge_model_settings
+
+        overrides: AnthropicModelSettings = {'thinking': {'budget_tokens': 2048}}
+
+        result = merge_model_settings(None, overrides)
+
+        assert result == overrides
+
+    def test_merge_with_none_overrides(self):
+        """Merging with None overrides should return base."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {'thinking': {'budget_tokens': 4096}}
+
+        result = merge_model_settings(base, None)
+
+        assert result == base
+
+    def test_merge_with_both_none(self):
+        """Merging with both None should return None."""
+        from pydantic_ai.settings import merge_model_settings
+
+        result = merge_model_settings(None, None)
+
+        assert result is None
+
+    def test_merge_mixed_settings_with_thinking(self):
+        """Complex merge with thinking and other settings."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {
+            'thinking': {'enabled': True, 'budget_tokens': 4096},
+            'max_tokens': 1000,
+            'extra_headers': {'X-Org': 'acme'},
+        }
+        overrides: AnthropicModelSettings = {
+            'thinking': {'effort': 'high'},
+            'temperature': 0.7,
+            'extra_headers': {'X-Request-ID': '123'},
+        }
+
+        result = merge_model_settings(base, overrides)
+
+        assert result is not None
+        # thinking should be shallow merged
+        assert result.get('thinking') == {'enabled': True, 'budget_tokens': 4096, 'effort': 'high'}
+        # max_tokens should be preserved from base
+        assert result.get('max_tokens') == 1000
+        # temperature should be from override
+        assert result.get('temperature') == 0.7
+        # extra_headers should be shallow merged
+        assert result.get('extra_headers') == {'X-Org': 'acme', 'X-Request-ID': '123'}
