@@ -591,11 +591,11 @@ class BedrockConverseModel(Model):
                         # Add multimodal files - Bedrock supports all types natively in toolResult
                         for file in part.multimodal_content:
                             file_block = await self._map_file_to_content_block(file, document_count)
-                            if file_block is not None:
+                            if file_block is not None:  # pragma: no branch
                                 tool_result_content.append(file_block)
 
                         # Ensure we have at least some content
-                        if not tool_result_content:
+                        if not tool_result_content:  # pragma: no branch
                             if profile.bedrock_tool_result_format == 'text':
                                 tool_result_content.append({'text': ''})
                             else:
@@ -776,6 +776,8 @@ class BedrockConverseModel(Model):
                 format = file.media_type.split('/')[1]
                 assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
                 return {'video': {'format': format, 'source': source}}
+            else:
+                assert_never(file)
         elif isinstance(file, AudioUrl):  # pragma: no cover
             # Audio not supported in Bedrock tool results, only in user messages
             # See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html

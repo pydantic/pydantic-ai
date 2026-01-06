@@ -2485,11 +2485,11 @@ async def test_empty_tool_result_json_format():
     # Create a stub provider that uses json format profile
     class JsonFormatBedrockProvider(Provider[Any]):
         @property
-        def name(self) -> str:
+        def name(self) -> str:  # pragma: no cover
             return 'bedrock-json'
 
         @property
-        def base_url(self) -> str:
+        def base_url(self) -> str:  # pragma: no cover
             return 'https://bedrock.stub'
 
         @property
@@ -2708,6 +2708,47 @@ async def test_video_url_s3_tool_return(bedrock_provider: BedrockProvider):
                                     }
                                 }
                             ],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_audio_binary_in_tool_return_dropped(bedrock_provider: BedrockProvider):
+    """Test that audio BinaryContent in tool returns is silently dropped (unsupported by Bedrock)."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    audio_content = BinaryContent(data=b'fake audio data', media_type='audio/mpeg')
+
+    req: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_audio',
+                    content=audio_content,
+                    tool_call_id='audio1',
+                    timestamp=now,
+                ),
+            ],
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    # Audio is dropped since Bedrock doesn't support it in tool results, empty text fallback remains
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'audio1',
+                            'content': [{'text': ''}],
                             'status': 'success',
                         }
                     }
