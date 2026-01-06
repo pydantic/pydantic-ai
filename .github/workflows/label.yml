@@ -1,4 +1,4 @@
-name: PR Label Check
+name: PR
 
 on:
   pull_request:
@@ -20,13 +20,14 @@ jobs:
           for label in "${REQUIRED_LABELS[@]}"; do
             if echo "$LABELS" | grep -q "^${label}$"; then
               HAS_LABEL=true
-              echo "❌ PR has required label: $label"
+              echo "✅ PR has required label: $label"
               break
             fi
           done
 
           if [ "$HAS_LABEL" = false ]; then
-            echo "✅ PR must have one of the following labels: ${REQUIRED_LABELS[*]}"
+            echo "❌ PR must have one of the following labels: ${REQUIRED_LABELS[*]}"
+            echo "A maintainer will assign it"
             exit 1
           fi
         env:
