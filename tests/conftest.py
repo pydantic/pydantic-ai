@@ -119,15 +119,16 @@ SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
 
 @customize_repr
 def _(value: bytes):  # pragma: no cover
-    """Use IsBytes() for large byte sequences in snapshots.
-    inline-snapshot serializes dataclass fields by calling repr() on each field value.
-    For BinaryContent.data (bytes), this would embed huge byte literals in snapshots.
-    By customizing bytes repr, we replace large byte sequences with IsBytes().
-    """
+    """Use IsBytes() for large byte sequences in snapshots."""
     if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
         return 'IsBytes()'
-    # Use object.__repr__ call pattern to avoid recursion through dispatch
     return bytes.__repr__(value)
+
+
+@customize_repr
+def _(value: datetime):  # pragma: no cover
+    """Use IsDatetime() for datetime values in snapshots."""
+    return 'IsDatetime()'
 
 
 class TestEnv:

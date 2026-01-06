@@ -1,7 +1,7 @@
 """Deprecated Gemini model implementation.
 
-This module is deprecated. Use `pydantic_ai.models.google.GoogleModel` instead.
-See <https://ai.pydantic.dev/models/google/> for more details.
+This module is deprecated. Use [`pydantic_ai.models.google.GoogleModel`][pydantic_ai.models.google.GoogleModel] instead.
+See the [Google model documentation](https://ai.pydantic.dev/models/google/) for more details.
 
 This module uses a custom HTTP implementation. The recommended `GoogleModel` in
 `google.py` uses the official `google-genai` SDK.

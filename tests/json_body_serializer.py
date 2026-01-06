@@ -11,9 +11,11 @@ import yaml
 
 # Smart quote and special character normalization.
 # LLM APIs sometimes return smart quotes and special Unicode characters in responses.
-# When captured in cassettes, these can cause linter complaints about non-ASCII characters
-# and snapshot instability across different environments. Normalizing to ASCII equivalents
-# ensures consistent, portable cassette files.
+# These are captured in cassettes, which then populate snapshots
+# which in turn cause linter complaints about non-ASCII characters.
+# Fixing these manually in the snapshots doesn't help,
+# because the snapshots are asserted on test reruns against the cassettes.
+# Normalizing to ASCII equivalents ensures consistent, portable cassette files and stable snapshots.
 SMART_CHAR_MAP = {
     '\u2018': "'",  # LEFT SINGLE QUOTATION MARK
     '\u2019': "'",  # RIGHT SINGLE QUOTATION MARK
