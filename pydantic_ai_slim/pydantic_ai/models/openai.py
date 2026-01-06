@@ -2601,7 +2601,9 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
 def _map_logprobs(
     logprobs: Sequence[chat_completion_token_logprob.ChatCompletionTokenLogprob]
     | Sequence[responses.response_output_text.Logprob]
-    | Sequence[Any],  # For response_text_done_event.Logprob and other Logprob types
+    | Sequence[
+        Any
+    ],  # Accept duck-typed Logprob variants (e.g., from response_text_done_event) that share the same structure
 ) -> list[dict[str, Any]]:
     return [
         {
