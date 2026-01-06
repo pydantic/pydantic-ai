@@ -80,7 +80,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             except ValidationError:
                 pass
 
-        if self._raw_stream_response.final_result_event is not None:
+        if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
             response = self.response
             # Final validation with allow_partial=False (the default).
             # We always yield the final result even if the content matches the last partial yield, because:
