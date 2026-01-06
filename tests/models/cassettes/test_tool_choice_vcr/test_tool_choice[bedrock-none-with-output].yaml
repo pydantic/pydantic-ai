@@ -1,0 +1,64 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Tell me about Paris"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the current
+      weather for a city."}}, {"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "Structured output model for city information."}}], "toolChoice": {"tool": {"name": "final_result"}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YTJlNGJmMzQtMjk2Yy00Zjg4LWFjOGUtNTk3Y2E2NjZhOTg5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '705'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1101'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3817
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Paris
+                summary: Paris is the capital and most populous city of France, known as the "City of Light" (La Ville Lumière).
+                  It is renowned for its rich history, art, architecture, and culture. Major landmarks include the Eiffel
+                  Tower, Louvre Museum, Notre-Dame Cathedral, Arc de Triomphe, and the Champs-Élysées. Paris is a global center
+                  for art, fashion, gastronomy, and culture, and is divided into 20 arrondissements. The city sits on the
+                  Seine River and has been a major European city for centuries, playing a crucial role in politics, economics,
+                  and the arts. It attracts millions of tourists annually and is home to world-class museums, restaurants,
+                  and historic sites.
+              name: final_result
+              toolUseId: tooluse_tT69j5RUQsGvIdTgUUGJYQ
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 742
+        outputTokens: 209
+        serverToolUsage: {}
+        totalTokens: 951
+    status:
+      code: 200
+      message: OK
+version: 1

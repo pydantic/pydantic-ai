@@ -1,0 +1,99 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '735'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me about Paris
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Structured output model for city information.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1545'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1217
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Paris
+                summary: Paris is the capital and most populous city of France. It is renowned for its art, fashion, gastronomy,
+                  and culture. Iconic landmarks include the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral.
+              name: final_result
+            thoughtSignature: CpIDAXLI2nx/J+SHI+eS5xMqPalY2vk/Jxw/6K1GGORBCfBYS42FBZm6/ceYQJfGz4p9TlvqFqn6nFdvJxhwtF+JDYxrFhM9O0a8wXBJMFGAkktkq45k27BLcI28NZjmKS1VozLIdqWe67EL10G76FtCosHe7qPo7LLt3KcqgoKPaBk6AbymA3WJeM5MqEjf/aSd5v8Kzh9ATYG257UWpDL0i8cWnZtoRFlOUeEdr73wK1UDN8jPReyhiadLxQoVTeR5irzuE+tCstnlvv455K+5fYaQXL6PigfRcP2JzrsILrBwiufJboOoebbdzAfkJqBzw0zw/7u9h1rHc+nnlGT/t9OHFXUoUlhq5cBYDZS6oRft7FSBMovoBCFAott+YeMiXLorzzW5rzSn4WeWbADk1XQ91/hGauRPQYKuKCy+bO8HbAWjmCxyJFdIA/4Qvxo0VqiAEkRK41RtxOY9IqVD/pDziA9eb+I74a/w4RdwydWl7tVPF6KpAmWbhbgpzmmFjl/BlvVi+iYjD9a2LsluIGA1
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: cAxcadq-A6HUz7IPsZiYqQg
+      usageMetadata:
+        candidatesTokenCount: 60
+        promptTokenCount: 95
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 95
+        thoughtsTokenCount: 75
+        totalTokenCount: 230
+    status:
+      code: 200
+      message: OK
+version: 1

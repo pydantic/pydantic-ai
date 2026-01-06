@@ -1,0 +1,3780 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '382'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1051'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2321'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_Xe2iMzYE93ysTTGByqJDkpz7
+            type: function
+      created: 1767642769
+      id: chatcmpl-CukvB3J4BlDYP9OPYuqbFrzunkmg8
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 87
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 64
+          rejected_prediction_tokens: 0
+        prompt_tokens: 132
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 219
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '654'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3597'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_fwvZFTI4c2HptnAyBLOlCOXm
+            type: function
+      created: 1767642772
+      id: chatcmpl-CukvEVtrFt3y9NmyKxKVbl9EBndI6
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 165
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 128
+          rejected_prediction_tokens: 0
+        prompt_tokens: 167
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 332
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '926'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3800'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_4XCAgbhrOZZmdftGDHPdbz4n
+            type: function
+      created: 1767642777
+      id: chatcmpl-CukvJgeJk7ABZ4K4itYyF5XVuXesb
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 292
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 256
+          rejected_prediction_tokens: 0
+        prompt_tokens: 202
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 494
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1198'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '5455'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_cDvI40bEM1pEVhnhW3JzC0KT
+            type: function
+      created: 1767642781
+      id: chatcmpl-CukvNmWi3xxNimrNAtWq4fbuEaORn
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 343
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 320
+          rejected_prediction_tokens: 0
+        prompt_tokens: 237
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 580
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1470'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '5647'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_N1RnX8yy7rxunKUTCTo1WwEl
+            type: function
+      created: 1767642787
+      id: chatcmpl-CukvTWANweu824SrXtmt1FZAppw4Q
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 407
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 384
+          rejected_prediction_tokens: 0
+        prompt_tokens: 272
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 679
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1742'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '7813'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_nMpvkPk8VOU5zErwglxjPjde
+            type: function
+      created: 1767642794
+      id: chatcmpl-CukvaxMvUHnjj2G4agARJgvsfNAp6
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 407
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 384
+          rejected_prediction_tokens: 0
+        prompt_tokens: 307
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 714
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2014'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '7637'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_9Eb11CbXVESarbaNeDLRhdY7
+            type: function
+      created: 1767642802
+      id: chatcmpl-CukviZK7J5chledlR6Po1RKUN6mJZ
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 407
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 384
+          rejected_prediction_tokens: 0
+        prompt_tokens: 342
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 749
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2286'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '4247'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_8RkVbvpqTZeB4RakHZxJUMa6
+            type: function
+      created: 1767642811
+      id: chatcmpl-CukvrrUnVzN1cKdNopmlcNIzcmkVL
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 215
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 192
+          rejected_prediction_tokens: 0
+        prompt_tokens: 377
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 592
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2558'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3333'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_3wgqve0GtGexZoYiTiEigKI9
+            type: function
+      created: 1767642816
+      id: chatcmpl-CukvwuShra9o6tUQeOitVUnargTjr
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 215
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 192
+          rejected_prediction_tokens: 0
+        prompt_tokens: 412
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 627
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2830'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '6550'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_3DRjOQHwiPT2sA4MaWkrD20V
+            type: function
+      created: 1767642820
+      id: chatcmpl-Cukw0MfCvNLN2gPHd1wPBf457mPIp
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 292
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 256
+          rejected_prediction_tokens: 0
+        prompt_tokens: 447
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 739
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '3102'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3DRjOQHwiPT2sA4MaWkrD20V
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3DRjOQHwiPT2sA4MaWkrD20V
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '4464'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_TdgsdVjzp3xTMeWncVJYECPL
+            type: function
+      created: 1767642827
+      id: chatcmpl-Cukw7WwXK0ri3CUIV2DVjmMd4bXLj
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 215
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 192
+          rejected_prediction_tokens: 0
+        prompt_tokens: 482
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 697
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '3374'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3DRjOQHwiPT2sA4MaWkrD20V
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3DRjOQHwiPT2sA4MaWkrD20V
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_TdgsdVjzp3xTMeWncVJYECPL
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_TdgsdVjzp3xTMeWncVJYECPL
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '4358'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_A44GbS5TnL6wTtbECKw08saH
+            type: function
+      created: 1767642833
+      id: chatcmpl-CukwDG59BB75cpSt2qSzsEZ9dmwzQ
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 279
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 256
+          rejected_prediction_tokens: 0
+        prompt_tokens: 517
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 796
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '3646'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3DRjOQHwiPT2sA4MaWkrD20V
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3DRjOQHwiPT2sA4MaWkrD20V
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_TdgsdVjzp3xTMeWncVJYECPL
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_TdgsdVjzp3xTMeWncVJYECPL
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_A44GbS5TnL6wTtbECKw08saH
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_A44GbS5TnL6wTtbECKw08saH
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '4366'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_5cNldosfj5qiOh9yT4x0IT6w
+            type: function
+      created: 1767642838
+      id: chatcmpl-CukwI9T1xO84Erek1vP3Nk6Px8c59
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 279
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 256
+          rejected_prediction_tokens: 0
+        prompt_tokens: 552
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 831
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '3918'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3DRjOQHwiPT2sA4MaWkrD20V
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3DRjOQHwiPT2sA4MaWkrD20V
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_TdgsdVjzp3xTMeWncVJYECPL
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_TdgsdVjzp3xTMeWncVJYECPL
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_A44GbS5TnL6wTtbECKw08saH
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_A44GbS5TnL6wTtbECKw08saH
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_5cNldosfj5qiOh9yT4x0IT6w
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_5cNldosfj5qiOh9yT4x0IT6w
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3260'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+            type: function
+      created: 1767642843
+      id: chatcmpl-CukwNUHsNP3v4jHhbqNCHU7hyu0XQ
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 215
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 192
+          rejected_prediction_tokens: 0
+        prompt_tokens: 587
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 802
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '4190'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3DRjOQHwiPT2sA4MaWkrD20V
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3DRjOQHwiPT2sA4MaWkrD20V
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_TdgsdVjzp3xTMeWncVJYECPL
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_TdgsdVjzp3xTMeWncVJYECPL
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_A44GbS5TnL6wTtbECKw08saH
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_A44GbS5TnL6wTtbECKw08saH
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_5cNldosfj5qiOh9yT4x0IT6w
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_5cNldosfj5qiOh9yT4x0IT6w
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '5435'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_wDtHmVJ0cbojlsnRNKH1tVbo
+            type: function
+      created: 1767642848
+      id: chatcmpl-CukwS1nORxAEdQIyKRSjvpv27seC4
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 279
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 256
+          rejected_prediction_tokens: 0
+        prompt_tokens: 622
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 901
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '4462'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3DRjOQHwiPT2sA4MaWkrD20V
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3DRjOQHwiPT2sA4MaWkrD20V
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_TdgsdVjzp3xTMeWncVJYECPL
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_TdgsdVjzp3xTMeWncVJYECPL
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_A44GbS5TnL6wTtbECKw08saH
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_A44GbS5TnL6wTtbECKw08saH
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_5cNldosfj5qiOh9yT4x0IT6w
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_5cNldosfj5qiOh9yT4x0IT6w
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_wDtHmVJ0cbojlsnRNKH1tVbo
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_wDtHmVJ0cbojlsnRNKH1tVbo
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3203'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_id04fj6mIh8idrpHIDL47UvA
+            type: function
+      created: 1767642853
+      id: chatcmpl-CukwX5O3lIoypw3dSPZlScgM3n04s
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 151
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 128
+          rejected_prediction_tokens: 0
+        prompt_tokens: 657
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 808
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '4734'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3DRjOQHwiPT2sA4MaWkrD20V
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3DRjOQHwiPT2sA4MaWkrD20V
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_TdgsdVjzp3xTMeWncVJYECPL
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_TdgsdVjzp3xTMeWncVJYECPL
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_A44GbS5TnL6wTtbECKw08saH
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_A44GbS5TnL6wTtbECKw08saH
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_5cNldosfj5qiOh9yT4x0IT6w
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_5cNldosfj5qiOh9yT4x0IT6w
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_wDtHmVJ0cbojlsnRNKH1tVbo
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_wDtHmVJ0cbojlsnRNKH1tVbo
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_id04fj6mIh8idrpHIDL47UvA
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_id04fj6mIh8idrpHIDL47UvA
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '5159'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_q9KJPMKuX0GI70txRqX6mHfs
+            type: function
+      created: 1767642857
+      id: chatcmpl-CukwbYMO9DKXE6qECp0YqmUfcFLm5
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 279
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 256
+          rejected_prediction_tokens: 0
+        prompt_tokens: 692
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 971
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '5006'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3DRjOQHwiPT2sA4MaWkrD20V
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3DRjOQHwiPT2sA4MaWkrD20V
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_TdgsdVjzp3xTMeWncVJYECPL
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_TdgsdVjzp3xTMeWncVJYECPL
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_A44GbS5TnL6wTtbECKw08saH
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_A44GbS5TnL6wTtbECKw08saH
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_5cNldosfj5qiOh9yT4x0IT6w
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_5cNldosfj5qiOh9yT4x0IT6w
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_wDtHmVJ0cbojlsnRNKH1tVbo
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_wDtHmVJ0cbojlsnRNKH1tVbo
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_id04fj6mIh8idrpHIDL47UvA
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_id04fj6mIh8idrpHIDL47UvA
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_q9KJPMKuX0GI70txRqX6mHfs
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_q9KJPMKuX0GI70txRqX6mHfs
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1054'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3965'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_mXK4WxtolL8C3bagkDg2Dav5
+            type: function
+      created: 1767642864
+      id: chatcmpl-CukwieDk8FfHXD52kldGKrrPFDm3X
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 279
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 256
+          rejected_prediction_tokens: 0
+        prompt_tokens: 727
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 1006
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '5278'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Nc3RVEUqvkwN2q8YBa3EI_OlUWB5BgAQBQO3zaZAZAY-1767642771-1.0.1.1-6c0EV5YocnbZd7DZC4.eCAttlF1tZbApBxB5Fe_kXWEhrQN4kaXLg8xgWoDn4VZ4jEsBh5S2tGvG9B4L2ptokzY8AaDE0_WT4FCd4Bi_aE0;
+        _cfuvid=pLVLi.56NgDRQc8pc8As76NS5d_xVYBI5rwtiLtCW3o-1767642771635-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_Xe2iMzYE93ysTTGByqJDkpz7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_Xe2iMzYE93ysTTGByqJDkpz7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_fwvZFTI4c2HptnAyBLOlCOXm
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_fwvZFTI4c2HptnAyBLOlCOXm
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_4XCAgbhrOZZmdftGDHPdbz4n
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_4XCAgbhrOZZmdftGDHPdbz4n
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_cDvI40bEM1pEVhnhW3JzC0KT
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_cDvI40bEM1pEVhnhW3JzC0KT
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_N1RnX8yy7rxunKUTCTo1WwEl
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_N1RnX8yy7rxunKUTCTo1WwEl
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_nMpvkPk8VOU5zErwglxjPjde
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_nMpvkPk8VOU5zErwglxjPjde
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_9Eb11CbXVESarbaNeDLRhdY7
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_9Eb11CbXVESarbaNeDLRhdY7
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_8RkVbvpqTZeB4RakHZxJUMa6
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_8RkVbvpqTZeB4RakHZxJUMa6
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3wgqve0GtGexZoYiTiEigKI9
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3wgqve0GtGexZoYiTiEigKI9
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_3DRjOQHwiPT2sA4MaWkrD20V
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_3DRjOQHwiPT2sA4MaWkrD20V
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_TdgsdVjzp3xTMeWncVJYECPL
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_TdgsdVjzp3xTMeWncVJYECPL
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_A44GbS5TnL6wTtbECKw08saH
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_A44GbS5TnL6wTtbECKw08saH
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_5cNldosfj5qiOh9yT4x0IT6w
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_5cNldosfj5qiOh9yT4x0IT6w
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_tPiFTtMAzOqoWxJ5GmW2zVmK
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_wDtHmVJ0cbojlsnRNKH1tVbo
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_wDtHmVJ0cbojlsnRNKH1tVbo
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_id04fj6mIh8idrpHIDL47UvA
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_id04fj6mIh8idrpHIDL47UvA
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_q9KJPMKuX0GI70txRqX6mHfs
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_q9KJPMKuX0GI70txRqX6mHfs
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_mXK4WxtolL8C3bagkDg2Dav5
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: call_mXK4WxtolL8C3bagkDg2Dav5
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '4583'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_aNoMeu1GeLFZCbUIv29Vp5gW
+            type: function
+      created: 1767642868
+      id: chatcmpl-CukwmBC08NN9Wh5suxVcs0Ip3QOvh
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 215
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 192
+          rejected_prediction_tokens: 0
+        prompt_tokens: 762
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 977
+    status:
+      code: 200
+      message: OK
+version: 1

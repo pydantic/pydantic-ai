@@ -1,0 +1,69 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '135'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1012'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b8f7d-b865-73ff-a1f9-a5b1275a9f1a
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: "To check the current weather in **Paris, France**, you can use reliable weather services like:\n\n- **[Météo
+            France](https://www.meteofrance.com/)** (official French weather service)\n- **[Weather.com](https://weather.com/weather/today/l/Paris,France)**\n-
+            **[AccuWeather](https://www.accuweather.com/en/fr/paris/623/weather-forecast/623)**\n\n### **Quick Snapshot (as
+            of my last update):**\n- **Temperature:** Typically ranges between **5°C (41°F) to 20°C (68°F)** depending on
+            the season.\n- **Current Conditions:** Check for rain, sunshine, or wind (Paris can be unpredictable!).\n\nFor
+            real-time updates, I recommend checking one of the links above. Would you like a forecast for a specific date?
+            \U0001F60A"
+          role: assistant
+          tool_calls: null
+      created: 1767638939
+      id: d70ee51b2e424f81835e61372302a457
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 186
+        prompt_tokens: 10
+        total_tokens: 196
+    status:
+      code: 200
+      message: OK
+version: 1

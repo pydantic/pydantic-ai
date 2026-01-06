@@ -1,0 +1,110 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '408'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Tell me about Paris
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Structured output model for city information.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3331'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b8f90-5997-7c50-afe9-ea8bdc68dd3a
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Paris", "summary": "Paris, the capital city of France, is one of the most iconic and visited
+                cities in the world. Known as the \"City of Light\" (La Ville Lumière), Paris is celebrated for its rich history,
+                art, culture, architecture, and cuisine. \n\nKey highlights of Paris include:\n\n1. **Landmarks and Monuments**:
+                \n   - The **Eiffel Tower**, an iconic symbol of Paris, offers breathtaking views of the city.\n   - **Notre-Dame
+                Cathedral**, a masterpiece of French Gothic architecture, though currently under restoration after the 2019
+                fire.\n   - **The Louvre Museum**, the world''s largest art museum, home to the Mona Lisa, Venus de Milo,
+                and thousands of other artworks.\n   - **Arc de Triomphe**, a monumental structure honoring those who fought
+                for France, particularly during the Napoleonic Wars.\n   - **Sacré-Cœur Basilica**, located atop Montmartre
+                hill, providing stunning panoramic views.\n\n2. **Culture and Arts**: \n   - Paris is a global hub for art,
+                fashion, and design. It has been home to many famous artists, writers, and intellectuals, such as Picasso,
+                Hemingway, and Victor Hugo.\n   - The **Musée d''Orsay**, housed in a former railway station, features an
+                impressive collection of Impressionist and Post-Impressionist masterpieces.\n   - **The Centre Pompidou**,
+                known for its modern and contemporary art collections.\n\n3. **Neighborhoods**: \n   - **Montmartre**, famous
+                for its bohemian atmosphere and the Sacré-Cœur Basilica.\n   - **Le Marais**, a historic district with trendy
+                boutiques, galleries, and cafés.\n   - **Champs-Élysées**, a prestigious avenue lined with shops, theaters,
+                and cafés.\n   - **Latin Quarter**, known for its student life, lively atmosphere, and historic universities.\n\n4.
+                **Cuisine**: \n   - Paris is a paradise for food lovers, offering everything from Michelin-starred restaurants
+                to charming bistros and street food.\n   - Famous dishes include croissants, baguettes, escargot, coq au vin,
+                and crème brûlée.\n   - The city is also known for its patisseries, chocolatiers, and fromageries.\n\n5. **Parks
+                and Gardens**: \n   - **Jardin des Tuileries**, a beautiful garden located between the Louvre and Place de
+                la Concorde.\n   - **Luxembourg Gardens**, a favorite spot for Parisians to relax and enjoy outdoor activities.\n   -
+                **Bois de Boulogne**, a large public park offering walking paths, lakes, and even a botanical garden.\n\n6.
+                **Events and Festivals**: \n   - **Bastille Day (July 14th)**, celebrated with parades, fireworks, and parties.\n   -
+                **Paris Fashion Week**, one of the most prestigious fashion events in the world.\n   - **Nuit Blanche**, an
+                all-night arts festival held annually.\n\nParis is a city that seamlessly blends history and modernity, offering
+                something for everyone, whether you''re interested in art, history, food, or simply soaking in the atmosphere
+                of this enchanting city."}'
+              name: final_result
+            id: qSBEp4X01
+            index: 0
+      created: 1767640160
+      id: d60742b1c3434ea093a4cb6a3e6b710d
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 722
+        prompt_tokens: 86
+        total_tokens: 808
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,95 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '401'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: none
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1569'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            I'm not able to provide real-time information such as current weather conditions. However, I can suggest some ways for you to find out the current weather in Paris:
+
+            1. Check a weather website or app: You can visit websites like AccuWeather, Weather.com, or Météo-France to get the current weather conditions and forecast for Paris.
+            2. Use a search engine: Simply type "Paris weather" or "weather in Paris" in a search engine like Google, and you'll get the current weather conditions and forecast.
+            3. Check a travel website: If you're planning a trip to Paris, you can check travel websites like TripAdvisor or Lonely Planet for weather information.
+
+            Keep in mind that Paris has a temperate climate with cool winters and mild summers. The best time to visit Paris is during the spring (April-May) and autumn (September-October), when the weather is pleasant and comfortable.
+
+            If you need more specific information or have any other questions, feel free to ask!
+          role: assistant
+      created: 1767638939
+      id: chatcmpl-bc728888-e21b-45d8-95ee-872ce6cc8dd6
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_ba95244fa2
+      usage:
+        completion_time: 0.480883739
+        completion_tokens: 197
+        prompt_time: 7.5599e-05
+        prompt_tokens: 16
+        queue_time: 0.200037534
+        total_time: 0.480959338
+        total_tokens: 213
+      usage_breakdown: null
+      x_groq:
+        id: req_01ke7qvcqgeqbrrsfrxr1z05dp
+        seed: 1149770897
+    status:
+      code: 200
+      message: OK
+version: 1

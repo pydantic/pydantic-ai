@@ -1,0 +1,158 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/meta-llama/Llama-4-Scout-17B-16E-Instruct?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-length:
+      - '904'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"388-myb6zbS3leJ0g7Gjjeu5p4iBNkw"
+      ratelimit:
+      - '"api";r=998;t=199'
+      ratelimit-policy:
+      - '"fixed window";"api";q=1000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 67ed3cd9290a7f9d3301f9c1
+      id: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      inferenceProviderMapping:
+        fireworks-ai:
+          isModelAuthor: false
+          providerId: accounts/fireworks/models/llama4-scout-instruct-basic
+          status: error
+          task: conversational
+        groq:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        novita:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        nscale:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: live
+          task: conversational
+        sambanova:
+          isModelAuthor: false
+          providerId: Llama-4-Scout-17B-16E-Instruct
+          status: error
+          task: conversational
+        together:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      stream: false
+      tool_choice: none
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    headers:
+      content-type:
+      - application/json
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"655-ZcZAlJQo61czhH1LataNrafTOtA"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            I'm not able to provide real-time information such as current weather conditions. However, I can suggest some ways for you to find out the current weather in Paris:
+
+            1. Check a weather website or app: You can check websites like AccuWeather, Weather.com, or Météo-France (the official French weather service) for up-to-date weather forecasts and current conditions in Paris.
+            2. Use a search engine: Simply type "Paris weather" or "weather Paris" in a search engine like Google, and you'll get the current weather conditions and forecast.
+            3. Check a travel website: If you're planning a trip to Paris, you can check travel websites like TripAdvisor or Lonely Planet for weather information and tips.
+
+            Keep in mind that Paris has a temperate climate with cool winters and mild summers, with average temperatures ranging from around 32°F (0°C) in January (the coldest month) to 77°F (25°C) in July (the warmest month). However, the weather can be unpredictable, so it's always a good idea to check the forecast before heading out.
+          reasoning: null
+          role: assistant
+          tool_calls: []
+        seed: null
+      created: 1767661777
+      id: oS9DeSo-z1gNr-9b9754b03d4152d5
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 219
+        prompt_tokens: 17
+        total_tokens: 236
+    status:
+      code: 200
+      message: OK
+version: 1

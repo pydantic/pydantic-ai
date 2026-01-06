@@ -1,0 +1,174 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '759'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Tell me about Paris
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Structured output model for city information.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5921'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '6038'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767640185
+      created_at: 1767640179
+      error: null
+      id: resp_0f96fbb3391273de00695c0c733dec8193a1a9757449a5b6f2
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpXAx5I5EzYR4TONVBz_qVM2IxYeHDjdrJuM3n5KQaWMPog4E4FkeFk7QOPH9WX7TMM8Q_BgmIc7f5lImPcoaUqHcprMUtZzhEIubaukfOGXIiD0sebd9-mEct4d4kSJqW_1OgbzGzezpfYX-BtRD5l-L9cUjrvzlCcPv34LVZoZPHOm0dkZ32O9PLUsTUZheZGEBRs9AqtVZciAIiJi-wK0A2a3c84yfBaMX26iDh5a448W0EaHbuPxBuURgMkjp4QqlirWFGjxlTBY4vVcUfeb5E247aWi5Ku42KDHB11_Rna5B5FusIvp94KSbZdEHajR0BzUTvU598PYCt5zqchMUfo3kHLhTbmWD-MlINIIvHNHo7iLhkQSLAqO2JDNur_jGyedduTuvClZYWwBjZukPndB70x-geo-ilW_q_6gGEy2k10oUhO2YpmzF_daO79kIlA_bs-1t_TmXztVPgcvB-nMW_rgxEwST4fG65Ot5cl2VWf7K-jcXXul7Jskw1WuBOQ1tnDgQFRHGvthM7kPfuT9rp3pi1lLnG8SRuTAkWZWAytqZ5dbT3WkK5jyYZnadmDozjcAHuYiOpmB7G2NZu_LFl9oWTlxwAJE6barATHmpoOfc9F14Wxo3ZnRpH4JTT_IJTTBK1hdcoocuFvDhPmJJYyZx4-frLKFDqZcoWV1pGEfaODUjPzQ0cJZ5mql9RH9zsIzmErgmapnIYNzcmh4m4Wjlno8nHMVp_BFNNosrt89fT9Q9DXiX7aV03Wzfk1mTxSwYfJ2QiEA0LZnznL6NYAZsmYMMENja5qkYeOEwaCthNzPHK-4qKjaux1UgK23Z5Uy9OIMrDSa_LufbByLSDy8-PRe6r31Ih4zieoAAhN4r3JnYF-Uno5742XmXE5JNLaIHTQoQEZWIzV6KaRPkh0Ypamnq4nS5LlrRksAgZPNaatTXLPCoeuygJ2tqUkOvS52E-13HmZMWhuTX5avqiUjl7qYM1-g54TwMGYMuKDZ6D-9rdbmHrS1xFe0PBTh6mRz3qUcvmw1tsyAB9XzffOwOZjjguHAugBMK3v9txDyjLA8FEPEbA4P7ju2L67xM2NP-91SbcVYOkoqnV43RffLM6W3DTzVDQcZWPHLtbzmFtMugqZ_awBSeLyD8y6hkQ5kcAFZDtKv_qt1M_BJByKsJwwWA4YRbcpZ8TqWkaS15BoxOg-BhfQoZL2sunQgFdzYNvxyrf4wfTnETmMBONwTqOD9lbo6soX5IK-3wmAaJc7NDg3eE_Q6caLANMh3TrOoCH5fG83Lq8sHcLkewmC_lsIBaHSJ6OYugkHOA1Zb4nor1SPi7JkOzeazeQZAtRRJu1QLxmUMlTtyp9Mo1MJ8vpSQxJ_Q2TRET6m8niR-eb-I7KWT7IbyJj35p-hT3wyxMOKe_LXOMo5zLgedNgDYdVxNoesAgG9A9d5wlacxAMirxBHqZoHLTUDcMvsvzkRFVzgq5mbWGsvL1TYPQnq4IicPG1mZw8GUXxPeZF2eW9BijWwC8tfrzjstm1zGBawtUY_L9ln0Z83OPDondGhZfkjk1P1BPeO5-tAcNlCCQ950_U47NufJpuXHV1gJPSVOQnolxH6huOTV6LWsITo7m0BRgC9U-DrzmeLqCwtBABcO-mD9RTa0l_xXY2bDHIQv9gHoN34nN-3s5kHbIJiTt5wOIKOzo1Gn33zo98SrFJhnV_PhKBayOLgfWvoBVGuocqoWrpcUgYFAL0hJrU7kEhKmg8Nkg53UaLDfGX96OVmuIgV5Gv6Cj8Ktf0c-8-USniZLdmAmfeZKOBuixVyO5lPWt5TzT8PiSSAo8cXAnlzREekdpRJEcZ7oKYoyGvW8txQsD1O4Bu-G5DxdNdKhrfsPPPIlbfkqn3xT1ffxYS8AZjiJmXPmONTxXX9py8A4jjPVm4F8bvrnVIdtFp8kce80s2VezstRdF_O8B9Fn5AYZ8IPxRntwWrRt23yI3wFWcLS5zzJU5k7bY1f__SLj3SBm0bP4pN_roI3Xm_nChti8hG1JYa0cL0lCnhIwlcMOKCKbMWR71ZoqZ_QazlNB9u0opV5wVwzECUXS8wr7rp2MB9MCoRxX2Mz-AIrlSXWYnWLMOZbSswZs8j67P9oP0wpvjKsXkQGmVsM6FJooXr8Z8NN_6Z4hVLHnnuVbKtt0LlLcj9wx-AFRKJ0hwLXFhDYQjMgx2ExztddRANXHeSPc56tS44kIELK2hS7Vr5N8lUnUIRfOvNXrZ0mQ_oU25rAElT9ZLGSSxcBlgYT__N5a2sDeHox8dZWCHchI3kYZrkwhzXYjD_MRmvMxMv1Qvex92u7Q8u09sTe1OfQq-K7ICkcbySs2yHg-08Af7itCeaYmveGcUxE2xoY-m9jv5NT0u4odMmKagPLCd-vAXHaLGB-xiD9h4iSfP2iszPFW9FvAMNAzInfmRKVLhrsBNbHzT-7YxOUh0IsF4pFv8KsrL_2JoNA-xgtNXnpXpTyZOCMtdIj3ZzenBxyxbBzD6DAifGtu1CqSuSVQxh9z_GN0JDAJR-u9Aruik5_-PByrNje_-3PaEQDphY-5a9lW-xfDnmIvR8TYrAb_pjQYBCS6-z27M6RdgNJcuQbr73LvVF9BhQg3uco9d4EDFCp7UgNHLgRjrHEEEsSnSl5hYeg5ZlJ0UA-rSqjZ-Njbx58Qm4gOsFo5CI6SCfc5361sw4LGmB-0LnEx0auEvdKxbBWldetQLPyepG_AofFlYgmJndmpipOpB6ylPMxu-he0iasqhkriZlAF_H4-AKr5OIlR13kz3YLiuO3BfqKNJLExIx-Wx3gYixBRCAaPGYPXdH5mASbGVII9GOqYOFaaSiVe7xzNFHguSgIw3sxUbH4n9NcE-ermDPw8ceU55fDIV1MBU2_UfC34MzigJJC-Ze1Y1tWkuyrk6NPeLJ8tSEc5tpSy2Ncj_oteclWmYU7ZoxWkMmBd-wnmgDf3yth9OTmKCdD3P6AeMUZ3tYFtMHGeqaNt_N0483Ib5bq7o9R_PcQzHLxwS6gGutlT2VbqwPggoOlg3EYV89m_96--VXwArkK1VweyUmNMP1ThJG4QGmG9E0yNYXCiiFczILVcXtchJISVRtlhkikjL
+        id: rs_0f96fbb3391273de00695c0c746598819381fa75571bd6374a
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Paris","summary":"Capital of France; global center for art, fashion, gastronomy and culture,
+          famous landmarks include the Eiffel Tower, the Louvre, and Notre-Dame."}'
+        call_id: call_fd0JafBxBUylLvZeuC2ZViRg
+        id: fc_0f96fbb3391273de00695c0c789c888193b1b871fc8603405c
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Structured output model for city information.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 73
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 373
+        output_tokens_details:
+          reasoning_tokens: 320
+        total_tokens: 446
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

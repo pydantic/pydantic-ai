@@ -1,0 +1,110 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '705'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Tell me about Paris
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice:
+        function:
+          name: final_result
+        type: function
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: Structured output model for city information.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '886'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris","summary":"The capital of France, Paris is known for its art, fashion, and culture.
+                It is often called the ''City of Light'' due to its historical and cultural significance."}'
+              name: final_result
+            id: 06v33f5nm
+            type: function
+      created: 1767640159
+      id: chatcmpl-dd8b23d7-df81-4b4a-af11-1608956c0f9b
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_5436ed2ebe
+      usage:
+        completion_time: 0.226264849
+        completion_tokens: 92
+        prompt_time: 0.031009276
+        prompt_tokens: 776
+        queue_time: 0.173403247
+        total_time: 0.257274125
+        total_tokens: 868
+      usage_breakdown: null
+      x_groq:
+        id: req_01ke7s0n51f6y85ja9hxytn3xf
+        seed: 1018040955
+    status:
+      code: 200
+      message: OK
+version: 1

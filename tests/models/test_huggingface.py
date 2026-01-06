@@ -1218,3 +1218,35 @@ def test_tool_choice_auto_with_required_output() -> None:
     assert len(tools) == 1
     # With allow_text_output=False, 'auto' becomes 'required'
     assert result_tool_choice == 'required'
+
+
+@pytest.mark.anyio
+@pytest.mark.vcr
+async def test_together_500_on_tool_continuation(allow_model_requests: None, huggingface_api_key: str) -> None:
+    """Documents Together backend 500 error on multi-turn tool conversations.
+
+    When using HuggingFace with the Together backend and tool_choice='auto':
+    1. First request succeeds - model calls the tool
+    2. Second request (with tool result) fails with 500 Internal Server Error
+
+    This is a known limitation of the Together backend via HuggingFace's router.
+    Other backends (novita, nscale) don't support tool calling at all.
+
+    This test is expected to fail with ModelHTTPError(status_code=500) on the second request.
+    It documents the issue for future reference and to track if/when Together fixes this.
+    """
+
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f'Sunny, 22C in {city}'
+
+    model = HuggingFaceModel(
+        'meta-llama/Llama-4-Scout-17B-16E-Instruct',
+        provider=HuggingFaceProvider(api_key=huggingface_api_key, provider_name='together'),
+    )
+    agent: Agent[None, str] = Agent(model, tools=[get_weather])
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run("What's the weather in Paris?", model_settings={'tool_choice': 'auto'})
+
+    assert exc_info.value.status_code == 500

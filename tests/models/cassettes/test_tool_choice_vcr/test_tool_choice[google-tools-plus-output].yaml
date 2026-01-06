@@ -1,0 +1,230 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '993'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather for Paris and summarize
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get the current time in a timezone.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        - description: Structured output model for city information.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1227'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=934
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Paris
+              name: get_weather
+            thoughtSignature: CtICAXLI2nyYCR2ZsIOoH5wVM6v1pT6sLVgvHwMBVtn3ZEs8N/UzkG+RmFZu1UEHCGySK/LB563VIJEHCF6o6oL5ZW66qHAd40YDL9bVmC/MkBGAYDCEJ4iaL74/kSNeh91oWF9k9wSE6B/SDYVq91oYV/GI42ucjYsnuZwpmWXDzwzxP+JE0sMyK1edKkerw9o5YT4IjMzwL9WQi0rz0JxR1EoKGM0isNwmtkyn7Rx7muVI9jGxyMYZsCh+/t9CETWBoSZjaLCmSOCHqxu/G1hf4yFCGHVfnHpryA+vvEFd4iBvn9zAkbiKoWRLUCuooYafQaypmVMqZ8gojLUNRrm2Ckpw0ZyBt39flCA6y4Z01QzlTPKyqsEiUWn/OuMGof9l/pWcWS3OAYzEBN/mjMEGg1ZejL/xvtnK8dDlbMRojrFGf+y6KrWcBhghp8yOkEFkzfc=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: hAxcaaXlL7-fz7IPvqPoqAg
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 137
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 137
+        thoughtsTokenCount: 81
+        totalTokenCount: 233
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1800'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather for Paris and summarize
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: Paris
+            id: pyd_ai_ebefdb0fadb84cd7a150140169415a18
+            name: get_weather
+          thoughtSignature: CtICAXLI2nyYCR2ZsIOoH5wVM6v1pT6sLVgvHwMBVtn3ZEs8N_UzkG-RmFZu1UEHCGySK_LB563VIJEHCF6o6oL5ZW66qHAd40YDL9bVmC_MkBGAYDCEJ4iaL74_kSNeh91oWF9k9wSE6B_SDYVq91oYV_GI42ucjYsnuZwpmWXDzwzxP-JE0sMyK1edKkerw9o5YT4IjMzwL9WQi0rz0JxR1EoKGM0isNwmtkyn7Rx7muVI9jGxyMYZsCh-_t9CETWBoSZjaLCmSOCHqxu_G1hf4yFCGHVfnHpryA-vvEFd4iBvn9zAkbiKoWRLUCuooYafQaypmVMqZ8gojLUNRrm2Ckpw0ZyBt39flCA6y4Z01QzlTPKyqsEiUWn_OuMGof9l_pWcWS3OAYzEBN_mjMEGg1ZejL_xvtnK8dDlbMRojrFGf-y6KrWcBhghp8yOkEFkzfc=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_ebefdb0fadb84cd7a150140169415a18
+            name: get_weather
+            response:
+              return_value: Sunny, 22C in Paris
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get the current time in a timezone.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        - description: Structured output model for city information.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1201'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1080
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Paris
+                summary: Sunny, 22C
+              name: final_result
+            thoughtSignature: CqACAXLI2nyKS/MJFHKdCLW5O5compKbo/yqUiKwpLl3jJpaDTqjiOj2puGDCptlwMiA8L6sc5wvapBlYMOe6Ite40l+MuMVTP4GENQderjm3LckAsfgM8Vt0ysYMOHQp6yfgSqDCZXxUnTSWZsFJGEWD2b4UaCwa6rcTh9j0N47czuE/feWgW6mA3VNm5d9fhAl2IaPbf1wTNVIufP3rzMi5bju8jlOl5NqONtCXeexAhTO0LQrB5Yi8OjFJY42rLnNu/cTw8vEwxnpEF1bgHjkoRVXWfad3P6ABET4TljLSkzOW1ZzYTShi1fEgbYk7BN7tx7i5fmTrManrlu8IofyQlAIEf1iAWRQ477WNXpcyKrEKRc6FECGV44K2jfSvr6l
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: hgxcaZPMHJ6VmtkPvo3v4Ao
+      usageMetadata:
+        candidatesTokenCount: 25
+        promptTokenCount: 176
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 176
+        thoughtsTokenCount: 67
+        totalTokenCount: 268
+    status:
+      code: 200
+      message: OK
+version: 1
