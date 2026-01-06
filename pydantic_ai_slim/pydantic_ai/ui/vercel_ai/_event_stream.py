@@ -91,16 +91,17 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     @cached_property
     def _denied_tool_ids(self) -> set[str]:
         """Get the set of tool_call_ids that were denied by the user."""
-        denied_ids: set[str] = set()
+        denied: set[str] = set()
         for msg in self.run_input.messages:
-            if msg.role != 'assistant':
-                continue
-            for part in msg.parts:
-                if not isinstance(part, ToolUIPart | DynamicToolUIPart):
-                    continue
-                if isinstance(part.approval, ToolApprovalResponded) and not part.approval.approved:
-                    denied_ids.add(part.tool_call_id)
-        return denied_ids
+            if msg.role == 'assistant':
+                for part in msg.parts:
+                    if (
+                        isinstance(part, ToolUIPart | DynamicToolUIPart)
+                        and isinstance(part.approval, ToolApprovalResponded)
+                        and not part.approval.approved
+                    ):
+                        denied.add(part.tool_call_id)
+        return denied
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -130,9 +131,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if pydantic_reason:
             self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
 
-        # Emit tool approval requests for deferred approvals (only when tool_approval is enabled)
+        # Emit tool approval requests for deferred approvals (only when enable_tool_approval is enabled)
         output = event.result.output
-        if self.tool_approval and isinstance(output, DeferredToolRequests):
+        if self.enable_tool_approval and isinstance(output, DeferredToolRequests):
             for tool_call in output.approvals:
                 yield ToolApprovalRequestChunk(
                     approval_id=str(uuid4()),
@@ -277,8 +278,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         part = event.result
         tool_call_id = part.tool_call_id
 
-        # Check if this tool was denied by the user (only when tool_approval is enabled)
-        if self.tool_approval and tool_call_id in self._denied_tool_ids:
+        # Check if this tool was denied by the user (only when enable_tool_approval is enabled)
+        if self.enable_tool_approval and tool_call_id in self._denied_tool_ids:
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
