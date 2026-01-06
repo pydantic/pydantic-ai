@@ -168,7 +168,7 @@ def get_model(provider: str, api_keys: dict[str, str]) -> Model:
     elif provider == 'google':
         return GoogleModel(model_name, provider=GoogleProvider(api_key=api_keys['google']))
     elif provider == 'bedrock':
-        return BedrockConverseModel(model_name, provider=BedrockProvider())
+        return BedrockConverseModel(model_name, provider=BedrockProvider(region_name='us-east-2'))
     elif provider == 'huggingface':
         return HuggingFaceModel(
             model_name, provider=HuggingFaceProvider(api_key=api_keys['huggingface'], provider_name='together')
