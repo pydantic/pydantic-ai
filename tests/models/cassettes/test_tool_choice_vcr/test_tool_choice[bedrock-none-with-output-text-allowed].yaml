@@ -1,0 +1,60 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Tell me about Paris briefly"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "Structured output model for city information."}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ODEwMzJlNjYtMmQzZC00MmM0LTk0YjYtNjQ1YjliMGFkNDBk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '456'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '968'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3450
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Paris
+                summary: Paris is the capital and largest city of France, known as the "City of Light." It's a global center
+                  for art, fashion, culture, and gastronomy. Famous landmarks include the Eiffel Tower, Louvre Museum, Notre-Dame
+                  Cathedral, and Arc de Triomphe. The city sits along the Seine River and is renowned for its beautiful architecture,
+                  romantic atmosphere, world-class museums, haute couture, and café culture. With a rich history spanning
+                  over 2,000 years, Paris remains one of the most visited and influential cities in the world.
+              name: final_result
+              toolUseId: tooluse_rWbjDbp8QG204VfBI-YCDA
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 584
+        outputTokens: 189
+        serverToolUsage: {}
+        totalTokens: 773
+    status:
+      code: 200
+      message: OK
+version: 1

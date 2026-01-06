@@ -1,0 +1,94 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '439'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Tell me about Paris briefly
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Structured output model for city information.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '789'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris","summary":"The capital of France, known for its art, fashion, and culture."}'
+              name: final_result
+            id: wgx33t11x
+            type: function
+      created: 1767727907
+      id: chatcmpl-01ddc2fc-da9c-44fc-ad44-f0ca7cc5852e
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_130a0cd72d
+      usage:
+        completion_time: 0.125676016
+        completion_tokens: 49
+        prompt_time: 0.024138635
+        prompt_tokens: 723
+        queue_time: 0.342061218
+        total_time: 0.149814651
+        total_tokens: 772
+      usage_breakdown: null
+      x_groq:
+        id: req_01keacpg9meph9mbehvpkmw7j5
+        seed: 1716507496
+    status:
+      code: 200
+      message: OK
+version: 1

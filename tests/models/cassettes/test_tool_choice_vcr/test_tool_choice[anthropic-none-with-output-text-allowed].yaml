@@ -1,0 +1,84 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '413'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Tell me about Paris briefly
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: Structured output model for city information.
+        input_schema:
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '996'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01LjVfwSeAhNsnZ9PkzmAauR
+        input:
+          city: Paris
+          summary: Paris is the capital and largest city of France, renowned worldwide for its art, culture, fashion, and
+            cuisine. Known as the "City of Light," it features iconic landmarks including the Eiffel Tower, Louvre Museum,
+            Notre-Dame Cathedral, and Arc de Triomphe. Located along the Seine River, Paris is a major European center for
+            business, education, and tourism, attracting millions of visitors annually with its historic architecture, world-class
+            museums, charming cafés, and romantic atmosphere.
+        name: final_result
+        type: tool_use
+      id: msg_01SQmpgkijPThJ9eJpuY2vwo
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 576
+        output_tokens: 174
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

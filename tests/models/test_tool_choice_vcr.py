@@ -25,6 +25,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings, ToolChoice, ToolsPlusOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
@@ -125,7 +126,7 @@ class Case:
     tool_choice: ToolChoice
     expected_message_structure: Any  # snapshot() stored here per case
     tools: list[Callable[..., str]] = field(default_factory=lambda: [get_weather])
-    output_type: type | None = None
+    output_type: OutputSpec[Any] | None = None
     prompt: str = "What's the weather in Paris?"
     # Expected values - set to None to skip assertion
     expected_tool_choice_in_request: Any = None
@@ -319,6 +320,25 @@ CASES = [
     Case('huggingface-none-with-output', 'huggingface', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris',
          expected_warning_match="tool_choice='none'"),
     Case('openai_responses-none-with-output', 'openai_responses', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris',
+         expected_warning_match="tool_choice='none'"),
+
+    # === tool_choice='none' with text+structured output - triggers (tool_names, 'auto') branch ===
+    # Using (str, CityInfo) tuple allows text output AND creates output tool, hitting the 'auto' mode path
+    Case('openai-none-with-output-text-allowed', 'openai', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly',
+         expected_warning_match="tool_choice='none'"),
+    Case('anthropic-none-with-output-text-allowed', 'anthropic', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly',
+         expected_warning_match="tool_choice='none'"),
+    Case('groq-none-with-output-text-allowed', 'groq', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly',
+         expected_warning_match="tool_choice='none'"),
+    Case('mistral-none-with-output-text-allowed', 'mistral', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly',
+         expected_warning_match="tool_choice='none'"),
+    Case('google-none-with-output-text-allowed', 'google', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly',
+         expected_warning_match="tool_choice='none'"),
+    Case('bedrock-none-with-output-text-allowed', 'bedrock', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly',
+         expected_warning_match="tool_choice='none'"),
+    Case('huggingface-none-with-output-text-allowed', 'huggingface', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly',
+         expected_warning_match="tool_choice='none'"),
+    Case('openai_responses-none-with-output-text-allowed', 'openai_responses', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','TextPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly',
          expected_warning_match="tool_choice='none'"),
 
     # === ToolsPlusOutput - specific function tools + output tools ===

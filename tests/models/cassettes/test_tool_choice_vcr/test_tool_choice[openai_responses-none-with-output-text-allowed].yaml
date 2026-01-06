@@ -1,0 +1,182 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '763'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Tell me about Paris briefly
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: auto
+        tools:
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Structured output model for city information.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4738'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3435'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767727922
+      created_at: 1767727918
+      error: null
+      id: resp_05cd25752c4257e700695d632ee63481a19878c474ac984533
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpXWMyrNIXHDBRTtiKPk-AwPv-QEIQl4JAse-oyAsr-XOikVPdhyu6X6tO63Vobt_7OjoLg6dIEw-DllSSFs9xa7ookBE7rhDgvZqklZSmuY7VJadCxSH-C8gCypWo2lS87h6GNA9VQNaf58uUAujkyw_MGWifM0vvQMkRA5M6sMU-S0HRYKNJUhYWzPDRVJC1HKV6xSve7oGgp-nPGWVwfGYXTmxV6Rz9FkRALfV1yQbOh9K04XaZ6kyrp0Rhggfyvx7hWVRckSOIE1k7IpTR3ZgxtNnHxPjSo0a4AHV8iRRzcaOTTzIdZJvuiul6AJhGHg73Soz-p_P1KWZcPhqqOw4ZKqiV-lmg_-ZRZll87Ytjhj7Yrb7PyipuoTfwwcMNjuPo-7mo9HxSetRbDk-1nk1TZMZuWTQS6RlyNEAJ9JGk2b0HuLr-_IqSX9IpfYpWCxBBtLksOQnMqUdkS_SCOfa9wty4bXj2MxYxx4MMgX8-KnNvkyWVWDy1o-YQIAhriTd03DmaigILWE92_hRdXUs8e6qWrHFyia7Xpsw775vq2rJhVKwEfCkETz7LcWInlNA2eK5X_wIhIU9xcE2MokDd1UcN-trVsWkooFMTzuBlpsThamsr7zQCTnFO-A4tQeTTmpyRCMUgoolS2lTBR2-Lq9A50OiKvugf685wqqPGl6BLHGBZW0_-_G_B5dLn044mJ2RStbvA75FL0we6KuJSYW4aSqD_QSsfPPmDHX14InB8n52y9A6JwHYuhaiOccICWahDJdqLeqXGV2tfGz3AfcrkzaNOnzI9gnKlbiL3dq4xsSJTDP2NVUbsUydJ0WmFvdsYECT-wmfAUTbUTXxqmylXb1TmE0_oSKn4pCYBoj63C2MZbcKk7EXo9WlCXknH_tHEXt7Ap67ACIgJtdij-hV8xYdgWQ_SINI_GMXysODcJI2o1kMA2wzwVJPAAslT953AJeU3jJqyyqpm-9-DqhAtAGA0maPRCitKknHkrtbnVkTMAoz5H7AgWs5q9FNBxonnRSFjU-foIteegAsLWUe4n6eg5jIQkbcKF-N4XTWL89BuKBpiOU3ixRxEgm-v0Re1oS3ziUNOUlSESmGJkjJZP8ZxHqsdvyx_logM4a6iwUUDKD8t_jtIBcfLTlZH_RROFZuvieAd4ElThxEnBXHzM9X1qUs7F0o5e4b5_nGntGKQ_comKrYW35C5fbWU_BNEFY__TjuiCrp0WH361UtmhQvt0IegqKpboHNmiz6h5HsOKl5pLSrhabT0fEU96xdOK0l8H7cMnhPGNRqyfDhM14Vmvtj_6S_Acp8JCRAC1FTb7E-e27bhJbL3fEkF
+        id: rs_05cd25752c4257e700695d632f727481a1a1ad16aebe5053d0
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Paris is the capital city of France, located in northern central France along the River Seine. It is a global
+            center for art, fashion, gastronomy and culture, home to world-famous landmarks such as the Eiffel Tower, the
+            Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées. Paris has a rich history dating back to Roman times
+            and played key roles in European politics, art and intellectual life. The city is also an important economic hub
+            with strong finance, tech and tourism sectors, excellent public transport (metro, RER, buses) and many neighborhoods
+            (arrondissements) each with distinct character. Popular visiting seasons are spring and early fall, when weather
+            and crowds are generally pleasant.
+          type: output_text
+        id: msg_05cd25752c4257e700695d63306ac481a1934f11e4932440b0
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: auto
+        tools:
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Structured output model for city information.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 74
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 211
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 285
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

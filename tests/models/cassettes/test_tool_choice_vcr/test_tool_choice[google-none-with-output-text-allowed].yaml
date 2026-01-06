@@ -1,0 +1,95 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '480'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me about Paris briefly
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: Structured output model for city information.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1711'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1438
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - citationMetadata:
+          citationSources:
+          - endIndex: 445
+            license: ''
+            startIndex: 180
+            uri: https://www.oncologyleadership.org/
+        content:
+          parts:
+          - functionCall:
+              args:
+                city: Paris
+                summary: Paris, France's capital, is a major European city and a global center for art, fashion, gastronomy
+                  and culture. Its 19th-century cityscape is crisscrossed by wide boulevards and the River Seine. Beyond such
+                  landmarks as the Eiffel Tower and the 12th-century Gothic Notre-Dame cathedral, the city is known for its
+                  cafe culture and designer boutiques along the Rue du Faubourg Saint-Honoré.
+              name: final_result
+            thoughtSignature: CssBAXLI2nyUIONodKhRzEtPNmPPBK1ISEjB6D2rXs6/reGfXk1L5WKmvtknCmbi9Nx160xikhwTZFMA6eZIYOqFI5hXdKEeqlG1tpSrzHI6TZTIZFwul1aQSjxcvKNILZ0tj4GLncBf9RdUS+Elm5CvXhyVw4xlaEedAvrKvlbVMr2bxiE69FCSgBxNEh6MmfdOV8g4frgiR4qaOeRcC6DGR5JINiwub1HWTyWq7D5D3PHf9Co/6F0Ura3Qrrox1VJ3N4Xxl67/qpybTuw=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: KGNdabmPLqagz7IPpNbnuAg
+      usageMetadata:
+        candidatesTokenCount: 108
+        promptTokenCount: 56
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 56
+        thoughtsTokenCount: 42
+        totalTokenCount: 206
+    status:
+      code: 200
+      message: OK
+version: 1
