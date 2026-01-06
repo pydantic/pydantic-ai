@@ -628,9 +628,16 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     and correct OpenTelemetry instrumentation:
 
     ```python
+    from pydantic_ai import Agent
+
+    agent = Agent('test')
     with agent.run_stream_sync('Hello') as result:
         for chunk in result.stream_output():
             print(chunk)
+            #> success
+            #> success (no
+            #> success (no tool
+            #> success (no tool calls)
     ```
 
     When used as a context manager, all streamed data is collected when entering the context.
