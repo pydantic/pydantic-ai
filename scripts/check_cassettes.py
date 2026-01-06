@@ -113,7 +113,7 @@ def main() -> int:
                 orphans.append(f'{test_file}/{cassette}.yaml')
 
     print()
-    print(f'Results: {matched} matched, {len(orphans)} orphaned')
+    print(f'Orphaned cassettes check: {matched} matched, {len(orphans)} orphaned')
 
     if orphans:
         print()
