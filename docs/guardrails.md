@@ -70,12 +70,14 @@ from pydantic_ai.guardrails import (
 
 agent = Agent('openai:gpt-4o')
 
-try:
-    result = await agent.run('potentially harmful content')
-except InputGuardrailTripwireTriggered as e:
-    print(f'Input blocked by {e.guardrail_name}: {e.result.message}')
-except OutputGuardrailTripwireTriggered as e:
-    print(f'Output blocked by {e.guardrail_name}: {e.result.message}')
+
+async def main():
+    try:
+        result = await agent.run('potentially harmful content')
+    except InputGuardrailTripwireTriggered as e:
+        print(f'Input blocked by {e.guardrail_name}: {e.result.message}')
+    except OutputGuardrailTripwireTriggered as e:
+        print(f'Output blocked by {e.guardrail_name}: {e.result.message}')
 ```
 
 ## Blocking vs Non-blocking Guardrails
@@ -178,7 +180,13 @@ Register guardrails via the constructor using [`InputGuardrail`][pydantic_ai.gua
 ```python {title="constructor_guardrails.py" test="skip"}
 from collections.abc import Sequence
 
-from pydantic_ai import Agent, GuardrailResult, InputGuardrail, OutputGuardrail, RunContext
+from pydantic_ai import (
+    Agent,
+    GuardrailResult,
+    InputGuardrail,
+    OutputGuardrail,
+    RunContext,
+)
 from pydantic_ai.messages import UserContent
 
 
