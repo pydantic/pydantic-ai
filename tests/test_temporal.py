@@ -34,6 +34,7 @@ from pydantic_ai import (
     RunUsage,
     TextPart,
     TextPartDelta,
+    Tool,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -2993,3 +2994,304 @@ async def test_temporal_model_request_stream_outside_workflow():
 
     # Verify response comes from the wrapped TestModel
     assert any(isinstance(part, TextPart) and part.content == 'Direct stream response' for part in response.parts)
+
+
+# ============================================
+# Tests for tool metadata-based activity config
+# ============================================
+
+
+def _metadata_tool_call_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model that returns a tool call for get_country_from_metadata, then text."""
+    if any(isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in messages):
+        return ModelResponse(parts=[TextPart(content='The country is provided.')])
+    return ModelResponse(parts=[ToolCallPart(tool_name='get_country_from_metadata', args='{}', tool_call_id='call_1')])
+
+
+metadata_tool_call_model = FunctionModel(_metadata_tool_call_model)
+
+# Agent with a tool that has activity disabled via metadata
+agent_with_metadata_activity_disabled = Agent(
+    metadata_tool_call_model, name='agent_with_metadata_activity_disabled', deps_type=Deps
+)
+
+
+@agent_with_metadata_activity_disabled.tool(metadata={'temporal_activity_config': False})
+async def get_country_from_metadata(ctx: RunContext[Deps]) -> str:
+    """Get the country from deps - async tool with activity disabled via metadata."""
+    return ctx.deps.country
+
+
+temporal_agent_with_metadata_activity_disabled = TemporalAgent(
+    agent_with_metadata_activity_disabled,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class AgentWorkflowWithMetadataActivityDisabled:
+    @workflow.run
+    async def run(self, prompt: str, deps: Deps) -> str:
+        result = await temporal_agent_with_metadata_activity_disabled.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_temporal_agent_tool_metadata_activity_disabled(client_with_logfire: Client, capfire: CaptureLogfire):
+    """Test that a tool can have its activity disabled via metadata."""
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWorkflowWithMetadataActivityDisabled],
+        plugins=[AgentPlugin(temporal_agent_with_metadata_activity_disabled)],
+    ):
+        output = await client_with_logfire.execute_workflow(
+            AgentWorkflowWithMetadataActivityDisabled.run,
+            args=['What is the country?', Deps(country='France')],
+            id=f'{AgentWorkflowWithMetadataActivityDisabled.__name__}',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The country is provided.')
+
+    exporter = capfire.exporter
+    spans = exporter.exported_spans_as_dict()
+
+    # Verify that there's no activity for the tool call (it should run directly in the workflow)
+    activity_names = [
+        span['attributes']['logfire.msg']
+        for span in spans
+        if span.get('attributes') and 'StartActivity' in span['attributes'].get('logfire.msg', '')
+    ]
+
+    # Should have model request activity but NOT a tool call activity
+    assert any('model_request' in name for name in activity_names)
+    assert not any('call_tool' in name for name in activity_names)
+    assert not any('get_country_from_metadata' in name for name in activity_names)
+
+
+# Agent with a sync tool that has activity disabled via metadata (should fail)
+
+
+def _sync_tool_call_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model that returns a tool call for get_weather_sync_metadata."""
+    if any(isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in messages):
+        return ModelResponse(parts=[TextPart(content='The weather is sunny.')])
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name='get_weather_sync_metadata', args='{"city": "Paris"}', tool_call_id='call_1')]
+    )
+
+
+sync_tool_call_model = FunctionModel(_sync_tool_call_model)
+
+
+def get_weather_sync_metadata(city: str) -> str:
+    """Sync tool with activity disabled via metadata - this should fail."""
+    return 'sunny'
+
+
+sync_tool_with_metadata_disabled = Tool(
+    get_weather_sync_metadata,
+    metadata={'temporal_activity_config': False},
+)
+
+agent_with_sync_tool_metadata_disabled = Agent(
+    sync_tool_call_model, name='agent_with_sync_tool_metadata_disabled', tools=[sync_tool_with_metadata_disabled]
+)
+
+
+temporal_agent_with_sync_tool_metadata_disabled = TemporalAgent(
+    agent_with_sync_tool_metadata_disabled,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class AgentWorkflowWithSyncToolMetadataActivityDisabled:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_tool_metadata_disabled.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_sync_tool_metadata_activity_disabled(client: Client):
+    """Test that a sync tool with activity disabled via metadata raises an error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWorkflowWithSyncToolMetadataActivityDisabled],
+        plugins=[AgentPlugin(temporal_agent_with_sync_tool_metadata_disabled)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "Temporal activity config for tool 'get_weather_sync_metadata' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
+            ),
+        ):
+            await client.execute_workflow(
+                AgentWorkflowWithSyncToolMetadataActivityDisabled.run,
+                args=['What is the weather in Mexico City?'],
+                id=AgentWorkflowWithSyncToolMetadataActivityDisabled.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+# Agent with a tool that has custom timeout via metadata
+
+
+def _timeout_tool_call_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model that returns a tool call for get_country_with_timeout, then text."""
+    if any(isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in messages):
+        return ModelResponse(parts=[TextPart(content='The country is provided.')])
+    return ModelResponse(parts=[ToolCallPart(tool_name='get_country_with_timeout', args='{}', tool_call_id='call_1')])
+
+
+timeout_tool_call_model = FunctionModel(_timeout_tool_call_model)
+
+agent_with_metadata_activity_config = Agent(
+    timeout_tool_call_model, name='agent_with_metadata_activity_config', deps_type=Deps
+)
+
+
+@agent_with_metadata_activity_config.tool(
+    metadata={'temporal_activity_config': {'start_to_close_timeout': timedelta(seconds=200)}}
+)
+async def get_country_with_timeout(ctx: RunContext[Deps]) -> str:
+    """Get the country from deps - tool with custom timeout via metadata."""
+    return ctx.deps.country
+
+
+temporal_agent_with_metadata_activity_config = TemporalAgent(
+    agent_with_metadata_activity_config,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class AgentWorkflowWithMetadataActivityConfig:
+    @workflow.run
+    async def run(self, prompt: str, deps: Deps) -> str:
+        result = await temporal_agent_with_metadata_activity_config.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_temporal_agent_tool_metadata_activity_config(client: Client):
+    """Test that a tool can have custom activity config via metadata."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWorkflowWithMetadataActivityConfig],
+        plugins=[AgentPlugin(temporal_agent_with_metadata_activity_config)],
+    ):
+        output = await client.execute_workflow(
+            AgentWorkflowWithMetadataActivityConfig.run,
+            args=['What is the country?', Deps(country='Germany')],
+            id=f'{AgentWorkflowWithMetadataActivityConfig.__name__}',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The country is provided.')
+
+
+# ============================================
+# Tests for TemporalAgent subagent delegation
+# ============================================
+
+
+def _joke_selector_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model that returns a tool call for joke_factory, then text."""
+    if any(isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in messages):
+        return ModelResponse(parts=[TextPart(content='Why did the chicken cross the road?')])
+    return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args='{"count": 3}', tool_call_id='call_1')])
+
+
+joke_selector_model_func = FunctionModel(_joke_selector_model)
+
+
+def _joke_generator_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model that returns a list of jokes."""
+    return ModelResponse(parts=[TextPart(content='["Joke 1", "Joke 2", "Joke 3"]')])
+
+
+joke_generator_model_func = FunctionModel(_joke_generator_model)
+
+
+# Sub-agent for joke generation
+joke_generation_agent = Agent(
+    joke_generator_model_func,
+    name='joke_generator',
+    output_type=list[str],
+)
+temporal_joke_agent = TemporalAgent(joke_generation_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+# Main agent that delegates to the sub-agent
+joke_selection_agent = Agent(
+    joke_selector_model_func,
+    name='joke_selector',
+    system_prompt=(
+        'Use the `joke_factory` to generate some jokes, then choose the best. You must return just a single joke.'
+    ),
+)
+
+
+@joke_selection_agent.tool(metadata={'temporal_activity_config': False})
+async def joke_factory(ctx: RunContext[None], count: int) -> list[str]:
+    result = await temporal_joke_agent.run(
+        f'Please generate {count} jokes.',
+        usage=ctx.usage,
+    )
+    return result.output
+
+
+temporal_selector_agent = TemporalAgent(joke_selection_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class JokeWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_selector_agent.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_subagent_delegation(client_with_logfire: Client, capfire: CaptureLogfire):
+    """Test that a TemporalAgent can delegate to another TemporalAgent.
+
+    When a tool has activity disabled and calls another TemporalAgent, the sub-agent's
+    model requests should be tracked as separate activities, not bundled into the tool's activity.
+    """
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[JokeWorkflow],
+        plugins=[AgentPlugin(temporal_selector_agent), AgentPlugin(temporal_joke_agent)],
+    ):
+        output = await client_with_logfire.execute_workflow(
+            JokeWorkflow.run,
+            args=['Tell me a joke.'],
+            id=f'{JokeWorkflow.__name__}',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('Why did the chicken cross the road?')
+
+    exporter = capfire.exporter
+    spans = exporter.exported_spans_as_dict()
+
+    # Get all activity names
+    activity_names = [
+        span['attributes']['logfire.msg']
+        for span in spans
+        if span.get('attributes') and 'StartActivity' in span['attributes'].get('logfire.msg', '')
+    ]
+
+    # Should have model request activities for BOTH agents
+    selector_model_requests = [name for name in activity_names if 'joke_selector' in name and 'model_request' in name]
+    generator_model_requests = [name for name in activity_names if 'joke_generator' in name and 'model_request' in name]
+
+    assert len(selector_model_requests) >= 1, (
+        f'Expected at least one model request for joke_selector, got: {activity_names}'
+    )
+    assert len(generator_model_requests) >= 1, (
+        f'Expected at least one model request for joke_generator, got: {activity_names}'
+    )
+
+    # Should NOT have a tool call activity for joke_factory since it's disabled
+    tool_activities = [name for name in activity_names if 'call_tool' in name or 'joke_factory' in name]
+    assert len(tool_activities) == 0, f'Expected no tool call activities, got: {tool_activities}'

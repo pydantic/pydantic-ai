@@ -65,7 +65,11 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        tool_activity_config = self.tool_activity_config.get(name, {})
+        # Get activity config: TemporalAgent constructor config takes precedence over tool metadata
+        tool_activity_config = self.tool_activity_config.get(name)
+        if tool_activity_config is None:
+            # Fall back to tool metadata
+            tool_activity_config = (tool.tool_def.metadata or {}).get('temporal_activity_config', {})
         if tool_activity_config is False:
             assert isinstance(tool, FunctionToolsetTool)
             if not tool.is_async:

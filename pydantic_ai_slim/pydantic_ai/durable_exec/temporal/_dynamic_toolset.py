@@ -125,11 +125,15 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
+        # Get activity config: TemporalAgent constructor config takes precedence over tool metadata
         tool_activity_config = self.tool_activity_config.get(name)
+        if tool_activity_config is None:
+            # Fall back to tool metadata
+            tool_activity_config = (tool.tool_def.metadata or {}).get('temporal_activity_config', {})
         if tool_activity_config is False:  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        merged_config = self.activity_config | (tool_activity_config or {})
+        merged_config = self.activity_config | tool_activity_config
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(
             await workflow.execute_activity(

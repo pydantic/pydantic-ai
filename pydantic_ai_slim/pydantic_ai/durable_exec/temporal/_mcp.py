@@ -119,7 +119,18 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
+        # Get activity config: TemporalAgent constructor config takes precedence over tool metadata
+        specific_tool_config = self.tool_activity_config.get(name)
+        if specific_tool_config is None:
+            # Fall back to tool metadata (note: False is validated in __init__ for constructor config,
+            # but needs to be checked here for metadata config)
+            specific_tool_config = (tool.tool_def.metadata or {}).get('temporal_activity_config', {})
+            if specific_tool_config is False:
+                raise UserError(
+                    f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled) in tool metadata, '
+                    'but MCP tools require the use of IO and so cannot be run outside of an activity.'
+                )
+        tool_activity_config = self.activity_config | (specific_tool_config or {})
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(
             await workflow.execute_activity(

@@ -264,6 +264,75 @@ class MultiModelWorkflow:
         return result.output
 ```
 
+### Agent Delegation
+
+When using [agent delegation](../multi-agent-applications.md#agent-delegation) with Temporal — where one agent calls another agent from within a tool — you need to ensure that the sub-agent is also a `TemporalAgent` if you want its execution to be durable as well.
+
+By default, tool functions are executed inside Temporal activities. If a sub-agent runs inside an activity, its model requests and tool calls happen within that single activity and are not individually tracked by Temporal. This means if the activity fails partway through the sub-agent's execution, it will restart from the beginning of the sub-agent run.
+
+To make the sub-agent's execution durable (with each model request and tool call tracked as separate activities), you can:
+
+1. Wrap the sub-agent in a `TemporalAgent`
+2. Disable the activity for the tool that calls it (using `metadata={'temporal_activity_config': False}`)
+
+This allows the sub-agent to run directly in the workflow context, where its `TemporalAgent` wrapper will handle creating activities for each of its model requests and tool calls.
+
+```python {title="agent_delegation_temporal.py" test="skip"}
+from temporalio import workflow
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalAgent
+from pydantic_ai.tools import RunContext
+
+# Sub-agent for joke generation
+joke_generation_agent = Agent(
+    'google-gla:gemini-2.5-flash',
+    name='joke_generator',
+    output_type=list[str],
+)
+temporal_joke_agent = TemporalAgent(joke_generation_agent)
+
+# Main agent that delegates to the sub-agent
+joke_selection_agent = Agent(
+    'openai:gpt-5',
+    name='joke_selector',
+    system_prompt=(
+        'Use the `joke_factory` to generate some jokes, then choose the best. '
+        'You must return just a single joke.'
+    ),
+)
+
+
+@joke_selection_agent.tool(metadata={'temporal_activity_config': False})  # (1)!
+async def joke_factory(ctx: RunContext[None], count: int) -> list[str]:
+    result = await temporal_joke_agent.run(  # (2)!
+        f'Please generate {count} jokes.',
+        usage=ctx.usage,
+    )
+    return result.output
+
+
+temporal_selector_agent = TemporalAgent(joke_selection_agent)
+
+
+@workflow.defn
+class JokeWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [temporal_selector_agent, temporal_joke_agent]  # (3)!
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_selector_agent.run(prompt)
+        return result.output
+```
+
+1. Disable the activity for this tool so the sub-agent runs in the workflow context.
+2. The sub-agent is a `TemporalAgent`, so its model requests and tool calls are tracked as separate activities.
+3. Register both agents' activities with the workflow.
+
+!!! warning
+
+    When disabling the activity for a tool, ensure the tool function is `async` and doesn't perform any I/O operations directly (other than calling the sub-agent). All I/O should be handled by the sub-agent's activities.
+
 ## Activity Configuration
 
 Temporal activity configuration, like timeouts and retry policies, can be customized by passing [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow.ActivityConfig.html) objects to the `TemporalAgent` constructor:
@@ -275,6 +344,39 @@ Temporal activity configuration, like timeouts and retry policies, can be custom
     This is merged with the base and toolset-specific activity configs.
 
     If a tool does not use I/O, you can specify `False` to disable using an activity. Note that the tool is required to be defined as an `async` function as non-async tools are run in threads which are non-deterministic and thus not supported outside of activities.
+
+### Tool Metadata Configuration
+
+As an alternative to passing `tool_activity_config` to the `TemporalAgent` constructor, you can also specify the activity configuration for a specific tool using the [`metadata`][pydantic_ai.tools.ToolMetadata] parameter when defining the tool:
+
+```python {title="tool_metadata_config.py" test="skip"}
+from datetime import timedelta
+
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5', name='my_agent')
+
+
+@agent.tool(metadata={'temporal_activity_config': {'start_to_close_timeout': timedelta(seconds=120)}})
+async def slow_tool(query: str) -> str:
+    """A tool that takes a long time to run."""
+    ...
+
+
+@agent.tool(metadata={'temporal_activity_config': False})
+async def fast_pure_tool(x: int, y: int) -> int:
+    """A fast tool that doesn't use I/O and can run outside an activity."""
+    return x + y
+```
+
+The `temporal_activity_config` key in the tool's metadata can be set to:
+
+- A [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow.ActivityConfig.html) object (or dict) to customize timeouts and retry policies for the tool's activity.
+- `False` to disable using an activity for this tool (only valid for async tools that don't use I/O).
+
+!!! note
+
+    Configuration passed to the `TemporalAgent` constructor via `tool_activity_config` takes precedence over tool metadata.
 
 ## Activity Retries
 

@@ -4,10 +4,10 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import ConfigDict, Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, Self, TypeVar
+from typing_extensions import NotRequired, ParamSpec, Self, TypedDict, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
@@ -28,6 +28,7 @@ __all__ = (
     'ToolsPrepareFunc',
     'BuiltinToolFunc',
     'Tool',
+    'ToolMetadata',
     'ObjectJsonSchema',
     'ToolDefinition',
     'DeferredToolRequests',
@@ -143,6 +144,39 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 * `'sphinx'` — [Sphinx-style](https://sphinx-rtd-tutorial.readthedocs.io/en/latest/docstrings.html#the-sphinx-docstring-format) docstrings.
 * `'auto'` — Automatically infer the format based on the structure of the docstring.
 """
+
+
+class ToolMetadata(TypedDict, total=False):
+    """Metadata for a tool that can be used for filtering and tool behavior customization.
+
+    This TypedDict allows any additional keys beyond those explicitly defined.
+
+    Example:
+    ```python
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-4o', name='my_agent')
+
+    @agent.tool(metadata={'temporal_activity_config': {'start_to_close_timeout': timedelta(seconds=120)}})
+    async def my_slow_tool(query: str) -> str:
+        # A tool that takes a long time to run
+        ...
+    ```
+    """
+
+    __pydantic_config__ = ConfigDict(extra='allow')  # pyright: ignore[reportAssignmentType]
+
+    temporal_activity_config: NotRequired[Any]
+    """The Temporal activity config to use for this tool.
+
+    When using [Temporal for durable execution](durable_execution/temporal.md), this can be set to:
+
+    - A [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow.ActivityConfig.html)
+      object to customize timeouts and retry policies for the tool's activity.
+    - `False` to disable using an activity for this tool (only valid for async tools that don't use I/O).
+
+    This is merged with the base and toolset-specific activity configs.
+    """
 
 
 @dataclass(kw_only=True)
@@ -274,7 +308,7 @@ class Tool(Generic[ToolAgentDepsT]):
     strict: bool | None
     sequential: bool
     requires_approval: bool
-    metadata: dict[str, Any] | None
+    metadata: ToolMetadata | None
     timeout: float | None
     function_schema: _function_schema.FunctionSchema
     """
@@ -516,10 +550,13 @@ class ToolDefinition:
         See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
     """
 
-    metadata: dict[str, Any] | None = None
+    metadata: ToolMetadata | None = None
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
     For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
+
+    For function tools, this can be used to configure Temporal activity behavior via the `temporal_activity_config` key.
+    See [`ToolMetadata`][pydantic_ai.tools.ToolMetadata] for more details.
     """
 
     timeout: float | None = None
