@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import os
 import uuid
 import warnings
@@ -8,8 +9,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -37,6 +39,8 @@ from pydantic_ai.usage import RequestUsage
 
 try:
     from prefect import flow, task
+    from prefect.client.orchestration import PrefectClient, SyncPrefectClient
+    from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
@@ -107,16 +111,6 @@ def setup_prefect_test_harness() -> Iterator[None]:
     max_keepalive_connections=8) which can cause PoolTimeout errors with nested flows.
     We restore the httpx defaults (unlimited connections) to prevent pool exhaustion.
     """
-    import functools
-    from unittest.mock import patch
-
-    import httpx
-    from prefect.client.orchestration import PrefectClient, SyncPrefectClient
-
-    # Suppress deprecation warnings from starlette/fastapi imports
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', category=DeprecationWarning)
-        from prefect.testing.utilities import prefect_test_harness
 
     # Store original __init__ methods
     original_async_init = PrefectClient.__init__
