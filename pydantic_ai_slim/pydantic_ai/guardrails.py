@@ -84,7 +84,7 @@ class GuardrailResult(Generic[T]):
 
         Example:
             ```python
-            return GuardrailResult.passed(message="Content is safe")
+            result = GuardrailResult.passed(message="Content is safe")
             ```
         """
         return cls(tripwire_triggered=False, output=output, message=message)
@@ -103,9 +103,9 @@ class GuardrailResult(Generic[T]):
 
         Example:
             ```python
-            return GuardrailResult.blocked(
+            result = GuardrailResult.blocked(
                 message="PII detected in input",
-                detected_pii_types=["email", "phone"]
+                detected_pii_types=["email", "phone"],
             )
             ```
         """
@@ -127,10 +127,12 @@ class InputGuardrailTripwireTriggered(AgentRunError):
         ```python
         from pydantic_ai.guardrails import InputGuardrailTripwireTriggered
 
-        try:
-            result = await agent.run("blocked content")
-        except InputGuardrailTripwireTriggered as e:
-            print(f"Input blocked by {e.guardrail_name}: {e.result.message}")
+
+        async def main():
+            try:
+                await agent.run("blocked content")
+            except InputGuardrailTripwireTriggered as e:
+                print(f"Input blocked by {e.guardrail_name}: {e.result.message}")
         ```
     """
 
@@ -162,10 +164,12 @@ class OutputGuardrailTripwireTriggered(AgentRunError):
         ```python
         from pydantic_ai.guardrails import OutputGuardrailTripwireTriggered
 
-        try:
-            result = await agent.run("prompt")
-        except OutputGuardrailTripwireTriggered as e:
-            print(f"Output blocked by {e.guardrail_name}: {e.result.message}")
+
+        async def main():
+            try:
+                await agent.run("prompt")
+            except OutputGuardrailTripwireTriggered as e:
+                print(f"Output blocked by {e.guardrail_name}: {e.result.message}")
         ```
     """
 

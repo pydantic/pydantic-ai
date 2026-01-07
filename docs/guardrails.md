@@ -73,7 +73,7 @@ agent = Agent('openai:gpt-4o')
 
 async def main():
     try:
-        result = await agent.run('potentially harmful content')
+        await agent.run('potentially harmful content')
     except InputGuardrailTripwireTriggered as e:
         print(f'Input blocked by {e.guardrail_name}: {e.result.message}')
     except OutputGuardrailTripwireTriggered as e:
