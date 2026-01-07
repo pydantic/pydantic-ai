@@ -794,7 +794,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot(['Hello ', 'Hello world'])
+        assert chunks == snapshot(['Hello ', 'Hello world', 'Hello world'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
     async with agent.run_stream('Hello') as result:
@@ -831,7 +831,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot(['abc', 'abc€def'])
+        assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
@@ -861,7 +861,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot([(1, 2)])
+        assert chunks == snapshot([(1, 2), (1, 2)])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
@@ -1046,7 +1046,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 },
                 {'text': 'xxx'},
             ],
@@ -1063,7 +1063,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 }
             ],
         }
@@ -1221,7 +1221,7 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=163, details={'thoughts_tokens': 153, 'text_prompt_tokens': 33}
+                    input_tokens=33, output_tokens=155, details={'thoughts_tokens': 145, 'text_prompt_tokens': 33}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1247,24 +1247,15 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
+                    TextPart(content='6'),
                     TextPart(
-                        content="""\
-.
-
-"""
-                    ),
-                    TextPart(
-                        content="""\
-Based on the image provided, the fruit is a **kiwi** (also known as a kiwifruit).
-
-The image clearly shows a cross-section of the fruit, displaying its characteristic bright green flesh, small black seeds arranged around a white center, and fuzzy brown skin on the edges.\
-"""
+                        content='The fruit in the image is a **kiwi** (specifically, a cross-section showing its green flesh, black seeds, and white core).'
                     ),
                 ],
                 usage=RequestUsage(
                     input_tokens=1166,
-                    output_tokens=293,
-                    details={'thoughts_tokens': 231, 'image_prompt_tokens': 1088, 'text_prompt_tokens': 78},
+                    output_tokens=215,
+                    details={'thoughts_tokens': 184, 'image_prompt_tokens': 1088, 'text_prompt_tokens': 78},
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1372,9 +1363,7 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
     assert result.output == snapshot('Your Chinese zodiac is Dragon.\n')
 
     result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
-    assert result.output == snapshot(
-        'I am sorry, I cannot provide you with your Chinese zodiac sign because you are not old enough. You must be at least 18 years old.'
-    )
+    assert result.output == snapshot('I am sorry, I cannot fulfill this request. The age needs to be greater than 18.')
 
 
 @pytest.mark.vcr()
@@ -1437,26 +1426,14 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         return 20.0
 
     result = await agent.run('What is the temperature in Tokyo?')
-    assert result.output == snapshot(
-        'I was not able to get the temperature in Tokyo. There seems to be an issue with the way the location is being processed by the tool.'
-    )
+    assert result.output == snapshot('I need the latitude and longitude for Tokyo. Can you please provide them?')
 
 
 @pytest.mark.vcr()
-async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
-    with try_import() as imports_successful:
-        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-        from pydantic_ai.providers.openai import OpenAIProvider
+async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str):
+    model = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(model)
 
-    if not imports_successful():  # pragma: lax no cover
-        pytest.skip('OpenAI is not installed')
-
-    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    gemini_model = GeminiModel('gemini-2.5-flash-preview-04-17', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(openai_model)
-
-    # We call OpenAI to get the thinking parts, because Google disabled the thoughts in the API.
-    # See https://github.com/pydantic/pydantic-ai/issues/793 for more details.
     result = await agent.run(
         'How do I cross the street?',
         model_settings=OpenAIResponsesModelSettings(
@@ -1528,6 +1505,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
             gemini_thinking_config={'thinking_budget': 1024, 'include_thoughts': True},
         ),
     )
+
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1558,61 +1536,32 @@ Always be cautious—even if you have the right-of-way—and understand that it'
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Considering the way to cross the street, analogously, how do I cross the river?',
-                        timestamp=IsDatetime(),
+                        content='What is 2+2?',
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
+                    ThinkingPart(
                         content="""\
-Okay, let's draw an analogy between crossing a street and crossing a river, applying the safety principles from the street crossing guide to the river environment.
+**Calculating the Simple**
 
-Think of the **river** as being like the **street** – a natural barrier you need to get across. The **hazards** on the river are different from vehicles, but they are still things that can harm you.
-
-Here's the analogous guide for crossing a river:
-
-1.  **Before you approach the river:**
-    *   Just as you use a sidewalk to get to the street's edge, use a trail or the riverbank to get to a spot where you can assess the river.
-    *   If you're inexperienced with rivers or unsure about the conditions, try to have someone experienced accompany you.
-
-2.  **When you're ready to cross:**
-    *   Just as you look and listen for vehicles, carefully **assess the river conditions**. Look in all directions (upstream, downstream, across):
-        *   How fast is the current moving? (Like checking vehicle speed).
-        *   How deep does the water look? (Like judging the width and how much time you have).
-        *   Are there obstacles in the water (rocks, logs)? (Like parked cars or road hazards).
-        *   Is the bottom visible and does it look stable? (Like checking the road surface).
-        *   Check upstream for potential hazards coming towards you (like debris).
-    *   Listen to the river – the sound can tell you if the current is very strong or if there are rapids.
-    *   Acknowledge the river's power – just as you make eye contact with drivers, respect that the river can be dangerous and doesn't care if you're trying to cross.
-
-3.  **Use designated crossing areas whenever possible:**
-    *   If there's a **bridge or a ferry**, use it. These are like the crosswalks and traffic signals – the safest, established ways to cross, often managing the "flow" (of water below, or people/boats on the river).
-    *   If you must wade or swim, look for the safest possible **crossing point** – maybe a wider, shallower section, a known ford, or a spot with a less turbulent current. This is like choosing a crosswalk instead of crossing anywhere.
-
-4.  **While crossing:**
-    *   Just as you stay alert and avoid distractions, **focus completely on the crossing**. Don't be looking at your phone or distracted by conversation if you are actively navigating the water.
-    *   Move with purpose, but carefully. If wading, maintain your balance against the current and watch your footing. If swimming, focus on your technique and direction. Stay aware of where you are relative to your intended path and the river's flow.
-
-5.  **After crossing:**
-    *   Once you've safely reached the other side, take a moment to ensure you are truly out of the main flow and on stable ground. Be aware of the riverbank conditions.
-
-**Analogous Takeaway:**
-
-Just as you wouldn't just run blindly into a busy street, you shouldn't just jump into a river without understanding its conditions and choosing the safest method and location to cross. Be cautious, assess the "traffic" (current, depth, obstacles), and use the available "infrastructure" (bridges, ferries, established crossing points) whenever possible.\
+Okay, here we go. Someone's asking a pretty straightforward arithmetic question. It's really just a simple calculation. Nothing fancy, just plug in the numbers and get the result.  No need to overthink it. It's a quick win, a chance to flex some basic math muscles before getting into anything more complex. Just a matter of applying the right operation and moving on.
 """
                     ),
+                    TextPart(content='2 + 2 = 4'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=801, output_tokens=2313, details={'thoughts_tokens': 794, 'text_prompt_tokens': 801}
+                    input_tokens=8, output_tokens=24, details={'thoughts_tokens': 16, 'text_prompt_tokens': 8}
                 ),
-                model_name='gemini-2.5-flash-preview-04-17',
-                timestamp=IsDatetime(),
+                model_name='gemini-2.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id='lghYaaSmK7eomtkP_KDT6A0',
                 run_id=IsStr(),
             ),
         ]

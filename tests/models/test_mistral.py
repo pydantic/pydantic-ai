@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
@@ -734,6 +735,15 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
                     'dict_value': {'A': 'A', 'B': 'B'},
                     'dict_int_value': {'A': 1, 'B': 2},
                 },
+                {
+                    'first': 'One',
+                    'second': 2,
+                    'bool_value': True,
+                    'nullable_value': None,
+                    'array_value': ['A', 'B', 'C'],
+                    'dict_value': {'A': 'A', 'B': 'B'},
+                    'dict_int_value': {'A': 1, 'B': 2},
+                },
             ]
         )
         assert result.is_complete
@@ -819,6 +829,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
             ]
         )
         assert result.is_complete
@@ -849,7 +860,7 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
         v = [c async for c in result.stream_output(debounce_by=None)]
-        assert v == snapshot([1, 1])
+        assert v == snapshot([1, 1, 1])
         assert result.is_complete
         assert result.usage().input_tokens == 6
         assert result.usage().output_tokens == 6
@@ -939,6 +950,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
                 ['first', 'One', 'second', 'Two'],
                 ['first', 'One', 'second', 'Two'],
                 ['first', 'One', 'second', 'Two'],
+                ['first', 'One', 'second', 'Two'],
             ]
         )
         assert result.is_complete
@@ -1022,6 +1034,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
                 MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
             ]
         )
         assert result.is_complete
@@ -1086,6 +1099,7 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
                 MyTypedBaseModel(first='One', second=''),
                 MyTypedBaseModel(first='One', second='T'),
                 MyTypedBaseModel(first='One', second='Tw'),
+                MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
@@ -1501,7 +1515,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
         v = [c async for c in result.stream_output(debounce_by=None)]
-        assert v == snapshot([{'won': True}])
+        assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.usage().input_tokens == 4
@@ -1626,7 +1640,7 @@ async def test_stream_tool_call(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
         v = [c async for c in result.stream_output(debounce_by=None)]
-        assert v == snapshot(['final ', 'final response'])
+        assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.usage().input_tokens == 6
@@ -2298,13 +2312,8 @@ async def test_video_url_input(allow_model_requests: None):
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    mock_client = MockMistralAI.create_mock(
-        SDKError(
-            'test error',
-            status_code=500,
-            body='test error',
-        )
-    )
+    response = httpx.Response(500, content=b'test error')
+    mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -2313,13 +2322,8 @@ def test_model_status_error(allow_model_requests: None) -> None:
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
-    mock_client = MockMistralAI.create_mock(
-        SDKError(
-            'Connection error',
-            status_code=300,
-            body='redirect',
-        )
-    )
+    response = httpx.Response(300, content=b'redirect')
+    mock_client = MockMistralAI.create_mock(SDKError('Connection error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelAPIError) as exc_info:
