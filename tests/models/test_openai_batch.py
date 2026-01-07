@@ -207,8 +207,8 @@ class MockOpenAIBatch:
             )
 
         async def retrieve(self, batch_id: str) -> OpenAIBatchResponse:
-            for batch in self.parent.batches_list:  # pragma: no branch
-                if batch.id == batch_id:
+            for batch in self.parent.batches_list:
+                if batch.id == batch_id:  # pragma: no branch
                     return batch
             return OpenAIBatchResponse(  # pragma: no cover
                 id=batch_id,
