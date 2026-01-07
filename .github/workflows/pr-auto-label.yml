@@ -71,7 +71,6 @@ jobs:
   category-label:
     name: Set Category Label
     runs-on: ubuntu-latest
-    if: github.event.action == 'opened'
     permissions:
       id-token: write
     steps:
