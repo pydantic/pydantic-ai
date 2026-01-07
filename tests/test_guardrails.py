@@ -232,6 +232,10 @@ async def test_input_guardrail_with_deps():
     with pytest.raises(InputGuardrailTripwireTriggered):
         await agent.run('This is spam content', deps=deps)
 
+    # Pass with list prompt (covers Sequence[UserContent] branch)
+    result = await agent.run(['Hello', 'world'], deps=deps)
+    assert result.output == 'Hello!'
+
 
 async def test_input_guardrail_sync_function():
     """Test that sync guardrail functions work correctly."""
