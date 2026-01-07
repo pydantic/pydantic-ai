@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import inspect
+import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -43,6 +44,13 @@ __all__ = (
 
 T = TypeVar('T')
 """An invariant TypeVar."""
+
+
+async def _wait_briefly() -> None:
+    """Brief async sleep to allow polling without blocking."""
+    import asyncio
+
+    await asyncio.sleep(0.01)
 
 
 @dataclass(kw_only=True)
@@ -640,8 +648,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
             #> success (no tool calls)
     ```
 
-    When used as a context manager, all streamed data is collected when entering the context.
-    This ensures OpenTelemetry spans are properly closed with all attributes.
+    When used as a context manager, the async streaming lifecycle runs in a background thread,
+    ensuring OpenTelemetry spans are properly closed with all attributes while still allowing
+    real-time streaming of chunks as they arrive.
 
     Note: Using `run_stream_sync` without the context manager pattern will still work for
     basic streaming, but OpenTelemetry spans may have incomplete attributes.
@@ -649,9 +658,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     _streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT] | None = None
     _context_entered: bool = field(default=False, init=False)
-    _cached_output: list[OutputDataT] | None = field(default=None, init=False)
-    _cached_text: list[str] | None = field(default=None, init=False)
-    _cached_responses: list[tuple[_messages.ModelResponse, bool]] | None = field(default=None, init=False)
+    # Thread-based streaming fields (used when context manager pattern is used)
+    _thread: threading.Thread | None = field(default=None, init=False)
+    _stream_ready: threading.Event = field(default_factory=threading.Event, init=False)
+    _stream_done: threading.Event = field(default_factory=threading.Event, init=False)
+    _exception: BaseException | None = field(default=None, init=False)
 
     def __init__(
         self,
@@ -663,45 +674,83 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         else:
             self._stream = streamed_run_result
         self._context_entered = False
-        self._cached_output = None
-        self._cached_text = None
-        self._cached_responses = None
+        self._thread = None
+        self._stream_ready = threading.Event()
+        self._stream_done = threading.Event()
+        self._exception = None
 
     def __enter__(self) -> StreamedRunResultSync[AgentDepsT, OutputDataT]:
-        """Enter the context manager, collecting all streamed data.
+        """Enter the context manager, starting the async stream in a background thread.
 
-        When using the context manager pattern, all stream data is collected immediately
-        to ensure the async context manager lifecycle (including OTel spans) completes
-        within a single event loop context.
+        When using the context manager pattern, the async context manager lifecycle
+        runs entirely in a background thread, ensuring proper OTel span handling.
+        Streaming still works normally - chunks are yielded as they arrive.
         """
         if not hasattr(self, '_stream'):
             # Already have a direct StreamedRunResult, nothing to do
             self._context_entered = True
             return self
 
-        async def collect_all() -> None:
-            """Collect all stream data within a single async context."""
-            # Get the StreamedRunResult from the generator
-            result = await anext(self._stream)
-            self._streamed_run_result = result
+        self._context_entered = True
+        # Start the background thread that will run the async lifecycle
+        self._thread = threading.Thread(target=self._run_async_stream, daemon=True)
+        self._thread.start()
+
+        # Wait for the stream to be ready
+        self._stream_ready.wait()
+
+        # Check if an exception occurred during initialization
+        if self._exception is not None:
+            raise self._exception
+
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        """Exit the context manager, waiting for the async stream to complete.
+
+        This ensures the async generator is properly exhausted in the background thread,
+        which triggers the cleanup of the underlying async context manager (including OTel spans).
+        """
+        if self._thread is not None:
+            # Signal that we're done consuming (in case iteration didn't complete)
+            self._stream_done.set()
+            # Wait for the background thread to complete
+            self._thread.join()
+
+        # Re-raise any exception from the background thread
+        if self._exception is not None and exc_type is None:
+            raise self._exception
+
+    def _run_async_stream(self) -> None:
+        """Run the async stream lifecycle in a background thread.
+
+        This method runs the entire async context manager lifecycle in a single
+        run_until_complete() call, ensuring OTel context is properly maintained.
+        """
+
+        async def consume_stream() -> None:
             try:
-                # Collect output data
-                self._cached_output = [item async for item in result.stream_output()]
+                # Enter the async context manager by getting the result
+                result = await anext(self._stream)
+                self._streamed_run_result = result
+                # Signal that the stream is ready
+                self._stream_ready.set()
+
+                # Wait for the sync consumer to signal they're done
+                # We use a polling approach since we can't await a threading.Event
+                while not self._stream_done.is_set():
+                    await _wait_briefly()
+            except BaseException as e:
+                self._exception = e
+                self._stream_ready.set()  # Signal ready even on error
             finally:
-                # Exhaust the generator to trigger cleanup (exits the async with in _consume_stream)
+                # Exhaust the generator to trigger cleanup
                 try:
                     await anext(self._stream)
                 except StopAsyncIteration:
                     pass
 
-        _utils.get_event_loop().run_until_complete(collect_all())
-        self._context_entered = True
-        return self
-
-    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
-        """Exit the context manager. Cleanup has already been handled in __enter__."""
-        # All cleanup is done in __enter__ since we collect everything there
-        pass
+        _utils.get_event_loop().run_until_complete(consume_stream())
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of messages.
@@ -784,9 +833,6 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the response data.
         """
-        # If data was pre-collected via context manager, return cached data
-        if self._cached_output is not None:
-            return iter(self._cached_output)
         return self._async_iterator_to_sync(lambda result: result.stream_output(debounce_by=debounce_by))
 
     def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
