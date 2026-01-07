@@ -22,6 +22,7 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
+    FileId,
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
@@ -444,8 +445,6 @@ async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
 
 def test_file_id_identifier_property():
     """Test that FileId.identifier returns the file_id."""
-    from pydantic_ai import FileId
-
     file_id = FileId(file_id='file-abc123')
     assert file_id.identifier == 'file-abc123'
 
@@ -457,7 +456,6 @@ def test_file_id_identifier_property():
 async def test_file_id_in_otel_message_parts(allow_model_requests: None):
     """Test that FileId is handled correctly in otel message parts conversion (skipped)."""
     from pydantic_ai.agent import InstrumentationSettings
-    from pydantic_ai.messages import FileId, UserPromptPart
 
     # Create a UserPromptPart with FileId
     part = UserPromptPart(content=['text before', FileId(file_id='file-abc123'), 'text after'])
@@ -1922,8 +1920,6 @@ async def test_text_document_as_binary_content_input(
 
 async def test_file_id_with_text(allow_model_requests: None) -> None:
     """Test that FileId is correctly mapped to a document block with file source."""
-    from pydantic_ai import FileId
-
     c = completion_message(
         [BetaTextBlock(text='The file contains important data.', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=8),
@@ -1953,8 +1949,6 @@ async def test_file_id_with_text(allow_model_requests: None) -> None:
 
 async def test_file_id_only(allow_model_requests: None) -> None:
     """Test FileId as the only content in a message."""
-    from pydantic_ai import FileId
-
     c = completion_message(
         [BetaTextBlock(text='This is a PDF document.', type='text')],
         usage=BetaUsage(input_tokens=5, output_tokens=6),
@@ -1974,8 +1968,6 @@ async def test_file_id_only(allow_model_requests: None) -> None:
 
 async def test_multiple_file_ids(allow_model_requests: None) -> None:
     """Test multiple FileIds in a single message."""
-    from pydantic_ai import FileId
-
     c = completion_message(
         [BetaTextBlock(text='Both files contain similar data.', type='text')],
         usage=BetaUsage(input_tokens=15, output_tokens=7),

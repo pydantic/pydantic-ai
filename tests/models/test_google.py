@@ -26,6 +26,7 @@ from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FileId,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -4679,8 +4680,6 @@ async def test_cache_point_filtering():
 
 async def test_file_id_mapping():
     """Test that FileId is correctly mapped to file_data in Google model."""
-    from pydantic_ai import FileId
-
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
@@ -4693,8 +4692,6 @@ async def test_file_id_mapping():
 
 async def test_file_id_mapping_with_media_type():
     """Test that FileId with media_type is correctly mapped."""
-    from pydantic_ai import FileId
-
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/xyz789'

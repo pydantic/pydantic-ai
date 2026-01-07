@@ -21,6 +21,7 @@ from pydantic_ai import (
     BinaryContent,
     CachePoint,
     DocumentUrl,
+    FileId,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
@@ -1470,8 +1471,6 @@ async def test_document_as_binary_content_input_with_tool(
 
 async def test_file_id_chat_model(allow_model_requests: None) -> None:
     """Test that FileId is correctly mapped in OpenAIChatModel."""
-    from pydantic_ai import FileId
-
     c = completion_message(
         ChatCompletionMessage(content='The file contains important data.', role='assistant'),
     )
@@ -1501,8 +1500,6 @@ async def test_file_id_chat_model(allow_model_requests: None) -> None:
 async def test_file_id_responses_model(allow_model_requests: None) -> None:
     """Test that FileId is correctly mapped in OpenAIResponsesModel."""
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
-
-    from pydantic_ai import FileId
 
     output_item = ResponseOutputMessage(
         id='msg_123',
