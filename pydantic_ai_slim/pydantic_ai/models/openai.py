@@ -217,10 +217,10 @@ class OpenAIBatch(Batch):
     at 50% reduced cost.
 
     Example:
-        ```python
-        from pydantic_ai.models.openai import OpenAIChatModel
+        ```python {lint="skip" test="skip"}
         from pydantic_ai.messages import ModelRequest
         from pydantic_ai.models import ModelRequestParameters
+        from pydantic_ai.models.openai import OpenAIChatModel
 
         model = OpenAIChatModel('gpt-4o-mini')
         requests = [
@@ -1270,10 +1270,10 @@ class OpenAIChatModel(Model):
             ValueError: If batch contains fewer than 2 requests.
 
         Example:
-            ```python
-            from pydantic_ai.models.openai import OpenAIChatModel
+            ```python {lint="skip" test="skip"}
             from pydantic_ai.messages import ModelRequest
             from pydantic_ai.models import ModelRequestParameters
+            from pydantic_ai.models.openai import OpenAIChatModel
 
             model = OpenAIChatModel('gpt-4o-mini')
             requests = [

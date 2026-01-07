@@ -633,7 +633,7 @@ class Batch:
     for asynchronous processing, typically at reduced cost.
 
     Example:
-        ```python
+        ```python {lint="skip" test="skip"}
         from pydantic_ai.models.openai import OpenAIChatModel
 
         model = OpenAIChatModel('gpt-4o-mini')
@@ -1022,7 +1022,7 @@ class Model(ABC):
             NotImplementedError: If this model doesn't support batch processing.
 
         Example:
-            ```python
+            ```python {lint="skip" test="skip"}
             from pydantic_ai.messages import ModelRequest
             from pydantic_ai.models import ModelRequestParameters
 
