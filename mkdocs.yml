@@ -24,19 +24,35 @@ nav:
           - output.md
           - message-history.md
           - direct.md
-      - Models & Providers:
+      - Models:
           - Overview: models/overview.md
-          - models/openai.md
           - models/anthropic.md
-          - models/google.md
           - models/bedrock.md
-          - models/cerebras.md
           - models/cohere.md
-          - models/groq.md
-          - models/huggingface.md
+          - models/deepseek.md
+          - models/google.md
           - models/mistral.md
-          - models/openrouter.md
-          - models/outlines.md
+          - models/moonshotai.md
+          - models/openai.md
+          - models/perplexity.md
+          - models/xai.md
+          - Inference Providers:
+              - models/alibaba.md
+              - models/azure.md
+              - models/cerebras.md
+              - models/fireworks.md
+              - models/github-models.md
+              - models/groq.md
+              - models/heroku.md
+              - models/huggingface.md
+              - models/litellm.md
+              - models/nebius.md
+              - models/ollama.md
+              - models/openrouter.md
+              - models/outlines.md
+              - models/ovhcloud.md
+              - models/together.md
+              - models/vercel.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md

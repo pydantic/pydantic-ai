@@ -63,6 +63,23 @@ img.index-header {
   text-align: center;
 }
 
+/* Model comparison rating badges */
+.rating-badge {
+  display: inline-block;
+  width: 1.5em;
+  height: 1.5em;
+  line-height: 1.5em;
+  text-align: center;
+  border-radius: 4px;
+  font-weight: bold;
+  color: white;
+}
+.rating-5 { background-color: #FF007F; } /* Pydantic pink */
+.rating-4 { background-color: #22c55e; } /* Green */
+.rating-3 { background-color: #eab308; } /* Yellow */
+.rating-2 { background-color: #f97316; } /* Orange */
+.rating-1 { background-color: #ef4444; } /* Red */
+
 .md-search__input::-webkit-search-decoration,
 .md-search__input::-webkit-search-cancel-button,
 .md-search__input::-webkit-search-results-button,
