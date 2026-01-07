@@ -1,5 +1,6 @@
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
@@ -147,6 +148,7 @@ def test_binary_content_video(media_type: str, format: str):
         ('application/pdf', 'pdf'),
         ('text/plain', 'txt'),
         ('text/csv', 'csv'),
+        ('application/msword', 'doc'),
         ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'docx'),
         ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'xlsx'),
         ('text/html', 'html'),
@@ -209,6 +211,7 @@ _url_formats = [
     pytest.param(DocumentUrl('foobar.pdf'), 'application/pdf', 'pdf', id='pdf'),
     pytest.param(DocumentUrl('foobar.txt'), 'text/plain', 'txt', id='txt'),
     pytest.param(DocumentUrl('foobar.csv'), 'text/csv', 'csv', id='csv'),
+    pytest.param(DocumentUrl('foobar.doc'), 'application/msword', 'doc', id='doc'),
     pytest.param(
         DocumentUrl('foobar.docx'),
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -306,6 +309,13 @@ def test_binary_content_is_methods():
     assert document_content.format == 'pdf'
 
 
+def test_binary_content_base64():
+    bc = BinaryContent(data=b'Hello, world!', media_type='image/png')
+    assert bc.base64 == 'SGVsbG8sIHdvcmxkIQ=='
+    assert not bc.base64.startswith('data:')
+    assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
@@ -330,10 +340,23 @@ def test_video_url_invalid():
         VideoUrl('foobar.potato').media_type
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="'Python 3.10's mimetypes module does not support query parameters'"
+)
+def test_url_with_query_parameters() -> None:
+    """Test that Url types correctly infer media type from URLs with query parameters"""
+    video_url = VideoUrl('https://example.com/video.mp4?query=param')
+    assert video_url.media_type == 'video/mp4'
+    assert video_url.format == 'mp4'
+
+
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
     original_delta = ThinkingPartDelta(
-        content_delta='original', signature_delta='sig1', provider_name='original_provider'
+        content_delta='original',
+        signature_delta='sig1',
+        provider_name='original_provider',
+        provider_details={'foo': 'bar', 'baz': 'qux'},
     )
 
     # Test applying delta with no content or signature - should raise error
@@ -358,6 +381,47 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
     assert result.provider_name == 'new_provider'
+
+    # Test applying delta with provider_details
+    provider_details_delta = ThinkingPartDelta(
+        content_delta='', provider_details={'finish_reason': 'STOP', 'foo': 'qux'}
+    )
+    result = provider_details_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.provider_details == {'foo': 'qux', 'baz': 'qux', 'finish_reason': 'STOP'}
+
+    # Test chaining callable provider_details in delta-to-delta
+    delta1 = ThinkingPartDelta(
+        content_delta='first',
+        provider_details=lambda d: {**(d or {}), 'first': 1},
+    )
+    delta2 = ThinkingPartDelta(
+        content_delta=' second',
+        provider_details=lambda d: {**(d or {}), 'second': 2},
+    )
+    chained = delta2.apply(delta1)
+    assert isinstance(chained, ThinkingPartDelta)
+    assert callable(chained.provider_details)
+    # Apply chained delta to actual ThinkingPart to verify both callables ran
+    part = ThinkingPart(content='')
+    result_part = chained.apply(part)
+    assert result_part.provider_details == {'first': 1, 'second': 2}
+
+    # Test applying dict delta to callable delta (dict should merge with callable result)
+    delta_callable = ThinkingPartDelta(
+        content_delta='callable',
+        provider_details=lambda d: {**(d or {}), 'from_callable': 'yes'},
+    )
+    delta_dict = ThinkingPartDelta(
+        content_delta=' dict',
+        provider_details={'from_dict': 'also'},
+    )
+    chained = delta_dict.apply(delta_callable)
+    assert isinstance(chained, ThinkingPartDelta)
+    assert callable(chained.provider_details)
+    part = ThinkingPart(content='')
+    result_part = chained.apply(part)
+    assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
 
 
 def test_pre_usage_refactor_messages_deserializable():
@@ -402,7 +466,7 @@ def test_pre_usage_refactor_messages_deserializable():
                         content='What is the capital of Mexico?',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City.')],
@@ -418,6 +482,14 @@ def test_pre_usage_refactor_messages_deserializable():
             ),
         ]
     )
+
+
+def test_file_part_has_content():
+    filepart = FilePart(content=BinaryContent(data=b'', media_type='application/pdf'))
+    assert not filepart.has_content()
+
+    filepart.content.data = b'not empty'
+    assert filepart.has_content()
 
 
 def test_file_part_serialization_roundtrip():
@@ -441,6 +513,7 @@ def test_file_part_serialization_roundtrip():
                         'id': None,
                         'provider_name': None,
                         'part_kind': 'file',
+                        'provider_details': None,
                     }
                 ],
                 'usage': {
@@ -457,14 +530,33 @@ def test_file_part_serialization_roundtrip():
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
+                'provider_url': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
+                'run_id': None,
+                'metadata': None,
             }
         ]
     )
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
     assert deserialized == messages
+
+
+def test_model_messages_type_adapter_preserves_run_id():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            run_id='run-123',
+            metadata={'key': 'value'},
+        ),
+        ModelResponse(parts=[TextPart(content='Hello!')], run_id='run-123', metadata={'key': 'value'}),
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
 
 
 def test_model_response_convenience_methods():
@@ -583,4 +675,38 @@ def test_binary_content_validation_with_optional_identifier():
             'media_type': 'image/png',
             'identifier': 'foo',
         }
+    )
+
+
+def test_binary_content_from_path(tmp_path: Path):
+    # test normal file
+    test_xml_file = tmp_path / 'test.xml'
+    test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_xml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
+
+    # test non-existent file
+    non_existent_file = tmp_path / 'non-existent.txt'
+    with pytest.raises(FileNotFoundError, match='File not found:'):
+        BinaryContent.from_path(non_existent_file)
+
+    # test file with unknown media type
+    test_unknown_file = tmp_path / 'test.unknownext'
+    test_unknown_file.write_text('some content', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_unknown_file)
+    assert binary_content == snapshot(BinaryContent(data=b'some content', media_type='application/octet-stream'))
+
+    # test string path
+    test_txt_file = tmp_path / 'test.txt'
+    test_txt_file.write_text('just some text', encoding='utf-8')
+    string_path = test_txt_file.as_posix()
+    binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
+    assert binary_content == snapshot(BinaryContent(data=b'just some text', media_type='text/plain'))
+
+    # test image file
+    test_jpg_file = tmp_path / 'test.jpg'
+    test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
+    binary_content = BinaryContent.from_path(test_jpg_file)
+    assert binary_content == snapshot(
+        BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
     )

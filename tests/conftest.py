@@ -14,17 +14,18 @@ from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai.models import Model
 
 __all__ = (
     'IsDatetime',
@@ -34,9 +35,11 @@ __all__ = (
     'IsBytes',
     'IsInt',
     'IsInstance',
+    'IsList',
     'TestEnv',
     'ClientWithHandler',
     'try_import',
+    'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -62,8 +65,9 @@ if TYPE_CHECKING:
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
+    def IsList(*args: T, **kwargs: Any) -> list[T]: ...
 else:
-    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
+    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -108,6 +112,23 @@ else:
                 return super().equals(other)
             else:
                 return other == self._first_other
+
+
+SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
+
+
+@customize_repr
+def _(value: bytes):  # pragma: no cover
+    """Use IsBytes() for large byte sequences in snapshots."""
+    if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
+        return 'IsBytes()'
+    return bytes.__repr__(value)
+
+
+@customize_repr
+def _(value: datetime):  # pragma: no cover
+    """Use IsDatetime() for datetime values in snapshots."""
+    return 'IsDatetime()'
 
 
 class TestEnv:
@@ -198,7 +219,7 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
         sanitized_name = re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', request.node.name)[:max_name_len]
         module_name = f'{sanitized_name}_{secrets.token_hex(5)}'
         path = tmp_path / f'{module_name}.py'
-        path.write_text(source_code)
+        path.write_text(source_code, encoding='utf-8')
         filename = str(path)
 
         if module_name_prefix:  # pragma: no cover
@@ -244,6 +265,7 @@ def event_loop() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
+    Embedder.instrument_all(False)
 
 
 try:
@@ -304,21 +326,32 @@ def vcr_config():
 
 
 @pytest.fixture(autouse=True)
-async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
+async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
+    """Track and close cached httpx clients created during each test.
+
+    Prevents reusing AsyncClient instances across tests (and event loops),
+    which can cause 'Event loop is closed' errors, without touching prod code.
+    """
+    created_clients: set[httpx.AsyncClient] = set()
+
+    # Patch the cached factory to record returned clients while preserving caching.
+    original_cached_func = pydantic_ai.models._cached_async_http_client  # type: ignore[reportPrivateUsage]
+
+    def tracked_cached_async_http_client(*args: Any, **kwargs: Any):
+        client = original_cached_func(*args, **kwargs)
+        created_clients.add(client)
+        return client
+
+    monkeypatch.setattr(pydantic_ai.models, '_cached_async_http_client', tracked_cached_async_http_client)
+
     yield
-    for provider in [
-        'openai',
-        'anthropic',
-        'azure',
-        'google-gla',
-        'google-vertex',
-        'groq',
-        'mistral',
-        'cohere',
-        'deepseek',
-        None,
-    ]:
-        await cached_async_http_client(provider=provider).aclose()
+
+    # Close only the clients that were actually created/accessed in this test
+    for client in created_clients:
+        await client.aclose()
+
+    # Ensure no stale cached clients persist between tests (new event loop per test)
+    original_cached_func.cache_clear()
 
 
 @pytest.fixture(scope='session')
@@ -333,9 +366,9 @@ def audio_content(assets_path: Path) -> BinaryContent:
 
 
 @pytest.fixture(scope='session')
-def image_content(assets_path: Path) -> BinaryContent:
-    image_bytes = assets_path.joinpath('kiwi.png').read_bytes()
-    return BinaryContent(data=image_bytes, media_type='image/png')
+def image_content(assets_path: Path) -> BinaryImage:
+    image_bytes = assets_path.joinpath('kiwi.jpg').read_bytes()
+    return BinaryImage(data=image_bytes, media_type='image/jpeg')
 
 
 @pytest.fixture(scope='session')
@@ -352,7 +385,7 @@ def document_content(assets_path: Path) -> BinaryContent:
 
 @pytest.fixture(scope='session')
 def text_document_content(assets_path: Path) -> BinaryContent:
-    content = assets_path.joinpath('dummy.txt').read_text()
+    content = assets_path.joinpath('dummy.txt').read_text(encoding='utf-8')
     bin_content = BinaryContent(data=content.encode(), media_type='text/plain')
     return bin_content
 
@@ -369,7 +402,7 @@ def openai_api_key() -> str:
 
 @pytest.fixture(scope='session')
 def gemini_api_key() -> str:
-    return os.getenv('GEMINI_API_KEY', 'mock-api-key')
+    return os.getenv('GEMINI_API_KEY', os.getenv('GOOGLE_API_KEY', 'mock-api-key'))
 
 
 @pytest.fixture(scope='session')
@@ -424,6 +457,7 @@ def bedrock_provider():
             region_name=os.getenv('AWS_REGION', 'us-east-1'),
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
             aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+            aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
         )
         yield BedrockProvider(bedrock_client=bedrock_client)
         bedrock_client.close()
@@ -454,6 +488,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
     mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.fixture()
@@ -463,21 +498,13 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
-        from google.genai import Client
-
-        from pydantic_ai.providers.google import GoogleProvider
+        from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
     except ImportError:  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'global')
-    client = Client(vertexai=True, project=project, location=location)
-
-    try:
-        yield GoogleProvider(client=client)
-    finally:
-        client.aio._api_client._httpx_client.close()  # type: ignore
-        await client.aio._api_client._async_httpx_client.aclose()  # type: ignore
+    yield GoogleProvider(project=project, location=cast(VertexAILocation, location))
 
 
 @pytest.fixture()
@@ -506,7 +533,7 @@ def model(
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
 
-            return AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+            return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
         elif request.param == 'mistral':
             from pydantic_ai.models.mistral import MistralModel
             from pydantic_ai.providers.mistral import MistralProvider
@@ -543,6 +570,18 @@ def model(
             return HuggingFaceModel(
                 'Qwen/Qwen2.5-72B-Instruct',
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+            )
+        elif request.param == 'outlines':
+            from outlines.models.transformers import from_transformers
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            from pydantic_ai.models.outlines import OutlinesModel
+
+            return OutlinesModel(
+                from_transformers(
+                    AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini'),
+                    AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
+                )
             )
         else:
             raise ValueError(f'Unknown model: {request.param}')

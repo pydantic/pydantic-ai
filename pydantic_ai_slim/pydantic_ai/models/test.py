@@ -13,6 +13,7 @@ from typing_extensions import assert_never
 
 from .. import _utils
 from .._run_context import RunContext
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
@@ -44,11 +45,14 @@ class _WrappedTextOutput:
     value: str | None
 
 
-@dataclass
+@dataclass(init=False)
 class _WrappedToolOutput:
     """A wrapper class to tag an output that came from the custom_output_args field."""
 
-    value: Any | None
+    value: dict[str, Any] | None
+
+    def __init__(self, value: Any | None):
+        self.value = pydantic_core.to_jsonable_python(value)
 
 
 @dataclass(init=False)
@@ -92,6 +96,7 @@ class TestModel(Model):
         custom_output_text: str | None = None,
         custom_output_args: Any | None = None,
         seed: int = 0,
+        model_name: str = 'test',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -101,7 +106,7 @@ class TestModel(Model):
         self.custom_output_args = custom_output_args
         self.seed = seed
         self.last_model_request_parameters = None
-        self._model_name = 'test'
+        self._model_name = model_name
         self._system = 'test'
         super().__init__(settings=settings, profile=profile)
 
@@ -152,6 +157,11 @@ class TestModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._system
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """TestModel supports all builtin tools for testing flexibility."""
+        return SUPPORTED_BUILTIN_TOOLS
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -294,6 +304,7 @@ class TestStreamedResponse(StreamedResponse):
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
     _provider_name: str
+    _provider_url: str | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -310,14 +321,12 @@ class TestStreamedResponse(StreamedResponse):
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=''):
+                    yield event
                 for word in words:
                     self._usage += _get_string_usage(word)
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
+                        yield event
             elif isinstance(part, ToolCallPart):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
@@ -345,6 +354,11 @@ class TestStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -364,7 +378,7 @@ class _JsonSchemaTestData:
         self.defs = schema.get('$defs', {})
         self.seed = seed
 
-    def generate(self) -> Any:
+    def generate(self) -> dict[str, Any]:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)
 

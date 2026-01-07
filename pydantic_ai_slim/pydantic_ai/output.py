@@ -11,8 +11,9 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
+from ._run_context import RunContext
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, ToolDefinition
+from .tools import DeferredToolRequests, ObjectJsonSchema, ToolDefinition
 
 __all__ = (
     # classes
@@ -37,10 +38,11 @@ T_co = TypeVar('T_co', covariant=True)
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the output data type of a run."""
 
-OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text', 'image']
+OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text', 'image', 'auto']
 """All output modes.
 
-`tool_or_text` is deprecated and no longer in use.
+- `tool_or_text` is deprecated and no longer in use.
+- `auto` means the model will automatically choose a structured output mode based on the model's `ModelProfile.default_structured_output_mode`.
 """
 StructuredOutputMode = Literal['tool', 'native', 'prompted']
 """Output modes that can be used for structured output. Used by ModelProfile.default_structured_output_mode"""
@@ -59,7 +61,7 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Callable[[RunContext, str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
+    Callable[[RunContext[Any], str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
     type_params=(T_co,),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.
@@ -163,6 +165,11 @@ class NativeOutput(Generic[OutputDataT]):
     """The description of the structured output that will be passed to the model. If not specified and only one output is provided, the docstring of the output type or function will be used."""
     strict: bool | None
     """Whether to use strict mode for the output, if the model supports it."""
+    template: str | None
+    """Template for the prompt passed to the model.
+    The '{schema}' placeholder will be replaced with the output JSON schema.
+    If no template is specified but the model's profile indicates that it requires the schema to be sent as a prompt, the default template specified on the profile will be used.
+    """
 
     def __init__(
         self,
@@ -171,11 +178,13 @@ class NativeOutput(Generic[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
+        template: str | None = None,
     ):
         self.outputs = outputs
         self.name = name
         self.description = description
         self.strict = strict
+        self.template = template
 
 
 @dataclass(init=False)

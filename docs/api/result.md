@@ -5,3 +5,4 @@
         inherited_members: true
         members:
             - StreamedRunResult
+            - StreamedRunResultSync

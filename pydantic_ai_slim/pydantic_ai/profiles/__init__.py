@@ -1,12 +1,13 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from textwrap import dedent
 
 from typing_extensions import Self
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from ..output import StructuredOutputMode
 
 __all__ = [
@@ -25,9 +26,17 @@ class ModelProfile:
     supports_tools: bool = True
     """Whether the model supports tools."""
     supports_json_schema_output: bool = False
-    """Whether the model supports JSON schema output."""
+    """Whether the model supports JSON schema output.
+
+    This is also referred to as 'native' support for structured output.
+    Relates to the `NativeOutput` output type.
+    """
     supports_json_object_output: bool = False
-    """Whether the model supports JSON object output."""
+    """Whether the model supports a dedicated mode to enforce JSON output, without necessarily sending a schema.
+
+    E.g. [OpenAI's JSON mode](https://platform.openai.com/docs/guides/structured-outputs#json-mode)
+    Relates to the `PromptedOutput` output type.
+    """
     supports_image_output: bool = False
     """Whether the model supports image output."""
     default_structured_output_mode: StructuredOutputMode = 'tool'
@@ -42,6 +51,8 @@ class ModelProfile:
         """
     )
     """The instructions template to use for prompted structured output. The '{schema}' placeholder will be replaced with the JSON schema for the output."""
+    native_output_requires_schema_in_instructions: bool = False
+    """Whether to add prompted output template in native structured output mode"""
     json_schema_transformer: type[JsonSchemaTransformer] | None = None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model."""
 
@@ -55,6 +66,15 @@ class ModelProfile:
     which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
 
     This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
+    """
+
+    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = field(
+        default_factory=lambda: SUPPORTED_BUILTIN_TOOLS
+    )
+    """The set of builtin tool types that this model/profile supports.
+
+    Defaults to ALL builtin tools. Profile functions should explicitly
+    restrict this based on model capabilities.
     """
 
     @classmethod

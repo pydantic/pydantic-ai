@@ -1,4 +1,3 @@
-import base64
 from dataclasses import dataclass
 from datetime import timezone
 from typing import Any
@@ -11,7 +10,7 @@ from pydantic_ai import BinaryContent, ModelRequest, ModelResponse, SystemPrompt
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import CreateMessageResult
@@ -54,12 +53,15 @@ def test_assistant_text():
                         content='Hello',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -88,17 +90,29 @@ def test_assistant_text_history():
     assert result.output == snapshot('text content')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='1', timestamp=IsNow(tz=timezone.utc))], instructions='testing'),
-            ModelResponse(
-                parts=[TextPart(content='text content')],
-                model_name='test-model',
-                timestamp=IsNow(tz=timezone.utc),
+            ModelRequest(
+                parts=[UserPromptPart(content='1', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                instructions='testing',
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='2', timestamp=IsNow(tz=timezone.utc))], instructions='testing'),
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='2', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                instructions='testing',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='text content')],
+                model_name='test-model',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -109,11 +123,10 @@ def test_assistant_text_history_complex():
         ModelRequest(
             parts=[
                 UserPromptPart(content='1'),
-                UserPromptPart(
-                    content=['a string', BinaryContent(data=base64.b64encode(b'data'), media_type='image/jpeg')]
-                ),
+                UserPromptPart(content=['a string', BinaryContent(data=b'data', media_type='image/jpeg')]),
                 SystemPromptPart(content='system content'),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[TextPart(content='text content')],

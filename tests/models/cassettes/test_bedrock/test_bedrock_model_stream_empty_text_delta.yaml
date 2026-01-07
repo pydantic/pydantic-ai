@@ -1,0 +1,66 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Hi"}]}], "system": [], "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Zjg3NDYxYzEtZDQzZS00YThkLTkwNDMtNDcwOTNjMWZlMGM2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '98'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/openai.gpt-oss-120b-1%3A0/converse-stream
+  response:
+    body:
+      string: !!binary |
+        AAAAsgAAAFKKQLTFCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTpjb250ZW50LXR5cGUHABBh
+        cHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsicCI6ImFiY2RlZmdoaWprbG1u
+        b3BxcnN0dXZ3eHl6QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowIiwicm9sZSI6ImFzc2lzdGFu
+        dCJ9QP+CaAAAAKIAAABXmsrXyAs6ZXZlbnQtdHlwZQcAEWNvbnRlbnRCbG9ja0RlbHRhDTpjb250
+        ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVu
+        dEJsb2NrSW5kZXgiOjAsImRlbHRhIjp7InRleHQiOiIifSwicCI6ImFiY2RlZmdoaSJ9NTLrNAAA
+        ALkAAABW+v1BzQs6ZXZlbnQtdHlwZQcAEGNvbnRlbnRCbG9ja1N0b3ANOmNvbnRlbnQtdHlwZQcA
+        EGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRl
+        eCI6MCwicCI6ImFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6QUJDREVGR0hJSktMTU5PUFFSU1RV
+        VldYWVowIn2IAETUAAABWQAAAFducmUhCzpldmVudC10eXBlBwARY29udGVudEJsb2NrRGVsdGEN
+        OmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJj
+        b250ZW50QmxvY2tJbmRleCI6MSwiZGVsdGEiOnsicmVhc29uaW5nQ29udGVudCI6eyJ0ZXh0Ijoi
+        VGhlIHVzZXIganVzdCBzYXlzIFwiSGlcIi4gV2UgbmVlZCB0byByZXNwb25kIGFwcHJvcHJpYXRl
+        bHksIGZyaWVuZGx5IGdyZWV0aW5nLiBObyBzcGVjaWFsIGluc3RydWN0aW9ucy4gU2hvdWxkIGJl
+        IHNob3J0LiJ9fSwicCI6ImFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6QUJDREVGR0hJSktMTU5P
+        UFFSU1RVVldYIn2DKrHfAAAAsQAAAFbKjQoMCzpldmVudC10eXBlBwAQY29udGVudEJsb2NrU3Rv
+        cA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7
+        ImNvbnRlbnRCbG9ja0luZGV4IjoxLCJwIjoiYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXpBQkNE
+        RUZHSElKS0xNTk9QUVJTIn1Cad1JAAAA5AAAAFdNeXohCzpldmVudC10eXBlBwARY29udGVudEJs
+        b2NrRGVsdGENOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcA
+        BWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6MiwiZGVsdGEiOnsidGV4dCI6IkhlbGxvISBIb3cg
+        Y2FuIEkgaGVscCJ9LCJwIjoiYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXpBQkNERUZHSElKS0xN
+        Tk9QUVJTVFVWV1hZWjAxIn2L4Y7bAAAAuwAAAFf3OiI7CzpldmVudC10eXBlBwARY29udGVudEJs
+        b2NrRGVsdGENOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcA
+        BWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6MiwiZGVsdGEiOnsidGV4dCI6IiB5b3UgdG9kYXk/
+        In0sInAiOiJhYmNkZWZnaGlqa2xtbm9wcXJzdHV2dyJ9dKsF8AAAAI4AAABW6fwlWws6ZXZlbnQt
+        dHlwZQcAEGNvbnRlbnRCbG9ja1N0b3ANOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24N
+        Om1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6MiwicCI6ImFiY2RlZmdo
+        aWoifbla37UAAACDAAAAUY8IdEkLOmV2ZW50LXR5cGUHAAttZXNzYWdlU3RvcA06Y29udGVudC10
+        eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7InAiOiJhYiIsInN0
+        b3BSZWFzb24iOiJlbmRfdHVybiJ9kFbppAAAAOQAAABOKRLS4Qs6ZXZlbnQtdHlwZQcACG1ldGFk
+        YXRhDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVu
+        dHsibWV0cmljcyI6eyJsYXRlbmN5TXMiOjc1M30sInAiOiJhYmNkZWZnaGlqa2xtbiIsInVzYWdl
+        Ijp7ImlucHV0VG9rZW5zIjo3MCwib3V0cHV0VG9rZW5zIjo0Mywic2VydmVyVG9vbFVzYWdlIjp7
+        fSwidG90YWxUb2tlbnMiOjExM319saJH4A==
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1

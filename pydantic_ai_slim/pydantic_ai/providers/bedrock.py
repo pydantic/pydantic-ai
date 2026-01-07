@@ -4,7 +4,7 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, overload
+from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -21,6 +21,8 @@ try:
     from botocore.client import BaseClient
     from botocore.config import Config
     from botocore.exceptions import NoRegionError
+    from botocore.session import Session
+    from botocore.tokens import FrozenAuthToken
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `boto3` package to use the Bedrock provider, '
@@ -38,13 +40,18 @@ class BedrockModelProfile(ModelProfile):
     bedrock_supports_tool_choice: bool = False
     bedrock_tool_result_format: Literal['text', 'json'] = 'text'
     bedrock_send_back_thinking_parts: bool = False
+    bedrock_supports_prompt_caching: bool = False
+    bedrock_supports_tool_caching: bool = False
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
     profile = amazon_model_profile(model_name)
     if 'nova' in model_name:
-        return BedrockModelProfile(bedrock_supports_tool_choice=True).update(profile)
+        return BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_supports_prompt_caching=True,
+        ).update(profile)
     return profile
 
 
@@ -54,6 +61,10 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     if 'r1' in model_name:
         return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
     return profile  # pragma: no cover
+
+
+# Known geo prefixes for cross-region inference profile IDs
+BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
 
 
 class BedrockProvider(Provider[BaseClient]):
@@ -74,7 +85,10 @@ class BedrockProvider(Provider[BaseClient]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
             'anthropic': lambda model_name: BedrockModelProfile(
-                bedrock_supports_tool_choice=True, bedrock_send_back_thinking_parts=True
+                bedrock_supports_tool_choice=True,
+                bedrock_send_back_thinking_parts=True,
+                bedrock_supports_prompt_caching=True,
+                bedrock_supports_tool_caching=True,
             ).update(anthropic_model_profile(model_name)),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 mistral_model_profile(model_name)
@@ -88,10 +102,11 @@ class BedrockProvider(Provider[BaseClient]):
         # Split the model name into parts
         parts = model_name.split('.', 2)
 
-        # Handle regional prefixes (e.g. "us.")
-        if len(parts) > 2 and len(parts[0]) == 2:
+        # Handle regional prefixes
+        if len(parts) > 2 and parts[0] in BEDROCK_GEO_PREFIXES:
             parts = parts[1:]
 
+        # required format is provider.model-name-with-version
         if len(parts) < 2:
             return None
 
@@ -117,10 +132,23 @@ class BedrockProvider(Provider[BaseClient]):
     def __init__(
         self,
         *,
+        api_key: str,
+        base_url: str | None = None,
         region_name: str | None = None,
+        profile_name: str | None = None,
+        aws_read_timeout: float | None = None,
+        aws_connect_timeout: float | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
+        base_url: str | None = None,
+        region_name: str | None = None,
         profile_name: str | None = None,
         aws_read_timeout: float | None = None,
         aws_connect_timeout: float | None = None,
@@ -130,11 +158,13 @@ class BedrockProvider(Provider[BaseClient]):
         self,
         *,
         bedrock_client: BaseClient | None = None,
-        region_name: str | None = None,
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
+        base_url: str | None = None,
+        region_name: str | None = None,
         profile_name: str | None = None,
+        api_key: str | None = None,
         aws_read_timeout: float | None = None,
         aws_connect_timeout: float | None = None,
     ) -> None:
@@ -142,10 +172,12 @@ class BedrockProvider(Provider[BaseClient]):
 
         Args:
             bedrock_client: A boto3 client for Bedrock Runtime. If provided, other arguments are ignored.
-            region_name: The AWS region name.
-            aws_access_key_id: The AWS access key ID.
-            aws_secret_access_key: The AWS secret access key.
-            aws_session_token: The AWS session token.
+            aws_access_key_id: The AWS access key ID. If not set, the `AWS_ACCESS_KEY_ID` environment variable will be used if available.
+            aws_secret_access_key: The AWS secret access key. If not set, the `AWS_SECRET_ACCESS_KEY` environment variable will be used if available.
+            aws_session_token: The AWS session token. If not set, the `AWS_SESSION_TOKEN` environment variable will be used if available.
+            api_key: The API key for Bedrock client. Can be used instead of `aws_access_key_id`, `aws_secret_access_key`, and `aws_session_token`. If not set, the `AWS_BEARER_TOKEN_BEDROCK` environment variable will be used if available.
+            base_url: The base URL for the Bedrock client.
+            region_name: The AWS region name. If not set, the `AWS_DEFAULT_REGION` environment variable will be used if available.
             profile_name: The AWS profile name.
             aws_read_timeout: The read timeout for Bedrock client.
             aws_connect_timeout: The connect timeout for Bedrock client.
@@ -153,19 +185,44 @@ class BedrockProvider(Provider[BaseClient]):
         if bedrock_client is not None:
             self._client = bedrock_client
         else:
+            read_timeout = aws_read_timeout or float(os.getenv('AWS_READ_TIMEOUT', 300))
+            connect_timeout = aws_connect_timeout or float(os.getenv('AWS_CONNECT_TIMEOUT', 60))
+            config: dict[str, Any] = {
+                'read_timeout': read_timeout,
+                'connect_timeout': connect_timeout,
+            }
             try:
-                read_timeout = aws_read_timeout or float(os.getenv('AWS_READ_TIMEOUT', 300))
-                connect_timeout = aws_connect_timeout or float(os.getenv('AWS_CONNECT_TIMEOUT', 60))
-                session = boto3.Session(
-                    aws_access_key_id=aws_access_key_id,
-                    aws_secret_access_key=aws_secret_access_key,
-                    aws_session_token=aws_session_token,
-                    region_name=region_name,
-                    profile_name=profile_name,
-                )
+                if api_key is not None:
+                    session = boto3.Session(
+                        botocore_session=_BearerTokenSession(api_key),
+                        region_name=region_name,
+                        profile_name=profile_name,
+                    )
+                    config['signature_version'] = 'bearer'
+                else:
+                    session = boto3.Session(
+                        aws_access_key_id=aws_access_key_id,
+                        aws_secret_access_key=aws_secret_access_key,
+                        aws_session_token=aws_session_token,
+                        region_name=region_name,
+                        profile_name=profile_name,
+                    )
                 self._client = session.client(  # type: ignore[reportUnknownMemberType]
                     'bedrock-runtime',
-                    config=Config(read_timeout=read_timeout, connect_timeout=connect_timeout),
+                    config=Config(**config),
+                    endpoint_url=base_url,
                 )
             except NoRegionError as exc:  # pragma: no cover
                 raise UserError('You must provide a `region_name` or a boto3 client for Bedrock Runtime.') from exc
+
+
+class _BearerTokenSession(Session):
+    def __init__(self, token: str):
+        super().__init__()
+        self.token = token
+
+    def get_auth_token(self, **_kwargs: Any) -> FrozenAuthToken:
+        return FrozenAuthToken(self.token)
+
+    def get_credentials(self) -> None:  # type: ignore[reportIncompatibleMethodOverride]
+        return None

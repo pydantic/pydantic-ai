@@ -134,30 +134,28 @@ The Responses API has built-in tools that you can use instead of building your o
 - [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
 
-Web search, Code interpreter, and Image generation are natively supported through the [Built-in tools](../builtin-tools.md) feature.
+Web search, Code interpreter, Image generation, and File search are natively supported through the [Built-in tools](../builtin-tools.md) feature.
 
-File search and Computer use can be enabled by passing an [`openai.types.responses.FileSearchToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/file_search_tool_param.py) or [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. They don't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for these built-in tools.
+Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
 
-```python {title="file_search_tool.py"}
-from openai.types.responses import FileSearchToolParam
+```python {title="computer_use_tool.py" test="skip"}
+from openai.types.responses import ComputerToolParam
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model_settings = OpenAIResponsesModelSettings(
     openai_builtin_tools=[
-        FileSearchToolParam(
-            type='file_search',
-            vector_store_ids=['your-history-book-vector-store-id']
+        ComputerToolParam(
+            type='computer_use',
         )
     ],
 )
 model = OpenAIResponsesModel('gpt-5')
 agent = Agent(model=model, model_settings=model_settings)
 
-result = agent.run_sync('Who was Albert Einstein?')
+result = agent.run_sync('Open a new browser tab')
 print(result.output)
-#> Albert Einstein was a German-born theoretical physicist.
 ```
 
 #### Referencing earlier responses
@@ -233,7 +231,7 @@ agent = Agent(model)
 ```
 
 Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
-When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("openrouter:google/gemini-2.5-pro-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of building instantiating the provider class explicitly.
+When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of building instantiating the provider class explicitly.
 
 #### Model Profile
 
@@ -303,6 +301,50 @@ model = OpenAIChatModel(
     'deepseek-chat',
     provider=DeepSeekProvider(
         api_key='your-deepseek-api-key', http_client=custom_http_client
+    ),
+)
+agent = Agent(model)
+...
+```
+
+### Alibaba Cloud Model Studio (DashScope)
+
+To use Qwen models via [Alibaba Cloud Model Studio (DashScope)](https://www.alibabacloud.com/en/product/modelstudio), you can set the `ALIBABA_API_KEY` (or `DASHSCOPE_API_KEY`) environment variable and use [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('alibaba:qwen-max')
+...
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.alibaba import AlibabaProvider
+
+model = OpenAIChatModel(
+    'qwen-max',
+    provider=AlibabaProvider(api_key='your-api-key'),
+)
+agent = Agent(model)
+...
+```
+
+The `AlibabaProvider` uses the international DashScope compatible endpoint `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` by default. You can override this by passing a custom `base_url`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.alibaba import AlibabaProvider
+
+model = OpenAIChatModel(
+    'qwen-max',
+    provider=AlibabaProvider(
+        api_key='your-api-key',
+        base_url='https://dashscope.aliyuncs.com/compatible-mode/v1',  # China region
     ),
 )
 agent = Agent(model)
@@ -380,34 +422,6 @@ model = OpenAIChatModel(
         api_version='your-api-version',
         api_key='your-api-key',
     ),
-)
-agent = Agent(model)
-...
-```
-
-### OpenRouter
-
-To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
-
-You can set the `OPENROUTER_API_KEY` environment variable and use [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('openrouter:anthropic/claude-3.5-sonnet')
-...
-```
-
-Or initialise the model and provider directly:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openrouter import OpenRouterProvider
-
-model = OpenAIChatModel(
-    'anthropic/claude-3.5-sonnet',
-    provider=OpenRouterProvider(api_key='your-openrouter-api-key'),
 )
 agent = Agent(model)
 ...
@@ -613,7 +627,7 @@ You can set the `HEROKU_INFERENCE_KEY` and (optionally )`HEROKU_INFERENCE_URL` e
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('heroku:claude-3-7-sonnet')
+agent = Agent('heroku:claude-sonnet-4-5')
 ...
 ```
 
@@ -625,44 +639,11 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.heroku import HerokuProvider
 
 model = OpenAIChatModel(
-    'claude-3-7-sonnet',
+    'claude-sonnet-4-5',
     provider=HerokuProvider(api_key='your-heroku-inference-key'),
 )
 agent = Agent(model)
 ...
-```
-
-### Cerebras
-
-To use [Cerebras](https://cerebras.ai/), you need to create an API key in the [Cerebras Console](https://cloud.cerebras.ai/).
-
-You can set the `CEREBRAS_API_KEY` environment variable and use [`CerebrasProvider`][pydantic_ai.providers.cerebras.CerebrasProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('cerebras:llama3.3-70b')
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```
-
-Or initialise the model and provider directly:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.cerebras import CerebrasProvider
-
-model = OpenAIChatModel(
-    'llama3.3-70b',
-    provider=CerebrasProvider(api_key='your-cerebras-api-key'),
-)
-agent = Agent(model)
-
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
 ```
 
 ### LiteLLM
@@ -679,7 +660,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.litellm import LiteLLMProvider
 
 model = OpenAIChatModel(
-    'openai/gpt-3.5-turbo',
+    'openai/gpt-5',
     provider=LiteLLMProvider(
         api_base='<api-base-url>',
         api_key='<api-key>'
@@ -718,6 +699,40 @@ from pydantic_ai.providers.nebius import NebiusProvider
 model = OpenAIChatModel(
     'Qwen/Qwen3-32B-fast',
     provider=NebiusProvider(api_key='your-nebius-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+### OVHcloud AI Endpoints
+
+To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to the [OVHcloud manager](https://ovh.com/manager), then in Public Cloud > AI Endpoints > API keys. Click on `Create a new API key` and copy your new key.
+
+You can explore the [catalog](https://endpoints.ai.cloud.ovh.net/catalog) to find which models are available.
+
+You can set the `OVHCLOUD_API_KEY` environment variable and use [`OVHcloudProvider`][pydantic_ai.providers.ovhcloud.OVHcloudProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('ovhcloud:gpt-oss-120b')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+If you need to configure the provider, you can use the [`OVHcloudProvider`][pydantic_ai.providers.ovhcloud.OVHcloudProvider] class:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+
+model = OpenAIChatModel(
+    'gpt-oss-120b',
+    provider=OVHcloudProvider(api_key='your-api-key'),
 )
 agent = Agent(model)
 result = agent.run_sync('What is the capital of France?')

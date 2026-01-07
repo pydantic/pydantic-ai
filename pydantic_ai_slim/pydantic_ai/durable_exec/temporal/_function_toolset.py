@@ -1,56 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Annotated, Any, Literal, assert_never
+from typing import Any, Literal
 
-from pydantic import ConfigDict, Discriminator, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import FunctionToolset, ToolsetTool
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._run_context import TemporalRunContext
-from ._toolset import TemporalWrapperToolset
-
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class _CallToolParams:
-    name: str
-    tool_args: dict[str, Any]
-    serialized_run_context: Any
-
-
-@dataclass
-class _ApprovalRequired:
-    kind: Literal['approval_required'] = 'approval_required'
-
-
-@dataclass
-class _CallDeferred:
-    kind: Literal['call_deferred'] = 'call_deferred'
-
-
-@dataclass
-class _ModelRetry:
-    message: str
-    kind: Literal['model_retry'] = 'model_retry'
-
-
-@dataclass
-class _ToolReturn:
-    result: Any
-    kind: Literal['tool_return'] = 'tool_return'
-
-
-_CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
-    Discriminator('kind'),
-]
+from ._toolset import (
+    CallToolParams,
+    CallToolResult,
+    TemporalWrapperToolset,
+)
 
 
 class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
@@ -69,7 +35,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        async def call_tool_activity(params: _CallToolParams, deps: AgentDepsT) -> _CallToolResult:
+        async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             name = params.name
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             try:
@@ -80,18 +46,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from e
 
-            # The tool args will already have been validated into their proper types in the `ToolManager`,
-            # but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
-            args_dict = tool.args_validator.validate_python(params.tool_args)
-            try:
-                result = await self.wrapped.call_tool(name, args_dict, ctx, tool)
-                return _ToolReturn(result=result)
-            except ApprovalRequired:
-                return _ApprovalRequired()
-            except CallDeferred:
-                return _CallDeferred()
-            except ModelRetry as e:
-                return _ModelRetry(message=e.message)
+            return await self._call_tool_in_activity(name, params.tool_args, ctx, tool)
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type
@@ -107,7 +62,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.tool_activity_config.get(name, {})
@@ -120,27 +75,24 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                 )
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        tool_activity_config = self.activity_config | tool_activity_config
-        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        result = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
-            activity=self.call_tool_activity,
-            args=[
-                _CallToolParams(
-                    name=name,
-                    tool_args=tool_args,
-                    serialized_run_context=serialized_run_context,
-                ),
-                ctx.deps,
-            ],
+        activity_config: ActivityConfig = {
+            'summary': f'call tool: {self.id}:{name}',
+            **self.activity_config,
             **tool_activity_config,
+        }
+        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        return self._unwrap_call_tool_result(
+            await workflow.execute_activity(
+                activity=self.call_tool_activity,
+                args=[
+                    CallToolParams(
+                        name=name,
+                        tool_args=tool_args,
+                        serialized_run_context=serialized_run_context,
+                        tool_def=None,
+                    ),
+                    ctx.deps,
+                ],
+                **activity_config,
+            )
         )
-        if isinstance(result, _ApprovalRequired):
-            raise ApprovalRequired()
-        elif isinstance(result, _CallDeferred):
-            raise CallDeferred()
-        elif isinstance(result, _ModelRetry):
-            raise ModelRetry(result.message)
-        elif isinstance(result, _ToolReturn):
-            return result.result
-        else:
-            assert_never(result)

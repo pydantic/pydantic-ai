@@ -44,7 +44,7 @@ class WrapperModel(Model):
             yield response_stream
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        return self.wrapped.customize_request_parameters(model_request_parameters)
+        return self.wrapped.customize_request_parameters(model_request_parameters)  # pragma: no cover
 
     def prepare_request(
         self,

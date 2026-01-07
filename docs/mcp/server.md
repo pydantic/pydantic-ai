@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 
 server = FastMCP('Pydantic AI Server')
 server_agent = Agent(
-    'anthropic:claude-3-5-haiku-latest', system_prompt='always reply in rhyme'
+    'anthropic:claude-haiku-4-5', system_prompt='always reply in rhyme'
 )
 
 

@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '264'
+      - '535'
       content-type:
       - application/json
       host:
@@ -20,27 +20,42 @@ interactions:
         - text: What is the temperature in Tokyo?
         role: user
       tools:
-        function_declarations:
+        functionDeclarations:
         - description: ''
           name: get_temperature
-          parameters:
+          parameters_json_schema:
+            $defs:
+              CurrentLocation:
+                additionalProperties: false
+                properties:
+                  city:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - city
+                - country
+                type: object
+            additionalProperties: false
             properties:
               location:
+                additionalProperties:
+                  $ref: '#/$defs/CurrentLocation'
                 type: object
             required:
             - location
             type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '741'
+      - '1211'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=534
+      - gfet4t7; dur=1024
       transfer-encoding:
       - chunked
       vary:
@@ -49,24 +64,143 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.15060695580073766
-        content:
+      - content:
           parts:
-          - text: |
-              I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.
+          - functionCall:
+              args:
+                location:
+                  city: Tokyo
+              name: get_temperature
+            thoughtSignature: CqACAXLI2nwtRSijkF0wyuS+XFIu3sBl3o5eIYL0RL532byzNHncC0I43TWAO5BsXYCzAKwPZOjFjur9AcdF1gDpSnsW5iSeHNbLmrpXjlHAZk/JLcuMN1RH8R0vCJknFkhRJngzvtMApMWnAWLTlDRlR2LzOAshCODrsaVN8m/I5gSV6vkFETiJ9/PoWMTGzcWglbgYFLjordwEcxHyoIwe2V1pDdkleeDA8MwSvwbFI++yR3oT3tCVaC6+oe08OlQwtXv1Hz4XZPMoNxMWrVthwXQt2R0t/vo5+irHcLh8LjPU16wRZeek/wH6LcCjORqiLhzWMubAxcs/QNvGJhTU1DoZmGYOC/YZ5HANMzdzf26TwU35+Khk/SGsfQNasxoR
           role: model
+        finishMessage: Model generated function call(s).
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: V0VVaZ3ML4GsqtsP3ozx6A0
       usageMetadata:
-        candidatesTokenCount: 28
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 28
-        promptTokenCount: 12
+        candidatesTokenCount: 19
+        promptTokenCount: 40
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 12
-        totalTokenCount: 40
+          tokenCount: 40
+        thoughtsTokenCount: 58
+        totalTokenCount: 117
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1085'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature in Tokyo?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              location:
+                city: Tokyo
+            name: get_temperature
+          thoughtSignature: skip_thought_signature_validator
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_temperature
+            response:
+              call_error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "model_type",
+                    "loc": [
+                      "location",
+                      "city"
+                    ],
+                    "msg": "Input should be a valid dictionary or instance of CurrentLocation",
+                    "input": "Tokyo"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      tools:
+        functionDeclarations:
+        - description: ''
+          name: get_temperature
+          parameters_json_schema:
+            $defs:
+              CurrentLocation:
+                additionalProperties: false
+                properties:
+                  city:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - city
+                - country
+                type: object
+            additionalProperties: false
+            properties:
+              location:
+                additionalProperties:
+                  $ref: '#/$defs/CurrentLocation'
+                type: object
+            required:
+            - location
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '5523'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=4537
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I need the latitude and longitude for Tokyo. Can you please provide them?
+            thoughtSignature: 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
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: XEVVabaLItmjqtsPzqrZ2Q0
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 164
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 164
+        thoughtsTokenCount: 793
+        totalTokenCount: 972
     status:
       code: 200
       message: OK

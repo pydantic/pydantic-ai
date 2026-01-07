@@ -191,7 +191,7 @@ class LLMJudge(Evaluator[object, object, object]):
     """
 
     rubric: str
-    model: models.Model | models.KnownModelName | None = None
+    model: models.Model | models.KnownModelName | str | None = None
     include_input: bool = False
     include_expected_output: bool = False
     model_settings: ModelSettings | None = None

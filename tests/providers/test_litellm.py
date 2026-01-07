@@ -89,7 +89,7 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
     }
 
     # Test models without provider prefix (should use openai profile)
-    models_without_prefix = ['gpt-4', 'claude-3-sonnet', 'gemini-pro', 'llama2-70b']
+    models_without_prefix = ['gpt-4', 'claude-sonnet-4-5', 'gemini-pro', 'llama2-70b']
 
     for model in models_without_prefix:
         profile = provider.model_profile(model)

@@ -26,7 +26,7 @@ interactions:
             type: base64
           type: document
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -46,7 +46,7 @@ interactions:
       - text: The document simply contains the text "Dummy PDF file" at the top of what appears to be an otherwise blank page.
         type: text
       id: msg_013KjWqJBTr1cjNSgxWyE2Wu
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

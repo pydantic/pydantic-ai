@@ -18,7 +18,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
-
+    from pydantic_ai.models.openrouter import OpenRouterModel
 
 if not imports_successful():
     pytest.skip('model packages were not installed', allow_module_level=True)  # pragma: lax no cover
@@ -29,30 +29,57 @@ if not imports_successful():
 TEST_CASES = [
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway:openai/gpt-5',
+        'gateway/chat:gpt-5',
         'gpt-5',
         'openai',
         'openai',
         OpenAIChatModel,
-        id='gateway:openai/gpt-5',
+        id='gateway/chat:gpt-5',
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway:groq/llama-3.3-70b-versatile',
+        'gateway/responses:gpt-5',
+        'gpt-5',
+        'openai',
+        'openai',
+        OpenAIResponsesModel,
+        id='gateway/responses:gpt-5',
+    ),
+    pytest.param(
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        'gateway/groq:llama-3.3-70b-versatile',
         'llama-3.3-70b-versatile',
         'groq',
         'groq',
         GroqModel,
-        id='gateway:groq/llama-3.3-70b-versatile',
+        id='gateway/groq:llama-3.3-70b-versatile',
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway:google-vertex/gemini-1.5-flash',
+        'gateway/gemini:gemini-1.5-flash',
         'gemini-1.5-flash',
         'google-vertex',
         'google',
         GoogleModel,
-        id='gateway:google-vertex/gemini-1.5-flash',
+        id='gateway/gemini:gemini-1.5-flash',
+    ),
+    pytest.param(
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        'gateway/anthropic:claude-sonnet-4-5',
+        'claude-sonnet-4-5',
+        'anthropic',
+        'anthropic',
+        AnthropicModel,
+        id='gateway/anthropic:claude-sonnet-4-5',
+    ),
+    pytest.param(
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        'gateway/converse:amazon.nova-micro-v1:0',
+        'amazon.nova-micro-v1:0',
+        'bedrock',
+        'bedrock',
+        BedrockConverseModel,
+        id='gateway/converse:amazon.nova-micro-v1:0',
     ),
     pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
@@ -108,16 +135,16 @@ TEST_CASES = [
     ),
     pytest.param(
         {'ANTHROPIC_API_KEY': 'anthropic-api-key'},
-        'anthropic:claude-3-5-haiku-latest',
-        'claude-3-5-haiku-latest',
+        'anthropic:claude-haiku-4-5',
+        'claude-haiku-4-5',
         'anthropic',
         'anthropic',
         AnthropicModel,
     ),
     pytest.param(
         {'ANTHROPIC_API_KEY': 'anthropic-api-key'},
-        'claude-3-5-haiku-latest',
-        'claude-3-5-haiku-latest',
+        'claude-haiku-4-5',
+        'claude-haiku-4-5',
         'anthropic',
         'anthropic',
         AnthropicModel,
@@ -148,8 +175,8 @@ TEST_CASES = [
     ),
     pytest.param(
         {'AWS_DEFAULT_REGION': 'aws-default-region'},
-        'bedrock:bedrock-claude-3-5-haiku-latest',
-        'bedrock-claude-3-5-haiku-latest',
+        'bedrock:bedrock-claude-haiku-4-5',
+        'bedrock-claude-haiku-4-5',
         'bedrock',
         'bedrock',
         BedrockConverseModel,
@@ -186,6 +213,14 @@ TEST_CASES = [
         'openai',
         OpenAIResponsesModel,
     ),
+    pytest.param(
+        {'OPENROUTER_API_KEY': 'openrouter-api-key'},
+        'openrouter:anthropic/claude-3.5-sonnet',
+        'anthropic/claude-3.5-sonnet',
+        'openrouter',
+        'openrouter',
+        OpenRouterModel,
+    ),
 ]
 
 
@@ -213,6 +248,17 @@ def test_infer_model(
 
         m2 = infer_model(m)
         assert m2 is m
+
+
+def test_infer_model_with_provider():
+    from pydantic_ai.providers import openai
+
+    provider_class = openai.OpenAIProvider(api_key='1234', base_url='http://test')
+    m = infer_model('openai:gpt-5', lambda x: provider_class)
+
+    assert isinstance(m, OpenAIChatModel)
+    assert m._provider is provider_class  # type: ignore
+    assert m._provider.base_url == 'http://test'  # type: ignore
 
 
 def test_infer_str_unknown():

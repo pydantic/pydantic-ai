@@ -69,7 +69,7 @@ from pydantic_ai import Agent
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
 
-agent = Agent('openai:gpt-4o', instructions='Be concise, reply with one sentence.')
+agent = Agent('openai:gpt-5', instructions='Be concise, reply with one sentence.')
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
@@ -106,49 +106,30 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 
 ### Monitoring HTTP Requests
 
-!!! tip "\"F**k you, show me the prompt.\""
-    As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
-    (bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
+As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
+(bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
-    To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs use the [HTTPX](https://www.python-httpx.org/) library internally.
+To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs (except for [Bedrock](models/bedrock.md)) use the [HTTPX](https://www.python-httpx.org/) library internally:
 
-=== "With HTTP instrumentation"
 
-    ```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
-    import logfire
+```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
+import logfire
 
-    from pydantic_ai import Agent
+from pydantic_ai import Agent
 
-    logfire.configure()
-    logfire.instrument_pydantic_ai()
-    logfire.instrument_httpx(capture_all=True)  # (1)!
-    agent = Agent('openai:gpt-4o')
-    result = agent.run_sync('What is the capital of France?')
-    print(result.output)
-    #> The capital of France is Paris.
-    ```
+logfire.configure()
+logfire.instrument_pydantic_ai()
+logfire.instrument_httpx(capture_all=True)  # (1)!
 
-    1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
+agent = Agent('openai:gpt-5')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
 
-    ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
+1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
 
-=== "Without HTTP instrumentation"
-
-    ```py {title="without_logfire_instrument_httpx.py"}
-    import logfire
-
-    from pydantic_ai import Agent
-
-    logfire.configure()
-    logfire.instrument_pydantic_ai()
-
-    agent = Agent('openai:gpt-4o')
-    result = agent.run_sync('What is the capital of France?')
-    print(result.output)
-    #> The capital of France is Paris.
-    ```
-
-    ![Logfire without HTTPX instrumentation](img/logfire-without-httpx.png)
+![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
 
 ## Using OpenTelemetry
 
@@ -184,7 +165,7 @@ logfire.configure(send_to_logfire=False)  # (2)!
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -237,7 +218,7 @@ tracer_provider.add_span_processor(span_processor)
 set_tracer_provider(tracer_provider)
 
 Agent.instrument_all()
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -263,6 +244,8 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
 - [Confident AI](https://documentation.confident-ai.com/docs/llm-tracing/integrations/pydanticai)
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
+- [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
+- [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
 
 ## Advanced usage
 
@@ -284,7 +267,7 @@ from pydantic_ai import Agent
 
 logfire.configure()
 logfire.instrument_pydantic_ai(version=1, event_mode='logs')
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -296,20 +279,20 @@ Note that the OpenTelemetry Semantic Conventions are still experimental and are 
 
 ### Setting OpenTelemetry SDK providers
 
-By default, the global `TracerProvider` and `EventLoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_event_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
+By default, the global `TracerProvider` and `LoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
 ```python {title="instrumentation_settings_providers.py"}
-from opentelemetry.sdk._events import EventLoggerProvider
+from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
 from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
-    event_logger_provider=EventLoggerProvider(),
+    logger_provider=LoggerProvider(),
 )
 
-agent = Agent('openai:gpt-4o', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -321,7 +304,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 
 settings = InstrumentationSettings()
-model = InstrumentedModel('openai:gpt-4o', settings)
+model = InstrumentedModel('openai:gpt-5', settings)
 agent = Agent(model)
 ```
 
@@ -332,16 +315,16 @@ from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
-agent = Agent('openai:gpt-4o', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
 
 ### Excluding prompts and completions
 
-For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from instrumentation events while preserving the structural information needed for debugging and monitoring.
+For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from OpenTelemetry events, including user prompts and model completions, tool call arguments and responses, and any other message content.
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content.
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent
@@ -349,9 +332,15 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
 
-agent = Agent('openai:gpt-4o', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
+
+### Adding Custom Metadata
+
+Use the agent's `metadata` parameter to attach additional data to the agent's span.
+When instrumentation is enabled, the computed metadata is recorded on the agent span under the `metadata` attribute.
+See the [usage and metadata example in the agents guide](agents.md#run-metadata) for details and usage.

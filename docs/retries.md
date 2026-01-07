@@ -58,7 +58,7 @@ def create_retrying_client():
 
 # Use the retrying client with a model
 client = create_retrying_client()
-model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -214,7 +214,7 @@ client = create_network_resilient_client()
 
 ```python {title="custom_retry_logic.py"}
 import httpx
-from tenacity import stop_after_attempt, wait_exponential
+from tenacity import retry_if_exception, stop_after_attempt, wait_exponential
 
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
@@ -230,7 +230,7 @@ def create_custom_retry_client():
 
     transport = AsyncTenacityTransport(
         config=RetryConfig(
-            retry=custom_retry_condition,
+            retry=retry_if_exception(custom_retry_condition),
             # Use wait_retry_after for smart waiting on rate limits,
             # with custom exponential backoff as fallback
             wait=wait_retry_after(
@@ -262,7 +262,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -276,7 +276,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = AnthropicModel('claude-3-5-sonnet-20241022', provider=AnthropicProvider(http_client=client))
+model = AnthropicModel('claude-sonnet-4-5-20250929', provider=AnthropicProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -327,7 +327,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -339,3 +339,17 @@ agent = Agent(model)
 - Use async transports for better concurrency when handling multiple requests
 
 For more advanced retry configurations, refer to the [tenacity documentation](https://tenacity.readthedocs.io/).
+
+## Provider-Specific Retry Behavior
+
+### AWS Bedrock
+
+The AWS Bedrock provider uses boto3's built-in retry mechanisms instead of httpx. To configure retries for Bedrock, use boto3's `Config`:
+
+```python
+from botocore.config import Config
+
+config = Config(retries={'max_attempts': 5, 'mode': 'adaptive'})
+```
+
+See [Bedrock: Configuring Retries](models/bedrock.md#configuring-retries) for complete examples.

@@ -8,7 +8,7 @@ import pytest
 from dirty_equals import IsInt, IsJson, IsList
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
@@ -18,10 +18,14 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
 from pydantic_ai.tools import RunContext
+from pydantic_ai.toolsets.abstract import ToolsetTool
+from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.toolsets.wrapper import WrapperToolset
 
-from .conftest import IsStr
+from .conftest import IsDatetime, IsStr
 
 try:
+    import logfire
     from logfire.testing import CaptureLogfire
 except ImportError:  # pragma: lax no cover
     logfire_installed = False
@@ -87,11 +91,37 @@ def test_logfire(
     instrument: InstrumentationSettings | bool,
     capfire: CaptureLogfire,
 ) -> None:
-    my_agent = Agent(model=TestModel(), instrument=instrument)
+    class InstrumentedToolset(WrapperToolset):
+        async def __aenter__(self) -> Self:
+            with logfire.span('toolset_enter'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                await super().__aenter__()
+                return self
 
-    @my_agent.tool_plain
+        async def __aexit__(self, *args: Any) -> bool | None:
+            with logfire.span('toolset_exit'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                return await super().__aexit__(*args)
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+        ) -> Any:
+            with logfire.span('toolset_call_tool {name}', name=name):  # pyright: ignore[reportPossiblyUnboundVariable]
+                return await super().call_tool(name, tool_args, ctx, tool)
+
+    toolset = FunctionToolset()
+
+    @toolset.tool
     async def my_ret(x: int) -> str:
         return str(x + 1)
+
+    if instrument:
+        toolset = InstrumentedToolset(toolset)
+
+    my_agent = Agent(
+        model=TestModel(),
+        toolsets=[toolset],
+        instrument=instrument,
+        metadata={'env': 'test'},
+    )
 
     result = my_agent.run_sync('Hello')
     assert result.output == snapshot('{"my_ret":"1"}')
@@ -109,16 +139,29 @@ def test_logfire(
                     'name': 'invoke_agent my_agent',
                     'message': 'my_agent run',
                     'children': [
-                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 1, 'name': 'toolset_enter', 'message': 'toolset_enter'},
+                        {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                         {
-                            'id': 2,
+                            'id': 3,
                             'name': 'running tools',
                             'message': 'running 1 tool',
                             'children': [
-                                {'id': 3, 'name': 'execute_tool my_ret', 'message': 'running tool: my_ret'},
+                                {
+                                    'id': 4,
+                                    'name': 'execute_tool my_ret',
+                                    'message': 'running tool: my_ret',
+                                    'children': [
+                                        {
+                                            'id': 5,
+                                            'name': 'toolset_call_tool {name}',
+                                            'message': 'toolset_call_tool my_ret',
+                                        }
+                                    ],
+                                }
                             ],
                         },
-                        {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 6, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                     ],
                 }
             ]
@@ -131,16 +174,29 @@ def test_logfire(
                     'name': 'agent run',
                     'message': 'my_agent run',
                     'children': [
-                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 1, 'name': 'toolset_enter', 'message': 'toolset_enter'},
+                        {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                         {
-                            'id': 2,
+                            'id': 3,
                             'name': 'running tools',
                             'message': 'running 1 tool',
                             'children': [
-                                {'id': 3, 'name': 'running tool', 'message': 'running tool: my_ret'},
+                                {
+                                    'id': 4,
+                                    'name': 'running tool',
+                                    'message': 'running tool: my_ret',
+                                    'children': [
+                                        {
+                                            'id': 5,
+                                            'name': 'toolset_call_tool {name}',
+                                            'message': 'toolset_call_tool my_ret',
+                                        }
+                                    ],
+                                }
                             ],
                         },
-                        {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 6, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                     ],
                 }
             ]
@@ -156,14 +212,29 @@ def test_logfire(
                         'name': 'agent run',
                         'message': 'my_agent run',
                         'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 1, 'name': 'toolset_enter', 'message': 'toolset_enter'},
+                            {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                             {
-                                'id': 2,
+                                'id': 3,
                                 'name': 'running tools',
                                 'message': 'running 1 tool',
-                                'children': [{'id': 3, 'name': 'running tool', 'message': 'running tool: my_ret'}],
+                                'children': [
+                                    {
+                                        'id': 4,
+                                        'name': 'running tool',
+                                        'message': 'running tool: my_ret',
+                                        'children': [
+                                            {
+                                                'id': 5,
+                                                'name': 'toolset_call_tool {name}',
+                                                'message': 'toolset_call_tool my_ret',
+                                            }
+                                        ],
+                                    }
+                                ],
                             },
-                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 6, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                         ],
                     }
                 ]
@@ -176,16 +247,29 @@ def test_logfire(
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
                         'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 1, 'name': 'toolset_enter', 'message': 'toolset_enter'},
+                            {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                             {
-                                'id': 2,
+                                'id': 3,
                                 'name': 'running tools',
                                 'message': 'running 1 tool',
                                 'children': [
-                                    {'id': 3, 'name': 'execute_tool my_ret', 'message': 'running tool: my_ret'}
+                                    {
+                                        'id': 4,
+                                        'name': 'execute_tool my_ret',
+                                        'message': 'running tool: my_ret',
+                                        'children': [
+                                            {
+                                                'id': 5,
+                                                'name': 'toolset_call_tool {name}',
+                                                'message': 'toolset_call_tool my_ret',
+                                            }
+                                        ],
+                                    }
                                 ],
                             },
-                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 6, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                         ],
                     }
                 ]
@@ -231,12 +315,14 @@ def test_logfire(
                         ]
                     )
                 ),
+                'metadata': '{"env": "test"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
                                 'pydantic_ai.all_messages': {'type': 'array'},
+                                'metadata': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
                         }
@@ -296,12 +382,14 @@ def test_logfire(
                     )
                 ),
                 'final_result': '{"my_ret":"1"}',
+                'metadata': '{"env": "test"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
                                 'all_messages_events': {'type': 'array'},
+                                'metadata': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
                         }
@@ -309,7 +397,9 @@ def test_logfire(
                 ),
             }
         )
-    chat_span_attributes = summary.attributes[1]
+    chat_span_attributes = next(
+        attrs for attrs in summary.attributes.values() if attrs.get('gen_ai.operation.name', None) == 'chat'
+    )
     if instrument is True or instrument.event_mode == 'attributes':
         if hasattr(capfire, 'get_collected_metrics'):  # pragma: no branch
             assert capfire.get_collected_metrics() == snapshot(
@@ -336,13 +426,13 @@ def test_logfire(
                                     'zero_count': 0,
                                     'positive': {
                                         'offset': 23234,
-                                        'bucket_counts': IsList(length=...),  # type: ignore
+                                        'bucket_counts': IsList(length=...),
                                     },
                                     'negative': {'offset': 0, 'bucket_counts': [0]},
                                     'flags': 0,
                                     'min': 51,
                                     'max': 52,
-                                    'exemplars': IsList(length=...),  # type: ignore
+                                    'exemplars': IsList(length=...),
                                 },
                                 {
                                     'attributes': {
@@ -360,13 +450,13 @@ def test_logfire(
                                     'zero_count': 0,
                                     'positive': {
                                         'offset': 255,
-                                        'bucket_counts': IsList(length=...),  # type: ignore
+                                        'bucket_counts': IsList(length=...),
                                     },
                                     'negative': {'offset': 0, 'bucket_counts': [0]},
                                     'flags': 0,
                                     'min': 4,
                                     'max': 8,
-                                    'exemplars': IsList(length=...),  # type: ignore
+                                    'exemplars': IsList(length=...),
                                 },
                             ],
                             'aggregation_temporality': 1,
@@ -462,12 +552,14 @@ def test_logfire(
                                 'sequential': False,
                                 'kind': 'function',
                                 'metadata': None,
+                                'timeout': None,
                             }
                         ],
                         'builtin_tools': [],
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     }
@@ -481,6 +573,40 @@ def test_logfire(
             'gen_ai.usage.output_tokens': 4,
         }
     )
+
+
+def _test_logfire_metadata_values_callable_dict(ctx: RunContext[Any]) -> dict[str, str]:
+    return {'model_name': ctx.model.model_name}
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(
+    ('metadata', 'expected'),
+    [
+        pytest.param({'env': 'test'}, '{"env": "test"}', id='dict'),
+        pytest.param(_test_logfire_metadata_values_callable_dict, '{"model_name": "test"}', id='callable-dict'),
+    ],
+)
+def test_logfire_metadata_values(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    metadata: dict[str, Any] | Callable[[RunContext[Any]], dict[str, Any]],
+    expected: dict[str, Any],
+) -> None:
+    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata=metadata)
+    agent.run_sync('Hello')
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0]['metadata'] == expected
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata={'env': 'base'})
+    with agent.override(metadata={'env': 'override'}):
+        agent.run_sync('Hello')
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0]['metadata'] == '{"env": "override"}'
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -908,8 +1034,10 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'sequential': False,
                                 'kind': 'output',
                                 'metadata': None,
+                                'timeout': None,
                             }
                         ],
+                        'prompted_output_template': None,
                         'allow_text_output': False,
                         'allow_image_output': False,
                     }
@@ -1015,6 +1143,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },
@@ -2650,7 +2779,11 @@ def test_function_instructions_with_history_in_agent_run_span(
     result = my_agent.run_sync(
         'Hello',
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content='Hi')], instructions='Instructions from a previous agent run'),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hi')],
+                instructions='Instructions from a previous agent run',
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(parts=[TextPart(content='Hello')]),
         ],
         output_type=MyOutput,

@@ -1,0 +1,172 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '358'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Find cities in Europe
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            query:
+              type: string
+          required:
+          - query
+          type: object
+        name: search_database
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '501'
+      content-type:
+      - application/json
+      retry-after:
+      - '13'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01A73Ko8diCmNfpop86iruFS
+        input:
+          query: cities in Europe
+        name: search_database
+        type: tool_use
+      id: msg_0182oJGpkVSy5KywtSW29xb4
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 557
+        output_tokens: 55
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '680'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Find cities in Europe
+          type: text
+        role: user
+      - content:
+        - id: toolu_01A73Ko8diCmNfpop86iruFS
+          input:
+            query: cities in Europe
+          name: search_database
+          type: tool_use
+        role: assistant
+      - content:
+        - content: Found 42 results for "cities in Europe"
+          is_error: false
+          tool_use_id: toolu_01A73Ko8diCmNfpop86iruFS
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            query:
+              type: string
+          required:
+          - query
+          type: object
+        name: search_database
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '803'
+      content-type:
+      - application/json
+      retry-after:
+      - '10'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          I found **42 cities in Europe** in the database. These would include major cities like London, Paris, Berlin, Rome, Madrid, Amsterdam, Vienna, Prague, and many others across the European continent.
+
+          Would you like me to search for more specific information, such as:
+          - Cities in a particular European country?
+          - Cities by size or population?
+          - Specific details about certain European cities?
+        type: text
+      id: msg_018QHsDM1XcS2KgtDbC9wSpU
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 636
+        output_tokens: 88
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

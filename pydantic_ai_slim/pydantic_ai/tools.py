@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
@@ -11,6 +11,7 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
+from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
@@ -25,6 +26,7 @@ __all__ = (
     'ToolParams',
     'ToolPrepareFunc',
     'ToolsPrepareFunc',
+    'BuiltinToolFunc',
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
@@ -39,12 +41,14 @@ ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 SystemPromptFunc: TypeAlias = (
-    Callable[[RunContext[AgentDepsT]], str]
-    | Callable[[RunContext[AgentDepsT]], Awaitable[str]]
-    | Callable[[], str]
-    | Callable[[], Awaitable[str]]
+    Callable[[RunContext[AgentDepsT]], str | None]
+    | Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]
+    | Callable[[], str | None]
+    | Callable[[], Awaitable[str | None]]
 )
 """A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
+
+Functions which return None are excluded from model requests.
 
 Usage `SystemPromptFunc[AgentDepsT]`.
 """
@@ -122,6 +126,15 @@ agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
 Usage `ToolsPrepareFunc[AgentDepsT]`.
 """
 
+BuiltinToolFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT]], Awaitable[AbstractBuiltinTool | None] | AbstractBuiltinTool | None
+]
+"""Definition of a function that can prepare a builtin tool at call time.
+
+This is useful if you want to customize the builtin tool based on the run context (e.g. user dependencies),
+or omit it completely from a step.
+"""
+
 DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 """Supported docstring formats.
 
@@ -147,6 +160,8 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Metadata for deferred tool calls, keyed by `tool_call_id`."""
 
 
 @dataclass(kw_only=True)
@@ -240,22 +255,27 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         return s
 
 
+ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
+"""Type variable for agent dependencies for a tool."""
+
+
 @dataclass(init=False)
-class Tool(Generic[AgentDepsT]):
+class Tool(Generic[ToolAgentDepsT]):
     """A tool function for an agent."""
 
-    function: ToolFuncEither[AgentDepsT]
+    function: ToolFuncEither[ToolAgentDepsT]
     takes_ctx: bool
     max_retries: int | None
     name: str
     description: str | None
-    prepare: ToolPrepareFunc[AgentDepsT] | None
+    prepare: ToolPrepareFunc[ToolAgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
+    timeout: float | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -265,13 +285,13 @@ class Tool(Generic[AgentDepsT]):
 
     def __init__(
         self,
-        function: ToolFuncEither[AgentDepsT],
+        function: ToolFuncEither[ToolAgentDepsT],
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
         name: str | None = None,
         description: str | None = None,
-        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        prepare: ToolPrepareFunc[ToolAgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -279,6 +299,7 @@ class Tool(Generic[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -335,6 +356,8 @@ class Tool(Generic[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Defaults to None (no timeout).
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -356,6 +379,7 @@ class Tool(Generic[AgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.timeout = timeout
 
     @classmethod
     def from_schema(
@@ -411,9 +435,11 @@ class Tool(Generic[AgentDepsT]):
             strict=self.strict,
             sequential=self.sequential,
             metadata=self.metadata,
+            timeout=self.timeout,
+            kind='unapproved' if self.requires_approval else 'function',
         )
 
-    async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
+    async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
 
         By default, this method creates a tool definition, then either returns it, or calls `self.prepare`
@@ -423,9 +449,6 @@ class Tool(Generic[AgentDepsT]):
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
         base_tool_def = self.tool_def
-
-        if self.requires_approval and not ctx.tool_call_approved:
-            base_tool_def = replace(base_tool_def, kind='unapproved')
 
         if self.prepare is not None:
             return await self.prepare(ctx, base_tool_def)
@@ -476,7 +499,7 @@ class ToolDefinition:
     When `False`, the model may be free to generate other properties or types (depending on the vendor).
     When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
 
-    Note: this is currently only supported by OpenAI models.
+    Note: this is currently supported by OpenAI and Anthropic models.
     """
 
     sequential: bool = False
@@ -497,6 +520,13 @@ class ToolDefinition:
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
     For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
+    """
+
+    timeout: float | None = None
+    """Timeout in seconds for tool execution.
+
+    If the tool takes longer than this, a retry prompt is returned to the model.
+    Defaults to None (no timeout).
     """
 
     @property

@@ -37,10 +37,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
+          cache-suffix: claude-code
 
       - run: uv tool install pre-commit
 

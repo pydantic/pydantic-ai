@@ -28,8 +28,6 @@ DepsT = TypeVar('DepsT', default=None, contravariant=True)
 class GraphRunContext(Generic[StateT, DepsT]):
     """Context for a graph."""
 
-    # TODO: Can we get rid of this struct and just pass both these things around..?
-
     state: StateT
     """The state of the graph."""
     deps: DepsT

@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from pydantic import BaseModel
@@ -27,39 +27,56 @@ from pydantic_ai import (
     ModelResponse,
     ModelSettings,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     RunContext,
+    RunUsage,
     TextPart,
     TextPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
+    WebSearchTool,
+    WebSearchUserLocation,
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append
 
 try:
+    import temporalio.api.common.v1
     from temporalio import workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
+    from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+    from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, LogfirePlugin, PydanticAIPlugin, TemporalAgent
+    from pydantic_ai.durable_exec.temporal import (
+        AgentPlugin,
+        LogfirePlugin,
+        PydanticAIPlugin,
+        PydanticAIWorkflow,
+        TemporalAgent,
+    )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
+    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -73,12 +90,17 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+except ImportError:  # pragma: lax no cover
+    pytest.skip('fastmcp not installed', allow_module_level=True)
+
+try:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
@@ -147,7 +169,11 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
-    async with await WorkflowEnvironment.start_local(port=TEMPORAL_PORT, ui=True) as env:  # pyright: ignore[reportUnknownMemberType]
+    async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
+        port=TEMPORAL_PORT,
+        ui=True,
+        dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+    ) as env:
         yield env
 
 
@@ -197,7 +223,7 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, client: 
         workflows=[SimpleAgentWorkflow],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             SimpleAgentWorkflow.run,
             args=['What is the capital of Mexico?'],
             id=SimpleAgentWorkflow.__name__,
@@ -305,7 +331,7 @@ async def test_complex_agent_run_in_workflow(
         workflows=[ComplexAgentWorkflow],
         plugins=[AgentPlugin(complex_temporal_agent)],
     ):
-        output = await client_with_logfire.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client_with_logfire.execute_workflow(
             ComplexAgentWorkflow.run,
             args=[
                 'Tell me: the capital of the country; the weather there; the product name',
@@ -368,16 +394,22 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -393,7 +425,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -407,7 +439,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -481,25 +513,28 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -515,7 +550,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -572,130 +607,133 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name":"final_result","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","event_kind":"final_result"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -745,12 +783,24 @@ async def test_complex_agent_run(allow_model_requests: None):
             PartDeltaEvent(
                 index=0, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
+                next_part_kind='tool-call',
+            ),
             PartStartEvent(
                 index=1,
                 part=ToolCallPart(tool_name='get_product_name', args='', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'),
+                previous_part_kind='tool-call',
             ),
             PartDeltaEvent(
                 index=1, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
+            ),
+            PartEndEvent(
+                index=1,
+                part=ToolCallPart(
+                    tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
@@ -795,6 +845,12 @@ async def test_complex_agent_run(allow_model_requests: None):
             ),
             PartDeltaEvent(
                 index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -973,6 +1029,14 @@ async def test_complex_agent_run(allow_model_requests: None):
             PartDeltaEvent(
                 index=0, delta=ToolCallPartDelta(args_delta=']}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
+                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                ),
+            ),
         ]
     )
 
@@ -984,7 +1048,7 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
         workflows=[SimpleAgentWorkflow, ComplexAgentWorkflow],
         plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(complex_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             SimpleAgentWorkflow.run,
             args=['What is the capital of Mexico?'],
             id=SimpleAgentWorkflow.__name__,
@@ -992,7 +1056,7 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
         )
         assert output == snapshot('The capital of Mexico is Mexico City.')
 
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             ComplexAgentWorkflow.run,
             args=[
                 'Tell me: the capital of the country; the weather there; the product name',
@@ -1034,7 +1098,7 @@ async def test_agent_without_name():
 async def test_agent_without_model():
     with pytest.raises(
         UserError,
-        match='An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.',
+        match="The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time.",
     ):
         TemporalAgent(Agent(name='test_agent'))
 
@@ -1047,6 +1111,123 @@ async def test_toolset_without_id():
         ),
     ):
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+
+
+# --- DynamicToolset / @agent.toolset tests ---
+
+
+@dataclass
+class DynamicToolsetDeps:
+    user_name: str
+
+
+dynamic_toolset_agent = Agent(TestModel(), name='dynamic_toolset_agent', deps_type=DynamicToolsetDeps)
+
+
+@dynamic_toolset_agent.toolset(id='my_dynamic_tools')
+def my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[DynamicToolsetDeps]:
+    toolset = FunctionToolset[DynamicToolsetDeps](id='dynamic_weather')
+
+    @toolset.tool
+    def get_dynamic_weather(location: str) -> str:
+        """Get the weather for a location."""
+        user = ctx.deps.user_name
+        return f'Weather in {location} for {user}: sunny.'
+
+    return toolset
+
+
+dynamic_toolset_temporal_agent = TemporalAgent(
+    dynamic_toolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class DynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: DynamicToolsetDeps) -> str:
+        result = await dynamic_toolset_temporal_agent.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_dynamic_toolset_in_workflow(client: Client):
+    """Test that @agent.toolset works correctly in a Temporal workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(dynamic_toolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicToolsetAgentWorkflow.run,
+            args=['Get the weather for London', DynamicToolsetDeps(user_name='Alice')],
+            id='test_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('{"get_dynamic_weather":"Weather in a for Alice: sunny."}')
+
+
+async def test_dynamic_toolset_outside_workflow():
+    """Test that the dynamic toolset agent works correctly outside of a workflow."""
+    result = await dynamic_toolset_temporal_agent.run(
+        'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
+    )
+    assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- MCP-based DynamicToolset test ---
+# Tests that @agent.toolset with an MCP toolset works with Temporal workflows.
+# Uses MCPServerStreamableHTTP (HTTP-based) rather than subprocess-based MCP servers.
+# See https://github.com/pydantic/pydantic-ai/issues/2818 for MCPServer subprocess issues with Temporal.
+
+
+mcp_dynamic_toolset_agent = Agent(model, name='mcp_dynamic_toolset_agent')
+
+
+@mcp_dynamic_toolset_agent.toolset(id='mcp_toolset')
+def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
+    """Dynamic toolset that returns an MCP toolset.
+
+    This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
+    """
+    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')
+
+
+mcp_dynamic_toolset_temporal_agent = TemporalAgent(
+    mcp_dynamic_toolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPDynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcp_dynamic_toolset_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
+    """Test that @agent.toolset with MCPServerStreamableHTTP works in a Temporal workflow.
+
+    This demonstrates MCP lifecycle management (entering/exiting the MCP toolset context manager)
+    within a DynamicToolset wrapped by TemporalDynamicToolset.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPDynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcp_dynamic_toolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPDynamicToolsetAgentWorkflow.run,
+            args=['Can you tell me about the pydantic/pydantic-ai repo? Keep it short.'],
+            id='test_mcp_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        # The deepwiki MCP server should return info about the pydantic-ai repo
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
 async def test_temporal_agent():
@@ -1100,6 +1281,21 @@ async def test_temporal_agent():
     )
 
 
+def test_temporal_wrapper_visit_and_replace():
+    """Temporal wrapper toolsets should not be replaced by visit_and_replace."""
+    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+
+    toolsets = complex_temporal_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    temporal_function_toolsets = [ts for ts in toolsets if isinstance(ts, TemporalFunctionToolset)]
+    assert len(temporal_function_toolsets) >= 1
+
+    temporal_function_toolset = temporal_function_toolsets[0]
+
+    # visit_and_replace should return self for temporal wrappers
+    result = temporal_function_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
+    assert result is temporal_function_toolset
+
+
 async def test_temporal_agent_run(allow_model_requests: None):
     result = await simple_temporal_agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
@@ -1130,9 +1326,8 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
     events = [event async for event in simple_temporal_agent.run_stream_events('What is the capital of Mexico?')]
     assert events == snapshot(
         [
-            PartStartEvent(index=0, part=TextPart(content='')),
+            PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='The')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' of')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
@@ -1140,6 +1335,7 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(index=0, part=TextPart(content='The capital of Mexico is Mexico City.')),
             AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.')),
         ]
     )
@@ -1186,12 +1382,97 @@ async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, c
             UserError,
             snapshot('`agent.run_sync()` cannot be used inside a Temporal workflow. Use `await agent.run()` instead.'),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunSync.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunSync.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+def drop_first_message(msgs: list[ModelMessage]) -> list[ModelMessage]:
+    return msgs[1:] if len(msgs) > 1 else msgs
+
+
+agent_with_sync_history_processor = Agent(
+    model, name='agent_with_sync_history_processor', history_processors=[drop_first_message]
+)
+temporal_agent_with_sync_history_processor = TemporalAgent(
+    agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class AgentWithSyncHistoryProcessorWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_history_processor.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_history_processor(allow_model_requests: None, client: Client):
+    """Test that sync history processors work inside Temporal workflows.
+
+    This validates that the _disable_threads ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync history processors to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncHistoryProcessorWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_history_processor)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncHistoryProcessorWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncHistoryProcessorWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+agent_with_sync_instructions = Agent(model, name='agent_with_sync_instructions')
+
+
+@agent_with_sync_instructions.instructions
+def sync_instructions_fn() -> str:
+    return 'You are a helpful assistant.'
+
+
+temporal_agent_with_sync_instructions = TemporalAgent(
+    agent_with_sync_instructions, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class AgentWithSyncInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_instructions.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_instructions(allow_model_requests: None, client: Client):
+    """Test that sync instructions functions work inside Temporal workflows.
+
+    This validates that the _disable_threads ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync instructions functions to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncInstructionsWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_instructions)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncInstructionsWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncInstructionsWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
 @workflow.defn
@@ -1216,7 +1497,7 @@ async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None,
                 '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunStream.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunStream.__name__,
@@ -1244,7 +1525,7 @@ async def test_temporal_agent_run_stream_events_in_workflow(allow_model_requests
                 '`agent.run_stream_events()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunStreamEvents.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunStreamEvents.__name__,
@@ -1275,7 +1556,7 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
                 '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithIter.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithIter.__name__,
@@ -1311,7 +1592,7 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
                 'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithEventStreamHandler.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithEventStreamHandler.__name__,
@@ -1319,11 +1600,21 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
             )
 
 
+# Unregistered model instance for testing error case
+unregistered_model = OpenAIChatModel(
+    'gpt-4o-mini',
+    provider=OpenAIProvider(
+        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
+        http_client=http_client,
+    ),
+)
+
+
 @workflow.defn
 class SimpleAgentWorkflowWithRunModel:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, model=model)
+        result = await simple_temporal_agent.run(prompt, model=unregistered_model)
         return result.output  # pragma: no cover
 
 
@@ -1337,10 +1628,10 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         with workflow_raises(
             UserError,
             snapshot(
-                'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by id.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunModel.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunModel.__name__,
@@ -1369,7 +1660,7 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
                 'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunToolsets.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunToolsets.__name__,
@@ -1398,7 +1689,7 @@ async def test_temporal_agent_override_model_in_workflow(allow_model_requests: N
                 'Model cannot be contextually overridden inside a Temporal workflow, it must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithOverrideModel.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithOverrideModel.__name__,
@@ -1427,7 +1718,7 @@ async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests
                 'Toolsets cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithOverrideToolsets.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithOverrideToolsets.__name__,
@@ -1456,7 +1747,7 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
                 'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithOverrideTools.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithOverrideTools.__name__,
@@ -1480,7 +1771,7 @@ async def test_temporal_agent_override_deps_in_workflow(allow_model_requests: No
         workflows=[SimpleAgentWorkflowWithOverrideDeps],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             SimpleAgentWorkflowWithOverrideDeps.run,
             args=['What is the capital of Mexico?'],
             id=SimpleAgentWorkflowWithOverrideDeps.__name__,
@@ -1524,7 +1815,7 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
                 "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 AgentWorkflowWithSyncToolActivityDisabled.run,
                 args=['What is the weather in Mexico City?'],
                 id=AgentWorkflowWithSyncToolActivityDisabled.__name__,
@@ -1574,7 +1865,7 @@ async def test_temporal_model_stream_direct(client: Client):
                 'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 DirectStreamWorkflow.run,
                 args=['What is the capital of Mexico?'],
                 id=DirectStreamWorkflow.__name__,
@@ -1615,7 +1906,7 @@ async def test_temporal_agent_with_unserializable_deps_type(allow_model_requests
                 "The `deps` object failed to be serialized. Temporal requires all objects that are passed to activities to be serializable using Pydantic's `TypeAdapter`."
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 UnserializableDepsAgentWorkflow.run,
                 args=['What is the model name?'],
                 id=UnserializableDepsAgentWorkflow.__name__,
@@ -1734,7 +2025,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
         workflows=[HitlAgentWorkflow],
         plugins=[AgentPlugin(hitl_temporal_agent)],
     ):
-        workflow = await client.start_workflow(  # pyright: ignore[reportUnknownMemberType]
+        workflow = await client.start_workflow(
             HitlAgentWorkflow.run,
             args=['Delete the file `.env` and create `test.txt`'],
             id=HitlAgentWorkflow.__name__,
@@ -1772,7 +2063,11 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             timestamp=IsDatetime(),
                         )
                     ],
+                    # NOTE in other tests we check timestamp=IsNow(tz=timezone.utc)
+                    # but temporal tests fail when we use IsNow
+                    timestamp=IsDatetime(),
                     instructions='Just call tools without asking for confirmation.',
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1800,9 +2095,11 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     model_name=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2025-08-28T22:11:03Z'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1819,7 +2116,9 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             timestamp=IsDatetime(),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     instructions='Just call tools without asking for confirmation.',
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1840,9 +2139,11 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'stop', 'timestamp': '2025-08-28T22:11:06Z'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -1876,7 +2177,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
         workflows=[ModelRetryWorkflow],
         plugins=[AgentPlugin(model_retry_temporal_agent)],
     ):
-        workflow = await client.start_workflow(  # pyright: ignore[reportUnknownMemberType]
+        workflow = await client.start_workflow(
             ModelRetryWorkflow.run,
             args=['What is the weather in CDMX?'],
             id=ModelRetryWorkflow.__name__,
@@ -1892,7 +2193,9 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             content='What is the weather in CDMX?',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1915,9 +2218,11 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2025-08-28T23:19:50Z'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1927,7 +2232,9 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1950,9 +2257,11 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2025-08-28T23:19:51Z'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1962,7 +2271,9 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
@@ -1979,9 +2290,11 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'stop', 'timestamp': '2025-08-28T23:19:52Z'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -2019,7 +2332,7 @@ async def test_custom_model_settings(allow_model_requests: None, client: Client)
         workflows=[SettingsAgentWorkflow],
         plugins=[AgentPlugin(settings_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             SettingsAgentWorkflow.run,
             args=['Give me those settings'],
             id=SettingsAgentWorkflow.__name__,
@@ -2053,9 +2366,740 @@ async def test_image_agent(allow_model_requests: None, client: Client):
             UserError,
             snapshot('Image output is not supported with Temporal because of the 2MB payload size limit.'),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 ImageAgentWorkflow.run,
                 args=['Generate an image of an axolotl.'],
                 id=ImageAgentWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+# Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
+web_search_model = OpenAIResponsesModel(
+    'gpt-5',
+    provider=OpenAIProvider(
+        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
+        http_client=http_client,
+    ),
+)
+
+web_search_agent = Agent(
+    web_search_model,
+    name='web_search_agent',
+    builtin_tools=[WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX'))],
+)
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+web_search_temporal_agent = TemporalAgent(
+    web_search_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=300)),
+)
+
+
+@workflow.defn
+class WebSearchAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await web_search_temporal_agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
+    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
+)
+async def test_web_search_agent_run_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WebSearchAgentWorkflow],
+        plugins=[AgentPlugin(web_search_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            WebSearchAgentWorkflow.run,
+            args=['In one sentence, what is the top news story in my country today?'],
+            id=WebSearchAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            'Severe floods and landslides across Veracruz, Hidalgo, and Puebla have cut off hundreds of communities and left dozens dead and many missing, prompting a major federal emergency response. ([apnews.com](https://apnews.com/article/5d036e18057361281e984b44402d3b1b?utm_source=openai))'
+        )
+
+
+def test_temporal_run_context_preserves_run_id():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['run_id'] == 'run-123'
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.run_id == 'run-123'
+
+
+def test_temporal_run_context_serializes_metadata():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        metadata={'env': 'prod'},
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['metadata'] == {'env': 'prod'}
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.metadata == {'env': 'prod'}
+
+
+def test_temporal_run_context_serializes_usage():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(
+            requests=2,
+            tool_calls=1,
+            input_tokens=123,
+            output_tokens=456,
+            details={'foo': 1},
+        ),
+        run_id='run-123',
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['usage'] == ctx.usage
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.usage == ctx.usage
+
+
+fastmcp_agent = Agent(
+    model,
+    name='fastmcp_agent',
+    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+)
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+fastmcp_temporal_agent = TemporalAgent(
+    fastmcp_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class FastMCPAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await fastmcp_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FastMCPAgentWorkflow],
+        plugins=[AgentPlugin(fastmcp_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            FastMCPAgentWorkflow.run,
+            args=['Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'],
+            id=FastMCPAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            'The `pydantic/pydantic-ai` repository is a Python agent framework crafted for developing production-grade Generative AI applications. It emphasizes type safety, model-agnostic design, and extensibility. The framework supports various LLM providers, manages agent workflows using graph-based execution, and ensures structured, reliable LLM outputs. Key packages include core framework components, graph execution engines, evaluation tools, and example applications.'
+        )
+
+
+# ============================================================================
+# Beta Graph API Tests - Tests for running pydantic-graph beta API in Temporal
+# ============================================================================
+
+
+@dataclass
+class GraphState:
+    """State for the graph execution test."""
+
+    values: list[int] = field(default_factory=list)
+
+
+# Create a graph with parallel execution using the beta API
+graph_builder = GraphBuilder(
+    name='parallel_test_graph',
+    state_type=GraphState,
+    input_type=int,
+    output_type=list[int],
+)
+
+
+@graph_builder.step
+async def source(ctx: StepContext[GraphState, None, int]) -> int:
+    """Source step that passes through the input value."""
+    return ctx.inputs
+
+
+@graph_builder.step
+async def multiply_by_two(ctx: StepContext[GraphState, None, int]) -> int:
+    """Multiply input by 2."""
+    return ctx.inputs * 2
+
+
+@graph_builder.step
+async def multiply_by_three(ctx: StepContext[GraphState, None, int]) -> int:
+    """Multiply input by 3."""
+    return ctx.inputs * 3
+
+
+@graph_builder.step
+async def multiply_by_four(ctx: StepContext[GraphState, None, int]) -> int:
+    """Multiply input by 4."""
+    return ctx.inputs * 4
+
+
+# Create a join to collect results
+result_collector = graph_builder.join(reduce_list_append, initial_factory=list[int])
+
+# Build the graph with parallel edges (broadcast pattern)
+graph_builder.add(
+    graph_builder.edge_from(graph_builder.start_node).to(source),
+    # Broadcast: send value to all three parallel steps
+    graph_builder.edge_from(source).to(multiply_by_two, multiply_by_three, multiply_by_four),
+    # Collect all results
+    graph_builder.edge_from(multiply_by_two, multiply_by_three, multiply_by_four).to(result_collector),
+    graph_builder.edge_from(result_collector).to(graph_builder.end_node),
+)
+
+parallel_test_graph = graph_builder.build()
+
+
+@workflow.defn
+class ParallelGraphWorkflow:
+    """Workflow that executes a graph with parallel task execution."""
+
+    @workflow.run
+    async def run(self, input_value: int) -> list[int]:
+        """Run the parallel graph workflow.
+
+        Args:
+            input_value: The input number to process
+
+        Returns:
+            List of results from parallel execution
+        """
+        result = await parallel_test_graph.run(
+            state=GraphState(),
+            inputs=input_value,
+        )
+        return result
+
+
+async def test_beta_graph_parallel_execution_in_workflow(client: Client):
+    """Test that beta graph API with parallel execution works in Temporal workflows.
+
+    This test verifies the fix for the bug where parallel task execution in graphs
+    wasn't working properly with Temporal workflows due to GraphTask/GraphTaskRequest
+    serialization issues.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ParallelGraphWorkflow],
+    ):
+        output = await client.execute_workflow(
+            ParallelGraphWorkflow.run,
+            args=[10],
+            id=ParallelGraphWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        # Results can be in any order due to parallel execution
+        # 10 * 2 = 20, 10 * 3 = 30, 10 * 4 = 40
+        assert sorted(output) == [20, 30, 40]
+
+
+@workflow.defn
+class WorkflowWithAgents(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [simple_temporal_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+@workflow.defn
+class WorkflowWithAgentsWithoutPydanticAIWorkflow:
+    __pydantic_ai_agents__ = [simple_temporal_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_passing_agents_through_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithAgents],
+    ):
+        output = await client.execute_workflow(
+            WorkflowWithAgents.run,
+            args=['What is the capital of Mexico?'],
+            id=WorkflowWithAgents.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_passing_agents_through_workflow_without_pydantic_ai_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithAgentsWithoutPydanticAIWorkflow],
+    ):
+        output = await client.execute_workflow(
+            WorkflowWithAgentsWithoutPydanticAIWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=WorkflowWithAgentsWithoutPydanticAIWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+# Multi-Model Support Tests
+
+# Module-level test models for multi-model selection test
+test_model_selection_1 = TestModel(custom_output_text='Response from model 1')
+test_model_selection_2 = TestModel(custom_output_text='Response from model 2')
+test_model_selection_3 = TestModel(custom_output_text='Response from model 3')
+
+# Module-level test models for error test
+test_model_error_1 = TestModel()
+test_model_error_2 = TestModel()
+test_model_error_unregistered = TestModel()
+
+# Module-level temporal agents
+agent_selection = Agent(test_model_selection_1, name='multi_model_workflow_test')
+multi_model_selection_test_agent = TemporalAgent(
+    agent_selection,
+    name='multi_model_workflow_test',
+    models={
+        'model_2': test_model_selection_2,
+        'model_3': test_model_selection_3,
+    },
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+agent_error = Agent(test_model_error_1, name='error_test')
+multi_model_error_test_agent = TemporalAgent(
+    agent_error,
+    name='error_test',
+    models={'other': test_model_error_2},
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MultiModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, model_id: str | None = None) -> str:
+        result = await multi_model_selection_test_agent.run(prompt, model=model_id)
+        return result.output
+
+
+@workflow.defn
+class MultiModelWorkflowUnregistered:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        # Try to use an unregistered model
+        result = await multi_model_error_test_agent.run(prompt, model=test_model_error_unregistered)
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_multi_model_reserved_id():
+    """Test that reserved model IDs raise helpful errors."""
+    test_model1 = TestModel()
+    test_model2 = TestModel()
+
+    agent = Agent(test_model1, name='reserved_id_test')
+    with pytest.raises(UserError, match="Model ID 'default' is reserved"):
+        TemporalAgent(
+            agent,
+            name='reserved_id_test',
+            models={'default': test_model2},
+        )
+
+
+async def test_temporal_agent_multi_model_selection_in_workflow(allow_model_requests: None, client: Client):
+    """Test selecting different models in a workflow using the model parameter."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflow],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        # Test using default model (model_id=None)
+        output = await client.execute_workflow(
+            MultiModelWorkflow.run,
+            args=['Hello', None],
+            id='MultiModelWorkflow_default',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 1'
+
+        # Test selecting second model by ID
+        output = await client.execute_workflow(
+            MultiModelWorkflow.run,
+            args=['Hello', 'model_2'],
+            id='MultiModelWorkflow_model2',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 2'
+
+        # Test selecting third model by ID
+        output = await client.execute_workflow(
+            MultiModelWorkflow.run,
+            args=['Hello', 'model_3'],
+            id='MultiModelWorkflow_model3',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 3'
+
+
+async def test_temporal_agent_multi_model_unregistered_error(allow_model_requests: None, client: Client):
+    """Test that using an unregistered model raises a helpful error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowUnregistered],
+        plugins=[AgentPlugin(multi_model_error_test_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by id.',
+        ):
+            await client.execute_workflow(
+                MultiModelWorkflowUnregistered.run,
+                args=['Hello'],
+                id='MultiModelWorkflowUnregistered',
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_temporal_agent_multi_model_outside_workflow():
+    """Test that multi-model agents work outside workflows (using wrapped agent behavior).
+
+    Outside a workflow, a TemporalAgent should behave like a regular Agent.
+    This includes supporting model selection by registered ID or instance.
+    """
+    test_model1 = TestModel(custom_output_text='Model 1 response')
+    test_model2 = TestModel(custom_output_text='Model 2 response')
+    test_model_unregistered = TestModel(custom_output_text='Unregistered model response')
+
+    agent = Agent(test_model1, name='outside_workflow_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='outside_workflow_test',
+        models={'secondary': test_model2},
+    )
+
+    # Outside workflow, should use default model
+    result = await temporal_agent.run('Hello')
+    assert result.output == 'Model 1 response'
+
+    # Outside workflow, passing a registered model ID should also work
+    result = await temporal_agent.run('Hello', model='secondary')
+    assert result.output == 'Model 2 response'
+
+    # Passing a registered model instance should also work
+    result = await temporal_agent.run('Hello', model=test_model2)
+    assert result.output == 'Model 2 response'
+
+    # Passing an unregistered model instance should also work outside workflow
+    result = await temporal_agent.run('Hello', model=test_model_unregistered)
+    assert result.output == 'Unregistered model response'
+
+
+async def test_temporal_agent_without_default_model():
+    """Test that a TemporalAgent can be created without a default model if models is provided.
+
+    When no model is provided to run(), the first registered model should be used.
+    """
+    test_model1 = TestModel(custom_output_text='Model 1 response')
+    test_model2 = TestModel(custom_output_text='Model 2 response')
+
+    # Agent without a model
+    agent = Agent(name='no_default_model_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='no_default_model_test',
+        models={
+            'primary': test_model1,
+            'secondary': test_model2,
+        },
+    )
+
+    # Without a model, should use the first registered model
+    result = await temporal_agent.run('Hello')
+    assert result.output == 'Model 1 response'
+
+    # Outside workflow, can use registered models by id
+    result = await temporal_agent.run('Hello', model='primary')
+    assert result.output == 'Model 1 response'
+
+    result = await temporal_agent.run('Hello', model='secondary')
+    assert result.output == 'Model 2 response'
+
+
+# Workflow for testing passing model instances (can't be workflow args, so map by key)
+_model_instance_map = {
+    'default_instance': test_model_selection_1,
+    'model_2_instance': test_model_selection_2,
+}
+
+
+@workflow.defn
+class MultiModelWorkflowInstance:
+    @workflow.run
+    async def run(self, prompt: str, instance_key: str) -> str:
+        model_instance = _model_instance_map[instance_key]
+        result = await multi_model_selection_test_agent.run(prompt, model=model_instance)
+        return result.output
+
+
+@pytest.mark.parametrize(
+    ('model_id', 'expected_output'),
+    [
+        pytest.param('default', 'Response from model 1', id='default_explicit'),
+    ],
+)
+async def test_temporal_agent_model_selection_by_id(
+    allow_model_requests: None, client: Client, model_id: str, expected_output: str
+):
+    """Test model selection by passing model ID strings."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflow],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiModelWorkflow.run,
+            args=['Hello', model_id],
+            id=f'MultiModelWorkflow_{model_id}',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == expected_output
+
+
+@pytest.mark.parametrize(
+    ('instance_key', 'expected_output'),
+    [
+        pytest.param('default_instance', 'Response from model 1', id='default_instance'),
+        pytest.param('model_2_instance', 'Response from model 2', id='registered_instance'),
+    ],
+)
+async def test_temporal_agent_model_selection_by_instance(
+    allow_model_requests: None, client: Client, instance_key: str, expected_output: str
+):
+    """Test model selection by passing model instances."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowInstance],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiModelWorkflowInstance.run,
+            args=['Hello', instance_key],
+            id=f'MultiModelWorkflowInstance_{instance_key}',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == expected_output
+
+
+async def test_temporal_model_request_outside_workflow():
+    """Test that TemporalModel.request() falls back to wrapped model outside a workflow.
+
+    When TemporalModel.request() is called directly (not through TemporalAgent.run())
+    and not inside a Temporal workflow, it should delegate to the wrapped model's request method.
+    """
+    test_model = TestModel(custom_output_text='Direct model response')
+
+    temporal_model = TemporalModel(
+        test_model,
+        activity_name_prefix='test__direct_request',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # Call request() directly - outside a workflow, this should fall back to super().request()
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    response = await temporal_model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            builtin_tools=[],
+            output_mode='text',
+            allow_text_output=True,
+            output_tools=[],
+            output_object=None,
+        ),
+    )
+
+    # Verify response comes from the wrapped TestModel
+    assert any(isinstance(part, TextPart) and part.content == 'Direct model response' for part in response.parts)
+
+
+async def test_temporal_model_request_stream_outside_workflow():
+    """Test that TemporalModel.request_stream() falls back to wrapped model outside a workflow.
+
+    When TemporalModel.request_stream() is called directly (not through TemporalAgent.run())
+    and not inside a Temporal workflow, it should delegate to the wrapped model's request_stream method.
+    """
+    test_model = TestModel(custom_output_text='Direct stream response')
+
+    temporal_model = TemporalModel(
+        test_model,
+        activity_name_prefix='test__direct_stream',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # Call request_stream() directly - outside a workflow, this should fall back to super().request_stream()
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    async with temporal_model.request_stream(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            builtin_tools=[],
+            output_mode='text',
+            allow_text_output=True,
+            output_tools=[],
+            output_object=None,
+        ),
+    ) as stream:
+        # Consume the stream
+        async for _ in stream:
+            pass
+
+        # Get the final response
+        response = stream.get()
+
+    # Verify response comes from the wrapped TestModel
+    assert any(isinstance(part, TextPart) and part.content == 'Direct stream response' for part in response.parts)
+
+
+class CustomPydanticPayloadConverter(PydanticPayloadConverter):
+    """A custom payload converter that inherits from PydanticPayloadConverter."""
+
+    pass
+
+
+class CustomPayloadConverter(DefaultPayloadConverter):
+    """A custom payload converter that does not inherit from PydanticPayloadConverter."""
+
+    pass
+
+
+class MockPayloadCodec(PayloadCodec):
+    """A mock payload codec for testing (simulates encryption codec)."""
+
+    async def encode(
+        self, payloads: Sequence[temporalio.api.common.v1.Payload]
+    ) -> list[temporalio.api.common.v1.Payload]:  # pragma: no cover
+        return list(payloads)
+
+    async def decode(
+        self, payloads: Sequence[temporalio.api.common.v1.Payload]
+    ) -> list[temporalio.api.common.v1.Payload]:  # pragma: no cover
+        return list(payloads)
+
+
+def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> None:
+    """When no converter is provided, PydanticAIPlugin uses the standard pydantic_data_converter."""
+    plugin = PydanticAIPlugin()
+    # Create a minimal config without data_converter
+    config: dict[str, Any] = {}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is pydantic_data_converter
+
+
+def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
+    """When converter already uses PydanticPayloadConverter, return it unchanged."""
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(payload_converter_class=PydanticPayloadConverter)
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is converter
+
+
+def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
+    """When converter uses a subclass of PydanticPayloadConverter, return it unchanged (no warning)."""
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(payload_converter_class=CustomPydanticPayloadConverter)
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is converter
+    assert result['data_converter'].payload_converter_class is CustomPydanticPayloadConverter
+
+
+def test_pydantic_ai_plugin_with_default_payload_converter_replaced() -> None:
+    """When converter uses DefaultPayloadConverter, replace payload_converter_class without warning."""
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(payload_converter_class=DefaultPayloadConverter)
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is not converter
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+
+
+def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
+    """When converter has a custom payload_codec, preserve it while replacing payload_converter_class."""
+    plugin = PydanticAIPlugin()
+    codec = MockPayloadCodec()
+    converter = DataConverter(
+        payload_converter_class=DefaultPayloadConverter,
+        payload_codec=codec,
+    )
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is not converter
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_codec is codec
+
+
+def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
+    """When converter uses a non-Pydantic payload converter, warn and replace."""
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(payload_converter_class=CustomPayloadConverter)
+    config: dict[str, Any] = {'data_converter': converter}
+    with pytest.warns(
+        UserWarning,
+        match='A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter',
+    ):
+        result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+
+
+def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> None:
+    """When converter uses a non-Pydantic payload converter with custom codec, warn but preserve codec."""
+    plugin = PydanticAIPlugin()
+    codec = MockPayloadCodec()
+    converter = DataConverter(
+        payload_converter_class=CustomPayloadConverter,
+        payload_codec=codec,
+    )
+    config: dict[str, Any] = {'data_converter': converter}
+    with pytest.warns(UserWarning):
+        result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_codec is codec

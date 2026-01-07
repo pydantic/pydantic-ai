@@ -25,7 +25,7 @@ interactions:
             url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
           type: image
         role: user
-      model: claude-3-5-haiku-latest
+      model: claude-haiku-4-5
       stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -48,7 +48,7 @@ interactions:
           frying, or mashing.
         type: text
       id: msg_01TQMY6yjmVxHiAh8qEdausZ
-      model: claude-3-5-haiku-20241022
+      model: claude-haiku-4-5-20251001
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

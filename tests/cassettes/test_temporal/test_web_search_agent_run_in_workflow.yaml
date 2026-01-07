@@ -1,0 +1,151 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '336'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: In one sentence, what is the top news story in my country today?
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search
+        user_location:
+          city: Mexico City
+          country: MX
+          type: approximate
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '12089'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '45591'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1760537022
+      error: null
+      id: resp_0cc772278fa4f4140068efa9be8878819ca691ebcbe9f1f6be
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABo76nsGZ3D61NVA0XbnShNHmz5T4RonYmRGx_pRGkEbVDw7m4Ld84NA0js4svXie5FHgTxnkjohBfv597Y9YkQPDKDKkT80tQ41fo4SYkJ4r3BUtgD-DNrpssBBlK_uT-FfWeJlwTTvz6hfl1jP8NK54ZThlLzeSyhoDkQoiJf7d7rmjro49oy8owOCGlod1oiBBcZoF4zXL04lZXeOmrN40e6zIrEXGIb-iC2NL7O2R3GbipQcbq6zy2RpIbmjgmXRTWjtaMmWcJwry4oqYsud2UHojpkhXeN-0Yh4gPfzWbgvYDO47Lc48t5UkNDuBLXezNyRX_Pmlocn-h9RKNEdkq1iZau4UyY_1Fo8LKm0hQuE4x4ZKzRed2KJM4YjwSomtcGshDGKmZw94kabHY9tDI6y5-mWFhHqvjZt50xJukx2iOC6KKKk0iKiqcCeNb4r2K0G_xhLIS-sjbG9rv_762G3AiZ041xEwbStrqovRuTu52YV6b70gnuzvEG0QF9hToUpbZZQx1prAIE1WILXAZrDxvHB2czq2PF3WP0QGWdbJpO3ZSm9osjX1qqNgoiOArBUYtOQUbYM7JtLz92Es53GVeIXlHSlE_VT92ISO6n8UyAGLYuWLd-nTELBbsjNWmOo1LFpUsi7h0rVR0pbs2jTUDRLCn74ucVxYX45dTx0P-OKfNrKDQNaRCyvi-oCFdrJUc-ecm-EaVoqz0b63HHzhKNXFsmPeFZl5gtGnXARqXrbcBgel-wviXlMLt8KaWWMrEU_yq8KjACNeQy8POZsimzWT95oMAjD_J35JgeXajkYIFHuh1ZRb0awKdXPCUp6kR-nL_cBZco6nZARImw-9VR7527KT30aGvPhSYCrtqP9QXmI94IB9mYvGsCCj1ooQ3JW4nzvThJ3KN9xNZaMkvE_pORulsxPLfKfELoy7i74HWBZ7X5_7zLB-Rv-Zj58YJiFtpVYGSzKd2UfbI8GvYaakGFfN2LqzG4k2UA2rIh97nbMfbdVtUL0PuINsHc2Qr1aHbeaiHavya4QCGt1w0cds37gy06dqdL5Hny2NzhSekkUK2vDGV-evUpIkDeK3hY93NQYgwppnmdvMDYOMUl_VnLH5m-3FIW0bTJkxC2zYR4A1lkD_xhawH2KD5lrZS4-qttoDdfWceV6PIW3J7EnP0j9vq5Twkx9phCXWOL0-_7fEKwwmC2VwVvf43rbqbF5ZQpLl_nNiicJX4nmV_umniCS_hUjmHTHHyagnJjUzD7ZHFjF7CenXS4uag4TlNEozrxEv4vcZtWd_A-zSpqYLdGty2Zp16nkeq2DhF137AZTohRpDttSis-oh18GQzgvyDb3kUyb23CHcH9DZwScI4QDiDjoE94mzOe4_MjSyrY4d4stLYr5DYlUc_zE3jWp10QiNz8Yz3K4sm8aM_cPteHRuwGBPmjYWKoNwhsLEiHP3aNE-MYpkcV4oAJk8MR3NU3asRRZUD5CNj66gkRlpcsd6dTUPSJISIZM415mE7uG8HF0inxGn_VXSIFxV7PfjdIs6WE58dwEEe7QXTpxWjkuCCykg43znRi0G3Tscuq8oU7VUe5dTAfGDA-nwkroCFWyfpHT_VX92l4BFM6Pm9GF1XJ3_cpbp_TMkrLNwkklGeZSbghTU0RqKdGfffyrdZNqRW16BESjHc7Z8SsC8QhLjGvavyFHJOBB3vgwRAFDskmFlhTKMAsJqaq_tqJ550UrrRTmjJ1sH3gOozKgryOU9i7w2rlnbn24YkA9yCvIVSaB7bW8_Z0TbhoWY_0D25OQqc8pgOGECEHDzGOX_k5wSevf6WEdxoL9wY0PpNxGz_TwA0DMOd4vModAeCGDujQSfPS7PDUm9qtZMZtwyjZ4PKQ_K09-sKg7X4PUQ9DAdygNmHQCjK0iqY-fhcJwkApX1ichrxy6M9kA1EM8rO5fD4pTaRLoqNVutc1sUBq93DXMEjE73UTCfrygIOK2brw4P1LBNQe_CP3J65obJQ8tMTXyemrnLPYIzw=
+        id: rs_0cc772278fa4f4140068efa9bf0dcc819ca630d7697c77a632
+        summary: []
+        type: reasoning
+      - action:
+          query: Mexico top news October 15, 2025
+          type: search
+        id: ws_0cc772278fa4f4140068efa9c5aa14819c871c50351e98af40
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABo76nsliyRJLQ8_6svrujSylQVBRqPDxfWb2I2yr61HB3Rvh8mkk4ZPdzVyktR-gyzPkY-X5VtSV3rjjMCRvU6nGi8j9MmS-pULY8splSAdXCTcxm5LoH6laEAtugW0p6HlxkaehV4RLM2RNqiFbx3KMciX3JTkg9AJcchLtGiSvaV4KrI6gO7BoMY_L9lPsTAOJMCWmD6eK3S13Rc61XPEsUhLq7W4h_mz-A_y6K5Hehqu4sEzLlWgAI3bVogiULK0UYQqgmRkL5VhZCw3RP7lqV_3eDD-7hJEgH7tnW3aYkSt-6f0PmuDoDdF5UOdhgjYLyr2KGyXokoRVF310d4b7OEJsFycF4-mqtD8-r6RxjmSJVp95Oye-3X2HhXKwanOhJbtymEa77qy2hIC_8p222na1_wBo9awrBaq8T1cyGauiMEEbVcqVkhwE3mQzGYz2EzbvM-KZ7fguzOijBP3kCaJV3mF4qAVkYG_VDn1jEPd-s1CW34HwZevytQBNizpEJwysAqNHbW6rUgXQiq8gkL3N0MIGffabwI1ZckYikOpQrUw7C9kgVMgy_8jr3nlJ3c3nqLwM5dxB95orArSk-GWyk7BRa_N6htBB2xwrmcbwO8lSF5LCcW5zc6N3O24Vne3YeDVB9rfVMrOwk0pKukSuYmiZpws5U4Yuc3ZFHJfpU-Nswbl4SrjxZATG5Eyzo-ecUMIW-MsifLMwLadoxaq3nafpwcQhE4AH4U3Rgi_NOeHuP6iMeStRxUEi_Q7cRASg7TGZgRYAXVmRjaB0X_LGjA_oITzmfOKewUxG2SwtTi3X0-_dxMzQXVNvBp6nKv3THhnM-qAp9rXowmseH-WRqvsuZR0rwuYHig1nLA_gibGmWJ9VwPrhasxmA6kc-PlGkvoYE59lLL3HQYUzNuJsosSRtHix7gcmkpASBIJlPzzvo_10aE9peHNoam78vm8QcFxKA6Lrynva5qCndxXGN7Phh13mkFKmYYGwdufaHDEpeNH0qAWv2GsVHpHKENe0Ll2XqJNeK_lF-zvzFBh0DeRfVy3Lq3G6ZtNvV_sJslzcNQzqqU7gRJEsnzC-bfqJsTGc1NWbYG86OgMV9FmsUohGlDVNIMxAWwtEQXJitWR7UQpei528hz6pJj6uKzrTqoNXAUVjJcQz5DW9wR8OYwdl95FzFHGmqKn8cPTVEvnTV9ISCHPNJ4Hy6_qb2OaUh624h51eo8fvOye_qBFE4B0nnrhbmdtN9PYoxdcF_hvk0Dxt5rvOmiqeTlxueE
+        id: rs_0cc772278fa4f4140068efa9c91ae0819cb57bf002b036ffcb
+        summary: []
+        type: reasoning
+      - action:
+          query: inundaciones Mexico octubre 2025 muertos desaparecidos Veracruz Hidalgo Puebla 15 de octubre
+          type: search
+        id: ws_0cc772278fa4f4140068efa9cb9a94819c86a1054697faa9d6
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABo76nsdJIaRBHwtMtyHUET6TXVN2QSC9B3268qye-aJa-3t_U3_I8F5URYG19B9IuVC0RDpe2iBHtKklE6KIE_Ugzg57cRDo0wiTQxRDXYwjFxKPXCNyRQHYHkbPh9Dohk8nRcNt9mARzOpwgB6qknrb8odOOhyqe3q8bZ7aAqTh-qimwxkSssyAb-AOjYGAwSXmr2GErt284wA9jughihwSsiRxBmUSwnMx2Tcg8h1Kr4i2lnGcBPgWX_0bCpXGZY4A_JItQv-6Z0erPq5R9xPiYYlMDApTbBBOvFVCUXWuDx8XeAGYm0V18fJxXiEHuktll_Tj7o9c8GDbLF6V_hSsUsPAIQ0RCoKJ6hP4ZgE5CA1ml3WQa7IbPHBU-wKgHcKhwD5eBsRkE4DFfBx7zKTnZtB8FghGYYKkx4Ww7VZVqifoO8JAMvBsmZT3CWp6z69hCg4BOaXnfTE2llfA2B4b0oBTrCl9c4qG5dfx_ELVfRxOJyr8zI_Rxw_xj-fYgCrFb8xfa8XCvbV7thZMAac0eZyq8M9PGRbjvmKn7jNPYK-c2a46Ia6t_s93xxxUtTsCr-rvn2gKTMWm9BPTWqpqkAc2ZTCYxgT7QSs77IAOQuk_9OHDNBM-h0ujCYfzISsieGSnwIwMS3hfg9qiezUcNcwHOHxH7n3T2JfNRa2k37sJmxrFJOPyMezEqar1-XQvAEtXwNcNbYIykNZ4s8G3lCJAnvEzoRzCAmiiAndtejPlVrSZUhsWazjPcDnZ458-1nnMfb-vGK0Cybz3EdNWMFnWN5bjLIP3lc_wLPa_dWSz1Dm_bTckJWKAujV1jQITft04Nlo4i9vLW5vWb7Jsml4fiSYtvuALQkNzhOlMbdKvrL29UFobkfCB1hX4Cgj-Hkn7P5WjeYtxKXkOb171JGIEav5qQcfbImOuFxhg_7EUbaefIyGa1J2eGb7DRCcmbqnur5hvzMzPGNqHxWvEunVxf9ZvUEXsPoNPyC2Jkot_ntLSlwRtuuMqu9teK6NfWi0qCJeqbhEN-OWDpFtrmSEYLr1FNS5_XM6_VZ10o1GRW8notAm5RVdn7zDvjs_s5cXv4efs0UanOOAS6e_OIJeX7VHdiKLnHLXxZ-adp5NR2kKIw0hgtvcrCR7KHvr4itOny8zy_7EfeYgX8B66favNVeu6JLGEVIOs1bN3_evQYUyRPJAn3FwM_DIUZqQ1xJVewm1RAxvaENoT_gh3pib4vdjXxeGjJg7VsAkPpiHf0TSYvGKiAtdUuUHNfNv8X5MGuh40ST8ji-UHeWkUe8fzcVoypPVNApyO9bET3RgirucglYbObm3WwucxyZDkJC9nYb1LptN6K3xvJ8a97njRCnzjE4Z0SfOtRBotblGo0IN7cCVI-SJrOlXXdvm8PUOOofKmzM9Y-Seo_Vapq3NBfLGZar7Sg1RtHXTXpJABZZ1HNgfvmw0qqKka-cUyS2qByP6d1ZRc2MTAofNcJXEiiBF62f1JXK0yMwKyCacPBQ26J7xHvmDtz-lAZGO6n8GvWJy2UkGthYZLIHTfyKfc46t74ZunD1daW5_QK7dCMMdXylK8lQaSBtK8UIzlbDcT7cIeoO-9iGSEMj623RjwMqpAJLYW8cuoccnTnH3cJ0032hhuaTyvPnW98_2QdzERSY6booWeLI5QI4yWcmJgs8gnhQC1-UEZrZ-Y3_344Xv8t2Dk-ihlHMN0aZ5MpBkT_FXqspXn5a6HIVLEhdtckz1LWK6ZZxcMDBVZAy5pqTmIs_Ro303y1_5Z_oiKSl-ISCkUhCGCCb5JpLozG5tJZTqDij8u91L4c3fgzxs2Myk-Dk8eiAtNyR1kJTPLzFTqHrFvlTXbU5UaHqBjGLhlVXY-9H7vRB4Ssk0NWyQY5jv1L2jnhy64l6KtNBqY827HVOnsaT-XWlM4McnFT1MJ-qO41NzR-gTZva-KzjDgVj50_MBmxeuBLsnDVq26Iw2d9OQpyzo_qiN_Fs2G9zpaUr84-W9mNsoV3TljiQk9-D1xdy4ZXJ7oicW1Ah-Ua4lNGI8wKHujDDX-sw0FaEQfKKPrN4Ou_lXAStakNhnvn2C3sbPlUk6Mie52ky1Pyq9L3SMwFtNa_Sx0imAANBAqekA6BMwc_Q_Y8jgmtZatBAibaWfWfcCyWNy832S6wJ5L0_fOhYVwT4PMvOw9AIwQbTSAJtuLN7zxZOv2Qw5_UnatJR6MgXbQc0BrmWI_FGuZdOuv2TMGKZkV9ynaZ5L-Dk0P90lpZwNmpbddh1y7TQNY6Os6YPwwcyPSMgTD1fY3eJPWDEv8OxRIrFJeth_tJMb-IX2fozD7ZAXUXuEFqtCFZ7yqoO-AbW8rgLWU5ILiJJk7neHSyWrsiDf0eyILU-tC1QoGuP-Md5hehvrobjVQgkARdzIUAy_8RIeG956NoG1nqIM-5tu0A8xjv2rBf5vTw5p6rbtCiQtTacMVrprXLz-p23XqrOAZuEvhc7mMJBwEJcGq8w12oil-oakW3gbHWzKWUb_6bLGYaI7uBjSH_HDtcU79uONBYGDKRG_eZa0EcupHQ8twVBNviyz2bSubTN4gWvjz4k1nHkmQBagFQzy6ogcCVldZVyLtib2TfMH64DVeEFBEM-aUKcs81R42r8aZjW_I3RFRGS8hodNs0Y1ZfkYms_kBNOZc3pw2iP4rtOLDWatSGfUWN8owiQETiOI2AD70HoXcVBmjyRpxheI_mBVz6YIxMzf0esd5U118NzOyxqfQ66EvmAzmN0iSrbR2Vucx4CojBzweQ0KoWn_HV4U3qjkdXcmdvncbTK18LPoOhS6z7BhEKXDhd1bhI1f5AyirZhqR8xvK0r6aeQdkL7OWyQoDWJM-CRtn0S4O3qucwNA1XFVPt5fF8rysehSjLN4GH0AAueDBc9_BGx0fQMsmpRjUO71W0P-C4pY-eYvUu60u6ng2YELowM7Poak8xWOsvlGqYuXj2s4Tuj6hJPeD6vPoUDaxfFPjMijSkpfASxJvNbE8DpftoPrfiXIG-LDfGIXiJISgDzBgTllf3cw1lhSYq51WfqcBaWsIvXWGGbvnfqE2bA7nRwNUBkmxd9NC38-DAAySadaHIBjsIgv7VEKKp841cvTQ4bB-8Fp1d7pZOvMsq4GjaKCQNfjNcWL87KyyJ-GonLExJStrdNGxwS_9AYNA-6KEdtz-V9YRFzbkHl4406ueOody8O7jvucmoyKFTU1S2yJ5Wbd1gNYA-6wV_II78hbI6dXjTEGvdbRWIKkTktnD6pgDhHjkdS6uzsTcUYTkj60SxMujKv2xlRevDANdgFDB0-zKkv0ntRINr5_CHmnLbW3NYAAyGQ9wOgvfNEMno0EVLQU9F596lscKSXAl4djL1F_GSSn80lb0ujdu77Xh130yORuio6SSF9DAXg1wYI8O0Il2nyJg-0DWTyy6mCG4zPmzyS6yRH64o4kOGmZBuOJSFvcF2Qy0h0h0xBvYhN9fBJh8AcjuYP9TWB8s8Z3KKYOXYlPTPlbN4BaowBVfmzG6_aJaDvUsT1bk9IruW4ENtwf6OxXs0nqEwQEGBYWDAmcdS5hESe7JuVQ1O2bLkg2fYl63VznOUIrYW5hbHMI6pZ3EMsuJD5ITzULCl-WlX_qmduuAKnnFbSzua4Rv6ZUOk_GC-BCIfcnro0RTJTna2hl8M-YP0g05v68zDFl4x1s1xsvii8VF4p_t6EGaPY00iUgB__4uWwdIkuywTAaLgvdtWonA7aCvEZr6a04ZyUD7jf6Acd1cwxkCe2Ed-GVd9f6vQcuXUwAwnuK_gsWsqLfPfA_9U3mxMABZVXjuLwxZlxGW1rxdRQZUdqeQvIBLVt3ozMyqu4mQfs0r4gaLUFff_qHkckNvbvJwUDquokNysr0e1matigksVRDUUQc5aXvR8KeQZKUvjQLh5Rv_gvUmkBO2pQQUJCG3IPQqf6lU1Y_86sxHVegaoZ52jbbEq32NO9gQ-3LlMPvmm-FTmdfaBxNZZ2GVHgjLdvmshTd3XrdrRlqXc2dwFsLbIi6Efg6Zy6Vr8HeZiHWtJjiNT6jurXE0aNkq3SSWHEW6tNcn1BXToFUI7R4vozxEzwQG9e-acnS6OZsRie5dDmQ02CXSlJYu8s8TwyXEhy3vmaGDrtVIXlBGdb-6lAjspALKC4I6k_6uwiv492gFe7usw9mvHgIe9b5y2h0z1VUZ1lr152G1Fw_2R-1C6RxwUPZuD3ZVSw5LvO18VApN4_jDwD6l6i9QcCAGgEtz5rSp1SfbYXpTCFd5ulbZAh0JgU_OUnK4QlXZL7vdfs0cKU43IQaDAwg2zJjKodk87JDoe6YmDfrFWZ_qkPWdfbVtvKOMg2bMqJVU0LbKGH3H_MKnQVnHH7UkcdTfu7wwbYIdddQHQPEzuzOwBTg9nz46nSKfZCIQ3FES6gP7bBDuw3IhwzZq30hAS0XPspU8OQuvAQcUcpjSYlKkNvWvw1ZaGE-wJsA2UgyUDeQ_gUAmvjEqXTkomk5EDiDWg4R7TMi3bzbVUylLcNOopOi_X6Quij0dWoV6tZJqKq8z1BJUeV7Dl9dcnN24MTQ4YFMV3r59zAD4_DBWkMorwfllcFB1-i3mq2RdtErHFay7BATssuoSvaVhZbfcc6OsqE6UcZTUr7ctBCKIpg5EJTAZRgZcUTUQMQYaJmCgBi5QY4UIf9oxxd8URQKz-nT2G9vKrCTRC7h2J2aG3RaM4TVYzJQUADkbj5ejVMTELy2JjG_LQLMLzd_yR4VeSOfn3RVbo_P7A5P0bOp4ftma8Qe5kDC2L2H252tNr2gU82ozygJdqi_2ZB_ladw5fojKVMe2w1dBg_g-c5HmJlIxWp0N_dj8hDTS_zC2J6X6zIFkhW9JTSRgVzdDJd8oZEGNtTbAo__R74yEHll9L52bRu68NTxrT4cQ4RIbA5dQUl0QgNwRr67roltQeWXj1eS47Pe070ntnScAgTCF8431lM2XiK1iPP6fbi23SWE6oD4JQaaAQkeHoBqjqPcTeoPSHLmpKkZS55e6XPlxbQp_exrt8yLJv9fs7wrfG0egRzJwIRd_H8vxCg7f65EUIIAyUp8TTaHpYWQJMmmWtAa035TcuwzRtswUYcWLZZWbqBB90m9EM9huFAmF6xJypAfjWFRm0Mtwh7AgqTTEuw6cnNw5lzGQKJqnP2kCiZ6gVb97A67qQZMOs_zDp8E68RgEzDIm14JEAKrIs0nI3VqrNyy0DGzyvn6TWZUAYqUdUGjchOYc_tj3_cr7_Icu1VWG48SNIlXMKHi0k09efcyTzfaaTXQS5UdlenHvFg9j1WO6oyORpaGbA3L5XUNwH1yX6d9wN8
+        id: rs_0cc772278fa4f4140068efa9d096c0819c99fea06cc2948069
+        summary: []
+        type: reasoning
+      - content:
+        - annotations:
+          - end_index: 281
+            start_index: 188
+            title: Landslides and flooding cut off 300 communities in Mexico with dozens dead and missing
+            type: url_citation
+            url: https://apnews.com/article/5d036e18057361281e984b44402d3b1b?utm_source=openai
+          logprobs: []
+          text: Severe floods and landslides across Veracruz, Hidalgo, and Puebla have cut off hundreds of communities and
+            left dozens dead and many missing, prompting a major federal emergency response. ([apnews.com](https://apnews.com/article/5d036e18057361281e984b44402d3b1b?utm_source=openai))
+          type: output_text
+        id: msg_0cc772278fa4f4140068efa9e8d5c0819caea9f8f22692335d
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters: null
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: Mexico City
+          country: MX
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 12594
+        input_tokens_details:
+          cached_tokens: 3200
+        output_tokens: 1150
+        output_tokens_details:
+          reasoning_tokens: 1088
+        total_tokens: 13744
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
