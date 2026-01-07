@@ -1828,7 +1828,7 @@ async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: N
 
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
-    assert result.usage() == snapshot(RunUsage(input_tokens=13, cache_write_tokens=1504, output_tokens=5, requests=1))
+    assert result.usage() == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
 
 
 @pytest.mark.vcr()

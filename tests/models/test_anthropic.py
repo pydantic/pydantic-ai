@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
 from typing import Annotated, Any, TypeVar, cast
-from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -19,7 +18,6 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BinaryContent,
-    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
@@ -59,7 +57,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsBytes, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -253,7 +251,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -270,7 +268,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1078,7 +1076,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1151,7 +1149,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1181,7 +1179,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1205,7 +1203,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1458,7 +1456,7 @@ async def test_stream_structured(allow_model_requests: None):
 
         # The tool output doesn't echo any content to the stream, so we only get the final payload once when
         # the block starts and once when it ends.
-        assert chunks == snapshot(['FINAL_PAYLOAD', 'FINAL_PAYLOAD'])
+        assert chunks == snapshot(['FINAL_PAYLOAD'])
         assert result.is_complete
         assert result.usage() == snapshot(
             RunUsage(
@@ -1481,7 +1479,7 @@ async def test_stream_structured(allow_model_requests: None):
                         provider_name='anthropic',
                         provider_url='https://api.anthropic.com',
                         provider_details={'finish_reason': 'end_turn'},
-                        provider_response_id=IsStr(),
+                        provider_response_id='msg_123',
                         finish_reason='stop',
                     )
                 )
@@ -1559,6 +1557,7 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
 
 async def test_image_url_force_download() -> None:
     """Test that force_download=True calls download_item for ImageUrl."""
+    from unittest.mock import AsyncMock, patch
 
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
@@ -1593,6 +1592,7 @@ async def test_image_url_force_download() -> None:
 
 async def test_image_url_no_force_download() -> None:
     """Test that force_download=False does not call download_item for ImageUrl."""
+    from unittest.mock import AsyncMock, patch
 
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
@@ -1621,6 +1621,7 @@ async def test_image_url_no_force_download() -> None:
 
 async def test_document_url_pdf_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl (PDF)."""
+    from unittest.mock import AsyncMock, patch
 
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
@@ -1655,6 +1656,7 @@ async def test_document_url_pdf_force_download() -> None:
 
 async def test_document_url_text_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl (text/plain)."""
+    from unittest.mock import AsyncMock, patch
 
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
@@ -1687,7 +1689,6 @@ async def test_document_url_text_force_download() -> None:
         assert mock_download.call_args[0][0].url == 'https://example.com/doc.txt'
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
 ):
@@ -1731,7 +1732,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01HQ5juE8oecrwBkoYMJi5fp',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1739,13 +1740,11 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                        ),
+                        content='See file 241a70',
                         tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1771,299 +1770,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-@pytest.mark.vcr()
-async def test_document_as_binary_content_tool_response(
-    allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
-):
-    """Test that PDF documents returned from tools are sent as separate user message (not in tool_result)."""
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_document() -> BinaryContent:
-        return document_content
-
-    result = await agent.run('What is the content of the document from get_document tool?')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is the content of the document from get_document tool?',
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content="I'll retrieve the document content for you."),
-                    ToolCallPart(tool_name='get_document', args={}, tool_call_id='toolu_013xd5U4vGrThMe5xJbBNgrW'),
-                ],
-                usage=RequestUsage(
-                    input_tokens=552,
-                    output_tokens=46,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 552,
-                        'output_tokens': 46,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_document',
-                        content=BinaryContent(data=IsBytes(), media_type='application/pdf'),
-                        tool_call_id='toolu_013xd5U4vGrThMe5xJbBNgrW',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content='The document is a PDF file with very simple content. It contains only one page with the heading "**Dummy PDF file**" at the top. The rest of the page appears to be blank. This is essentially a placeholder or test PDF document with minimal content.'
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=2228,
-                    output_tokens=57,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 2228,
-                        'output_tokens': 57,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-@pytest.mark.vcr()
-async def test_document_url_tool_response(allow_model_requests: None, anthropic_api_key: str):
-    """Test that DocumentUrl returned from tools is sent as separate user message."""
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_document() -> DocumentUrl:
-        return DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf')
-
-    result = await agent.run('What is the content of the document from get_document tool?')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is the content of the document from get_document tool?',
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content="I'll retrieve the document content for you."),
-                    ToolCallPart(tool_name='get_document', args={}, tool_call_id='toolu_01BGs82XcSBAZ2jbeMaV3utg'),
-                ],
-                usage=RequestUsage(
-                    input_tokens=552,
-                    output_tokens=46,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 552,
-                        'output_tokens': 46,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_document',
-                        content=DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf'),
-                        tool_call_id='toolu_01BGs82XcSBAZ2jbeMaV3utg',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-Based on the document retrieved, here is the content:
-
-## Document Summary
-
-**Title:** Sample PDF
-
-**Description:** "This is a simple PDF file. Fun fun fun."
-
-**Content:** The document is a sample PDF file containing Lorem Ipsum placeholder text. It's a classic dummy text commonly used in publishing and graphic design to demonstrate the visual form of a document without relying on meaningful content.
-
-The document consists of several paragraphs of Latin-derived placeholder text starting with "Lorem ipsum dolor sit amet, consectetuer adipiscing elit..." and continues with various phrases commonly found in Lorem Ipsum text.
-
-The document appears to be a single-page PDF used likely for testing or demonstration purposes, as indicated by its title and the use of standard Lorem Ipsum filler text throughout.\
-"""
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=3295,
-                    output_tokens=168,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 3295,
-                        'output_tokens': 168,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-@pytest.mark.vcr()
-async def test_image_url_tool_response(allow_model_requests: None, anthropic_api_key: str):
-    """Test that ImageUrl returned from tools is sent natively in tool_result."""
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> ImageUrl:
-        return ImageUrl(url='https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png')
-
-    result = await agent.run('What is shown in the image from get_image tool?')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is shown in the image from get_image tool?',
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content="I'll retrieve the image for you to see what it shows."),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01LuW5uk1XDjiMNJfDEv3QXp'),
-                ],
-                usage=RequestUsage(
-                    input_tokens=551,
-                    output_tokens=50,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 551,
-                        'output_tokens': 50,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content=ImageUrl(
-                            url='https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png'
-                        ),
-                        tool_call_id='toolu_01LuW5uk1XDjiMNJfDEv3QXp',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-The image shows the **Google logo**. It features the word "Google" written in the company's distinctive colorful typography:
-- **G** - Blue
-- **o** - Red
-- **o** - Yellow
-- **g** - Blue
-- **l** - Green
-- **e** - Red
-
-This is Google's well-known corporate logo that uses a sans-serif font (Product Sans) with their signature multi-colored design.\
-"""
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=767,
-                    output_tokens=100,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 767,
-                        'output_tokens': 100,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_015Cd8nysLLEjXi7JEm7A9DF',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2231,7 +1938,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2288,7 +1995,7 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01BnZvs3naGorn93wjjCDwbd',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2400,7 +2107,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2448,7 +2155,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2515,7 +2222,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_018XZkwvj9asBiffg3fXt88s',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2653,7 +2360,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 37, 27, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2705,7 +2412,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2763,7 +2470,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01PiJ6i3vjEZjHxojahi2YNc',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3340,7 +3047,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_0119wM5YxCLg3hwUWrxEQ9Y8',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3541,7 +3248,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01Vatv9GeGaeqVHfSGhkU7mo',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3826,7 +3533,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01QmxBSdEbD9ZeBWDVgFDoQ5',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -5557,7 +5264,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -5696,7 +5403,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -5807,7 +5514,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -6060,7 +5767,7 @@ print(f"3 * 12390 = {result}")\
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwceSoRxi8Pf16Fb7Tn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -6129,7 +5836,7 @@ print(f"4 * 12390 = {result}")\
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwdXe48NC7LaX3rxQ4d'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -6240,7 +5947,7 @@ Here's how it breaks down following the order of operations:
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -6765,7 +6472,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 11, 19, 23, 41, 8, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -6889,7 +6596,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -6928,7 +6635,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -7001,7 +6708,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -7038,7 +6745,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -7096,7 +6803,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -7129,7 +6836,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -7186,7 +6893,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
+                provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -8112,7 +7819,6 @@ In 1939, Finnish runner Taisto Mäki made history by becoming the first person t
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its",
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally",
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
-                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
             ]
         )
 
@@ -8586,112 +8292,3 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
-
-
-async def test_tool_return_image_url_force_download():
-    """Test that ImageUrl with force_download=True downloads and sends image data in tool_result."""
-
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-
-    messages: list[ModelRequest | ModelResponse] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(
-            parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='tool1')],
-            model_name='claude-sonnet-4-5',
-        ),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_image',
-                    content=ImageUrl(url='https://example.com/image.png', force_download=True),
-                    tool_call_id='tool1',
-                )
-            ]
-        ),
-    ]
-
-    with patch('pydantic_ai.models.anthropic.download_item', new_callable=AsyncMock) as mock_download:
-        mock_download.return_value = {'data': b'\x89PNG\r\n\x1a\n', 'data_type': 'png'}
-        _, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
-
-    mock_download.assert_called_once()
-    # Check the tool_result contains the image as base64
-    tool_result_msg = anthropic_messages[-1]
-    assert tool_result_msg['role'] == 'user'
-    tool_result_content = tool_result_msg['content'][0]  # pyright: ignore[reportIndexIssue,reportUnknownVariableType]
-    assert tool_result_content['type'] == 'tool_result'  # pyright: ignore[reportArgumentType]
-    # The content should have an image block from the downloaded data
-    image_block = tool_result_content['content'][0]  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
-    assert image_block['type'] == 'image'  # pyright: ignore[reportArgumentType]
-    assert image_block['source']['type'] == 'base64'  # pyright: ignore[reportArgumentType]
-
-
-async def test_tool_return_document_url_in_user_message():
-    """Test that DocumentUrl returned from tools is sent alongside tool_result in user message."""
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-
-    messages: list[ModelRequest | ModelResponse] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(
-            parts=[ToolCallPart(tool_name='get_doc', args={}, tool_call_id='tool1')],
-            model_name='claude-sonnet-4-5',
-        ),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_doc',
-                    content=DocumentUrl(url='https://example.com/doc.pdf'),
-                    tool_call_id='tool1',
-                )
-            ]
-        ),
-    ]
-
-    _, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
-
-    # Should have: user msg, assistant msg with tool_use, user msg with tool_result + document
-    assert len(anthropic_messages) == 3
-    # Last message should be user message with both tool_result and document content
-    tool_result_msg = anthropic_messages[-1]
-    assert tool_result_msg['role'] == 'user'
-    # Should have tool_result and document in same message
-    tool_result = [c for c in tool_result_msg['content'] if isinstance(c, dict) and c.get('type') == 'tool_result']
-    doc_content = [c for c in tool_result_msg['content'] if isinstance(c, dict) and c.get('type') == 'document']
-    assert len(tool_result) == 1
-    assert len(doc_content) == 1
-    assert doc_content[0]['source']['type'] == 'url'  # pyright: ignore[reportGeneralTypeIssues,reportArgumentType]
-
-
-async def test_tool_return_binary_pdf_in_user_message():
-    """Test that BinaryContent with non-image media_type is sent alongside tool_result in user message."""
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-
-    messages: list[ModelRequest | ModelResponse] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(
-            parts=[ToolCallPart(tool_name='get_doc', args={}, tool_call_id='tool1')],
-            model_name='claude-sonnet-4-5',
-        ),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_doc',
-                    content=BinaryContent(data=b'%PDF-1.4', media_type='application/pdf'),
-                    tool_call_id='tool1',
-                )
-            ]
-        ),
-    ]
-
-    _, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
-
-    # Should have: user msg, assistant msg with tool_use, user msg with tool_result + document
-    assert len(anthropic_messages) == 3
-    # Last message should be user message with both tool_result and document content
-    tool_result_msg = anthropic_messages[-1]
-    assert tool_result_msg['role'] == 'user'
-    # Should have tool_result and document in same message
-    tool_result = [c for c in tool_result_msg['content'] if isinstance(c, dict) and c.get('type') == 'tool_result']
-    doc_content = [c for c in tool_result_msg['content'] if isinstance(c, dict) and c.get('type') == 'document']
-    assert len(tool_result) == 1
-    assert len(doc_content) == 1

@@ -49,7 +49,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -183,7 +183,7 @@ async def test_request_simple_success(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -202,7 +202,7 @@ async def test_request_simple_success(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -266,7 +266,7 @@ async def test_request_structured_response(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -366,7 +366,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -399,7 +399,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -425,7 +425,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -462,9 +462,7 @@ async def test_stream_text(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['hello ', 'hello world', 'hello world']
-        )
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
 
 
@@ -477,7 +475,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['hello ', 'hello world', 'hello world.', 'hello world.']
+            ['hello ', 'hello world', 'hello world.']
         )
         assert result.is_complete
 
@@ -524,13 +522,7 @@ async def test_stream_structured(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -555,7 +547,7 @@ async def test_stream_structured(allow_model_requests: None):
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
-                provider_response_id=IsStr(),
+                provider_response_id='x',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -589,12 +581,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -607,9 +594,7 @@ async def test_no_delta(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['hello ', 'hello world', 'hello world']
-        )
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
 
 
@@ -669,11 +654,8 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={
-                    'finish_reason': 'tool_calls',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id=IsStr(),
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-31dace36-574a-42ee-a89f-154b2881e090',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -681,13 +663,11 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                        ),
+                        content='See file 241a70',
                         tool_call_id='arq6emmq6',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -699,11 +679,8 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id=IsStr(),
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-5644262c-ce2b-40af-9408-21690b4619a8',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -806,7 +783,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1079,7 +1056,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='stub',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1251,7 +1228,7 @@ search(What is the weather in San Francisco today?)
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 20, 46, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='stub',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2052,7 +2029,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2078,7 +2055,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2203,7 +2180,7 @@ Enjoy your homemade Uruguayan alfajores!\
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-4ef92b12-fb9d-486f-8b98-af9b5ecac736',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3570,7 +3547,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-dd0af56b-f71d-4101-be2f-89efcf3f05ac',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -5567,7 +5544,7 @@ We need to output the call.\
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={'timestamp': datetime(2025, 9, 2, 21, 23, 3, tzinfo=timezone.utc)},
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-4e0ca299-7515-490a-a98a-16d7664d4fba',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -5614,7 +5591,7 @@ We need to output the call.\
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 9, 2, 21, 23, 4, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-fffa1d41-1763-493a-9ced-083bd3f2d98b',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -5642,7 +5619,7 @@ We need to output the call.\
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 2, 21, 23, 4, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-fe6b5685-166f-4c71-9cd7-3d5a97301bf1',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

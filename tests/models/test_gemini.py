@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BinaryContent,
-    BinaryImage,
     DocumentUrl,
     ImageUrl,
     ModelRequest,
@@ -64,7 +63,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -794,7 +793,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot(['Hello ', 'Hello world', 'Hello world'])
+        assert chunks == snapshot(['Hello ', 'Hello world'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
     async with agent.run_stream('Hello') as result:
@@ -831,7 +830,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
+        assert chunks == snapshot(['abc', 'abc€def'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
@@ -861,7 +860,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot([(1, 2), (1, 2)])
+        assert chunks == snapshot([(1, 2)])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
@@ -1234,13 +1233,17 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                        ),
+                        content='See file 241a70',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 241a70:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1430,10 +1433,20 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
 
 
 @pytest.mark.vcr()
-async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str):
-    model = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(model)
+async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
+    with try_import() as imports_successful:
+        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+        from pydantic_ai.providers.openai import OpenAIProvider
 
+    if not imports_successful():  # pragma: lax no cover
+        pytest.skip('OpenAI is not installed')
+
+    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    gemini_model = GeminiModel('gemini-2.5-flash-preview-04-17', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(openai_model)
+
+    # We call OpenAI to get the thinking parts, because Google disabled the thoughts in the API.
+    # See https://github.com/pydantic/pydantic-ai/issues/793 for more details.
     result = await agent.run(
         'How do I cross the street?',
         model_settings=OpenAIResponsesModelSettings(
@@ -1490,7 +1503,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1505,7 +1518,6 @@ Always be cautious—even if you have the right-of-way—and understand that it'
             gemini_thinking_config={'thinking_budget': 1024, 'include_thoughts': True},
         ),
     )
-
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1529,39 +1541,68 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='What is 2+2?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
+                    TextPart(
                         content="""\
-**Calculating the Simple**
+Okay, let's draw an analogy between crossing a street and crossing a river, applying the safety principles from the street crossing guide to the river environment.
 
-Okay, here we go. Someone's asking a pretty straightforward arithmetic question. It's really just a simple calculation. Nothing fancy, just plug in the numbers and get the result.  No need to overthink it. It's a quick win, a chance to flex some basic math muscles before getting into anything more complex. Just a matter of applying the right operation and moving on.
+Think of the **river** as being like the **street** – a natural barrier you need to get across. The **hazards** on the river are different from vehicles, but they are still things that can harm you.
+
+Here's the analogous guide for crossing a river:
+
+1.  **Before you approach the river:**
+    *   Just as you use a sidewalk to get to the street's edge, use a trail or the riverbank to get to a spot where you can assess the river.
+    *   If you're inexperienced with rivers or unsure about the conditions, try to have someone experienced accompany you.
+
+2.  **When you're ready to cross:**
+    *   Just as you look and listen for vehicles, carefully **assess the river conditions**. Look in all directions (upstream, downstream, across):
+        *   How fast is the current moving? (Like checking vehicle speed).
+        *   How deep does the water look? (Like judging the width and how much time you have).
+        *   Are there obstacles in the water (rocks, logs)? (Like parked cars or road hazards).
+        *   Is the bottom visible and does it look stable? (Like checking the road surface).
+        *   Check upstream for potential hazards coming towards you (like debris).
+    *   Listen to the river – the sound can tell you if the current is very strong or if there are rapids.
+    *   Acknowledge the river's power – just as you make eye contact with drivers, respect that the river can be dangerous and doesn't care if you're trying to cross.
+
+3.  **Use designated crossing areas whenever possible:**
+    *   If there's a **bridge or a ferry**, use it. These are like the crosswalks and traffic signals – the safest, established ways to cross, often managing the "flow" (of water below, or people/boats on the river).
+    *   If you must wade or swim, look for the safest possible **crossing point** – maybe a wider, shallower section, a known ford, or a spot with a less turbulent current. This is like choosing a crosswalk instead of crossing anywhere.
+
+4.  **While crossing:**
+    *   Just as you stay alert and avoid distractions, **focus completely on the crossing**. Don't be looking at your phone or distracted by conversation if you are actively navigating the water.
+    *   Move with purpose, but carefully. If wading, maintain your balance against the current and watch your footing. If swimming, focus on your technique and direction. Stay aware of where you are relative to your intended path and the river's flow.
+
+5.  **After crossing:**
+    *   Once you've safely reached the other side, take a moment to ensure you are truly out of the main flow and on stable ground. Be aware of the riverbank conditions.
+
+**Analogous Takeaway:**
+
+Just as you wouldn't just run blindly into a busy street, you shouldn't just jump into a river without understanding its conditions and choosing the safest method and location to cross. Be cautious, assess the "traffic" (current, depth, obstacles), and use the available "infrastructure" (bridges, ferries, established crossing points) whenever possible.\
 """
                     ),
-                    TextPart(content='2 + 2 = 4'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=8, output_tokens=24, details={'thoughts_tokens': 16, 'text_prompt_tokens': 8}
+                    input_tokens=801, output_tokens=2313, details={'thoughts_tokens': 794, 'text_prompt_tokens': 801}
                 ),
-                model_name='gemini-2.5-flash',
-                timestamp=IsNow(tz=timezone.utc),
+                model_name='gemini-2.5-flash-preview-04-17',
+                timestamp=IsDatetime(),
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='lghYaaSmK7eomtkP_KDT6A0',
                 run_id=IsStr(),
             ),
         ]
@@ -1864,7 +1905,7 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
                 timestamp=IsDatetime(),
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
+                provider_response_id='TT9IaNfGN_DmqtsPzKnE4AE',
                 run_id=IsStr(),
             ),
         ]

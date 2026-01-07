@@ -431,13 +431,11 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                        ),
+                        content='See file 241a70',
                         tool_call_id='call_KRVWp1xfOSXIGBY4lxDwWyuL',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),

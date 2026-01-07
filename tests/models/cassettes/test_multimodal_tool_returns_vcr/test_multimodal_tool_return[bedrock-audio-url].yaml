@@ -1,0 +1,102 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Call the get_file tool to get a audio and describe what you
+      see."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema":
+      {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}, "description": "Return a file for the
+      model to analyze."}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YWNkZjFmODQtMTcwNC00NjYwLWFiYmYtMzUwOGNkODg1ZjA3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '403'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '461'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1015
+      output:
+        message:
+          content:
+          - text: |
+              <thinking> The user has requested to call the get_file tool to retrieve an audio file and describe its contents. I will proceed to call the get_file tool. </thinking>
+          - toolUse:
+              input: {}
+              name: get_file
+              toolUseId: tooluse_kUvJresqR0ecMnClvG5Kug
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 406
+        outputTokens: 51
+        serverToolUsage: {}
+        totalTokens: 457
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Call the get_file tool to get a audio and describe what you
+      see."}]}, {"role": "assistant", "content": [{"text": "<thinking> The user has requested to call the get_file tool to
+      retrieve an audio file and describe its contents. I will proceed to call the get_file tool. </thinking>\n"}, {"toolUse":
+      {"toolUseId": "tooluse_kUvJresqR0ecMnClvG5Kug", "name": "get_file", "input": {}}}]}, {"role": "user", "content": [{"toolResult":
+      {"toolUseId": "tooluse_kUvJresqR0ecMnClvG5Kug", "content": [{"text": ""}], "status": "success"}}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {}, "type": "object"}}, "description": "Return a file for the model to analyze."}}], "toolChoice": {"auto":
+      {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YWJlNzI4M2EtNmIyNS00YmVkLTk5MWYtNWVmNWViMDBlNmE5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '860'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '631'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1658
+      output:
+        message:
+          content:
+          - text: |-
+              <thinking> The get_file tool did not return any data. This could be due to an error or the absence of a file. I should inform the user that I was unable to retrieve the audio file. </thinking>
+
+              I'm sorry, but I was unable to retrieve the audio file using the get_file tool. Please ensure that the file is available and try again. If the issue persists, please provide more details about the file so I can assist you further.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 483
+        outputTokens: 97
+        serverToolUsage: {}
+        totalTokens: 580
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -40,7 +40,6 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
-from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -49,7 +48,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -179,7 +178,7 @@ async def test_request_simple_success(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -198,7 +197,7 @@ async def test_request_simple_success(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -272,7 +271,7 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
                 provider_details={
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -344,7 +343,7 @@ async def test_request_structured_response(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -450,7 +449,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -487,7 +486,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -513,7 +512,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -590,7 +589,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
                             'finish_reason': 'stop',
                             'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                         },
-                        provider_response_id=IsStr(),
+                        provider_response_id='123',
                         finish_reason='stop',
                     )
                 )
@@ -638,13 +637,7 @@ async def test_stream_structured(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
@@ -667,12 +660,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -692,12 +680,7 @@ async def test_stream_native_output(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -728,12 +711,7 @@ async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
@@ -759,13 +737,7 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
@@ -1041,6 +1013,7 @@ async def test_document_url_input_force_download_response_api(allow_model_reques
 
 async def test_image_url_force_download_chat() -> None:
     """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
+    from unittest.mock import AsyncMock, patch
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1075,6 +1048,7 @@ async def test_image_url_force_download_chat() -> None:
 
 async def test_image_url_no_force_download_chat() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
+    from unittest.mock import AsyncMock, patch
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1103,6 +1077,7 @@ async def test_image_url_no_force_download_chat() -> None:
 
 async def test_document_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
+    from unittest.mock import AsyncMock, patch
 
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1137,6 +1112,7 @@ async def test_document_url_force_download_responses() -> None:
 
 async def test_document_url_no_force_download_responses() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
+    from unittest.mock import AsyncMock, patch
 
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1165,6 +1141,7 @@ async def test_document_url_no_force_download_responses() -> None:
 
 async def test_audio_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
+    from unittest.mock import AsyncMock, patch
 
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1239,7 +1216,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1247,12 +1224,20 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content=ImageUrl(
-                            url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
-                        ),
+                        content='See file bd38f5',
                         tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file bd38f5:',
+                            ImageUrl(
+                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                                identifier='bd38f5',
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1277,7 +1262,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1285,7 +1270,6 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
     )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
 ):
@@ -1325,11 +1309,8 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={
-                    'finish_reason': 'tool_calls',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id=IsStr(),
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-Cpwffm3QIHBYzhoYYZSF7Et1tiiqI',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1337,13 +1318,11 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                        ),
+                        content='See file 241a70',
                         tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1364,11 +1343,8 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id=IsStr(),
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-CpwfhFC1iUmDKeoxOTSN7KP8D11aq',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1596,7 +1572,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 11, 22, 10, 1, 40, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2406,7 +2382,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 7, 16, 30, 56, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2460,7 +2436,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 4, 16, 13, 37, 14, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -2494,7 +2470,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 16, 13, 37, 15, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2536,7 +2512,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 21, 57, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='resp_68c1fa0523248197888681b898567bde093f57e27128848a',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2580,7 +2556,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 10, 22, 22, 24, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-CENUmtwDD0HdvTUYL6lUeijDtxrZL',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2901,7 +2877,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 24, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -2943,7 +2919,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 25, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3012,7 +2988,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 6, 9, 21, 20, 53, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3048,7 +3024,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 6, 9, 21, 20, 54, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3108,7 +3084,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 22, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3144,7 +3120,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 23, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3206,7 +3182,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 6, 9, 23, 21, 26, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3246,7 +3222,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 6, 9, 23, 21, 27, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3304,7 +3280,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 35, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3340,7 +3316,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 36, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3402,7 +3378,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 38, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3442,7 +3418,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 39, tzinfo=timezone.utc),
                 },
-                provider_response_id=IsStr(),
+                provider_response_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3869,187 +3845,3 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     # Expect Data URI with correct MIME type for mp3
     assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'
-
-
-async def test_responses_api_multimodal_tool_return_image_binary(image_content: BinaryContent):
-    """Test Responses API maps BinaryContent image in tool returns correctly."""
-    part = ToolReturnPart(tool_name='get_image', content=image_content, tool_call_id='img1')
-
-    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    assert result == snapshot(
-        [
-            {
-                'type': 'input_image',
-                'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+'),
-                'detail': 'auto',
-            }
-        ]
-    )
-
-
-async def test_responses_api_multimodal_tool_return_image_binary_with_metadata(image_content: BinaryContent):
-    """Test Responses API maps BinaryContent image with vendor_metadata detail setting."""
-    image_content_with_metadata = BinaryContent(
-        data=image_content.data, media_type='image/jpeg', vendor_metadata={'detail': 'high'}
-    )
-    part = ToolReturnPart(tool_name='get_image', content=image_content_with_metadata, tool_call_id='img1')
-
-    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    assert result == snapshot(
-        [
-            {
-                'type': 'input_image',
-                'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+'),
-                'detail': 'high',
-            }
-        ]
-    )
-
-
-async def test_responses_api_multimodal_tool_return_document_binary(document_content: BinaryContent):
-    """Test Responses API maps BinaryContent document in tool returns correctly."""
-    part = ToolReturnPart(tool_name='get_doc', content=document_content, tool_call_id='doc1')
-
-    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    assert result == snapshot(
-        [
-            {
-                'type': 'input_file',
-                'file_data': IsStr(regex=r'^data:application/pdf;base64,.+'),
-                'filename': 'filename.pdf',
-            }
-        ]
-    )
-
-
-async def test_responses_api_multimodal_tool_return_image_url():
-    """Test Responses API maps ImageUrl in tool returns correctly."""
-    image_url = ImageUrl(url='https://example.com/image.jpg')
-    part = ToolReturnPart(tool_name='get_image', content=image_url, tool_call_id='img1')
-
-    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    assert result == snapshot([{'type': 'input_image', 'image_url': 'https://example.com/image.jpg', 'detail': 'auto'}])
-
-
-async def test_responses_api_multimodal_tool_return_image_url_with_metadata():
-    """Test Responses API maps ImageUrl with vendor_metadata detail setting."""
-    image_url = ImageUrl(url='https://example.com/image.jpg', vendor_metadata={'detail': 'low'})
-    part = ToolReturnPart(tool_name='get_image', content=image_url, tool_call_id='img1')
-
-    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    assert result == snapshot([{'type': 'input_image', 'image_url': 'https://example.com/image.jpg', 'detail': 'low'}])
-
-
-async def test_responses_api_multimodal_tool_return_document_url():
-    """Test Responses API maps DocumentUrl in tool returns correctly."""
-    doc_url = DocumentUrl(url='https://example.com/doc.pdf')
-    part = ToolReturnPart(tool_name='get_doc', content=doc_url, tool_call_id='doc1')
-
-    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    assert result == snapshot([{'type': 'input_file', 'file_url': 'https://example.com/doc.pdf'}])
-
-
-async def test_responses_api_multimodal_tool_return_audio_url():
-    """Test Responses API maps AudioUrl in tool returns correctly."""
-    audio_url = AudioUrl(url='https://example.com/audio.mp3')
-    part = ToolReturnPart(tool_name='get_audio', content=audio_url, tool_call_id='audio1')
-
-    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    assert result == snapshot([{'type': 'input_file', 'file_url': 'https://example.com/audio.mp3'}])
-
-
-async def test_responses_api_multimodal_tool_return_with_text_and_image(image_content: BinaryContent):
-    """Test Responses API maps tool return with both text/json content and image."""
-    part = ToolReturnPart(
-        tool_name='analyze',
-        content=['Analysis result: success', image_content],
-        tool_call_id='analyze1',
-    )
-
-    result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    assert result == snapshot(
-        [
-            {'type': 'input_text', 'text': '["Analysis result: success"]'},
-            {
-                'type': 'input_image',
-                'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+'),
-                'detail': 'auto',
-            },
-        ]
-    )
-
-
-async def test_responses_api_multimodal_tool_return_image_url_force_download():
-    """Test Responses API maps ImageUrl with force_download=True in tool returns correctly."""
-
-    image_url = ImageUrl(url='https://example.com/image.jpg', force_download=True)
-    part = ToolReturnPart(tool_name='get_image', content=image_url, tool_call_id='img1')
-
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
-        mock_download.return_value = {
-            'data': 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD',
-            'data_type': 'jpg',
-        }
-        result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    mock_download.assert_called_once()
-    assert result == snapshot(
-        [{'type': 'input_image', 'image_url': 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD', 'detail': 'auto'}]
-    )
-
-
-async def test_responses_api_multimodal_tool_return_audio_url_force_download():
-    """Test Responses API maps AudioUrl with force_download=True in tool returns correctly."""
-
-    audio_url = AudioUrl(url='https://example.com/audio.mp3', force_download=True)
-    part = ToolReturnPart(tool_name='get_audio', content=audio_url, tool_call_id='audio1')
-
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
-        mock_download.return_value = {
-            'data': 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0U=',
-            'data_type': 'mp3',
-        }
-        result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    mock_download.assert_called_once()
-    assert result == snapshot(
-        [{'type': 'input_file', 'file_data': 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0U=', 'filename': 'filename.mp3'}]
-    )
-
-
-async def test_responses_api_multimodal_tool_return_document_url_force_download():
-    """Test Responses API maps DocumentUrl with force_download=True in tool returns correctly."""
-
-    doc_url = DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
-    part = ToolReturnPart(tool_name='get_doc', content=doc_url, tool_call_id='doc1')
-
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
-        mock_download.return_value = {
-            'data': 'data:application/pdf;base64,JVBERi0xLjQK',
-            'data_type': 'pdf',
-        }
-        result = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
-
-    mock_download.assert_called_once()
-    assert result == snapshot(
-        [{'type': 'input_file', 'file_data': 'data:application/pdf;base64,JVBERi0xLjQK', 'filename': 'filename.pdf'}]
-    )
-
-
-async def test_responses_api_multimodal_tool_return_unsupported_binary_type():
-    """Test Responses API raises error for unsupported BinaryContent media type in tool returns."""
-    import pytest
-
-    binary_audio = BinaryContent(data=b'audio data', media_type='audio/mp3')
-    part = ToolReturnPart(tool_name='get_audio', content=binary_audio, tool_call_id='audio1')
-
-    with pytest.raises(RuntimeError, match='Unsupported binary content type: audio/mp3'):
-        await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
