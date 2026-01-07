@@ -99,13 +99,14 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
             return await super().get_tools(ctx)
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        activity_config: ActivityConfig = {'summary': f'get tools: {self.id}', **self.activity_config}
         tool_defs = await workflow.execute_activity(
             activity=self.get_tools_activity,
             args=[
                 _GetToolsParams(serialized_run_context=serialized_run_context),
                 ctx.deps,
             ],
-            **self.activity_config,
+            **activity_config,
         )
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
@@ -119,7 +120,11 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
+        activity_config: ActivityConfig = {
+            'summary': f'call tool: {self.id}:{name}',
+            **self.activity_config,
+            **self.tool_activity_config.get(name, {}),
+        }
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(
             await workflow.execute_activity(
@@ -133,6 +138,6 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
                     ),
                     ctx.deps,
                 ],
-                **tool_activity_config,
+                **activity_config,
             )
         )
