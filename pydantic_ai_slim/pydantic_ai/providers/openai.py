@@ -81,5 +81,9 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='openai')
+            http_client = httpx.AsyncClient() #  cached_async_http_client(provider='openai')
             self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+
+    def __del__(self) -> None:
+        print('this was called.')
+        del self._client
