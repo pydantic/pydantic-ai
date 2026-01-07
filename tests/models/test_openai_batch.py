@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -40,6 +40,7 @@ with try_import() as imports_successful:
     from openai.types.batch_request_counts import BatchRequestCounts
 
     from pydantic_ai.models.openai import OpenAIBatch, OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -277,8 +278,7 @@ class TestOpenAIChatModelBatch:
         """Test that batch_create builds proper JSONL and uploads."""
         mock_client = MockOpenAIBatch()
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
@@ -308,8 +308,7 @@ class TestOpenAIChatModelBatch:
     async def test_batch_create_minimum_requests(self, allow_model_requests: None):
         """Test that batch_create requires at least 2 requests."""
         mock_client = MockOpenAIBatch()
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         requests = [
@@ -336,8 +335,7 @@ class TestOpenAIChatModelBatch:
             )
         ]
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         initial_batch = OpenAIBatch(
             id='batch_123',
@@ -382,8 +380,7 @@ class TestOpenAIChatModelBatch:
         mock_client = MockOpenAIBatch()
         mock_client.file_content_responses['file_output'] = output_content
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         batch = OpenAIBatch(
             id='batch_123',
@@ -406,8 +403,7 @@ class TestOpenAIChatModelBatch:
     async def test_batch_results_incomplete_raises(self, allow_model_requests: None):
         """Test batch_results raises if batch not complete."""
         mock_client = MockOpenAIBatch()
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         batch = OpenAIBatch(
             id='batch_123',
@@ -422,8 +418,7 @@ class TestOpenAIChatModelBatch:
     async def test_batch_cancel(self, allow_model_requests: None):
         """Test batch_cancel sends cancel request."""
         mock_client = MockOpenAIBatch()
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         batch = OpenAIBatch(
             id='batch_123',
@@ -446,43 +441,35 @@ class TestDirectAPIBatchFunctions:
     async def test_batch_create_direct_api(self, allow_model_requests: None):
         """Test batch_create Direct API function."""
         mock_client = MockOpenAIBatch()
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
-        with patch('pydantic_ai.models.openai.AsyncOpenAI', return_value=mock_client):
-            from pydantic_ai.models.openai import OpenAIChatModel
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+        requests = [
+            ('req-1', messages_1, ModelRequestParameters()),
+            ('req-2', messages_2, ModelRequestParameters()),
+        ]
 
-            model = OpenAIChatModel('gpt-4o-mini')
-            model.client = cast(AsyncOpenAI, mock_client)
+        batch = await batch_create(model, requests)
 
-            messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
-            messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
-            requests = [
-                ('req-1', messages_1, ModelRequestParameters()),
-                ('req-2', messages_2, ModelRequestParameters()),
-            ]
-
-            batch = await batch_create(model, requests)
-
-            assert batch.id == 'batch_abc123'
-            assert batch.status == BatchStatus.VALIDATING
+        assert batch.id == 'batch_abc123'
+        assert batch.status == BatchStatus.VALIDATING
 
     async def test_batch_create_direct_api_simple_tuples(self, allow_model_requests: None):
         """Test batch_create Direct API with simple 2-tuples (no explicit params)."""
         mock_client = MockOpenAIBatch()
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
-        with patch('pydantic_ai.models.openai.AsyncOpenAI', return_value=mock_client):
-            model = OpenAIChatModel('gpt-4o-mini')
-            model.client = cast(AsyncOpenAI, mock_client)
+        # Use simple 2-tuples - parameters should default
+        requests: list[tuple[str, list[ModelMessage]]] = [
+            ('req-1', [ModelRequest.user_text_prompt('Hello')]),
+            ('req-2', [ModelRequest.user_text_prompt('World')]),
+        ]
 
-            # Use simple 2-tuples - parameters should default
-            requests: list[tuple[str, list[ModelMessage]]] = [
-                ('req-1', [ModelRequest.user_text_prompt('Hello')]),
-                ('req-2', [ModelRequest.user_text_prompt('World')]),
-            ]
+        batch = await batch_create(model, requests)
 
-            batch = await batch_create(model, requests)
-
-            assert batch.id == 'batch_abc123'
-            assert batch.status == BatchStatus.VALIDATING
+        assert batch.id == 'batch_abc123'
+        assert batch.status == BatchStatus.VALIDATING
 
     async def test_batch_status_direct_api(self, allow_model_requests: None):
         """Test batch_status Direct API function."""
@@ -500,10 +487,7 @@ class TestDirectAPIBatchFunctions:
             )
         ]
 
-        from pydantic_ai.models.openai import OpenAIChatModel
-
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         initial_batch = OpenAIBatch(
             id='batch_123',
@@ -542,10 +526,7 @@ class TestDirectAPIBatchFunctions:
         mock_client = MockOpenAIBatch()
         mock_client.file_content_responses['file_output'] = json.dumps(output_line)
 
-        from pydantic_ai.models.openai import OpenAIChatModel
-
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         batch = OpenAIBatch(
             id='batch_123',
@@ -564,10 +545,7 @@ class TestDirectAPIBatchFunctions:
         """Test batch_cancel Direct API function."""
         mock_client = MockOpenAIBatch()
 
-        from pydantic_ai.models.openai import OpenAIChatModel
-
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         batch = OpenAIBatch(
             id='batch_123',
@@ -583,8 +561,7 @@ class TestDirectAPIBatchFunctions:
     def test_batch_create_sync(self, allow_model_requests: None):
         """Test synchronous batch_create."""
         mock_client = MockOpenAIBatch()
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
@@ -611,8 +588,7 @@ class TestDirectAPIBatchFunctions:
                 status='completed',
             )
         ]
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         initial_batch = OpenAIBatch(
             id='batch_123',
@@ -629,8 +605,7 @@ class TestDirectAPIBatchFunctions:
         """Test synchronous batch_cancel."""
         mock_client = MockOpenAIBatch()
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         batch = OpenAIBatch(
             id='batch_123',
@@ -672,8 +647,7 @@ class TestDirectAPIBatchFunctions:
         mock_client = MockOpenAIBatch()
         mock_client.file_content_responses['file_output'] = json.dumps(response_line)
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         batch = OpenAIBatch(
             id='batch_123',
@@ -799,8 +773,7 @@ class TestBatchErrorHandling:
         mock_client = MockOpenAIBatch()
         mock_client.file_content_responses['file_output'] = output_content
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         batch = OpenAIBatch(
             id='batch_123',
@@ -831,8 +804,7 @@ class TestBatchErrorHandling:
         mock_client = MockOpenAIBatch()
         mock_client.file_content_responses['file_output'] = ''
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        model.client = cast(AsyncOpenAI, mock_client)
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
 
         batch = OpenAIBatch(
             id='batch_123',
