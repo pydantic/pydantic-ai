@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -73,8 +73,6 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
-    # TODO(Marcelo): We are temporarily disabling it. We should enable them again.
-    pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
 ]
 
 
@@ -102,81 +100,55 @@ def setup_logfire_instrumentation() -> Iterator[None]:
 
 @pytest.fixture(autouse=True, scope='session')
 def setup_prefect_test_harness() -> Iterator[None]:
-    """Set up Prefect test harness with in-process ASGI server.
+    """Set up Prefect test harness for tests with default httpx connection pool limits.
 
-    This runs the Prefect server using uvicorn in a thread instead of a subprocess
-    to avoid HTTP connection pool issues with nested flows (see issue #3929).
+    Prefect overrides httpx defaults with conservative limits (max_connections=16,
+    max_keepalive_connections=8) which can cause PoolTimeout errors with nested flows.
+    We restore the httpx defaults (unlimited connections) to prevent pool exhaustion.
     """
-    import atexit
-    import shutil
-    import socket
-    import threading
-    import time
-    from contextlib import ExitStack
-    from pathlib import Path
-    from tempfile import mkdtemp
+    import functools
+    from unittest.mock import patch
 
-    import prefect.settings
-    import uvicorn
-    from prefect.logging.handlers import APILogWorker
-    from prefect.server.api.server import create_app
-    from prefect.server.database.dependencies import temporary_database_interface
+    import httpx
+    from prefect.client.orchestration import PrefectClient, SyncPrefectClient
 
-    # Create temp directory for the testing database
-    temp_dir = mkdtemp()
-    atexit.register(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+    # Suppress deprecation warnings from starlette/fastapi imports
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=DeprecationWarning)
+        from prefect.testing.utilities import prefect_test_harness
 
-    with ExitStack() as stack:
-        # Set up temporary database interface
-        stack.enter_context(temporary_database_interface())
+    # Store original __init__ methods
+    original_async_init = PrefectClient.__init__
+    original_sync_init = SyncPrefectClient.__init__
 
-        # Configure SQLite database path
-        db_path = 'sqlite+aiosqlite:///' + str(Path(temp_dir) / 'prefect-test.db')
-        stack.enter_context(
-            prefect.settings.temporary_settings(
-                updates={
-                    prefect.settings.PREFECT_API_DATABASE_CONNECTION_URL: db_path,
-                }
-            )
-        )
+    # Use httpx defaults (unlimited connections) instead of Prefect's conservative limits
+    # which can cause PoolTimeout errors with nested flows
+    default_limits = httpx.Limits()
 
-        # Create the ASGI app with webserver_only to disable all background services
-        app = create_app(webserver_only=True, ignore_cache=True)
+    @functools.wraps(original_async_init)
+    def patched_async_init(self: PrefectClient, *args: Any, **kwargs: Any) -> None:
+        # Inject default limits if not already specified
+        httpx_settings: dict[str, Any] = kwargs.get('httpx_settings') or {}
+        if 'limits' not in httpx_settings:
+            httpx_settings = {**httpx_settings, 'limits': default_limits}
+            kwargs['httpx_settings'] = httpx_settings
+        original_async_init(self, *args, **kwargs)
 
-        # Find a free port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('127.0.0.1', 0))
-            port = s.getsockname()[1]
+    @functools.wraps(original_sync_init)
+    def patched_sync_init(self: SyncPrefectClient, *args: Any, **kwargs: Any) -> None:
+        # Inject default limits if not already specified
+        httpx_settings: dict[str, Any] = kwargs.get('httpx_settings') or {}
+        if 'limits' not in httpx_settings:
+            httpx_settings = {**httpx_settings, 'limits': default_limits}
+            kwargs['httpx_settings'] = httpx_settings
+        original_sync_init(self, *args, **kwargs)
 
-        # Run server in a daemon thread
-        config = uvicorn.Config(app, host='127.0.0.1', port=port, log_level='warning')
-        server = uvicorn.Server(config)
-
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-
-        # Wait for server to start
-        time.sleep(2)
-
-        # Configure Prefect to use our local server
-        api_url = f'http://127.0.0.1:{port}/api'
-        stack.enter_context(
-            prefect.settings.temporary_settings(
-                updates={
-                    prefect.settings.PREFECT_API_URL: api_url,
-                }
-            )
-        )
-
-        try:
-            yield
-        finally:
-            # Drain logs before shutdown
-            APILogWorker.instance().drain()
-
-            # Signal server to stop
-            server.should_exit = True
-            thread.join(timeout=5)
+    with (
+        patch.object(PrefectClient, '__init__', patched_async_init),
+        patch.object(SyncPrefectClient, '__init__', patched_sync_init),
+        prefect_test_harness(),
+    ):
+        yield
 
 
 @contextmanager
