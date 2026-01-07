@@ -1,12 +1,15 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import os
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from functools import cached_property
 from typing import overload
 
 import httpx
+from typing_extensions import Self
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers import Provider
 
@@ -78,12 +81,40 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
+            self._user_provided_client = True
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = httpx.AsyncClient() #  cached_async_http_client(provider='openai')
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+
+        self._entered_count = 0
 
     def __del__(self) -> None:
         print('this was called.')
         del self._client
+
+    @cached_property
+    def _enter_lock(self) -> asyncio.Lock:
+        return asyncio.Lock()
+
+    async def __aenter__(self) -> Self:
+        # Get current asyncio task.
+        async with self._enter_lock:
+            if self._entered_count == 0:
+                async with AsyncExitStack() as exit_stack:
+                    await exit_stack.enter_async_context(self._client)
+
+                    self._exit_stack = exit_stack.pop_all()
+            self._entered_count += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        async with self._enter_lock:
+            self._entered_count -= 1
+            if self._entered_count == 0 and self._exit_stack is not None:
+                await self._exit_stack.aclose()
+                self._exit_stack = None
+
+
+# The idea is to abstract the above here.
+class EnterOnce(AbstractAsyncContextManager): ...
