@@ -35,7 +35,6 @@ from pydantic_ai.usage import RequestUsage
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
     from openai.types import Batch as OpenAIBatchResponse
     from openai.types.batch_request_counts import BatchRequestCounts
 
