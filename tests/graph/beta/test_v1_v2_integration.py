@@ -17,7 +17,7 @@ pytestmark = pytest.mark.anyio
 
 @dataclass
 class IntegrationState:
-    log: list[str] = field(default_factory=list)
+    log: list[str] = field(default_factory=list[str])
 
 
 async def test_v1_nodes_in_v2_graph():

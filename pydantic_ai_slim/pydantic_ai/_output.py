@@ -249,11 +249,11 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         if allows_image:
             outputs = [output for output in outputs if output is not _messages.BinaryImage]
 
-        if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
+        if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
                 raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
 
-            flattened_outputs = _flatten_output_spec(output.outputs)
+            flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
                 raise UserError(  # pragma: no cover
@@ -275,11 +275,11 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
             )
-        elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
+        elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
                 raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
 
-            flattened_outputs = _flatten_output_spec(output.outputs)
+            flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
                 raise UserError(  # pragma: no cover
@@ -308,9 +308,9 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             if output is str:
                 text_outputs.append(cast(type[str], output))
             elif isinstance(output, TextOutput):
-                text_outputs.append(output)
+                text_outputs.append(output)  # pyright: ignore[reportUnknownArgumentType]
             elif isinstance(output, ToolOutput):
-                tool_outputs.append(output)
+                tool_outputs.append(output)  # pyright: ignore[reportUnknownArgumentType]
             elif isinstance(output, NativeOutput):
                 # We can never get here because this is checked for above.
                 raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
@@ -897,13 +897,13 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 description = output.description
                 strict = output.strict
 
-                output = output.output
+                output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
             description = description or default_description
             if strict is None:
                 strict = default_strict
 
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
+            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)  # pyright: ignore[reportUnknownArgumentType]
             object_def = processor.object_def
 
             if name is None:
@@ -991,7 +991,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem[T]]:
     outputs: Sequence[OutputSpec[T]]
     if isinstance(output_spec, Sequence):
-        outputs = output_spec
+        outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
         outputs = (output_spec,)
 
@@ -1009,20 +1009,20 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
     outputs: Sequence[OutputSpec[T]]
     if isinstance(output_spec, Sequence):
-        outputs = output_spec
+        outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
         outputs = (output_spec,)
 
     outputs_flat: list[T | type[str]] = []
     for output in outputs:
         if isinstance(output, NativeOutput):
-            outputs_flat.extend(types_from_output_spec(output.outputs))
+            outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         elif isinstance(output, PromptedOutput):
-            outputs_flat.extend(types_from_output_spec(output.outputs))
+            outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         elif isinstance(output, TextOutput):
             outputs_flat.append(str)
         elif isinstance(output, ToolOutput):
-            outputs_flat.extend(types_from_output_spec(output.output))
+            outputs_flat.extend(types_from_output_spec(output.output))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         elif union_types := _utils.get_union_args(output):
             outputs_flat.extend(union_types)
         elif inspect.isfunction(output) or inspect.ismethod(output):

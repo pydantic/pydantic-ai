@@ -63,8 +63,8 @@ code_examples: dict[str, CodeExample] = {}
 
 @dataclass
 class ExamplesConfig(BaseExamplesConfig):
-    known_first_party: list[str] = field(default_factory=list)
-    known_local_folder: list[str] = field(default_factory=list)
+    known_first_party: list[str] = field(default_factory=list[str])
+    known_local_folder: list[str] = field(default_factory=list[str])
 
     def ruff_config(self) -> tuple[str, ...]:
         config = super().ruff_config()

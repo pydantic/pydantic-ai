@@ -90,7 +90,7 @@ class _CaseModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'
     inputs: InputsT
     metadata: MetadataT | None = None
     expected_output: OutputT | None = None
-    evaluators: list[EvaluatorSpec] = Field(default_factory=list)
+    evaluators: list[EvaluatorSpec] = Field(default_factory=list[EvaluatorSpec])
 
 
 class _DatasetModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'):
@@ -100,7 +100,7 @@ class _DatasetModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forb
     json_schema_path: str | None = Field(default=None, alias='$schema')
     name: str | None = None
     cases: list[_CaseModel[InputsT, OutputT, MetadataT]]
-    evaluators: list[EvaluatorSpec] = Field(default_factory=list)
+    evaluators: list[EvaluatorSpec] = Field(default_factory=list[EvaluatorSpec])
 
 
 @dataclass(init=False)
@@ -136,7 +136,9 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
     """
     expected_output: OutputT | None = None
     """Expected output of the task. This is the expected output of the task that will be evaluated."""
-    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = field(default_factory=list)
+    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = field(
+        default_factory=list[Evaluator[InputsT, OutputT, MetadataT]]
+    )
     """Evaluators to be used just on this case."""
 
     def __init__(
@@ -738,8 +740,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         class Case(BaseModel, extra='forbid'):  # pyright: ignore[reportUnusedClass]  # this _is_ used below, but pyright doesn't seem to notice..
             name: str | None = None
             inputs: in_type  # pyright: ignore[reportInvalidTypeForm]
-            metadata: meta_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
-            expected_output: out_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
+            metadata: meta_type | None = None  # pyright: ignore[reportInvalidTypeForm]
+            expected_output: out_type | None = None  # pyright: ignore[reportInvalidTypeForm]
             if evaluator_schema_types:  # pragma: no branch
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
 
@@ -854,8 +856,8 @@ def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') 
 class _TaskRun:
     """Internal class to track metrics and attributes for a task run."""
 
-    attributes: dict[str, Any] = field(init=False, default_factory=dict)
-    metrics: dict[str, int | float] = field(init=False, default_factory=dict)
+    attributes: dict[str, Any] = field(init=False, default_factory=dict[str, Any])
+    metrics: dict[str, int | float] = field(init=False, default_factory=dict[str, int | float])
 
     def record_metric(self, name: str, value: int | float) -> None:
         """Record a metric value.
