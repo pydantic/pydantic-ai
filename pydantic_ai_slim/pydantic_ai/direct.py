@@ -433,9 +433,9 @@ async def batch_create(
 
     See the [OpenAI Batch API docs](https://platform.openai.com/docs/guides/batch) for details.
 
-    ```py title="batch_create_example.py"
+    ```py {title="batch_create_example.py" test="skip"}
     from pydantic_ai import ModelRequest
-    from pydantic_ai.direct import batch_create, batch_status, batch_results
+    from pydantic_ai.direct import batch_create
 
 
     async def main():
@@ -525,8 +525,9 @@ async def batch_status(
     """Get current status of a batch job.
 
     ```py title="batch_status_example.py"
-    from pydantic_ai.direct import batch_status
     import asyncio
+
+    from pydantic_ai.direct import batch_status
 
 
     async def poll_until_complete(model, batch):

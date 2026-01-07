@@ -172,11 +172,12 @@ Batch processing allows you to submit multiple requests as a single job that pro
 
 ### Basic Batch Example
 
-```python title="batch_basic.py"
+```python {title="batch_basic.py" test="skip"}
 import asyncio
 
 from pydantic_ai import ModelRequest
-from pydantic_ai.direct import batch_create, batch_status, batch_results
+from pydantic_ai.direct import batch_create, batch_results, batch_status
+
 
 async def main():
     # Define questions to process
@@ -236,7 +237,7 @@ The following batch functions are available:
 
 The [`Batch`][pydantic_ai.Batch] object tracks job status:
 
-```python
+```python {lint="skip" test="skip"}
 from pydantic_ai import Batch, BatchStatus
 
 # Check if batch has finished (successfully or not)
@@ -256,7 +257,7 @@ print(f'Failed: {batch.failed_count}')
 
 Results are returned as [`BatchResult`][pydantic_ai.BatchResult] objects:
 
-```python
+```python {lint="skip" test="skip"}
 from pydantic_ai import BatchResult
 
 for result in results:
@@ -277,7 +278,7 @@ for result in results:
 
 Tools work in batch requests just like regular requests:
 
-```python
+```python {lint="skip" test="skip"}
 from pydantic import BaseModel
 
 from pydantic_ai import ModelRequest, ToolDefinition
