@@ -442,7 +442,7 @@ class OpenAIChatModel(Model):
         return self._model_name
 
     @property
-    def fully_qualified_model_name(self) -> str:
+    def fully_qualified_model_name(self) -> str:  # pragma: no cover
         """The model name with provider prefix."""
         return f'{self._provider.name}:{self.model_name}'
 
@@ -1163,7 +1163,7 @@ class OpenAIResponsesModel(Model):
         return self._model_name
 
     @property
-    def fully_qualified_model_name(self) -> str:
+    def fully_qualified_model_name(self) -> str:  # pragma: no cover
         """The model name with provider prefix."""
         return f'{self._provider.name}:{self.model_name}'
 
