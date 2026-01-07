@@ -72,6 +72,8 @@ jobs:
     name: Set Category Label
     runs-on: ubuntu-latest
     if: github.event.action == 'opened'
+    permissions:
+      id-token: write
     steps:
       - name: Check if category label already exists
         id: check-label
@@ -123,15 +125,3 @@ jobs:
             gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels --method POST -f "labels[]=<category>"
 
             Only output the gh command you ran and a brief explanation of why you chose that category.
-
-  # Placeholder for future priority labeling
-  # priority-label:
-  #   name: Set Priority Label
-  #   runs-on: ubuntu-latest
-  #   if: github.event.action == 'opened'
-  #   steps:
-  #     - name: Check linked issue milestone
-  #       run: |
-  #         # Get linked issues from PR body
-  #         # Check if any are in current milestone
-  #         # Set priority: P1/P2/P3 accordingly
