@@ -277,23 +277,11 @@ class InstrumentationSettings:
             output_message = output_messages[0]
 
             instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
-
-            system_parts: list[dict[str, Any]] = []
-            if self.include_content:
-                for message in input_messages:
-                    if isinstance(message, ModelRequest):
-                        for part in message.parts:
-                            if isinstance(part, SystemPromptPart):
-                                system_parts.append(_otel_messages.TextPart(type='text', content=part.content))
-
-            system_instructions_list: list[dict[str, Any]] = []
-            if instructions:
-                system_instructions_list.append(_otel_messages.TextPart(type='text', content=instructions))
-            system_instructions_list.extend(system_parts)
-
             system_instructions_attributes: dict[str, str] = {}
-            if system_instructions_list:
-                system_instructions_attributes['gen_ai.system_instructions'] = json.dumps(system_instructions_list)
+            if instructions and self.include_content:
+                system_instructions_attributes['gen_ai.system_instructions'] = json.dumps([
+                    _otel_messages.TextPart(type='text', content=instructions)
+                ])
 
             attributes: dict[str, AttributeValue] = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
@@ -361,10 +349,32 @@ class InstrumentationSettings:
                 self.cost_histogram.record(cost, token_attributes)
 
 
-GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
-GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
-# Preserved for backward compatibility (deprecated per OTel GenAI semconv)
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
+GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
+GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
+
+
+def _build_tool_definitions(model_request_parameters: 'ModelRequestParameters') -> list[dict[str, Any]]:
+    """Build OTel-compliant tool definitions from model request parameters.
+
+    Extracts tool metadata from function_tools and output_tools into a list of
+    tool definition dicts following the OTel GenAI semantic conventions format.
+    """
+    all_tools = itertools.chain(
+        model_request_parameters.function_tools or [],
+        model_request_parameters.output_tools or [],
+    )
+
+    tool_definitions: list[dict[str, Any]] = []
+    for tool in all_tools:
+        tool_def: dict[str, Any] = {'type': 'function', 'name': tool.name}
+        if tool.description:
+            tool_def['description'] = tool.description
+        if tool.parameters_json_schema:
+            tool_def['parameters'] = tool.parameters_json_schema
+        tool_definitions.append(tool_def)
+
+    return tool_definitions
 
 
 @dataclass(init=False)
@@ -447,31 +457,9 @@ class InstrumentedModel(WrapperModel):
             ),
         }
 
-        # Extract tool definitions if available (per OTel GenAI semconv)
-        if model_request_parameters.function_tools or model_request_parameters.output_tools:
-            tool_definitions = []
-            for tool in model_request_parameters.function_tools or []:
-                tool_def: dict[str, Any] = {
-                    'type': 'function',
-                    'name': tool.name,
-                }
-                if tool.description:
-                    tool_def['description'] = tool.description
-                if tool.parameters_json_schema:
-                    tool_def['parameters'] = tool.parameters_json_schema
-                tool_definitions.append(tool_def)
-            for tool in model_request_parameters.output_tools or []:
-                tool_def = {
-                    'type': 'function',
-                    'name': tool.name,
-                }
-                if tool.description:
-                    tool_def['description'] = tool.description
-                if tool.parameters_json_schema:
-                    tool_def['parameters'] = tool.parameters_json_schema
-                tool_definitions.append(tool_def)
-            if tool_definitions:
-                attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
+        tool_definitions = _build_tool_definitions(model_request_parameters)
+        if tool_definitions:
+            attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
 
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:

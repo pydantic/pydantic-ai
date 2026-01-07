@@ -845,10 +845,7 @@ Fix the errors and try again.\
                             }
                         ],
                         'gen_ai.response.model': 'gpt-4o-2024-11-20',
-                        'gen_ai.system_instructions': [
-                            {'type': 'text', 'content': 'instructions'},
-                            {'type': 'text', 'content': 'system_prompt'},
-                        ],
+                        'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
                         'gen_ai.usage.details.reasoning_tokens': 30,
