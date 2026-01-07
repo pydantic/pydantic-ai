@@ -690,6 +690,14 @@ class FileId:
     kind: Literal['file-id'] = 'file-id'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    @property
+    def identifier(self) -> str:
+        """The identifier of the file.
+
+        For FileId, this returns the file_id which serves as its unique identifier.
+        """
+        return self.file_id
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -813,6 +821,10 @@ class UserPromptPart:
                 parts.append(converted_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
+                pass
+            elif isinstance(part, FileId):
+                # FileId references provider-hosted files by ID, not a URL
+                # We don't have a specific otel message type for this, so skip it
                 pass
             else:
                 parts.append({'type': part.kind})  # pragma: no cover
