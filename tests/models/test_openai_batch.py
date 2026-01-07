@@ -194,9 +194,9 @@ class MockOpenAIBatch:
 
         async def create(self, **kwargs: Any) -> OpenAIBatchResponse:
             self.parent.batch_create_calls.append(kwargs)
-            if self.parent.batches_list:
-                return self.parent.batches_list[0]
-            return OpenAIBatchResponse(  # pragma: no cover
+            if self.parent.batches_list:  # pragma: no cover
+                return self.parent.batches_list[0]  # pragma: no cover
+            return OpenAIBatchResponse(
                 id='batch_abc123',
                 completion_window='24h',
                 created_at=1704067200,  # 2024-01-01
@@ -207,7 +207,7 @@ class MockOpenAIBatch:
             )
 
         async def retrieve(self, batch_id: str) -> OpenAIBatchResponse:
-            for batch in self.parent.batches_list:
+            for batch in self.parent.batches_list:  # pragma: no branch
                 if batch.id == batch_id:
                     return batch
             return OpenAIBatchResponse(  # pragma: no cover
