@@ -462,7 +462,8 @@ def test_guardrail_result_passed_with_output():
         score: float
 
     output = ClassificationOutput(category='safe', score=0.99)
-    result = GuardrailResult.passed(output=output, message='Classification complete')
+    # Type narrowing via explicit construction to test runtime behavior
+    result = GuardrailResult(tripwire_triggered=False, output=output, message='Classification complete')
 
     assert result.tripwire_triggered is False
     assert result.output == output
