@@ -83,7 +83,7 @@ class GuardrailResult(Generic[T]):
             A GuardrailResult with tripwire_triggered=False.
 
         Example:
-            ```python {lint="skip"}
+            ```python {test="skip" lint="skip"}
             result = GuardrailResult.passed(message='Content is safe')
             ```
         """
@@ -102,7 +102,7 @@ class GuardrailResult(Generic[T]):
             A GuardrailResult with tripwire_triggered=True.
 
         Example:
-            ```python {lint="skip"}
+            ```python {test="skip" lint="skip"}
             result = GuardrailResult.blocked(
                 message='PII detected in input',
                 detected_pii_types=['email', 'phone'],
@@ -124,7 +124,7 @@ class InputGuardrailTripwireTriggered(AgentRunError):
         result: The GuardrailResult that triggered the exception.
 
     Example:
-        ```python {lint="skip"}
+        ```python {test="skip" lint="skip"}
         from pydantic_ai.guardrails import InputGuardrailTripwireTriggered
 
 
@@ -161,7 +161,7 @@ class OutputGuardrailTripwireTriggered(AgentRunError):
         result: The GuardrailResult that triggered the exception.
 
     Example:
-        ```python {lint="skip"}
+        ```python {test="skip" lint="skip"}
         from pydantic_ai.guardrails import OutputGuardrailTripwireTriggered
 
 
