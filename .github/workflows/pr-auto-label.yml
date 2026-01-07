@@ -56,9 +56,11 @@ jobs:
 
           echo "Size: $SIZE"
 
-          # Remove any existing size labels via API
+          # Remove any existing size labels (except the one we're setting) via API
           for label in "size: S" "size: M" "size: L" "size: XL"; do
-            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/${label}" --method DELETE 2>/dev/null || true
+            if [ "$label" != "$SIZE" ]; then
+              gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/${label}" --method DELETE 2>/dev/null || true
+            fi
           done
 
           # Add the new size label via API
