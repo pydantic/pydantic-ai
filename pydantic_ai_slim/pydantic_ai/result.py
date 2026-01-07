@@ -719,7 +719,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
         # Re-raise any exception from the background thread
         if self._exception is not None and exc_type is None:
-            raise self._exception
+            raise self._exception  # pragma: no cover
 
     def _run_async_stream(self) -> None:
         """Run the async stream lifecycle in a background thread.
