@@ -3497,9 +3497,10 @@ def test_run_stream_sync_context_manager_early_exit():
     agent = Agent(m)
 
     with agent.run_stream_sync('Hello') as result:
-        # Only get one chunk and exit early
-        for _ in result.stream_output():
-            break  # Exit after first chunk
+        # Get the iterator but only consume one item
+        iterator = iter(result.stream_output())
+        next(iterator)
+        # Exit without consuming the rest
 
     # The context manager should still complete without hanging
     # and we should be able to access results
