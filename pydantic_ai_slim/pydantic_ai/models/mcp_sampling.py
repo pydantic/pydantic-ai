@@ -102,4 +102,3 @@ class MCPSamplingModel(Model):
     def system(self) -> str:
         """The system / model provider, returns `'MCP'`."""
         return 'MCP'
-
