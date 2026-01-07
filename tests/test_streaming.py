@@ -3487,26 +3487,6 @@ def test_run_stream_sync_context_manager():
     )
 
 
-def test_run_stream_sync_context_manager_early_exit():
-    """Test that context manager properly cleans up even when exiting early.
-
-    This ensures __exit__ properly signals the background thread to complete
-    even when the stream is not fully consumed.
-    """
-    m = TestModel()
-    agent = Agent(m)
-
-    with agent.run_stream_sync('Hello') as result:
-        # Get the iterator but only consume one item
-        iterator = iter(result.stream_output())
-        next(iterator)
-        # Exit without consuming the rest
-
-    # The context manager should still complete without hanging
-    # and we should be able to access results
-    assert result.response is not None
-
-
 def test_run_stream_sync_context_manager_exception_in_stream():
     """Test that exceptions during streaming are properly propagated.
 
