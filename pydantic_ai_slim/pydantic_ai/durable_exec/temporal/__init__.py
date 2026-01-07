@@ -53,7 +53,7 @@ def _data_converter(converter: DataConverter | None) -> DataConverter:
     # If using a non-Pydantic payload converter, warn and replace just the payload converter class,
     # preserving any custom payload_codec or failure_converter_class.
     if converter.payload_converter_class is not DefaultPayloadConverter:
-        warnings.warn(  # pragma: no cover
+        warnings.warn(
             'A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter. '
             'To suppress this warning, ensure your payload_converter_class inherits from PydanticPayloadConverter.'
         )
