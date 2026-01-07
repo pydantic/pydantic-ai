@@ -25,7 +25,7 @@ from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import _guardrail, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import _output, _system_prompt, exceptions, guardrails as _guardrails, messages as _messages, models, result, usage as _usage
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .guardrails import InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
@@ -155,11 +155,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     instrumentation_settings: InstrumentationSettings | None
 
     # Guardrails
-    input_guardrails: list[_guardrail.InputGuardrail[DepsT, Any]] = dataclasses.field(default_factory=list)
-    output_guardrails: list[_guardrail.OutputGuardrail[DepsT, OutputDataT, Any]] = dataclasses.field(
+    input_guardrails: list[_guardrails.InputGuardrail[DepsT, Any]] = dataclasses.field(default_factory=list)
+    output_guardrails: list[_guardrails.OutputGuardrail[DepsT, OutputDataT, Any]] = dataclasses.field(
         default_factory=list
     )
-    agent: Agent[DepsT, OutputDataT] | None = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -398,33 +397,27 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Run input guardrails and raise exception if any are triggered.
 
-        Blocking guardrails (run_in_parallel=False) run first sequentially.
-        Parallel guardrails (run_in_parallel=True) run concurrently.
+        Blocking guardrails run first sequentially.
+        Non-blocking guardrails run concurrently with each other.
         """
-        if not ctx.deps.input_guardrails or ctx.deps.agent is None:
+        if not ctx.deps.input_guardrails:
             return
 
         prompt = ctx.deps.prompt
-        # If no prompt, skip guardrails (nothing to validate)
         if prompt is None:
             return
 
-        # Separate blocking and parallel guardrails
-        blocking_guardrails = [g for g in ctx.deps.input_guardrails if not g.run_in_parallel]
-        parallel_guardrails = [g for g in ctx.deps.input_guardrails if g.run_in_parallel]
+        blocking = [g for g in ctx.deps.input_guardrails if g.blocking]
+        non_blocking = [g for g in ctx.deps.input_guardrails if not g.blocking]
 
-        # Run blocking guardrails sequentially first
-        for guardrail in blocking_guardrails:
-            result = await guardrail.run(ctx.deps.agent, prompt, run_context)
+        for guardrail in blocking:
+            result = await guardrail.run(prompt, run_context)
             if result.tripwire_triggered:
                 raise InputGuardrailTripwireTriggered(guardrail.name or 'input_guardrail', result)
 
-        # Run parallel guardrails concurrently
-        if parallel_guardrails:
-            results = await asyncio.gather(
-                *[guardrail.run(ctx.deps.agent, prompt, run_context) for guardrail in parallel_guardrails]
-            )
-            for guardrail, result in zip(parallel_guardrails, results):
+        if non_blocking:
+            results = await asyncio.gather(*[g.run(prompt, run_context) for g in non_blocking])
+            for guardrail, result in zip(non_blocking, results):
                 if result.tripwire_triggered:
                     raise InputGuardrailTripwireTriggered(guardrail.name or 'input_guardrail', result)
 
@@ -855,17 +848,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         output: Any,
     ) -> None:
-        """Run output guardrails and raise exception if any are triggered.
-
-        Output guardrails run sequentially (not in parallel) since they validate the final output.
-        """
-        if not ctx.deps.output_guardrails or ctx.deps.agent is None:
+        """Run output guardrails and raise exception if any are triggered."""
+        if not ctx.deps.output_guardrails:
             return
 
         run_context = build_run_context(ctx)
 
         for guardrail in ctx.deps.output_guardrails:
-            result = await guardrail.run(ctx.deps.agent, output, run_context)
+            result = await guardrail.run(output, run_context)
             if result.tripwire_triggered:
                 raise OutputGuardrailTripwireTriggered(guardrail.name or 'output_guardrail', result)
 

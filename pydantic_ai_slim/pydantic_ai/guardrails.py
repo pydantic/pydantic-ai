@@ -2,24 +2,34 @@
 
 Guardrails provide a way to validate, filter, and control agent inputs and outputs.
 They can be used to enforce safety policies, compliance requirements, or custom business rules.
-
-See [guardrails docs](./guardrails.md) for more information.
 """
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
+
+from . import _utils
+from .exceptions import AgentRunError
+from .messages import UserContent
+
+if TYPE_CHECKING:
+    from ._run_context import RunContext
 
 __all__ = (
     'GuardrailResult',
     'InputGuardrailTripwireTriggered',
     'OutputGuardrailTripwireTriggered',
+    'InputGuardrail',
+    'OutputGuardrail',
 )
 
 T = TypeVar('T', default=None)
+AgentDepsT = TypeVar('AgentDepsT', default=None)
+OutputDataT = TypeVar('OutputDataT', default=str)
 
 
 @dataclass
@@ -36,9 +46,7 @@ class GuardrailResult(Generic[T]):
         agent = Agent('openai:gpt-4o')
 
         @agent.input_guardrail
-        async def check_content(
-            ctx: RunContext[None], agent: Agent[None, str], prompt: str
-        ) -> GuardrailResult[None]:
+        async def check_content(ctx: RunContext[None], prompt: str) -> GuardrailResult[None]:
             if 'blocked_word' in prompt.lower():
                 return GuardrailResult.blocked(message='Content contains blocked word')
             return GuardrailResult.passed()
@@ -104,8 +112,7 @@ class GuardrailResult(Generic[T]):
         return cls(tripwire_triggered=True, output=output, message=message, metadata=metadata)
 
 
-@dataclass
-class InputGuardrailTripwireTriggered(Exception):
+class InputGuardrailTripwireTriggered(AgentRunError):
     """Exception raised when an input guardrail is triggered.
 
     This exception is raised when an input guardrail returns a GuardrailResult
@@ -140,8 +147,7 @@ class InputGuardrailTripwireTriggered(Exception):
         super().__init__(message)
 
 
-@dataclass
-class OutputGuardrailTripwireTriggered(Exception):
+class OutputGuardrailTripwireTriggered(AgentRunError):
     """Exception raised when an output guardrail is triggered.
 
     This exception is raised when an output guardrail returns a GuardrailResult
@@ -174,3 +180,94 @@ class OutputGuardrailTripwireTriggered(Exception):
         self.result = result
         message = result.message or f'Output guardrail "{guardrail_name}" triggered'
         super().__init__(message)
+
+
+# Input guardrail function signature: (ctx, prompt) -> GuardrailResult
+InputGuardrailFunc = (
+    Callable[['RunContext[AgentDepsT]', 'str | Sequence[UserContent]'], GuardrailResult[T]]
+    | Callable[['RunContext[AgentDepsT]', 'str | Sequence[UserContent]'], Awaitable[GuardrailResult[T]]]
+)
+
+# Output guardrail function signature: (ctx, output) -> GuardrailResult
+OutputGuardrailFunc = (
+    Callable[['RunContext[AgentDepsT]', OutputDataT], GuardrailResult[T]]
+    | Callable[['RunContext[AgentDepsT]', OutputDataT], Awaitable[GuardrailResult[T]]]
+)
+
+
+@dataclass
+class InputGuardrail(Generic[AgentDepsT, T]):
+    """Wrapper for input guardrail functions.
+
+    Input guardrails validate user prompts before the agent runs.
+
+    Attributes:
+        function: The guardrail function to execute.
+        blocking: If True, guardrail must pass before other guardrails run.
+            If False (default), guardrail runs concurrently with other non-blocking guardrails.
+        name: Name of the guardrail (defaults to function name).
+    """
+
+    function: InputGuardrailFunc[AgentDepsT, T]
+    """The guardrail function to execute."""
+
+    blocking: bool = False
+    """If True, guardrail must pass before other guardrails run."""
+
+    name: str | None = None
+    """Name of the guardrail (defaults to function name)."""
+
+    _is_async: bool = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self._is_async = _utils.is_async_callable(self.function)
+        if self.name is None:
+            self.name = getattr(self.function, '__name__', 'input_guardrail')
+
+    async def run(
+        self,
+        prompt: str | Sequence[UserContent],
+        run_context: RunContext[AgentDepsT],
+    ) -> GuardrailResult[T]:
+        """Execute the guardrail function."""
+        if self._is_async:
+            return await self.function(run_context, prompt)  # type: ignore
+        else:
+            return await _utils.run_in_executor(self.function, run_context, prompt)  # type: ignore
+
+
+@dataclass
+class OutputGuardrail(Generic[AgentDepsT, OutputDataT, T]):
+    """Wrapper for output guardrail functions.
+
+    Output guardrails validate agent responses before returning to the user.
+    They always run sequentially after the agent completes.
+
+    Attributes:
+        function: The guardrail function to execute.
+        name: Name of the guardrail (defaults to function name).
+    """
+
+    function: OutputGuardrailFunc[AgentDepsT, OutputDataT, T]
+    """The guardrail function to execute."""
+
+    name: str | None = None
+    """Name of the guardrail (defaults to function name)."""
+
+    _is_async: bool = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self._is_async = _utils.is_async_callable(self.function)
+        if self.name is None:
+            self.name = getattr(self.function, '__name__', 'output_guardrail')
+
+    async def run(
+        self,
+        output: OutputDataT,
+        run_context: RunContext[AgentDepsT],
+    ) -> GuardrailResult[T]:
+        """Execute the guardrail function."""
+        if self._is_async:
+            return await self.function(run_context, output)  # type: ignore
+        else:
+            return await _utils.run_in_executor(self.function, run_context, output)  # type: ignore
