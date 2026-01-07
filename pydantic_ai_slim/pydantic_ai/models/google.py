@@ -730,7 +730,9 @@ class GoogleModel(Model):
                             part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                         content.append(part_dict)  # pragma: lax no cover
                 elif isinstance(item, FileId):  # pragma: no cover
-                    raise NotImplementedError('FileId is not supported by Google. Use URL-based file references instead.')
+                    raise NotImplementedError(
+                        'FileId is not supported by Google. Use URL-based file references instead.'
+                    )
                 elif isinstance(item, CachePoint):
                     # Google doesn't support inline CachePoint markers. Google's caching requires
                     # pre-creating cache objects via the API, then referencing them by name using

@@ -791,7 +791,9 @@ class BedrockConverseModel(Model):
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, FileId):  # pragma: no cover
-                    raise NotImplementedError('FileId is not supported by Bedrock. Use S3 URLs or BinaryContent instead.')
+                    raise NotImplementedError(
+                        'FileId is not supported by Bedrock. Use S3 URLs or BinaryContent instead.'
+                    )
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching

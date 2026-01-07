@@ -400,7 +400,9 @@ class GeminiModel(Model):
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
                 elif isinstance(item, FileId):  # pragma: no cover
-                    raise NotImplementedError('FileId is not supported by Gemini. Use URL-based file references instead.')
+                    raise NotImplementedError(
+                        'FileId is not supported by Gemini. Use URL-based file references instead.'
+                    )
                 elif isinstance(item, CachePoint):
                     # Gemini doesn't support inline CachePoint markers. Google's caching requires
                     # pre-creating cache objects via the API, then referencing them by name using

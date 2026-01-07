@@ -660,17 +660,6 @@ class FileId:
 
     This allows referencing files that have been uploaded via provider-specific file APIs
     (e.g., Anthropic's Files API) rather than providing the file content directly.
-
-    Example:
-        ```python
-        from pydantic_ai import Agent, FileId
-
-        agent = Agent('anthropic:claude-sonnet-4-5')
-        result = agent.run_sync([
-            'What is the main content of this document?',
-            FileId('file-abc123'),
-        ])
-        ```
     """
 
     file_id: str
