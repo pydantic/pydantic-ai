@@ -62,6 +62,10 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
+    Batch,
+    BatchError,
+    BatchResult,
+    BatchStatus,
     Model,
     ModelRequestParameters,
     OpenAIChatCompatibleProvider,
@@ -125,6 +129,7 @@ __all__ = (
     'OpenAIChatModelSettings',
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
+    'OpenAIBatch',
 )
 
 OpenAIModelName = str | AllModels
@@ -201,6 +206,49 @@ def _resolve_openai_image_generation_size(
         )
 
     return mapped_size
+
+
+@dataclass
+class OpenAIBatch(Batch):
+    """OpenAI-specific batch job information.
+
+    Extends the base Batch class with OpenAI-specific fields like file IDs.
+    Use this with `OpenAIChatModel.batch_create()` to submit batch requests
+    at 50% reduced cost.
+
+    Example:
+        ```python
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.messages import ModelRequest
+        from pydantic_ai.models import ModelRequestParameters
+
+        model = OpenAIChatModel('gpt-4o-mini')
+        requests = [
+            ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+            ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+        ]
+        batch = await model.batch_create(requests)
+        print(f'Batch {batch.id} created with {batch.request_count} requests')
+        ```
+    """
+
+    input_file_id: str = ''
+    """ID of the uploaded JSONL file containing requests."""
+
+    output_file_id: str | None = None
+    """ID of the results file (available when completed)."""
+
+    error_file_id: str | None = None
+    """ID of the errors file (if any requests failed)."""
+
+    endpoint: str = '/v1/chat/completions'
+    """API endpoint for the batch requests."""
+
+    completion_window: str = '24h'
+    """Time window for batch completion."""
+
+    metadata: dict[str, str] | None = None
+    """User-provided metadata for the batch."""
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -1090,6 +1138,358 @@ class OpenAIChatModel(Model):
             ]
         )
         return ChatCompletionContentPartTextParam(text=text, type='text')
+
+    # --- Batch Processing Methods ---
+
+    async def _build_request_params(  # noqa: C901
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, Any]:
+        """Build OpenAI API parameters without making the request.
+
+        This method extracts the parameter-building logic from _completions_create()
+        so it can be reused for both regular requests and batch requests.
+
+        Returns:
+            Dictionary of parameters ready for chat.completions.create() or batch.
+        """
+        tools = self._get_tools(model_request_parameters)
+        web_search_options = self._get_web_search_options(model_request_parameters)
+
+        if not tools:
+            tool_choice: Literal['none', 'required', 'auto'] | None = None
+        elif (
+            not model_request_parameters.allow_text_output
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+        ):
+            tool_choice = 'required'
+        else:
+            tool_choice = 'auto'
+
+        openai_messages = await self._map_messages(messages, model_request_parameters)
+
+        response_format: chat.completion_create_params.ResponseFormat | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            response_format = self._map_json_schema(output_object)
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            response_format = {'type': 'json_object'}
+
+        # Make a copy to avoid modifying the original
+        settings_copy = dict(model_settings)
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            settings_copy.pop(setting, None)
+
+        # Build parameters dict
+        params: dict[str, Any] = {
+            'model': self.model_name,
+            'messages': openai_messages,
+        }
+
+        if tools:
+            params['tools'] = tools
+        if tool_choice:
+            params['tool_choice'] = tool_choice
+        if response_format:
+            params['response_format'] = response_format
+        if web_search_options:
+            params['web_search_options'] = web_search_options
+
+        # Add model settings
+        if 'parallel_tool_calls' in settings_copy:
+            params['parallel_tool_calls'] = settings_copy['parallel_tool_calls']
+        if 'stop_sequences' in settings_copy:
+            params['stop'] = settings_copy['stop_sequences']
+        if 'max_tokens' in settings_copy:
+            params['max_completion_tokens'] = settings_copy['max_tokens']
+        if 'seed' in settings_copy:
+            params['seed'] = settings_copy['seed']
+        if 'openai_reasoning_effort' in settings_copy:
+            params['reasoning_effort'] = settings_copy['openai_reasoning_effort']
+        if 'openai_user' in settings_copy:
+            params['user'] = settings_copy['openai_user']
+        if 'openai_service_tier' in settings_copy:
+            params['service_tier'] = settings_copy['openai_service_tier']
+        if 'openai_prediction' in settings_copy:
+            params['prediction'] = settings_copy['openai_prediction']
+        if 'temperature' in settings_copy:
+            params['temperature'] = settings_copy['temperature']
+        if 'top_p' in settings_copy:
+            params['top_p'] = settings_copy['top_p']
+        if 'presence_penalty' in settings_copy:
+            params['presence_penalty'] = settings_copy['presence_penalty']
+        if 'frequency_penalty' in settings_copy:
+            params['frequency_penalty'] = settings_copy['frequency_penalty']
+        if 'logit_bias' in settings_copy:
+            params['logit_bias'] = settings_copy['logit_bias']
+        if 'openai_logprobs' in settings_copy:
+            params['logprobs'] = settings_copy['openai_logprobs']
+        if 'openai_top_logprobs' in settings_copy:
+            params['top_logprobs'] = settings_copy['openai_top_logprobs']
+        if 'openai_prompt_cache_key' in settings_copy:
+            params['prompt_cache_key'] = settings_copy['openai_prompt_cache_key']
+        if 'openai_prompt_cache_retention' in settings_copy:
+            params['prompt_cache_retention'] = settings_copy['openai_prompt_cache_retention']
+
+        return params
+
+    async def batch_create(
+        self,
+        requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
+        model_settings: ModelSettings | None = None,
+        *,
+        metadata: dict[str, str] | None = None,
+        completion_window: Literal['24h'] = '24h',
+    ) -> OpenAIBatch:
+        """Submit a batch of chat completion requests to OpenAI.
+
+        Batch processing offers 50% cost reduction compared to regular API calls.
+        Batches are processed within the specified completion window (default 24h).
+
+        Args:
+            requests: List of (custom_id, messages, parameters) tuples.
+                - custom_id: Unique identifier to match results to requests
+                - messages: Message history for this request
+                - parameters: Tool definitions, output schema, etc.
+            model_settings: Settings applied to all requests in batch.
+            metadata: Optional metadata to attach to the batch.
+            completion_window: Time window for completion ('24h').
+
+        Returns:
+            OpenAIBatch with job information.
+
+        Raises:
+            ValueError: If batch contains fewer than 2 requests.
+
+        Example:
+            ```python
+            from pydantic_ai.models.openai import OpenAIChatModel
+            from pydantic_ai.messages import ModelRequest
+            from pydantic_ai.models import ModelRequestParameters
+
+            model = OpenAIChatModel('gpt-4o-mini')
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ]
+            batch = await model.batch_create(requests)
+            ```
+        """
+        import io
+
+        check_allow_model_requests()
+
+        if len(requests) < 2:
+            raise ValueError('Batch must contain at least 2 requests')
+
+        # Prepare model settings once
+        base_settings = cast(OpenAIChatModelSettings, model_settings or {})
+
+        # Build JSONL content
+        jsonl_lines: list[str] = []
+        for custom_id, messages, params in requests:
+            # Prepare request parameters using the same logic as regular requests
+            prepared_settings, prepared_params = self.prepare_request(base_settings, params)
+
+            # Build request params using shared logic
+            request_params = await self._build_request_params(
+                messages,
+                cast(OpenAIChatModelSettings, prepared_settings or {}),
+                prepared_params,
+            )
+
+            # Format as batch request line
+            batch_request = {
+                'custom_id': custom_id,
+                'method': 'POST',
+                'url': '/v1/chat/completions',
+                'body': request_params,
+            }
+            jsonl_lines.append(json.dumps(batch_request))
+
+        jsonl_content = '\n'.join(jsonl_lines)
+
+        # Upload the JSONL file
+        file_obj = await self.client.files.create(
+            file=io.BytesIO(jsonl_content.encode('utf-8')),
+            purpose='batch',
+        )
+
+        # Create the batch job
+        batch_response = await self.client.batches.create(
+            input_file_id=file_obj.id,
+            endpoint='/v1/chat/completions',
+            completion_window=completion_window,
+            metadata=metadata,
+        )
+
+        return self._parse_batch_response(batch_response)
+
+    async def batch_status(self, batch: Batch) -> OpenAIBatch:
+        """Get current status of an OpenAI batch job.
+
+        Args:
+            batch: Batch object from batch_create() or previous batch_status().
+
+        Returns:
+            Updated OpenAIBatch object with current status.
+        """
+        check_allow_model_requests()
+
+        batch_response = await self.client.batches.retrieve(batch.id)
+        return self._parse_batch_response(batch_response)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        """Retrieve results from a completed OpenAI batch.
+
+        This method downloads the output file, parses each result,
+        and converts responses using the same `_process_response()` logic
+        used for regular API calls.
+
+        Args:
+            batch: Batch object that has is_complete=True.
+
+        Returns:
+            List of BatchResult objects, one per request in the batch.
+
+        Raises:
+            ValueError: If batch is not complete.
+            TypeError: If batch is not an OpenAIBatch.
+        """
+        check_allow_model_requests()
+
+        if not batch.is_complete:
+            raise ValueError(f'Batch {batch.id} is not complete (status: {batch.status})')
+
+        if not isinstance(batch, OpenAIBatch):
+            raise TypeError(f'Expected OpenAIBatch, got {type(batch).__name__}')
+
+        results: list[BatchResult] = []
+        processed_ids: set[str] = set()
+
+        # Download and parse output file
+        if batch.output_file_id:
+            content = await self.client.files.content(batch.output_file_id)
+            for line in content.text.strip().split('\n'):
+                if not line:
+                    continue
+
+                result_data = json.loads(line)
+                custom_id = result_data.get('custom_id', '')
+                processed_ids.add(custom_id)
+
+                if result_data.get('error'):
+                    # Handle error
+                    error = result_data['error']
+                    results.append(
+                        BatchResult(
+                            custom_id=custom_id,
+                            error=BatchError(
+                                code=error.get('code', 'unknown'),
+                                message=error.get('message', 'Unknown error'),
+                            ),
+                        )
+                    )
+                else:
+                    # Parse successful response using existing logic
+                    response_body = result_data.get('response', {}).get('body', {})
+
+                    # Convert to ChatCompletion object for _process_response()
+                    chat_completion = chat.ChatCompletion.model_validate(response_body)
+
+                    # Reuse the existing response parsing
+                    model_response = self._process_response(chat_completion)
+
+                    results.append(
+                        BatchResult(
+                            custom_id=custom_id,
+                            response=model_response,
+                        )
+                    )
+
+        # Also check error file for any additional errors
+        if batch.error_file_id:
+            error_content = await self.client.files.content(batch.error_file_id)
+            for line in error_content.text.strip().split('\n'):
+                if not line:
+                    continue
+                error_data = json.loads(line)
+                custom_id = error_data.get('custom_id', '')
+
+                # Don't add duplicate if already processed
+                if custom_id not in processed_ids:
+                    processed_ids.add(custom_id)
+                    results.append(
+                        BatchResult(
+                            custom_id=custom_id,
+                            error=BatchError(
+                                code=error_data.get('error', {}).get('code', 'unknown'),
+                                message=error_data.get('error', {}).get('message', 'Unknown error'),
+                            ),
+                        )
+                    )
+
+        return results
+
+    async def batch_cancel(self, batch: Batch) -> OpenAIBatch:
+        """Cancel an OpenAI batch job.
+
+        Args:
+            batch: Batch object to cancel.
+
+        Returns:
+            Updated OpenAIBatch object with cancellation status.
+        """
+        check_allow_model_requests()
+
+        batch_response = await self.client.batches.cancel(batch.id)
+        return self._parse_batch_response(batch_response)
+
+    def _parse_batch_response(self, response: Any) -> OpenAIBatch:
+        """Convert OpenAI batch response to OpenAIBatch object."""
+        from datetime import timezone
+
+        # Map OpenAI status to our normalized enum
+        status_map: dict[str, BatchStatus] = {
+            'validating': BatchStatus.VALIDATING,
+            'failed': BatchStatus.FAILED,
+            'in_progress': BatchStatus.IN_PROGRESS,
+            'finalizing': BatchStatus.FINALIZING,
+            'completed': BatchStatus.COMPLETED,
+            'expired': BatchStatus.EXPIRED,
+            'cancelling': BatchStatus.CANCELLING,
+            'cancelled': BatchStatus.CANCELLED,
+        }
+
+        # Extract request counts safely using getattr
+        request_counts = response.request_counts
+        request_count = getattr(request_counts, 'total', 0) or 0
+        completed_count = getattr(request_counts, 'completed', 0) or 0
+        failed_count = getattr(request_counts, 'failed', 0) or 0
+
+        return OpenAIBatch(
+            id=response.id,
+            status=status_map.get(response.status, BatchStatus.PENDING),
+            created_at=datetime.fromtimestamp(response.created_at, tz=timezone.utc),
+            completed_at=(
+                datetime.fromtimestamp(response.completed_at, tz=timezone.utc) if response.completed_at else None
+            ),
+            request_count=request_count,
+            completed_count=completed_count,
+            failed_count=failed_count,
+            input_file_id=response.input_file_id,
+            output_file_id=response.output_file_id,
+            error_file_id=response.error_file_id,
+            endpoint=response.endpoint,
+            completion_window=response.completion_window,
+            metadata=response.metadata,
+        )
 
 
 @deprecated(

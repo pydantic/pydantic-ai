@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from enum import Enum
 from functools import cache, cached_property
 from typing import Any, Generic, Literal, TypeVar, get_args, overload
 
@@ -585,6 +586,121 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+class BatchStatus(str, Enum):
+    """Normalized batch job status across providers.
+
+    This enum provides a vendor-agnostic representation of batch processing states
+    that works across different providers (OpenAI, Anthropic, etc.).
+    """
+
+    PENDING = 'pending'
+    """Batch has been submitted but not yet processing."""
+    VALIDATING = 'validating'
+    """Batch is being validated before processing."""
+    IN_PROGRESS = 'in_progress'
+    """Batch is actively being processed."""
+    FINALIZING = 'finalizing'
+    """Batch processing is complete, results being finalized."""
+    COMPLETED = 'completed'
+    """Batch completed successfully."""
+    FAILED = 'failed'
+    """Batch failed with errors."""
+    EXPIRED = 'expired'
+    """Batch exceeded its time limit."""
+    CANCELLING = 'cancelling'
+    """Batch cancellation has been requested."""
+    CANCELLED = 'cancelled'
+    """Batch was successfully cancelled."""
+
+
+@dataclass
+class BatchError:
+    """Error information for a failed batch request."""
+
+    code: str
+    """Error code from the provider."""
+
+    message: str
+    """Human-readable error message."""
+
+
+@dataclass
+class Batch:
+    """Base class for batch job information.
+
+    Each provider returns a subclass with provider-specific fields.
+    Batch processing allows submitting multiple requests together
+    for asynchronous processing, typically at reduced cost.
+
+    Example:
+        ```python
+        from pydantic_ai.models.openai import OpenAIChatModel
+
+        model = OpenAIChatModel('gpt-4o-mini')
+        batch = await model.batch_create(requests)
+        print(f'Batch {batch.id} status: {batch.status}')
+        ```
+    """
+
+    id: str
+    """Unique identifier for this batch job."""
+
+    status: BatchStatus
+    """Current status of the batch job."""
+
+    created_at: datetime
+    """When the batch was created."""
+
+    completed_at: datetime | None = None
+    """When the batch completed (if finished)."""
+
+    request_count: int = 0
+    """Total number of requests in this batch."""
+
+    completed_count: int = 0
+    """Number of successfully completed requests."""
+
+    failed_count: int = 0
+    """Number of failed requests."""
+
+    @property
+    def is_complete(self) -> bool:
+        """Whether the batch has finished processing (successfully or not)."""
+        return self.status in (
+            BatchStatus.COMPLETED,
+            BatchStatus.FAILED,
+            BatchStatus.EXPIRED,
+            BatchStatus.CANCELLED,
+        )
+
+    @property
+    def is_successful(self) -> bool:
+        """Whether the batch completed successfully."""
+        return self.status == BatchStatus.COMPLETED
+
+
+@dataclass
+class BatchResult:
+    """Result for a single request within a batch.
+
+    Maps custom_id to either a successful ModelResponse or an error.
+    """
+
+    custom_id: str
+    """The custom_id from the original request, used to match results."""
+
+    response: ModelResponse | None = None
+    """The model response if successful."""
+
+    error: BatchError | None = None
+    """Error information if the request failed."""
+
+    @property
+    def is_successful(self) -> bool:
+        """Whether this individual request succeeded."""
+        return self.response is not None and self.error is None
+
+
 class Model(ABC):
     """Abstract class for a model."""
 
@@ -877,6 +993,90 @@ class Model(ABC):
                 instructions = output_instructions
 
         return instructions
+
+    # --- Batch Processing Methods ---
+    # These methods provide an interface for batch API processing.
+    # Subclasses that support batch processing should override these methods.
+
+    async def batch_create(
+        self,
+        requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
+        model_settings: ModelSettings | None = None,
+    ) -> Batch:
+        """Submit a batch of requests for asynchronous processing.
+
+        Batch processing allows submitting multiple requests together,
+        typically at reduced cost (e.g., 50% discount on OpenAI).
+
+        Args:
+            requests: List of (custom_id, messages, parameters) tuples.
+                - custom_id: Unique identifier to match results to requests
+                - messages: Message history for this request
+                - parameters: Tool definitions, output schema, etc.
+            model_settings: Settings applied to all requests in batch.
+
+        Returns:
+            Batch object with job ID and initial status.
+
+        Raises:
+            NotImplementedError: If this model doesn't support batch processing.
+
+        Example:
+            ```python
+            from pydantic_ai.messages import ModelRequest
+            from pydantic_ai.models import ModelRequestParameters
+
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ]
+            batch = await model.batch_create(requests)
+            ```
+        """
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch processing')
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        """Get current status of a batch job.
+
+        Args:
+            batch: Batch object from batch_create() or previous batch_status().
+
+        Returns:
+            Updated Batch object with current status.
+
+        Raises:
+            NotImplementedError: If this model doesn't support batch processing.
+        """
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch processing')
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        """Retrieve results from a completed batch.
+
+        Args:
+            batch: Batch object that has is_complete=True.
+
+        Returns:
+            List of BatchResult objects, one per request in the batch.
+
+        Raises:
+            NotImplementedError: If this model doesn't support batch processing.
+            ValueError: If batch is not complete.
+        """
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch processing')
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        """Cancel a pending or in-progress batch job.
+
+        Args:
+            batch: Batch object to cancel.
+
+        Returns:
+            Updated Batch object with cancellation status.
+
+        Raises:
+            NotImplementedError: If this model doesn't support batch processing.
+        """
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch processing')
 
 
 @dataclass

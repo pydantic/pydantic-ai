@@ -28,6 +28,15 @@ __all__ = (
     'model_request_stream',
     'model_request_stream_sync',
     'StreamedResponseSync',
+    # Batch processing functions
+    'batch_create',
+    'batch_create_sync',
+    'batch_status',
+    'batch_status_sync',
+    'batch_results',
+    'batch_results_sync',
+    'batch_cancel',
+    'batch_cancel_sync',
 )
 
 STREAM_INITIALIZATION_TIMEOUT = 30
@@ -400,3 +409,255 @@ class StreamedResponseSync:
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._ensure_stream_ready().timestamp
+
+
+# --- Batch Processing Functions ---
+# These functions provide a thin wrapper around Model batch methods.
+
+
+async def batch_create(
+    model: models.Model | models.KnownModelName | str,
+    requests: Sequence[tuple[str, Sequence[messages.ModelMessage], models.ModelRequestParameters]],
+    *,
+    model_settings: settings.ModelSettings | None = None,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> models.Batch:
+    """Submit a batch of requests for asynchronous processing.
+
+    Batch processing allows submitting multiple requests together,
+    typically at reduced cost (e.g., 50% discount on OpenAI).
+
+    ```py title="batch_create_example.py"
+    from pydantic_ai import ModelRequest
+    from pydantic_ai.direct import batch_create, batch_status, batch_results
+    from pydantic_ai.models import ModelRequestParameters
+
+
+    async def main():
+        requests = [
+            ('req-1', [ModelRequest.user_text_prompt('What is 2+2?')], ModelRequestParameters()),
+            ('req-2', [ModelRequest.user_text_prompt('What is 3+3?')], ModelRequestParameters()),
+        ]
+        batch = await batch_create('openai:gpt-4o-mini', requests)
+        print(f'Batch {batch.id} created with status: {batch.status}')
+        # Poll for completion...
+        # results = await batch_results('openai:gpt-4o-mini', batch)
+    ```
+
+    Args:
+        model: The model to make batch requests to.
+        requests: List of (custom_id, messages, parameters) tuples.
+            - custom_id: Unique identifier to match results to requests
+            - messages: Message history for this request
+            - parameters: Tool definitions, output schema, etc.
+        model_settings: Settings applied to all requests in the batch.
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        Batch object with job ID and initial status.
+
+    Raises:
+        NotImplementedError: If the model doesn't support batch processing.
+    """
+    model_instance = _prepare_model(model, instrument)
+    # Convert sequences to lists for the model method
+    requests_list = [(custom_id, list(msgs), params) for custom_id, msgs, params in requests]
+    return await model_instance.batch_create(requests_list, model_settings)
+
+
+def batch_create_sync(
+    model: models.Model | models.KnownModelName | str,
+    requests: Sequence[tuple[str, Sequence[messages.ModelMessage], models.ModelRequestParameters]],
+    *,
+    model_settings: settings.ModelSettings | None = None,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> models.Batch:
+    """Submit a batch of requests for asynchronous processing (synchronous version).
+
+    This is a convenience method that wraps [`batch_create`][pydantic_ai.direct.batch_create] with
+    `loop.run_until_complete(...)`. You therefore can't use this method inside async code or if there's an active event loop.
+
+    Args:
+        model: The model to make batch requests to.
+        requests: List of (custom_id, messages, parameters) tuples.
+        model_settings: Settings applied to all requests in the batch.
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        Batch object with job ID and initial status.
+    """
+    return _get_event_loop().run_until_complete(
+        batch_create(
+            model,
+            requests,
+            model_settings=model_settings,
+            instrument=instrument,
+        )
+    )
+
+
+async def batch_status(
+    model: models.Model | models.KnownModelName | str,
+    batch: models.Batch,
+    *,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> models.Batch:
+    """Get current status of a batch job.
+
+    ```py title="batch_status_example.py"
+    from pydantic_ai.direct import batch_status
+    import asyncio
+
+
+    async def poll_until_complete(model, batch):
+        while not batch.is_complete:
+            await asyncio.sleep(60)  # Poll every minute
+            batch = await batch_status(model, batch)
+            print(f'Status: {batch.status}, completed: {batch.completed_count}/{batch.request_count}')
+        return batch
+    ```
+
+    Args:
+        model: The model the batch was created with.
+        batch: Batch object from batch_create() or previous batch_status().
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        Updated Batch object with current status.
+    """
+    model_instance = _prepare_model(model, instrument)
+    return await model_instance.batch_status(batch)
+
+
+def batch_status_sync(
+    model: models.Model | models.KnownModelName | str,
+    batch: models.Batch,
+    *,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> models.Batch:
+    """Get current status of a batch job (synchronous version).
+
+    This is a convenience method that wraps [`batch_status`][pydantic_ai.direct.batch_status] with
+    `loop.run_until_complete(...)`.
+
+    Args:
+        model: The model the batch was created with.
+        batch: Batch object from batch_create() or previous batch_status().
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        Updated Batch object with current status.
+    """
+    return _get_event_loop().run_until_complete(batch_status(model, batch, instrument=instrument))
+
+
+async def batch_results(
+    model: models.Model | models.KnownModelName | str,
+    batch: models.Batch,
+    *,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> list[models.BatchResult]:
+    """Retrieve results from a completed batch.
+
+    ```py title="batch_results_example.py"
+    from pydantic_ai.direct import batch_results
+
+
+    async def process_results(model, batch):
+        results = await batch_results(model, batch)
+        for result in results:
+            if result.is_successful:
+                print(f'{result.custom_id}: {result.response}')
+            else:
+                print(f'{result.custom_id} failed: {result.error}')
+    ```
+
+    Args:
+        model: The model the batch was created with.
+        batch: Batch object that has is_complete=True.
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        List of BatchResult objects, one per request in the batch.
+
+    Raises:
+        ValueError: If batch is not complete.
+    """
+    model_instance = _prepare_model(model, instrument)
+    return await model_instance.batch_results(batch)
+
+
+def batch_results_sync(
+    model: models.Model | models.KnownModelName | str,
+    batch: models.Batch,
+    *,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> list[models.BatchResult]:
+    """Retrieve results from a completed batch (synchronous version).
+
+    This is a convenience method that wraps [`batch_results`][pydantic_ai.direct.batch_results] with
+    `loop.run_until_complete(...)`.
+
+    Args:
+        model: The model the batch was created with.
+        batch: Batch object that has is_complete=True.
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        List of BatchResult objects, one per request in the batch.
+    """
+    return _get_event_loop().run_until_complete(batch_results(model, batch, instrument=instrument))
+
+
+async def batch_cancel(
+    model: models.Model | models.KnownModelName | str,
+    batch: models.Batch,
+    *,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> models.Batch:
+    """Cancel a pending or in-progress batch job.
+
+    ```py title="batch_cancel_example.py"
+    from pydantic_ai.direct import batch_cancel
+
+
+    async def cancel_if_too_slow(model, batch, timeout_seconds):
+        import asyncio
+        await asyncio.sleep(timeout_seconds)
+        if not batch.is_complete:
+            batch = await batch_cancel(model, batch)
+            print(f'Cancelled batch: {batch.status}')
+    ```
+
+    Args:
+        model: The model the batch was created with.
+        batch: Batch object to cancel.
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        Updated Batch object with cancellation status.
+    """
+    model_instance = _prepare_model(model, instrument)
+    return await model_instance.batch_cancel(batch)
+
+
+def batch_cancel_sync(
+    model: models.Model | models.KnownModelName | str,
+    batch: models.Batch,
+    *,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> models.Batch:
+    """Cancel a pending or in-progress batch job (synchronous version).
+
+    This is a convenience method that wraps [`batch_cancel`][pydantic_ai.direct.batch_cancel] with
+    `loop.run_until_complete(...)`.
+
+    Args:
+        model: The model the batch was created with.
+        batch: Batch object to cancel.
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        Updated Batch object with cancellation status.
+    """
+    return _get_event_loop().run_until_complete(batch_cancel(model, batch, instrument=instrument))

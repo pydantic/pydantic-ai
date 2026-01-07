@@ -6,10 +6,19 @@ These methods are thin wrappers around the [`Model`][pydantic_ai.models.Model] i
 
 The following functions are available:
 
+**Single requests:**
+
 - [`model_request`][pydantic_ai.direct.model_request]: Make a non-streamed async request to a model
 - [`model_request_sync`][pydantic_ai.direct.model_request_sync]: Make a non-streamed synchronous request to a model
 - [`model_request_stream`][pydantic_ai.direct.model_request_stream]: Make a streamed async request to a model
 - [`model_request_stream_sync`][pydantic_ai.direct.model_request_stream_sync]: Make a streamed sync request to a model
+
+**Batch processing (OpenAI only):**
+
+- [`batch_create`][pydantic_ai.direct.batch_create]: Submit a batch of requests for asynchronous processing
+- [`batch_status`][pydantic_ai.direct.batch_status]: Check the status of a batch job
+- [`batch_results`][pydantic_ai.direct.batch_results]: Retrieve results from a completed batch
+- [`batch_cancel`][pydantic_ai.direct.batch_cancel]: Cancel an in-progress batch
 
 ## Basic Example
 
@@ -149,3 +158,188 @@ print(model_response.parts[0].content)
 ```
 
 See [Debugging and Monitoring](logfire.md) for more details, including how to instrument with plain OpenTelemetry without Logfire.
+
+## Batch Processing
+
+Batch processing allows you to submit multiple requests as a single job that processes asynchronously. This is ideal for high-volume workloads where you don't need immediate responses.
+
+**Benefits of batch processing:**
+
+- **50% cost savings** on OpenAI API calls
+- **Higher rate limits** - batch API has separate, more generous limits
+- **Provider-managed retries** - the provider handles transient failures internally
+- **Ideal for bulk operations** - evaluations, data processing, content generation
+
+### Basic Batch Example
+
+```python title="batch_basic.py"
+import asyncio
+
+from pydantic_ai import ModelRequest
+from pydantic_ai.direct import batch_create, batch_status, batch_results
+
+async def main():
+    # Define questions to process
+    questions = [
+        ('math-1', 'What is 2 + 2?'),
+        ('math-2', 'What is the square root of 144?'),
+        ('science-1', 'What is photosynthesis?'),
+        ('science-2', 'Explain gravity in one sentence.'),
+    ]
+
+    # Build batch requests - each is a (custom_id, messages) tuple
+    requests = [
+        (custom_id, [ModelRequest.user_text_prompt(question)])
+        for custom_id, question in questions
+    ]
+
+    # Submit batch (50% cost savings!)
+    batch = await batch_create('openai:gpt-4o-mini', requests)
+    print(f'Batch {batch.id} submitted with {batch.request_count} requests')
+
+    # Poll for completion (batches typically complete within 24 hours)
+    while not batch.is_complete:
+        print(f'Status: {batch.status} - waiting...')
+        await asyncio.sleep(60)  # Check every minute
+        batch = await batch_status('openai:gpt-4o-mini', batch)
+
+    # Retrieve results
+    if batch.is_successful:
+        results = await batch_results('openai:gpt-4o-mini', batch)
+        for result in results:
+            if result.is_successful:
+                # Access the ModelResponse just like a regular request
+                text = result.response.parts[0].content
+                print(f'{result.custom_id}: {text}')
+            else:
+                print(f'{result.custom_id}: ERROR - {result.error.message}')
+    else:
+        print(f'Batch failed with status: {batch.status}')
+
+asyncio.run(main())
+```
+
+### Batch Functions
+
+The following batch functions are available:
+
+- [`batch_create`][pydantic_ai.direct.batch_create]: Submit a batch of requests (async)
+- [`batch_create_sync`][pydantic_ai.direct.batch_create_sync]: Submit a batch of requests (sync)
+- [`batch_status`][pydantic_ai.direct.batch_status]: Check batch status (async)
+- [`batch_status_sync`][pydantic_ai.direct.batch_status_sync]: Check batch status (sync)
+- [`batch_results`][pydantic_ai.direct.batch_results]: Retrieve results when complete (async)
+- [`batch_results_sync`][pydantic_ai.direct.batch_results_sync]: Retrieve results when complete (sync)
+- [`batch_cancel`][pydantic_ai.direct.batch_cancel]: Cancel an in-progress batch (async)
+- [`batch_cancel_sync`][pydantic_ai.direct.batch_cancel_sync]: Cancel an in-progress batch (sync)
+
+### Batch Status and Results
+
+The [`Batch`][pydantic_ai.Batch] object tracks job status:
+
+```python
+from pydantic_ai import Batch, BatchStatus
+
+# Check if batch has finished (successfully or not)
+if batch.is_complete:
+    print('Batch finished!')
+
+# Check if batch completed successfully
+if batch.is_successful:
+    print(f'All {batch.completed_count} requests succeeded')
+
+# Detailed status
+print(f'Status: {batch.status}')  # BatchStatus enum
+print(f'Total: {batch.request_count}')
+print(f'Completed: {batch.completed_count}')
+print(f'Failed: {batch.failed_count}')
+```
+
+Results are returned as [`BatchResult`][pydantic_ai.BatchResult] objects:
+
+```python
+from pydantic_ai import BatchResult
+
+for result in results:
+    # custom_id matches your original request identifier
+    print(f'Request: {result.custom_id}')
+
+    if result.is_successful:
+        # response is a standard ModelResponse
+        response = result.response
+        print(f'Text: {response.parts[0].content}')
+        print(f'Tokens: {response.usage}')
+    else:
+        # error contains code and message
+        print(f'Error: {result.error.code} - {result.error.message}')
+```
+
+### Batch with Tools
+
+Tools work in batch requests just like regular requests:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import ModelRequest, ToolDefinition
+from pydantic_ai.direct import batch_create
+from pydantic_ai.models import ModelRequestParameters
+
+
+class Calculate(BaseModel):
+    """Perform a calculation."""
+    expression: str
+
+
+async def main():
+    # Create parameters with tool definition
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='calculate',
+                description=Calculate.__doc__,
+                parameters_json_schema=Calculate.model_json_schema(),
+            )
+        ],
+        allow_text_output=True,
+    )
+
+    requests = [
+        ('calc-1', [ModelRequest.user_text_prompt('What is 15 * 23?')]),
+        ('calc-2', [ModelRequest.user_text_prompt('What is 144 / 12?')]),
+    ]
+
+    batch = await batch_create(
+        'openai:gpt-4o-mini',
+        requests,
+        model_request_parameters=params,
+    )
+```
+
+!!! note "Tool Execution in Batches"
+    Unlike `Agent.run()`, batch processing does **not** automatically execute tools.
+    If the model returns tool calls, you must execute them yourself and submit
+    a follow-up batch with the tool results. For automatic tool handling, consider
+    using the Agent API for real-time requests or wait for future Agent-level batch support.
+
+### Provider Support
+
+Currently, batch processing is supported for:
+
+| Provider | Status | Notes |
+|----------|--------|-------|
+| OpenAI | ✅ Supported | 50% discount, 24-hour processing window |
+| Anthropic | 🔮 Planned | Message Batches API support coming |
+| Google | 🔮 Planned | Batch prediction support coming |
+
+Other providers will raise `NotImplementedError` when calling batch methods.
+
+### When to Use Batch vs Real-time
+
+| Use Case | Recommended Approach |
+|----------|---------------------|
+| Interactive chat | `Agent.run()` or `model_request()` |
+| Real-time responses needed | `Agent.run()` or `model_request()` |
+| Large-scale evaluations | **Batch processing** |
+| Bulk content generation | **Batch processing** |
+| Data processing pipelines | **Batch processing** |
+| Cost-sensitive workloads | **Batch processing** |
