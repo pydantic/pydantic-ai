@@ -25,7 +25,16 @@ from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import _output, _system_prompt, exceptions, guardrails as _guardrails, messages as _messages, models, result, usage as _usage
+from . import (
+    _output,
+    _system_prompt,
+    exceptions,
+    guardrails as _guardrails,
+    messages as _messages,
+    models,
+    result,
+    usage as _usage,
+)
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .guardrails import InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
@@ -44,7 +53,6 @@ from .tools import (
 )
 
 if TYPE_CHECKING:
-    from .agent import Agent
     from .models.instrumented import InstrumentationSettings
 
 __all__ = (
