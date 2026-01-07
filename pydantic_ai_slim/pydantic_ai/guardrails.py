@@ -83,8 +83,8 @@ class GuardrailResult(Generic[T]):
             A GuardrailResult with tripwire_triggered=False.
 
         Example:
-            ```python
-            result = GuardrailResult.passed(message="Content is safe")
+            ```python {lint="skip"}
+            result = GuardrailResult.passed(message='Content is safe')
             ```
         """
         return cls(tripwire_triggered=False, output=output, message=message)
@@ -102,10 +102,10 @@ class GuardrailResult(Generic[T]):
             A GuardrailResult with tripwire_triggered=True.
 
         Example:
-            ```python
+            ```python {lint="skip"}
             result = GuardrailResult.blocked(
-                message="PII detected in input",
-                detected_pii_types=["email", "phone"],
+                message='PII detected in input',
+                detected_pii_types=['email', 'phone'],
             )
             ```
         """
@@ -124,15 +124,15 @@ class InputGuardrailTripwireTriggered(AgentRunError):
         result: The GuardrailResult that triggered the exception.
 
     Example:
-        ```python
+        ```python {lint="skip"}
         from pydantic_ai.guardrails import InputGuardrailTripwireTriggered
 
 
         async def main():
             try:
-                await agent.run("blocked content")
+                await agent.run('blocked content')
             except InputGuardrailTripwireTriggered as e:
-                print(f"Input blocked by {e.guardrail_name}: {e.result.message}")
+                print(f'Input blocked by {e.guardrail_name}: {e.result.message}')
         ```
     """
 
@@ -161,15 +161,15 @@ class OutputGuardrailTripwireTriggered(AgentRunError):
         result: The GuardrailResult that triggered the exception.
 
     Example:
-        ```python
+        ```python {lint="skip"}
         from pydantic_ai.guardrails import OutputGuardrailTripwireTriggered
 
 
         async def main():
             try:
-                await agent.run("prompt")
+                await agent.run('prompt')
             except OutputGuardrailTripwireTriggered as e:
-                print(f"Output blocked by {e.guardrail_name}: {e.result.message}")
+                print(f'Output blocked by {e.guardrail_name}: {e.result.message}')
         ```
     """
 

@@ -38,9 +38,7 @@ async def test_input_guardrail_passes():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail
-    async def check_input(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def check_input(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         return GuardrailResult.passed(message='Input is safe')
 
     result = await agent.run('Hello')
@@ -56,9 +54,7 @@ async def test_input_guardrail_blocks():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail
-    async def block_harmful(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def block_harmful(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         if isinstance(prompt, str) and 'blocked' in prompt.lower():
             return GuardrailResult.blocked(message='Content contains blocked word')
         return GuardrailResult.passed()
@@ -85,9 +81,7 @@ async def test_input_guardrail_with_metadata():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail
-    async def check_with_metadata(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def check_with_metadata(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         if isinstance(prompt, str) and 'secret' in prompt.lower():
             return GuardrailResult.blocked(
                 message='PII detected',
@@ -113,9 +107,7 @@ async def test_input_guardrail_blocking_mode():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail(blocking=True, name='blocking_guardrail')
-    async def blocking_guardrail(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def blocking_guardrail(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         execution_order.append('blocking')
         return GuardrailResult.passed()
 
@@ -143,23 +135,17 @@ async def test_multiple_input_guardrails():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail
-    async def guardrail_1(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def guardrail_1(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         guardrails_run.append('guardrail_1')
         return GuardrailResult.passed()
 
     @agent.input_guardrail
-    async def guardrail_2(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def guardrail_2(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         guardrails_run.append('guardrail_2')
         return GuardrailResult.passed()
 
     @agent.input_guardrail
-    async def guardrail_3(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def guardrail_3(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         guardrails_run.append('guardrail_3')
         return GuardrailResult.passed()
 
@@ -176,15 +162,11 @@ async def test_input_guardrail_first_failure_stops():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail(blocking=True, name='first')
-    async def first_guardrail(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def first_guardrail(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         return GuardrailResult.blocked(message='First guardrail blocked')
 
     @agent.input_guardrail(blocking=True, name='second')
-    async def second_guardrail(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def second_guardrail(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         # This should not run since the first one blocked
         raise AssertionError('Second guardrail should not have run')
 
@@ -235,9 +217,7 @@ async def test_input_guardrail_sync_function():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail
-    def sync_guardrail(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    def sync_guardrail(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         if isinstance(prompt, str) and 'blocked' in prompt.lower():
             return GuardrailResult.blocked(message='Blocked by sync guardrail')
         return GuardrailResult.passed()
@@ -400,9 +380,7 @@ async def test_both_guardrails():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail
-    async def input_check(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def input_check(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         guardrails_run.append('input_guardrail')
         return GuardrailResult.passed()
 
@@ -428,9 +406,7 @@ async def test_input_blocked_skips_agent():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail
-    async def block_all(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def block_all(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         return GuardrailResult.blocked(message='All input blocked')
 
     with pytest.raises(InputGuardrailTripwireTriggered):
@@ -501,9 +477,7 @@ async def test_guardrails_via_constructor():
     def simple_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('Hello!')])
 
-    async def input_guardrail_func(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def input_guardrail_func(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         if isinstance(prompt, str) and 'blocked' in prompt.lower():
             return GuardrailResult.blocked(message='Input blocked')
         return GuardrailResult.passed()
@@ -590,9 +564,7 @@ def test_guardrails_with_run_sync():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail
-    def sync_input_guardrail(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    def sync_input_guardrail(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         return GuardrailResult.passed()
 
     @agent.output_guardrail
@@ -612,9 +584,7 @@ def test_guardrails_blocking_with_run_sync():
     agent = Agent(FunctionModel(simple_model))
 
     @agent.input_guardrail
-    def block_all(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    def block_all(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         return GuardrailResult.blocked(message='All blocked')
 
     with pytest.raises(InputGuardrailTripwireTriggered):
@@ -633,9 +603,7 @@ async def test_guardrails_with_streaming():
     agent = Agent(TestModel())
 
     @agent.input_guardrail
-    async def check_input(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def check_input(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         return GuardrailResult.passed()
 
     @agent.output_guardrail
@@ -654,9 +622,7 @@ async def test_input_guardrail_blocks_streaming():
     agent = Agent(TestModel())
 
     @agent.input_guardrail
-    async def block_all(
-        ctx: RunContext[None], prompt: str | Sequence[UserContent]
-    ) -> GuardrailResult[None]:
+    async def block_all(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         return GuardrailResult.blocked(message='Blocked')
 
     with pytest.raises(InputGuardrailTripwireTriggered):
