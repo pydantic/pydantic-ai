@@ -4677,6 +4677,35 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
+async def test_file_id_mapping():
+    """Test that FileId is correctly mapped to file_data in Google model."""
+    from pydantic_ai import FileId
+
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
+    content = await model._map_user_prompt(UserPromptPart(content=['Analyze this file', FileId(file_id=file_uri)]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 2
+    assert content[0] == {'text': 'Analyze this file'}
+    assert content[1] == {'file_data': {'file_uri': file_uri}}
+
+
+async def test_file_id_mapping_with_media_type():
+    """Test that FileId with media_type is correctly mapped."""
+    from pydantic_ai import FileId
+
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/xyz789'
+    content = await model._map_user_prompt(
+        UserPromptPart(content=[FileId(file_id=file_uri, media_type='application/pdf')])
+    )  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    assert content[0] == {'file_data': {'file_uri': file_uri, 'mime_type': 'application/pdf'}}
+
+
 # =============================================================================
 # GCS VideoUrl tests for google-vertex
 #

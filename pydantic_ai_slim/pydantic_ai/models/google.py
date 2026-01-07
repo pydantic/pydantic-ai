@@ -729,10 +729,13 @@ class GoogleModel(Model):
                         if isinstance(item, VideoUrl) and item.vendor_metadata:
                             part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                         content.append(part_dict)  # pragma: lax no cover
-                elif isinstance(item, FileId):  # pragma: no cover
-                    raise NotImplementedError(
-                        'FileId is not supported by Google. Use URL-based file references instead.'
-                    )
+                elif isinstance(item, FileId):
+                    # FileId.file_id should be a file URI from the Google Files API
+                    # e.g., 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
+                    file_data_dict: FileDataDict = {'file_uri': item.file_id}
+                    if item.media_type:
+                        file_data_dict['mime_type'] = item.media_type
+                    content.append({'file_data': file_data_dict})
                 elif isinstance(item, CachePoint):
                     # Google doesn't support inline CachePoint markers. Google's caching requires
                     # pre-creating cache objects via the API, then referencing them by name using

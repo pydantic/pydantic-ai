@@ -138,30 +138,81 @@ Some model providers support passing URLs to files hosted on their platform:
 
 ## File References by ID
 
-Some model providers have their own file storage APIs where you can upload files and reference them by ID. You can use [`FileId`][pydantic_ai.FileId] to reference these uploaded files:
-
-```py {title="file_id_input.py" test="skip" lint="skip"}
-from pydantic_ai import Agent, FileId
-
-agent = Agent(model='anthropic:claude-sonnet-4-5')
-result = agent.run_sync(
-    [
-        'What is the main content of this document?',
-        FileId(file_id='file-abc123'),  # File ID from Anthropic's Files API
-    ]
-)
-print(result.output)
-#> The document discusses...
-```
+Some model providers have their own file storage APIs where you can upload files and reference them by ID. You can use [`FileId`][pydantic_ai.FileId] to reference these uploaded files.
 
 ### Supported Models
 
 | Model | File ID Support |
 |-------|-----------------|
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | ✅ Supported via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files) |
-| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | Use URL-based references instead (see [Files API docs](models/google.md#document-image-audio-and-video-input)) |
-| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ❌ Not yet supported |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | ✅ Supported via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ Supported via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ Supported via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
 | Other models | ❌ Not supported |
 
+### Anthropic Example
+
+```py {title="file_id_anthropic.py" test="skip"}
+import anthropic
+
+from pydantic_ai import Agent, FileId
+
+# Upload a file using the Anthropic SDK
+client = anthropic.Anthropic()
+with open('document.pdf', 'rb') as f:
+    uploaded_file = client.files.create(file=f, purpose='user_data')
+
+# Reference the uploaded file by ID
+agent = Agent(model='anthropic:claude-sonnet-4-5')
+result = agent.run_sync([
+    'Summarize this document',
+    FileId(file_id=uploaded_file.id),
+])
+print(result.output)
+```
+
+### OpenAI Example
+
+```py {title="file_id_openai.py" test="skip"}
+from openai import OpenAI
+
+from pydantic_ai import Agent, FileId
+
+# Upload a file using the OpenAI SDK
+client = OpenAI()
+with open('document.pdf', 'rb') as f:
+    uploaded_file = client.files.create(file=f, purpose='user_data')
+
+# Reference the uploaded file by ID
+agent = Agent(model='openai:gpt-4o')
+result = agent.run_sync([
+    'Summarize this document',
+    FileId(file_id=uploaded_file.id),
+])
+print(result.output)
+```
+
+### Google Example
+
+```py {title="file_id_google.py" test="skip"}
+from google import genai
+
+from pydantic_ai import Agent, FileId
+
+# Upload a file using the Google GenAI SDK
+client = genai.Client()
+with open('document.pdf', 'rb') as f:
+    uploaded_file = client.files.upload(file=f)
+
+# Reference the uploaded file by URI
+agent = Agent(model='google-gla:gemini-2.0-flash')
+result = agent.run_sync([
+    'Summarize this document',
+    FileId(file_id=uploaded_file.uri, media_type=uploaded_file.mime_type),
+])
+print(result.output)
+```
+
 !!! note
-    Files must be uploaded to the provider's file storage before they can be referenced by ID. Consult your provider's documentation for instructions on uploading files.
+    Files must be uploaded to the provider's file storage before they can be referenced by ID.
+    For Google, use the file URI (e.g., `https://generativelanguage.googleapis.com/v1beta/files/abc123`) as the `file_id`.

@@ -1063,8 +1063,13 @@ class OpenAIChatModel(Model):
                         )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
-                elif isinstance(item, FileId):  # pragma: no cover
-                    raise NotImplementedError('FileId is not supported for OpenAI Chat Completions API')
+                elif isinstance(item, FileId):
+                    content.append(
+                        File(
+                            file=FileFile(file_id=item.file_id),
+                            type='file',
+                        )
+                    )
                 elif isinstance(item, CachePoint):
                     # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
                     pass
@@ -1974,8 +1979,13 @@ class OpenAIResponsesModel(Model):
                         )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
-                elif isinstance(item, FileId):  # pragma: no cover
-                    raise NotImplementedError('FileId is not supported for OpenAI Responses API')
+                elif isinstance(item, FileId):
+                    content.append(
+                        responses.ResponseInputFileParam(
+                            type='input_file',
+                            file_id=item.file_id,
+                        )
+                    )
                 elif isinstance(item, CachePoint):
                     # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
                     pass
