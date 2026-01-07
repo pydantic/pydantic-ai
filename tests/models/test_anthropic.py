@@ -1939,9 +1939,7 @@ async def test_file_id_only(allow_model_requests: None) -> None:
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
-    assert content == snapshot(
-        [{'source': {'file_id': 'file-xyz789', 'type': 'file'}, 'type': 'document'}]
-    )
+    assert content == snapshot([{'source': {'file_id': 'file-xyz789', 'type': 'file'}, 'type': 'document'}])
 
 
 async def test_multiple_file_ids(allow_model_requests: None) -> None:
