@@ -135,3 +135,33 @@ Some model providers support passing URLs to files hosted on their platform:
 
 - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] supports the [Files API](models/google.md#document-image-audio-and-video-input) for uploading and referencing files.
 - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] supports `s3://<bucket-name>/<object-key>` URIs, provided that the assumed role has the `s3:GetObject` permission. An optional `bucketOwner` query parameter must be specified if the bucket is not owned by the account making the request. For example: `s3://my-bucket/my-file.png?bucketOwner=123456789012`.
+
+## File References by ID
+
+Some model providers have their own file storage APIs where you can upload files and reference them by ID. You can use [`FileId`][pydantic_ai.FileId] to reference these uploaded files:
+
+```py {title="file_id_input.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, FileId
+
+agent = Agent(model='anthropic:claude-sonnet-4-5')
+result = agent.run_sync(
+    [
+        'What is the main content of this document?',
+        FileId(file_id='file-abc123'),  # File ID from Anthropic's Files API
+    ]
+)
+print(result.output)
+#> The document discusses...
+```
+
+### Supported Models
+
+| Model | File ID Support |
+|-------|-----------------|
+| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | ✅ Supported via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files) |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | Use URL-based references instead (see [Files API docs](models/google.md#document-image-audio-and-video-input)) |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ❌ Not yet supported |
+| Other models | ❌ Not supported |
+
+!!! note
+    Files must be uploaded to the provider's file storage before they can be referenced by ID. Consult your provider's documentation for instructions on uploading files.

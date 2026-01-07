@@ -654,7 +654,46 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
+@dataclass(repr=False)
+class FileId:
+    """A reference to a file uploaded to a provider's file storage.
+
+    This allows referencing files that have been uploaded via provider-specific file APIs
+    (e.g., Anthropic's Files API) rather than providing the file content directly.
+
+    Example:
+        ```python
+        from pydantic_ai import Agent, FileId
+
+        agent = Agent('anthropic:claude-sonnet-4-5')
+        result = agent.run_sync([
+            'What is the main content of this document?',
+            FileId('file-abc123'),
+        ])
+        ```
+    """
+
+    file_id: str
+    """The provider-specific file identifier."""
+
+    _: KW_ONLY
+
+    provider: str | None = None
+    """The provider this file belongs to (e.g., 'anthropic').
+
+    If not specified, the model will attempt to use the file with the current provider.
+    """
+
+    media_type: str | None = None
+    """Optional media type hint for the file."""
+
+    kind: Literal['file-id'] = 'file-id'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | FileId
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 

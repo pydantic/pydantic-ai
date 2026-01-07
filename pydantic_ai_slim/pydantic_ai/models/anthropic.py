@@ -28,6 +28,7 @@ from ..messages import (
     BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
+    FileId,
     FilePart,
     FinishReason,
     ImageUrl,
@@ -83,6 +84,7 @@ try:
         BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
+        BetaFileDocumentSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
         BetaJSONOutputFormatParam,
@@ -1112,6 +1114,11 @@ class AnthropicModel(Model):
                         )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                elif isinstance(item, FileId):
+                    yield BetaRequestDocumentBlockParam(
+                        source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                        type='document',
+                    )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
