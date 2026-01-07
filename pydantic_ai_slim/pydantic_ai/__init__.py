@@ -40,6 +40,11 @@ from .exceptions import (
     UserError,
 )
 from .format_prompt import format_as_xml
+from .guardrails import (
+    GuardrailResult,
+    InputGuardrailTripwireTriggered,
+    OutputGuardrailTripwireTriggered,
+)
 from .messages import (
     AgentStreamEvent,
     AudioFormat,
@@ -244,6 +249,10 @@ __all__ = (
     'StructuredDict',
     # format_prompt
     'format_as_xml',
+    # guardrails
+    'GuardrailResult',
+    'InputGuardrailTripwireTriggered',
+    'OutputGuardrailTripwireTriggered',
     # settings
     'ModelSettings',
     # usage

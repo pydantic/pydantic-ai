@@ -18,6 +18,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, Instru
 
 from .. import (
     _agent_graph,
+    _guardrail,
     _output,
     _system_prompt,
     _utils,
@@ -165,6 +166,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
+    _input_guardrails: list[_guardrail.InputGuardrail[AgentDepsT, Any]] = dataclasses.field(repr=False)
+    _output_guardrails: list[_guardrail.OutputGuardrail[AgentDepsT, OutputDataT, Any]] = dataclasses.field(repr=False)
+
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
@@ -195,6 +199,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        input_guardrails: Sequence[_guardrail.InputGuardrail[AgentDepsT, Any]] | None = None,
+        output_guardrails: Sequence[_guardrail.OutputGuardrail[AgentDepsT, OutputDataT, Any]] | None = None,
     ) -> None: ...
 
     @overload
@@ -224,6 +230,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        input_guardrails: Sequence[_guardrail.InputGuardrail[AgentDepsT, Any]] | None = None,
+        output_guardrails: Sequence[_guardrail.OutputGuardrail[AgentDepsT, OutputDataT, Any]] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -251,6 +259,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        input_guardrails: Sequence[_guardrail.InputGuardrail[AgentDepsT, Any]] | None = None,
+        output_guardrails: Sequence[_guardrail.OutputGuardrail[AgentDepsT, OutputDataT, Any]] | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -318,6 +328,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
+            input_guardrails: Optional list of guardrails to run on user input before the agent runs.
+                Guardrails can validate, filter, or block inputs based on custom criteria.
+                See [guardrails docs](./guardrails.md) for more information.
+            output_guardrails: Optional list of guardrails to run on agent output before returning to the user.
+                Guardrails can validate, filter, or block outputs based on custom criteria.
+                See [guardrails docs](./guardrails.md) for more information.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -381,6 +397,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors = history_processors or []
 
         self._event_stream_handler = event_stream_handler
+
+        self._input_guardrails = list(input_guardrails) if input_guardrails else []
+        self._output_guardrails = list(output_guardrails) if output_guardrails else []
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -673,6 +692,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
+            input_guardrails=self._input_guardrails,
+            output_guardrails=self._output_guardrails,
+            agent=self,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -1127,6 +1149,144 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         self._output_validators.append(_output.OutputValidator[AgentDepsT, Any](func))
         return func
+
+    @overload
+    def input_guardrail(
+        self, func: _guardrail.InputGuardrailFunc[AgentDepsT, T], /
+    ) -> _guardrail.InputGuardrailFunc[AgentDepsT, T]: ...
+
+    @overload
+    def input_guardrail(
+        self,
+        /,
+        *,
+        run_in_parallel: bool = True,
+        name: str | None = None,
+    ) -> Callable[[_guardrail.InputGuardrailFunc[AgentDepsT, T]], _guardrail.InputGuardrailFunc[AgentDepsT, T]]: ...
+
+    def input_guardrail(
+        self,
+        func: _guardrail.InputGuardrailFunc[AgentDepsT, T] | None = None,
+        /,
+        *,
+        run_in_parallel: bool = True,
+        name: str | None = None,
+    ) -> (
+        _guardrail.InputGuardrailFunc[AgentDepsT, T]
+        | Callable[[_guardrail.InputGuardrailFunc[AgentDepsT, T]], _guardrail.InputGuardrailFunc[AgentDepsT, T]]
+    ):
+        """Decorator to register an input guardrail function.
+
+        Input guardrails validate user prompts before the agent runs.
+        They can run in parallel with the agent (default) or block until validation passes.
+
+        See [guardrails docs](./guardrails.md) for more information.
+
+        Args:
+            func: The guardrail function.
+            run_in_parallel: If True (default), guardrail runs concurrently with agent.
+                If False, guardrail must pass before agent starts.
+            name: Optional name for the guardrail (defaults to function name).
+
+        Example:
+        ```python
+        from pydantic_ai import Agent, RunContext
+        from pydantic_ai.guardrails import GuardrailResult
+
+        agent = Agent('openai:gpt-4o')
+
+        @agent.input_guardrail
+        async def block_harmful(
+            ctx: RunContext[None], agent: Agent, prompt: str
+        ) -> GuardrailResult[None]:
+            if 'blocked' in prompt.lower():
+                return GuardrailResult.blocked(message='Content blocked')
+            return GuardrailResult.passed()
+        ```
+        """
+
+        def decorator(
+            guardrail_func: _guardrail.InputGuardrailFunc[AgentDepsT, T],
+        ) -> _guardrail.InputGuardrailFunc[AgentDepsT, T]:
+            self._input_guardrails.append(
+                _guardrail.InputGuardrail[AgentDepsT, T](
+                    function=guardrail_func, run_in_parallel=run_in_parallel, name=name
+                )
+            )
+            return guardrail_func
+
+        if func is not None:
+            return decorator(func)
+        return decorator
+
+    @overload
+    def output_guardrail(
+        self, func: _guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T], /
+    ) -> _guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T]: ...
+
+    @overload
+    def output_guardrail(
+        self,
+        /,
+        *,
+        name: str | None = None,
+    ) -> Callable[
+        [_guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T]],
+        _guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T],
+    ]: ...
+
+    def output_guardrail(
+        self,
+        func: _guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T] | None = None,
+        /,
+        *,
+        name: str | None = None,
+    ) -> (
+        _guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T]
+        | Callable[
+            [_guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T]],
+            _guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T],
+        ]
+    ):
+        """Decorator to register an output guardrail function.
+
+        Output guardrails validate agent responses before returning to the user.
+        They always run sequentially after the agent completes.
+
+        See [guardrails docs](./guardrails.md) for more information.
+
+        Args:
+            func: The guardrail function.
+            name: Optional name for the guardrail (defaults to function name).
+
+        Example:
+        ```python
+        from pydantic_ai import Agent, RunContext
+        from pydantic_ai.guardrails import GuardrailResult
+
+        agent = Agent('openai:gpt-4o')
+
+        @agent.output_guardrail
+        async def check_output(
+            ctx: RunContext[None], agent: Agent, output: str
+        ) -> GuardrailResult[None]:
+            if 'secret' in output.lower():
+                return GuardrailResult.blocked(message='Output contains secrets')
+            return GuardrailResult.passed()
+        ```
+        """
+
+        def decorator(
+            guardrail_func: _guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T],
+        ) -> _guardrail.OutputGuardrailFunc[AgentDepsT, OutputDataT, T]:
+            self._output_guardrails.append(
+                _guardrail.OutputGuardrail[AgentDepsT, OutputDataT, T](function=guardrail_func, name=name)
+            )
+            return guardrail_func
+
+        if func is not None:
+            return decorator(func)
+        return decorator
 
     @overload
     def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
