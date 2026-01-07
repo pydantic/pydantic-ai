@@ -412,7 +412,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             return
 
         prompt = ctx.deps.prompt
-        if prompt is None:
+        if prompt is None:  # pragma: no cover
             return
 
         blocking = [g for g in ctx.deps.input_guardrails if g.blocking]

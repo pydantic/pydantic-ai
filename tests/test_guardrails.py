@@ -76,7 +76,7 @@ async def test_input_guardrail_with_metadata():
     """Test that guardrails can return metadata."""
 
     def simple_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('Hello!')])
+        return ModelResponse(parts=[TextPart('Hello!')])  # pragma: no cover
 
     agent = Agent(FunctionModel(simple_model))
 
@@ -88,7 +88,7 @@ async def test_input_guardrail_with_metadata():
                 detected_pii_types=['secret'],
                 severity='high',
             )
-        return GuardrailResult.passed()
+        return GuardrailResult.passed()  # pragma: no cover
 
     with pytest.raises(InputGuardrailTripwireTriggered) as exc_info:
         await agent.run('This contains a secret')
@@ -124,6 +124,31 @@ async def test_input_guardrail_blocking_mode():
     assert execution_order == ['blocking', 'non_blocking']
 
 
+async def test_input_guardrail_only_blocking():
+    """Test that only blocking guardrails (no non-blocking) works correctly."""
+
+    execution_order: list[str] = []
+
+    def simple_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Hello!')])
+
+    agent = Agent(FunctionModel(simple_model))
+
+    @agent.input_guardrail(blocking=True)
+    async def first_blocking(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
+        execution_order.append('first')
+        return GuardrailResult.passed()
+
+    @agent.input_guardrail(blocking=True)
+    async def second_blocking(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
+        execution_order.append('second')
+        return GuardrailResult.passed()
+
+    result = await agent.run('Hello')
+    assert result.output == 'Hello!'
+    assert execution_order == ['first', 'second']
+
+
 async def test_multiple_input_guardrails():
     """Test that multiple guardrails all run."""
 
@@ -157,7 +182,7 @@ async def test_input_guardrail_first_failure_stops():
     """Test that the first guardrail failure raises exception immediately."""
 
     def simple_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('Hello!')])
+        return ModelResponse(parts=[TextPart('Hello!')])  # pragma: no cover
 
     agent = Agent(FunctionModel(simple_model))
 
@@ -168,7 +193,7 @@ async def test_input_guardrail_first_failure_stops():
     @agent.input_guardrail(blocking=True, name='second')
     async def second_guardrail(ctx: RunContext[None], prompt: str | Sequence[UserContent]) -> GuardrailResult[None]:
         # This should not run since the first one blocked
-        raise AssertionError('Second guardrail should not have run')
+        raise AssertionError('Second guardrail should not have run')  # pragma: no cover
 
     with pytest.raises(InputGuardrailTripwireTriggered) as exc_info:
         await agent.run('Hello')
@@ -262,7 +287,7 @@ async def test_output_guardrail_blocks():
     async def block_secrets(ctx: RunContext[None], output: str) -> GuardrailResult[None]:
         if 'SECRET' in output:
             return GuardrailResult.blocked(message='Output contains secrets')
-        return GuardrailResult.passed()
+        return GuardrailResult.passed()  # pragma: no cover
 
     with pytest.raises(OutputGuardrailTripwireTriggered) as exc_info:
         await agent.run('Tell me a secret')
@@ -288,7 +313,7 @@ async def test_output_guardrail_with_structured_output():
     @agent.output_guardrail
     async def check_confidence(ctx: RunContext[None], output: Response) -> GuardrailResult[None]:
         if output.confidence < 0.5:
-            return GuardrailResult.blocked(message='Confidence too low')
+            return GuardrailResult.blocked(message='Confidence too low')  # pragma: no cover
         return GuardrailResult.passed()
 
     result = await agent.run('Hello')
@@ -314,7 +339,7 @@ async def test_output_guardrail_with_structured_output_blocked():
     async def check_confidence(ctx: RunContext[None], output: Response) -> GuardrailResult[None]:
         if output.confidence < 0.5:
             return GuardrailResult.blocked(message='Confidence too low')
-        return GuardrailResult.passed()
+        return GuardrailResult.passed()  # pragma: no cover
 
     with pytest.raises(OutputGuardrailTripwireTriggered) as exc_info:
         await agent.run('Hello')
@@ -357,11 +382,31 @@ async def test_output_guardrail_sync_function():
     @agent.output_guardrail
     def sync_output_guardrail(ctx: RunContext[None], output: str) -> GuardrailResult[None]:
         if 'blocked' in output.lower():
-            return GuardrailResult.blocked(message='Output contains blocked content')
+            return GuardrailResult.blocked(message='Output contains blocked content')  # pragma: no cover
         return GuardrailResult.passed()
 
     result = await agent.run('Hello')
     assert result.output == 'Hello!'
+
+
+async def test_output_guardrail_with_name_arg():
+    """Test output_guardrail decorator with explicit name argument."""
+
+    def simple_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Secret data')])
+
+    agent = Agent(FunctionModel(simple_model))
+
+    @agent.output_guardrail(name='custom_name')
+    async def my_guardrail(ctx: RunContext[None], output: str) -> GuardrailResult[None]:
+        if 'secret' in output.lower():
+            return GuardrailResult.blocked(message='Secrets detected')
+        return GuardrailResult.passed()  # pragma: no cover
+
+    with pytest.raises(OutputGuardrailTripwireTriggered) as exc_info:
+        await agent.run('Hello')
+
+    assert exc_info.value.guardrail_name == 'custom_name'
 
 
 # ============================================================
@@ -398,7 +443,7 @@ async def test_input_blocked_skips_agent():
 
     agent_called = False
 
-    def simple_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def simple_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
         nonlocal agent_called
         agent_called = True
         return ModelResponse(parts=[TextPart('Response')])
@@ -484,7 +529,7 @@ async def test_guardrails_via_constructor():
 
     async def output_guardrail_func(ctx: RunContext[None], output: str) -> GuardrailResult[None]:
         if 'secret' in output.lower():
-            return GuardrailResult.blocked(message='Output contains secrets')
+            return GuardrailResult.blocked(message='Output contains secrets')  # pragma: no cover
         return GuardrailResult.passed()
 
     agent = Agent(
@@ -500,6 +545,33 @@ async def test_guardrails_via_constructor():
     # Test blocked input
     with pytest.raises(InputGuardrailTripwireTriggered):
         await agent.run('This is blocked')
+
+
+async def test_output_guardrail_constructor_name_auto_detection():
+    """Test that OutputGuardrail auto-detects function name when not explicitly provided."""
+
+    def simple_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Blocked content')])
+
+    async def my_output_check(ctx: RunContext[None], output: str) -> GuardrailResult[None]:
+        if 'blocked' in output.lower():
+            return GuardrailResult.blocked(message='Output blocked')
+        return GuardrailResult.passed()  # pragma: no cover
+
+    # Create guardrail without explicit name - should auto-detect from function
+    guardrail = OutputGuardrail(function=my_output_check)
+    assert guardrail.name == 'my_output_check'
+
+    agent = Agent(
+        FunctionModel(simple_model),
+        output_guardrails=[guardrail],
+    )
+
+    with pytest.raises(OutputGuardrailTripwireTriggered) as exc_info:
+        await agent.run('Hello')
+
+    # Verify auto-detected name is used in exception
+    assert exc_info.value.guardrail_name == 'my_output_check'
 
 
 # ============================================================
@@ -579,7 +651,7 @@ def test_guardrails_blocking_with_run_sync():
     """Test that guardrails can block with run_sync."""
 
     def simple_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('Hello!')])
+        return ModelResponse(parts=[TextPart('Hello!')])  # pragma: no cover
 
     agent = Agent(FunctionModel(simple_model))
 
@@ -608,7 +680,7 @@ async def test_guardrails_with_streaming():
 
     @agent.output_guardrail
     async def check_output(ctx: RunContext[None], output: str) -> GuardrailResult[None]:
-        return GuardrailResult.passed()
+        return GuardrailResult.passed()  # pragma: no cover
 
     async with agent.run_stream('Hello') as result:
         output = await result.get_output()
@@ -639,7 +711,7 @@ async def test_output_guardrail_passes_streaming():
     @agent.output_guardrail
     async def check_output(ctx: RunContext[None], output: str) -> GuardrailResult[None]:
         # Output guardrails run after streaming result is finalized
-        return GuardrailResult.passed()
+        return GuardrailResult.passed()  # pragma: no cover
 
     async with agent.run_stream('Hello') as result:
         output = await result.get_output()
