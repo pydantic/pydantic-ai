@@ -36,7 +36,6 @@ from pydantic_ai.usage import RequestUsage
 
 try:
     from prefect import flow, task
-    from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
@@ -76,6 +75,7 @@ pytestmark = [
     pytest.mark.xdist_group(name='prefect'),
 ]
 
+
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
 http_client = cached_async_http_client(provider='prefect')
@@ -100,9 +100,81 @@ def setup_logfire_instrumentation() -> Iterator[None]:
 
 @pytest.fixture(autouse=True, scope='session')
 def setup_prefect_test_harness() -> Iterator[None]:
-    """Set up Prefect test harness for all tests."""
-    with prefect_test_harness(server_startup_timeout=60):
-        yield
+    """Set up Prefect test harness with in-process ASGI server.
+
+    This runs the Prefect server using uvicorn in a thread instead of a subprocess
+    to avoid HTTP connection pool issues with nested flows (see issue #3929).
+    """
+    import atexit
+    import shutil
+    import socket
+    import threading
+    import time
+    from contextlib import ExitStack
+    from pathlib import Path
+    from tempfile import mkdtemp
+
+    import prefect.settings
+    import uvicorn
+    from prefect.logging.handlers import APILogWorker
+    from prefect.server.api.server import create_app
+    from prefect.server.database.dependencies import temporary_database_interface
+
+    # Create temp directory for the testing database
+    temp_dir = mkdtemp()
+    atexit.register(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+
+    with ExitStack() as stack:
+        # Set up temporary database interface
+        stack.enter_context(temporary_database_interface())
+
+        # Configure SQLite database path
+        db_path = 'sqlite+aiosqlite:///' + str(Path(temp_dir) / 'prefect-test.db')
+        stack.enter_context(
+            prefect.settings.temporary_settings(
+                updates={
+                    prefect.settings.PREFECT_API_DATABASE_CONNECTION_URL: db_path,
+                }
+            )
+        )
+
+        # Create the ASGI app with webserver_only to disable all background services
+        app = create_app(webserver_only=True, ignore_cache=True)
+
+        # Find a free port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('127.0.0.1', 0))
+            port = s.getsockname()[1]
+
+        # Run server in a daemon thread
+        config = uvicorn.Config(app, host='127.0.0.1', port=port, log_level='warning')
+        server = uvicorn.Server(config)
+
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+
+        # Wait for server to start
+        time.sleep(2)
+
+        # Configure Prefect to use our local server
+        api_url = f'http://127.0.0.1:{port}/api'
+        stack.enter_context(
+            prefect.settings.temporary_settings(
+                updates={
+                    prefect.settings.PREFECT_API_URL: api_url,
+                }
+            )
+        )
+
+        try:
+            yield
+        finally:
+            # Drain logs before shutdown
+            APILogWorker.instance().drain()
+
+            # Signal server to stop
+            server.should_exit = True
+            thread.join(timeout=5)
 
 
 @contextmanager
