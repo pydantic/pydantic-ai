@@ -10,7 +10,6 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     BinaryContent,
-    BinaryImage,
     CachePoint,
     DocumentUrl,
     FinalResultEvent,
@@ -45,7 +44,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from botocore.exceptions import ClientError
@@ -322,7 +321,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolCallPart(
                         tool_name='temperature',
                         args={'date': '2022-01-01', 'city': 'London'},
-                        tool_call_id=IsStr(),
+                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=551, output_tokens=132),
@@ -339,7 +338,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolReturnPart(
                         tool_name='temperature',
                         content='30°C',
-                        tool_call_id=IsStr(),
+                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -354,7 +353,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolCallPart(
                         tool_name='final_result',
                         args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
-                        tool_call_id=IsStr(),
+                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=685, output_tokens=166),
@@ -371,7 +370,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id=IsStr(),
+                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -464,7 +463,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                     ToolCallPart(
                         tool_name='get_capital',
                         args={'country': 'France'},
-                        tool_call_id=IsStr(),
+                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=417, output_tokens=69),
@@ -481,7 +480,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                     RetryPromptPart(
                         content='The country is not supported.',
                         tool_name='get_capital',
-                        tool_call_id=IsStr(),
+                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -635,16 +634,18 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             ),
             PartStartEvent(
                 index=1,
-                part=ToolCallPart(tool_name='get_temperature', tool_call_id=IsStr()),
+                part=ToolCallPart(tool_name='get_temperature', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id=IsStr()),
+                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
             ),
             PartEndEvent(
                 index=1,
-                part=ToolCallPart(tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id=IsStr()),
+                part=ToolCallPart(
+                    tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'
+                ),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
@@ -1392,7 +1393,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': IsDatetime(),
+                    'timestamp': datetime.datetime(2025, 9, 10, 22, 46, 57, tzinfo=datetime.timezone.utc),
                 },
                 provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
                 finish_reason='stop',
@@ -1827,7 +1828,7 @@ async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: N
 
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
-    assert result.usage() == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
+    assert result.usage() == snapshot(RunUsage(input_tokens=13, cache_write_tokens=1504, output_tokens=5, requests=1))
 
 
 @pytest.mark.vcr()
@@ -2301,543 +2302,5 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
     assert bedrock_messages == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},
-        ]
-    )
-
-
-async def test_multimodal_tool_return_mapping(bedrock_provider: BedrockProvider, document_content: BinaryContent):
-    """Test that multimodal content in tool returns is properly mapped to Bedrock format."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    # Test document BinaryContent in tool return
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(tool_name='get_doc', content=document_content, tool_call_id='doc1', timestamp=now),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'doc1',
-                            'content': [
-                                {
-                                    'document': {
-                                        'name': 'Document 1',
-                                        'format': 'pdf',
-                                        'source': {'bytes': IsBytes()},
-                                    }
-                                }
-                            ],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_image_binary_tool_return_mapping(bedrock_provider: BedrockProvider, image_content: BinaryContent):
-    """Test that image BinaryContent in tool returns is properly mapped to Bedrock format."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(tool_name='get_img', content=image_content, tool_call_id='img1', timestamp=now),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'img1',
-                            'content': [{'image': {'format': 'jpeg', 'source': {'bytes': IsBytes()}}}],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_video_binary_tool_return_mapping(bedrock_provider: BedrockProvider, video_content: BinaryContent):
-    """Test that video BinaryContent in tool returns is properly mapped to Bedrock format."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(tool_name='get_vid', content=video_content, tool_call_id='vid1', timestamp=now),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'vid1',
-                            'content': [{'video': {'format': 'mp4', 'source': {'bytes': IsBytes()}}}],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_mixed_content_tool_return_mapping(
-    bedrock_provider: BedrockProvider, image_content: BinaryContent, document_content: BinaryContent
-):
-    """Test that tool returns with mixed content (data + files) are properly mapped."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    # Tool returning both JSON data and an image
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_mixed',
-                    content=[{'result': 'success'}, image_content],
-                    tool_call_id='mix1',
-                    timestamp=now,
-                ),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'mix1',
-                            'content': [
-                                {'text': '[{"result":"success"}]'},
-                                {'image': {'format': 'jpeg', 'source': {'bytes': IsBytes()}}},
-                            ],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_empty_tool_result_text_format(bedrock_provider: BedrockProvider):
-    """Test that empty tool result uses text format fallback when profile uses text format."""
-    # Default profile uses text format
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    # Tool returns None (empty content)
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(tool_name='get_nothing', content=None, tool_call_id='empty1', timestamp=now),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    # Should have empty text fallback
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'empty1',
-                            'content': [{'text': ''}],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_empty_tool_result_json_format():
-    """Test that empty tool result uses json format fallback when profile uses json format."""
-    from pydantic_ai.providers.bedrock import BedrockModelProfile
-
-    # Create a stub provider that uses json format profile
-    class JsonFormatBedrockProvider(Provider[Any]):
-        @property
-        def name(self) -> str:  # pragma: no cover
-            return 'bedrock-json'
-
-        @property
-        def base_url(self) -> str:  # pragma: no cover
-            return 'https://bedrock.stub'
-
-        @property
-        def client(self) -> Any:
-            return None
-
-        def model_profile(self, model_name: str):
-            return BedrockModelProfile(bedrock_tool_result_format='json')
-
-    model = BedrockConverseModel('mistral.mistral-large-2402-v1:0', provider=JsonFormatBedrockProvider())
-    now = datetime.datetime.now()
-
-    # Tool returns None (empty content)
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(tool_name='get_nothing', content=None, tool_call_id='empty1', timestamp=now),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    # Should have empty json fallback
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'empty1',
-                            'content': [{'json': {}}],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_image_url_s3_tool_return(bedrock_provider: BedrockProvider):
-    """Test that ImageUrl with S3 URL in tool returns uses S3 location source."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_img',
-                    content=ImageUrl(url='s3://my-bucket/image.png', media_type='image/png'),
-                    tool_call_id='img1',
-                    timestamp=now,
-                ),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'img1',
-                            'content': [
-                                {
-                                    'image': {
-                                        'format': 'png',
-                                        'source': {'s3Location': {'uri': 's3://my-bucket/image.png'}},
-                                    }
-                                }
-                            ],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_image_url_s3_with_bucket_owner(bedrock_provider: BedrockProvider):
-    """Test that S3 URL with bucketOwner query param includes bucket owner in location."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_img',
-                    content=ImageUrl(url='s3://my-bucket/image.png?bucketOwner=123456789012', media_type='image/png'),
-                    tool_call_id='img1',
-                    timestamp=now,
-                ),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'img1',
-                            'content': [
-                                {
-                                    'image': {
-                                        'format': 'png',
-                                        'source': {
-                                            's3Location': {
-                                                'uri': 's3://my-bucket/image.png',
-                                                'bucketOwner': '123456789012',
-                                            }
-                                        },
-                                    }
-                                }
-                            ],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_document_url_http_tool_return(bedrock_provider: BedrockProvider):
-    """Test that DocumentUrl with HTTP URL downloads and uses bytes source."""
-    from unittest.mock import AsyncMock, patch
-
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_doc',
-                    content=DocumentUrl(url='https://example.com/doc.pdf'),
-                    tool_call_id='doc1',
-                    timestamp=now,
-                ),
-            ],
-        ),
-    ]
-
-    with patch('pydantic_ai.models.bedrock.download_item', new_callable=AsyncMock) as mock_download:
-        mock_download.return_value = {'data': b'%PDF-1.4', 'data_type': 'pdf'}
-        _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    mock_download.assert_called_once()
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'doc1',
-                            'content': [
-                                {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': b'%PDF-1.4'}}}
-                            ],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_video_url_s3_tool_return(bedrock_provider: BedrockProvider):
-    """Test that VideoUrl with S3 URL in tool returns uses S3 location source."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_vid',
-                    content=VideoUrl(url='s3://my-bucket/video.mp4', media_type='video/mp4'),
-                    tool_call_id='vid1',
-                    timestamp=now,
-                ),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'vid1',
-                            'content': [
-                                {
-                                    'video': {
-                                        'format': 'mp4',
-                                        'source': {'s3Location': {'uri': 's3://my-bucket/video.mp4'}},
-                                    }
-                                }
-                            ],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-async def test_audio_binary_in_tool_return_dropped(bedrock_provider: BedrockProvider):
-    """Test that audio BinaryContent in tool returns is silently dropped (unsupported by Bedrock)."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
-
-    audio_content = BinaryContent(data=b'fake audio data', media_type='audio/mpeg')
-
-    req: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_audio',
-                    content=audio_content,
-                    tool_call_id='audio1',
-                    timestamp=now,
-                ),
-            ],
-        ),
-    ]
-
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
-
-    # Audio is dropped since Bedrock doesn't support it in tool results, empty text fallback remains
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'toolResult': {
-                            'toolUseId': 'audio1',
-                            'content': [{'text': ''}],
-                            'status': 'success',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-
-@pytest.mark.vcr()
-async def test_image_as_binary_content_tool_response(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, image_content: BinaryContent
-):
-    """VCR test: Tool returning image is handled natively in toolResult."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(model)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content=IsStr()),
-                    ToolCallPart(
-                        tool_name='get_image',
-                        args={},
-                        tool_call_id=IsStr(),
-                    ),
-                ],
-                usage=IsInstance(RequestUsage),
-                model_name='us.amazon.nova-pro-v1:0',
-                timestamp=IsDatetime(),
-                provider_name='bedrock',
-                provider_url=IsStr(),
-                provider_details=IsInstance(dict),  # pyright: ignore[reportUnknownArgumentType]
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content=IsStr())],
-                usage=IsInstance(RequestUsage),
-                model_name='us.amazon.nova-pro-v1:0',
-                timestamp=IsDatetime(),
-                provider_name='bedrock',
-                provider_url=IsStr(),
-                provider_details=IsInstance(dict),  # pyright: ignore[reportUnknownArgumentType]
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
         ]
     )

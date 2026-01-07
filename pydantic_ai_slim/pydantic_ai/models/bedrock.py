@@ -592,11 +592,16 @@ class BedrockConverseModel(Model):
                             else:
                                 tool_result_content.append({'json': part.model_response_object()})
 
-                        # Add multimodal files - Bedrock supports all types natively in toolResult
+                        # Add multimodal files - only images are native in toolResult
+                        # Documents/videos must be siblings in the outer content array
+                        sibling_content: list[ContentBlockUnionTypeDef] = []
                         for file in part.multimodal_content:
                             file_block = await self._map_file_to_content_block(file, document_count)
                             if file_block is not None:  # pragma: no branch
-                                tool_result_content.append(file_block)
+                                if 'image' in file_block:
+                                    tool_result_content.append(file_block)
+                                else:
+                                    sibling_content.append(file_block)
 
                         # Ensure we have at least some content
                         if not tool_result_content:  # pragma: no branch
@@ -605,20 +610,20 @@ class BedrockConverseModel(Model):
                             else:
                                 tool_result_content.append({'json': {}})
 
-                        bedrock_messages.append(
+                        user_content: list[ContentBlockUnionTypeDef] = [
                             {
-                                'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': tool_result_content,
-                                            'status': 'success',
-                                        }
-                                    }
-                                ],
+                                'toolResult': {
+                                    'toolUseId': part.tool_call_id,
+                                    'content': tool_result_content,
+                                    'status': 'success',
+                                }
                             }
-                        )
+                        ]
+                        # Bedrock requires a text block when documents are present as siblings
+                        if any('document' in block for block in sibling_content):
+                            user_content.append({'text': 'Additional file from tool result:'})
+                        user_content.extend(sibling_content)
+                        bedrock_messages.append({'role': 'user', 'content': user_content})
                     elif isinstance(part, RetryPromptPart):
                         # TODO(Marcelo): We need to add a test here.
                         if part.tool_name is None:  # pragma: no cover
