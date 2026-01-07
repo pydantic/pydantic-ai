@@ -417,8 +417,12 @@ class StreamedResponseSync:
 
 async def batch_create(
     model: models.Model | models.KnownModelName | str,
-    requests: Sequence[tuple[str, Sequence[messages.ModelMessage], models.ModelRequestParameters]],
+    requests: Sequence[
+        tuple[str, Sequence[messages.ModelMessage]]
+        | tuple[str, Sequence[messages.ModelMessage], models.ModelRequestParameters]
+    ],
     *,
+    model_request_parameters: models.ModelRequestParameters | None = None,
     model_settings: settings.ModelSettings | None = None,
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
 ) -> models.Batch:
@@ -427,29 +431,29 @@ async def batch_create(
     Batch processing allows submitting multiple requests together,
     typically at reduced cost (e.g., 50% discount on OpenAI).
 
+    See the [OpenAI Batch API docs](https://platform.openai.com/docs/guides/batch) for details.
+
     ```py title="batch_create_example.py"
     from pydantic_ai import ModelRequest
     from pydantic_ai.direct import batch_create, batch_status, batch_results
-    from pydantic_ai.models import ModelRequestParameters
 
 
     async def main():
+        # Simple usage - just (custom_id, messages) tuples
         requests = [
-            ('req-1', [ModelRequest.user_text_prompt('What is 2+2?')], ModelRequestParameters()),
-            ('req-2', [ModelRequest.user_text_prompt('What is 3+3?')], ModelRequestParameters()),
+            ('req-1', [ModelRequest.user_text_prompt('What is 2+2?')]),
+            ('req-2', [ModelRequest.user_text_prompt('What is 3+3?')]),
         ]
         batch = await batch_create('openai:gpt-4o-mini', requests)
         print(f'Batch {batch.id} created with status: {batch.status}')
-        # Poll for completion...
-        # results = await batch_results('openai:gpt-4o-mini', batch)
     ```
 
     Args:
         model: The model to make batch requests to.
-        requests: List of (custom_id, messages, parameters) tuples.
-            - custom_id: Unique identifier to match results to requests
-            - messages: Message history for this request
-            - parameters: Tool definitions, output schema, etc.
+        requests: List of tuples, either:
+            - (custom_id, messages) - uses model_request_parameters default
+            - (custom_id, messages, parameters) - per-request parameters
+        model_request_parameters: Default parameters for requests that don't specify their own.
         model_settings: Settings applied to all requests in the batch.
         instrument: Whether to instrument with OpenTelemetry/Logfire.
 
@@ -460,15 +464,29 @@ async def batch_create(
         NotImplementedError: If the model doesn't support batch processing.
     """
     model_instance = _prepare_model(model, instrument)
-    # Convert sequences to lists for the model method
-    requests_list = [(custom_id, list(msgs), params) for custom_id, msgs, params in requests]
+    default_params = model_request_parameters or models.ModelRequestParameters()
+
+    # Normalize requests to 3-tuples
+    requests_list: list[tuple[str, list[messages.ModelMessage], models.ModelRequestParameters]] = []
+    for req in requests:
+        if len(req) == 2:
+            custom_id, msgs = req
+            requests_list.append((custom_id, list(msgs), default_params))
+        else:
+            custom_id, msgs, params = req
+            requests_list.append((custom_id, list(msgs), params))
+
     return await model_instance.batch_create(requests_list, model_settings)
 
 
 def batch_create_sync(
     model: models.Model | models.KnownModelName | str,
-    requests: Sequence[tuple[str, Sequence[messages.ModelMessage], models.ModelRequestParameters]],
+    requests: Sequence[
+        tuple[str, Sequence[messages.ModelMessage]]
+        | tuple[str, Sequence[messages.ModelMessage], models.ModelRequestParameters]
+    ],
     *,
+    model_request_parameters: models.ModelRequestParameters | None = None,
     model_settings: settings.ModelSettings | None = None,
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
 ) -> models.Batch:
@@ -479,7 +497,8 @@ def batch_create_sync(
 
     Args:
         model: The model to make batch requests to.
-        requests: List of (custom_id, messages, parameters) tuples.
+        requests: List of tuples, either (custom_id, messages) or (custom_id, messages, parameters).
+        model_request_parameters: Default parameters for requests that don't specify their own.
         model_settings: Settings applied to all requests in the batch.
         instrument: Whether to instrument with OpenTelemetry/Logfire.
 
@@ -490,6 +509,7 @@ def batch_create_sync(
         batch_create(
             model,
             requests,
+            model_request_parameters=model_request_parameters,
             model_settings=model_settings,
             instrument=instrument,
         )

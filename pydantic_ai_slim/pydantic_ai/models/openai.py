@@ -1252,6 +1252,8 @@ class OpenAIChatModel(Model):
         Batch processing offers 50% cost reduction compared to regular API calls.
         Batches are processed within the specified completion window (default 24h).
 
+        See [OpenAI Batch API docs](https://platform.openai.com/docs/guides/batch) for details.
+
         Args:
             requests: List of (custom_id, messages, parameters) tuples.
                 - custom_id: Unique identifier to match results to requests
@@ -1413,7 +1415,10 @@ class OpenAIChatModel(Model):
                         )
                     )
 
-        # Also check error file for any additional errors
+        # Check error file for requests that failed validation/processing.
+        # OpenAI may include errors in the output file (inline with results) OR in a separate
+        # error file. We track processed_ids to avoid duplicates when both files exist.
+        # See: https://platform.openai.com/docs/guides/batch#4-check-the-status-of-a-batch
         if batch.error_file_id:
             error_content = await self.client.files.content(batch.error_file_id)
             for line in error_content.text.strip().split('\n'):
@@ -1422,7 +1427,6 @@ class OpenAIChatModel(Model):
                 error_data = json.loads(line)
                 custom_id = error_data.get('custom_id', '')
 
-                # Don't add duplicate if already processed
                 if custom_id not in processed_ids:
                     processed_ids.add(custom_id)
                     results.append(

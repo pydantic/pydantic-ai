@@ -465,6 +465,25 @@ class TestDirectAPIBatchFunctions:
             assert batch.id == 'batch_abc123'
             assert batch.status == BatchStatus.VALIDATING
 
+    async def test_batch_create_direct_api_simple_tuples(self, allow_model_requests: None):
+        """Test batch_create Direct API with simple 2-tuples (no explicit params)."""
+        mock_client = MockOpenAIBatch()
+
+        with patch('pydantic_ai.models.openai.AsyncOpenAI', return_value=mock_client):
+            model = OpenAIChatModel('gpt-4o-mini')
+            model.client = cast(AsyncOpenAI, mock_client)
+
+            # Use simple 2-tuples - parameters should default
+            requests: list[tuple[str, list[ModelMessage]]] = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')]),
+                ('req-2', [ModelRequest.user_text_prompt('World')]),
+            ]
+
+            batch = await batch_create(model, requests)
+
+            assert batch.id == 'batch_abc123'
+            assert batch.status == BatchStatus.VALIDATING
+
     async def test_batch_status_direct_api(self, allow_model_requests: None):
         """Test batch_status Direct API function."""
         mock_client = MockOpenAIBatch()
