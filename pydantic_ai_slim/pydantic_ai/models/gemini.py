@@ -1,3 +1,12 @@
+"""Deprecated Gemini model implementation.
+
+This module is deprecated. Use [`pydantic_ai.models.google.GoogleModel`][pydantic_ai.models.google.GoogleModel] instead.
+See the [Google model documentation](https://ai.pydantic.dev/models/google/) for more details.
+
+This module uses a custom HTTP implementation. The recommended `GoogleModel` in
+`google.py` uses the official `google-genai` SDK.
+"""
+
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Sequence
@@ -77,10 +86,7 @@ class GeminiModelSettings(ModelSettings, total=False):
     """Thinking is "on" by default in both the API and AI Studio.
 
     Being on by default doesn't mean the model will send back thoughts. For that, you would need to set `include_thoughts`
-    to `True`, but since end of January 2025, `thoughts` are not returned anymore, and are only displayed in the Google
-    AI Studio. See https://discuss.ai.google.dev/t/thoughts-are-missing-cot-not-included-anymore/63653 for more details.
-
-    If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
+    to `True`. If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
 
     See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
     """
@@ -393,7 +399,9 @@ class GeminiModel(Model):
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
                 elif isinstance(item, CachePoint):
-                    # Gemini doesn't support prompt caching via CachePoint
+                    # Gemini doesn't support inline CachePoint markers. Google's caching requires
+                    # pre-creating cache objects via the API, then referencing them by name using
+                    # `GoogleModelSettings.google_cached_content`. See https://ai.google.dev/gemini-api/docs/caching
                     pass
                 else:
                     assert_never(item)  # pragma: lax no cover
@@ -552,8 +560,8 @@ class _GeminiRequest(TypedDict):
     """
 
     # Note: Even though Google supposedly supports camelCase and snake_case, we've had user report misbehavior
-    # when using snake_case, which is why this typeddict now uses camelCase. And anyway, the plan is to replace this
-    # with an official google SDK in the near future anyway.
+    # when using snake_case, which is why this typeddict now uses camelCase. The recommended `GoogleModel` in
+    # `google.py` uses the official `google-genai` SDK and should be used instead of this deprecated module.
     contents: list[_GeminiContent]
     tools: NotRequired[_GeminiTools]
     toolConfig: NotRequired[_GeminiToolConfig]
@@ -726,9 +734,7 @@ def _process_response_from_parts(
     items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
-            # NOTE: Google doesn't include the `thought` field anymore. We handle this here in case they decide to
-            # change their mind and start including it again.
-            if part.get('thought'):  # pragma: no cover
+            if part.get('thought'):
                 items.append(ThinkingPart(content=part['text']))
             else:
                 items.append(TextPart(content=part['text']))
