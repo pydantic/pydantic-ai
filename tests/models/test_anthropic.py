@@ -442,6 +442,36 @@ async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
     )
 
 
+def test_file_id_identifier_property():
+    """Test that FileId.identifier returns the file_id."""
+    from pydantic_ai import FileId
+
+    file_id = FileId(file_id='file-abc123')
+    assert file_id.identifier == 'file-abc123'
+
+    # Also test with provider and media_type
+    file_id_with_extras = FileId(file_id='file-xyz789', provider='anthropic', media_type='application/pdf')
+    assert file_id_with_extras.identifier == 'file-xyz789'
+
+
+async def test_file_id_in_otel_message_parts(allow_model_requests: None):
+    """Test that FileId is handled correctly in otel message parts conversion (skipped)."""
+    from pydantic_ai.agent import InstrumentationSettings
+    from pydantic_ai.messages import FileId, UserPromptPart
+
+    # Create a UserPromptPart with FileId
+    part = UserPromptPart(content=['text before', FileId(file_id='file-abc123'), 'text after'])
+
+    # Convert to otel message parts
+    settings = InstrumentationSettings(include_content=True)
+    otel_parts = part.otel_message_parts(settings)
+
+    # Should have 2 text parts, FileId is skipped (no otel type for file references)
+    assert otel_parts == snapshot(
+        [{'type': 'text', 'content': 'text before'}, {'type': 'text', 'content': 'text after'}]
+    )
+
+
 def test_cache_control_unsupported_param_type():
     """Test that cache control raises error for unsupported param types."""
     from unittest.mock import MagicMock
