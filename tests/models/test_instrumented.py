@@ -66,7 +66,7 @@ class MyModel(Model):
         return 'gpt-4o'
 
     @property
-    def fully_qualified_model_name(self) -> str:
+    def fully_qualified_model_name(self) -> str:  # pragma: no cover
         return f'{self.system}:{self.model_name}'
 
     @property
