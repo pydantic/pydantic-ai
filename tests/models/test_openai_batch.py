@@ -176,7 +176,7 @@ class MockOpenAIBatch:
     base_url: str = 'https://api.openai.com/v1'
 
     @classmethod
-    def create_mock(cls) -> AsyncOpenAI:
+    def create_mock(cls) -> AsyncOpenAI:  # pragma: no cover
         """Create a mock OpenAI client with proper type casting for Pyright."""
         return cast(AsyncOpenAI, cls())
 
@@ -194,7 +194,7 @@ class MockOpenAIBatch:
 
         async def create(self, **kwargs: Any) -> OpenAIBatchResponse:
             self.parent.batch_create_calls.append(kwargs)
-            if self.parent.batches_list:
+            if self.parent.batches_list:  # pragma: no branch
                 return self.parent.batches_list[0]
             # Return a default batch response
             return OpenAIBatchResponse(
@@ -211,8 +211,8 @@ class MockOpenAIBatch:
             for batch in self.parent.batches_list:
                 if batch.id == batch_id:
                     return batch
-            # Return a default batch response
-            return OpenAIBatchResponse(
+            # Return a default batch response  # pragma: no cover
+            return OpenAIBatchResponse(  # pragma: no cover
                 id=batch_id,
                 completion_window='24h',
                 created_at=1704067200,
