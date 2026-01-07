@@ -2,7 +2,6 @@
 
 Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to receive agent run input from, and stream events to, a frontend using [AI SDK UI](https://ai-sdk.dev/docs/ai-sdk-ui/overview) hooks like [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat). You can optionally use [AI Elements](https://ai-sdk.dev/elements) for pre-built UI components.
 
-
 ## Usage
 
 The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] class is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`](../agents.md#running-agents), running the agent, and then transforming Pydantic AI events into Vercel AI events. The event stream transformation is handled by the [`VercelAIEventStream`][pydantic_ai.ui.vercel_ai.VercelAIEventStream] class, but you typically won't use this directly.
@@ -90,16 +89,16 @@ async def chat(request: Request) -> Response:
 
 Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md) for details on setting up tools that require approval.
 
-To enable tool approval streaming, pass `tool_approval=True` when creating the adapter:
+To enable tool approval streaming, pass `enable_tool_approval=True` when creating the adapter:
 
 ```py {test="skip" lint="skip"}
 @app.post('/chat')
 async def chat(request: Request) -> Response:
-    adapter = await VercelAIAdapter.from_request(request, agent=agent, tool_approval=True)
+    adapter = await VercelAIAdapter.from_request(request, agent=agent, enable_tool_approval=True)
     return adapter.streaming_response(adapter.run_stream())
 ```
 
-When `tool_approval=True`, the adapter will:
+When `enable_tool_approval=True`, the adapter will:
 
 1. Emit `tool-approval-request` chunks when tools with `requires_approval=True` are called
 2. Automatically extract approval responses from follow-up requests
