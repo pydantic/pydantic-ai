@@ -364,7 +364,7 @@ The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSetting
 
     If you want to use it for per-request control, use [direct model requests](direct.md) or the `prepare_tools` function above.
 
-Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)), and **output tools** (internal tools used for [structured output](output.md#tool-output)). The `tool_choice` setting controls function tools; output tools are handled by the framework.
+Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)), and **output tools** (internal tools used for [structured output](output.md#tool-output)).
 
 ### Options
 
