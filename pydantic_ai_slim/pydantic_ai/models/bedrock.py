@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec, TypedDict, assert_never
 
 from pydantic_ai import (
     AudioUrl,
@@ -163,6 +163,22 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 _BEDROCK_IMAGE_FORMATS = ('gif', 'jpeg', 'png', 'webp')
 _BEDROCK_DOCUMENT_FORMATS = ('csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx')
 _BEDROCK_VIDEO_FORMATS = ('flv', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'three_gp', 'webm', 'wmv')
+
+
+class _ImageFileBlock(TypedDict):
+    image: ImageBlockTypeDef
+
+
+class _DocumentFileBlock(TypedDict):
+    document: DocumentBlockTypeDef
+
+
+class _VideoFileBlock(TypedDict):
+    video: VideoBlockTypeDef
+
+
+# subset of mypy_boto3_bedrock_runtime.type_defs.ToolResultContentBlockTypeDef
+_FileContentBlock = _ImageFileBlock | _DocumentFileBlock | _VideoFileBlock
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -590,8 +606,7 @@ class BedrockConverseModel(Model):
                         tool_result_content: list[Any] = []
 
                         # Add data content (text or JSON based on profile)
-                        data = part.text_or_json_content
-                        if data is not None:
+                        if part.text_or_json_content is not None:
                             if profile.bedrock_tool_result_format == 'text':
                                 tool_result_content.append({'text': part.model_response_str()})
                             else:
@@ -605,8 +620,12 @@ class BedrockConverseModel(Model):
                             if file_block is not None:  # pragma: no branch
                                 if 'image' in file_block:
                                     tool_result_content.append(file_block)
+                                elif 'document' in file_block:
+                                    sibling_content.append({'document': file_block['document']})
+                                elif 'video' in file_block:
+                                    sibling_content.append({'video': file_block['video']})
                                 else:
-                                    sibling_content.append(file_block)
+                                    assert_never(file_block)
 
                         # Ensure we have at least some content
                         if not tool_result_content:  # pragma: no branch
@@ -751,7 +770,7 @@ class BedrockConverseModel(Model):
     async def _map_file_to_content_block(
         file: ImageUrl | DocumentUrl | VideoUrl | AudioUrl | BinaryContent,
         document_count: Iterator[int],
-    ) -> ContentBlockUnionTypeDef | None:
+    ) -> _FileContentBlock | None:
         """Map a multimodal file directly to a Bedrock content block for tool results."""
         if isinstance(file, BinaryContent):
             format = file.format
