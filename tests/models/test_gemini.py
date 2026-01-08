@@ -36,6 +36,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
     GeminiModel,
@@ -61,9 +62,9 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
 pytestmark = [
     pytest.mark.anyio,
@@ -793,7 +794,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot(['Hello ', 'Hello world'])
+        assert chunks == snapshot(['Hello ', 'Hello world', 'Hello world'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
     async with agent.run_stream('Hello') as result:
@@ -830,7 +831,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot(['abc', 'abc€def'])
+        assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
@@ -860,7 +861,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot([(1, 2)])
+        assert chunks == snapshot([(1, 2), (1, 2)])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
@@ -1233,17 +1234,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
+                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 241a70:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1434,24 +1428,15 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
 
 @pytest.mark.vcr()
 async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
-    with try_import() as imports_successful:
-        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-        from pydantic_ai.providers.openai import OpenAIProvider
-
-    if not imports_successful():  # pragma: lax no cover
-        pytest.skip('OpenAI is not installed')
-
-    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    gemini_model = GeminiModel('gemini-2.5-flash-preview-04-17', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(openai_model)
+    gemini_model = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(gemini_model)
 
     # We call OpenAI to get the thinking parts, because Google disabled the thoughts in the API.
     # See https://github.com/pydantic/pydantic-ai/issues/793 for more details.
     result = await agent.run(
         'How do I cross the street?',
-        model_settings=OpenAIResponsesModelSettings(
-            openai_reasoning_effort='high', openai_reasoning_summary='detailed'
-        ),
+        model_settings=GeminiModelSettings(gemini_thinking_config={'thinking_budget': 1024, 'include_thoughts': True}),
+        usage_limits=UsageLimits(total_tokens_limit=5000),
     )
     assert result.all_messages() == snapshot(
         [
@@ -1463,48 +1448,82 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
             ModelResponse(
                 parts=[
                     IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
                     TextPart(
                         content="""\
-Here are guidelines for safely crossing a street. Remember that these tips are general and may need to be adjusted depending on your local traffic laws and the specific situation. They are not a substitute for professional safety advice.
+Crossing the street safely is a fundamental skill, and it's great you're asking! Here's a breakdown of how to do it, from basic principles to specific scenarios:
 
-1. Before you approach the street:
- • Use the sidewalk if available and get to the curb or edge of the road.
- • If you're a child or feel unsure, try to have an adult accompany you.
+## The Golden Rules of Crossing the Street:
 
-2. When you're ready to cross:
- • Look carefully in all directions—start by looking left, then right, and left again. In countries where you drive on the left you'll want to adjust accordingly.
- • Listen for vehicles and be aware of turning cars, which might not be immediately in your line of sight.
- • Make eye contact with drivers if possible so that you know they see you.
+1.  **Stop at the Curb:** Always stop at the edge of the sidewalk or street. Don't step into the street until you're ready to cross.
+2.  **Look Left, Right, and Left Again:** This is crucial. Traffic patterns can vary, so make sure to check all directions. Look left first for oncoming traffic, then right, and then left again as you start to step out, as new traffic might have appeared.
+3.  **Make Eye Contact with Drivers:** Don't just look at cars; try to make eye contact with drivers. This confirms that they see you. Never assume a driver sees you or will stop.
+4.  **Wait for a Safe Gap or Signal:** Only cross when there's plenty of time and space for you to get to the other side safely.
+5.  **Walk, Don't Run:** Cross the street at a steady, predictable pace. Running can make you lose balance or make it harder for drivers to react.
+6.  **Stay Alert - No Distractions!** Put away your phone, take out your headphones, and pay full attention to your surroundings.
 
-3. Use designated crossing areas whenever possible:
- • If there's a pedestrian crosswalk, use it. Crosswalks and traffic signals are there to help manage the flow of both vehicles and pedestrians.
- • If there's a "Walk" signal, wait until it's on before crossing. Even if the signal turns green for pedestrians, always take an extra moment to ensure that approaching drivers are stopping.
+---
 
-4. While crossing:
- • Continue to remain alert and avoid distractions like cell phones or headphones that could prevent you from noticing approaching traffic.
- • Walk at a steady pace and stay in the crosswalk until you have completely reached the other side.
+## Crossing in Different Scenarios:
 
-5. After crossing:
- • Once you've safely reached the other side, continue to be aware of any vehicles that might be turning or reversing.
+### 1. At a Marked Crosswalk with a Traffic Light / Pedestrian Signal:
 
-Always be cautious—even if you have the right-of-way—and understand that it's better to wait a moment longer than risk being caught off guard. Stay safe!\
-""",
-                        id='msg_68039413525c8191aca9aa8f886eaf5d04f0817ea037a07b',
+*   **Wait for the "WALK" Signal:** Press the pedestrian button if there is one. Wait for the signal to change to a "WALK" symbol (a white walking person or the word "WALK").
+*   **Look L-R-L:** Even with a signal, always check for turning vehicles or drivers running a red light.
+*   **Cross Promptly:** Walk across the street within the crosswalk lines.
+*   **Beware of Flashing "DON'T WALK":** If the "DON'T WALK" hand starts flashing while you're still on the curb, don't start crossing. If you've already started, continue to the other side quickly but safely.
+
+### 2. At a Marked Crosswalk (No Traffic Light):
+
+*   **Stop at the Curb:** Position yourself clearly visible at the edge of the crosswalk.
+*   **Look L-R-L:** Scan for approaching vehicles.
+*   **Wait for Vehicles to Stop:** Drivers are generally required to yield to pedestrians in marked crosswalks. Wait until traffic in all lanes has come to a complete stop before you begin.
+*   **Make Eye Contact:** Confirm drivers see you and intend to stop.
+*   **Cross Carefully:** Even when cars have stopped, remain vigilant for other vehicles, especially in multi-lane roads where one car might stop and another in an adjacent lane might not.
+
+### 3. At an Unmarked Intersection (No Crosswalk Lines):
+
+*   **Treat it Like a Crosswalk:** In many places, any intersection *is* legally considered a crosswalk, even if it's not painted. However, drivers might be less aware.
+*   **Choose Wisely:** Only cross if you have clear visibility of traffic and there's a significant gap in vehicles.
+*   **Extra Vigilance:** Be even more cautious than at a marked crosswalk, as drivers may be less expecting you.
+*   **Look L-R-L and Make Eye Contact:** Absolutely critical here.
+
+### 4. Crossing Mid-Block (Not at an Intersection or Crosswalk - "Jaywalking"):
+
+*   **Discouraged and Often Illegal:** It's generally safer and often legally required to cross at intersections or marked crosswalks.
+*   **If You Must (and it's safe/legal in your area):**
+    *   **Find a Clear Spot:** Choose an area where you have excellent visibility of oncoming traffic in both directions, and drivers can see you easily. Avoid crossing from behind parked cars or obstacles.
+    *   **Wide Gap:** Wait for a very wide gap in traffic.
+    *   **Cross Swiftly:** Get across the street as directly and quickly as possible once it's clear.
+    *   **Be Prepared to Wait:** You might need to wait a long time for a safe opportunity.
+
+### 5. Using an Overpass or Underpass:
+
+*   These are the safest options, as they completely separate pedestrians from vehicle traffic.
+*   Always use them if they are available, especially on very busy or high-speed roads.
+
+---
+
+## Important Safety Considerations:
+
+*   **Be Visible:** Wear bright or reflective clothing, especially at dawn, dusk, or night.
+*   **Be Predictable:** Don't dart into traffic or suddenly change direction.
+*   **Watch for Turning Vehicles:** Even if you have a "WALK" signal, always check for cars making right or left turns.
+*   **Never Walk While Intoxicated/Impaired:** Your judgment and reaction time will be severely affected.
+*   **Teach Children:** Always hold a child's hand when crossing and teach them these rules.
+*   **Be Patient:** It's better to wait an extra minute than to take a risk.
+
+By following these guidelines, you can cross the street safely and confidently!\
+"""
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
-                model_name='o3-mini-2025-01-31',
+                usage=RequestUsage(
+                    input_tokens=8, output_tokens=1987, details={'thoughts_tokens': 849, 'text_prompt_tokens': 8}
+                ),
+                model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={
-                    'finish_reason': 'completed',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
-                finish_reason='stop',
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='Fxhfad0_29DPsg-UlsFJ',
                 run_id=IsStr(),
             ),
         ]
@@ -1528,21 +1547,16 @@ Always be cautious—even if you have the right-of-way—and understand that it'
             ModelResponse(
                 parts=[
                     IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
-                model_name='o3-mini-2025-01-31',
+                usage=RequestUsage(
+                    input_tokens=8, output_tokens=1987, details={'thoughts_tokens': 849, 'text_prompt_tokens': 8}
+                ),
+                model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={
-                    'finish_reason': 'completed',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
-                finish_reason='stop',
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='Fxhfad0_29DPsg-UlsFJ',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -1557,52 +1571,121 @@ Always be cautious—even if you have the right-of-way—and understand that it'
             ),
             ModelResponse(
                 parts=[
+                    ThinkingPart(
+                        content="""\
+**Deconstructing "Crossing the River": An Analogical Approach**
+
+Alright, let's break this down. The user wants to map "crossing the street" principles onto "crossing a river." Essentially, it's about taking that fundamental safety mindset and adapting it to a totally different environment. First, I need to jog my memory of the street crossing principles, from that earlier answer: stop at the curb, look all directions, make eye contact, safe gap, steady pace, stay alert, different crossing scenarios. Got it. Now, how does that translate?
+
+Okay, let's brainstorm river crossing methods - that's the equivalent of thinking about crosswalks, overpasses, etc. Swimming, boating, a bridge, a ford, a ferry, wading, maybe even a rope traverse if we're getting technical. And, of course, the hazards: current, depth, temperature, rocks, wildlife, weather - the whole gamut. Also, prep - gear, knowledge, planning, a buddy.
+
+Now, the core of the analogy. "Stop at the Curb" - that needs to become "Assess from the Bank." You don't just leap into a river; you take a minute and observe. Like 'before you get wet, stop at the curb'.
+
+"Look L-R-L" becomes "Look Upstream, Downstream, and At the Water Itself." It's about spotting those river hazards and conditions. Instead of traffic, it's the current, the rapids, the rocks, the depth.
+
+"Make Eye Contact with Drivers" is a tricky one. No drivers, but you need to "read the water." That's the river's "intent." Understand its power.
+
+Then there's "Wait for a Safe Gap/Signal" - which becomes waiting for "Safe Conditions/Right Time." Low water, calm conditions, good weather. It's about knowing when to go.
+
+And finally, "Walk, Don't Run" is now "Move Deliberately and Appropriately for Method." Steady swim, careful wade, purposeful paddle - it's about being in control. Just as you do not run across the street, you do not rush the river.
+
+The final piece is "Stay Alert, No Distractions" - that's fundamental situational awareness regardless of the environment. Focus on the task at hand. Keep an eye out.
+"""
+                    ),
                     TextPart(
                         content="""\
-Okay, let's draw an analogy between crossing a street and crossing a river, applying the safety principles from the street crossing guide to the river environment.
+This is a fantastic analogy! Let's break down how to "cross the river" using the principles of "crossing the street."
 
-Think of the **river** as being like the **street** – a natural barrier you need to get across. The **hazards** on the river are different from vehicles, but they are still things that can harm you.
+The core idea is **assessment, preparation, timing, and respectful engagement with the force you're crossing.**
 
-Here's the analogous guide for crossing a river:
+---
 
-1.  **Before you approach the river:**
-    *   Just as you use a sidewalk to get to the street's edge, use a trail or the riverbank to get to a spot where you can assess the river.
-    *   If you're inexperienced with rivers or unsure about the conditions, try to have someone experienced accompany you.
+## Crossing the River: An Analogous Guide
 
-2.  **When you're ready to cross:**
-    *   Just as you look and listen for vehicles, carefully **assess the river conditions**. Look in all directions (upstream, downstream, across):
-        *   How fast is the current moving? (Like checking vehicle speed).
-        *   How deep does the water look? (Like judging the width and how much time you have).
-        *   Are there obstacles in the water (rocks, logs)? (Like parked cars or road hazards).
-        *   Is the bottom visible and does it look stable? (Like checking the road surface).
-        *   Check upstream for potential hazards coming towards you (like debris).
-    *   Listen to the river – the sound can tell you if the current is very strong or if there are rapids.
-    *   Acknowledge the river's power – just as you make eye contact with drivers, respect that the river can be dangerous and doesn't care if you're trying to cross.
+### The Golden Rules of "Crossing the River":
 
-3.  **Use designated crossing areas whenever possible:**
-    *   If there's a **bridge or a ferry**, use it. These are like the crosswalks and traffic signals – the safest, established ways to cross, often managing the "flow" (of water below, or people/boats on the river).
-    *   If you must wade or swim, look for the safest possible **crossing point** – maybe a wider, shallower section, a known ford, or a spot with a less turbulent current. This is like choosing a crosswalk instead of crossing anywhere.
+1.  **Stop at the Bank (Analogous to "Stop at the Curb"):**
+    *   **Street:** Don't step into the street until you're ready.
+    *   **River:** Don't just jump in. Get to the edge of the river (the bank) and take time to observe it. Never assume it's safe without looking.
 
-4.  **While crossing:**
-    *   Just as you stay alert and avoid distractions, **focus completely on the crossing**. Don't be looking at your phone or distracted by conversation if you are actively navigating the water.
-    *   Move with purpose, but carefully. If wading, maintain your balance against the current and watch your footing. If swimming, focus on your technique and direction. Stay aware of where you are relative to your intended path and the river's flow.
+2.  **Look Upstream, Downstream, and At the Water Itself (Analogous to "Look L-R-L"):**
+    *   **Street:** Check for traffic coming from all directions.
+    *   **River:**
+        *   **Upstream (Left):** What's coming *towards* you? Rapids, waterfalls, debris, other boats, changing weather? What might influence the current from upriver?
+        *   **Downstream (Right):** What's *below* you? Are there hazards you could be swept into? Strainers (fallen trees), rocks, rapids, dams, cold-water shock points? What are the potential consequences of losing control?
+        *   **At the Water Itself (Left again):** What are the immediate conditions? Current speed, depth (if visible), clarity, temperature, hidden rocks, eddies, sandbars?
 
-5.  **After crossing:**
-    *   Once you've safely reached the other side, take a moment to ensure you are truly out of the main flow and on stable ground. Be aware of the riverbank conditions.
+3.  **Read the Water's "Intent" / Understand its Power (Analogous to "Make Eye Contact with Drivers"):**
+    *   **Street:** Confirm drivers see you and intend to stop.
+    *   **River:** The river isn't a sentient being, but it *has* power and intent (its natural flow). You need to "read" the water's signals. Can you see rocks just below the surface? Is the current swirling strongly? Are there visible hazards? Understand that it will not stop for you, and you must respect its power.
 
-**Analogous Takeaway:**
+4.  **Wait for Safe Conditions or the Right Opportunity (Analogous to "Wait for a Safe Gap or Signal"):**
+    *   **Street:** Wait for a break in traffic or a "WALK" signal.
+    *   **River:** Wait for:
+        *   **Optimal Conditions:** Lower water levels, calmer weather, slower current (often in the morning or specific seasons).
+        *   **A Clear "Path":** A visible ford, a calm eddy, a suitable landing spot on the other side.
+        *   **The Right "Signal":** Perhaps you have a guide, a clear map of a known crossing point, or the weather forecast is perfect.
 
-Just as you wouldn't just run blindly into a busy street, you shouldn't just jump into a river without understanding its conditions and choosing the safest method and location to cross. Be cautious, assess the "traffic" (current, depth, obstacles), and use the available "infrastructure" (bridges, ferries, established crossing points) whenever possible.\
+5.  **Move Deliberately and with Purpose (Analogous to "Walk, Don't Run"):**
+    *   **Street:** Cross at a steady, predictable pace.
+    *   **River:** Whether swimming, wading, or paddling, move with clear intention and control. Don't panic or make sudden, erratic movements. Every action should be planned and executed carefully.
+
+6.  **Maintain Focus - No Distractions! (Analogous to "Stay Alert - No Distractions!"):**
+    *   **Street:** Put away your phone, remove headphones.
+    *   **River:** Your entire focus must be on the river, your technique, your equipment, and your surroundings. This is not the time for sightseeing or daydreaming.
+
+---
+
+## "Crossing the River" in Different Scenarios:
+
+### 1. Using a Bridge (Analogous to "Marked Crosswalk with a Traffic Light / Pedestrian Signal"):
+*   **Description:** The safest and most controlled way. A dedicated, engineered structure.
+*   **Analogy:** You are completely separated from the river's immediate flow. It's the "green light" equivalent - follow the path, and you're generally safe from the main "traffic" (current). Still, pay attention to the bridge's condition and other users.
+
+### 2. Using a Ferry or Known Boat Crossing (Analogous to "Marked Crosswalk, No Light"):
+*   **Description:** You're using a specific, designated method of transport across.
+*   **Analogy:** You're relying on a system (the ferry/boat operator) that knows the river's "traffic patterns" (currents, hazards). You wait for the "vehicle" to arrive and take you across. You've ceded control to a trusted system. Still, stay alert and follow instructions.
+
+### 3. Fording / Wading Across a Shallow Section (Analogous to "Unmarked Intersection"):
+*   **Description:** You're walking directly through the river where it's shallow enough.
+*   **Analogy:** This requires heightened awareness. There are no "lines" or "signals." You must:
+    *   **Verify Depth and Bottom:** Can you see the bottom? Is it rocky, muddy, slippery?
+    *   **Assess Current:** Even shallow water can have a strong current. Use a stick for balance.
+    *   **Choose Your Path:** Find the clearest, most direct, and safest route across.
+    *   **Look L-R-L (Upstream, Downstream, Water):** Especially critical here, as no one is expecting you.
+
+### 4. Swimming Directly Across (Analogous to "Crossing Mid-Block / Jaywalking"):
+*   **Description:** The most direct, often riskiest, method, using your own ability.
+*   **Analogy:** This is often discouraged unless you're highly skilled and prepared.
+    *   **High Visibility & Clear Spot:** Like finding a clear spot to jaywalk, you need to ensure you can be seen and have a clear "path."
+    *   **Wide Gap in "Traffic":** You need ample space and time, meaning very calm conditions, no immediate hazards, and plenty of time to reach the other side.
+    *   **Preparedness:** You *must* be an excellent swimmer, understand river dynamics, and potentially have a personal flotation device (PFD). This is like needing specific gear for a risky street crossing (e.g., a high-visibility vest for a night crossing).
+    *   **It Might Be Illegal/Dangerous:** Many rivers are unsafe for swimming, just as jaywalking is illegal/dangerous in many places.
+
+---
+
+## Important "River Crossing" Safety Considerations:
+
+*   **Be Visible:** Wear bright colors, especially if others (boaters) are on the river.
+*   **Be Predictable:** Don't suddenly change direction or stop mid-stream.
+*   **Watch for Changing Conditions:** Rivers are dynamic. What was safe an hour ago might not be now (e.g., rain upstream, dam release).
+*   **Never Cross Alone (If possible):** "Crossing with a buddy" is like having someone to spot for you on the street.
+*   **Have the Right Gear:** PFD, appropriate footwear for wading, dry bag, map, communication device. This is like having appropriate clothing and awareness for street crossing.
+*   **Know Your Limits:** Don't attempt to cross if you're not confident in your skills or the conditions.
+*   **Be Patient:** Waiting for safer conditions or finding a better crossing point is always preferable to taking a risk.
+
+In essence, crossing a river, like crossing a street, is about **respecting the environment's power, understanding its dynamics, and making informed, cautious decisions.**\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=801, output_tokens=2313, details={'thoughts_tokens': 794, 'text_prompt_tokens': 801}
+                    input_tokens=1166, output_tokens=2581, details={'thoughts_tokens': 940, 'text_prompt_tokens': 1166}
                 ),
-                model_name='gemini-2.5-flash-preview-04-17',
+                model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id='KBhfab3gGIbOz7IPyJnhqAY',
                 run_id=IsStr(),
             ),
         ]

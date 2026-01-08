@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '150'
+      - '164'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What is 2+2?
+        - text: How do I cross the street?
         role: user
       generationConfig:
         thinking_config:
@@ -29,11 +29,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1025'
+      - '9328'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1380
+      - gfet4t7; dur=17732
       transfer-encoding:
       - chunked
       vary:
@@ -45,24 +45,340 @@ interactions:
       - content:
           parts:
           - text: |
-              **Calculating the Simple**
+              Here's my thought process on how I'd approach giving advice on "how to cross the street".
 
-              Okay, here we go. Someone's asking a pretty straightforward arithmetic question. It's really just a simple calculation. Nothing fancy, just plug in the numbers and get the result.  No need to overthink it. It's a quick win, a chance to flex some basic math muscles before getting into anything more complex. Just a matter of applying the right operation and moving on.
+              **Deconstructing "Crossing the Street": A Comprehensive Approach**
+
+              Okay, so the user is asking about crossing the street. I need to dig deeper; the request is more than a simple physical action. It's about *safe* and *correct* practices, and that encompasses a whole range of things. My mind immediately jumps to safety precautions, legal implications, and the various scenarios people might encounter. It's not a single act; it's a context-dependent process.
+
+              First, I'll brainstorm the core actions. It's like a mental checklist: **Look** (left, right, then left again), **Walk**, **Signal** (if available), **Wait** for a safe moment or light change. I've got the basics down, now I need to account for all of the different options.
+
+              Next, I need to account for the different crossing environments. It could be crosswalks with lights or no lights, unmarked intersections, mid-block crossings, maybe even special zones like school areas or construction sites, or even overpasses or underpasses.
+
+              Now, my top priority has to be safety. I'm thinking about visibility--making sure the person is seen. Awareness is key; I need to stress the importance of paying attention to the surroundings, not just cars. Patience is critical; waiting for the right moment is essential. Predictability - no darting out into traffic! And most importantly, I'm reminding myself and the user that they should *never* assume drivers see them or will stop. This is paramount!
+
+              To communicate this effectively, I'll organize my response for clarity. I'll start with the most crucial advice - the safety fundamentals and core steps. Then, I'll break it down by the different types of crossing scenarios. I'll add general safety tips that apply universally, then I'll cover any special circumstances to make it complete. Finally, I'll conclude with a concise summary.
+
+              I need to flesh out each section. Let's start with the "Golden Rules". They need to be front and center: **Look Left, Right, Left Again** (and over your shoulder if turning). Emphasize the importance of **Making Eye Contact** with drivers. The physical act is important, **Walk, Don't Run**. Being seen is also key, so they should wear **Bright Clothes** and use a **Flashlight at Night**. Most importantly, stay **Alert** and avoid distractions like phones!
+
+              When I talk about marked crosswalks with lights or signals, I'll be clear: Wait for the "WALK" signal. Check for turning vehicles before you even take a step. Cross quickly but safely. Do *not* start on a "DON'T WALK" or flashing hand signal.
+
+              If there's no light, the instructions shift a little: Stop at the curb. Look left, right, left. Wait for cars to stop *completely*. Make eye contact to confirm, then go. Always be mindful of multiple lanes.
+
+              Unmarked intersections are tricky, so the awareness needs to be heightened. Treat them like a crosswalk, but drivers might be less pedestrian-aware. Only cross if it's completely clear.
+
+              Mid-block crossings (jaywalking) - I should discourage this as it is generally less safe, especially if a designated crossing is nearby. If someone needs to cross mid-block, I will emphasize the need to find a spot with clear visibility and a wide gap in traffic. Caution is paramount, and I need to mention that this is often illegal in most locations.
+
+              Finally, I'll add "advanced" or situational tips. This is where distractions are a huge no-no, especially phones and headphones. If they're with kids or pets, stress the need to hold hands and stay close. Night or bad weather needs reflective gear and extra caution. Parking lots and driveways require heightened alertness. Construction zones call for following signs. Large vehicles mean understanding wide turns and blind spots. And again, never assume drivers are paying attention. The human factor is a risk.
             thought: true
-          - text: 2 + 2 = 4
+          - text: |-
+              Crossing the street safely is a fundamental skill, and it's great you're asking! Here's a breakdown of how to do it, from basic principles to specific scenarios:
+
+              ## The Golden Rules of Crossing the Street:
+
+              1.  **Stop at the Curb:** Always stop at the edge of the sidewalk or street. Don't step into the street until you're ready to cross.
+              2.  **Look Left, Right, and Left Again:** This is crucial. Traffic patterns can vary, so make sure to check all directions. Look left first for oncoming traffic, then right, and then left again as you start to step out, as new traffic might have appeared.
+              3.  **Make Eye Contact with Drivers:** Don't just look at cars; try to make eye contact with drivers. This confirms that they see you. Never assume a driver sees you or will stop.
+              4.  **Wait for a Safe Gap or Signal:** Only cross when there's plenty of time and space for you to get to the other side safely.
+              5.  **Walk, Don't Run:** Cross the street at a steady, predictable pace. Running can make you lose balance or make it harder for drivers to react.
+              6.  **Stay Alert - No Distractions!** Put away your phone, take out your headphones, and pay full attention to your surroundings.
+
+              ---
+
+              ## Crossing in Different Scenarios:
+
+              ### 1. At a Marked Crosswalk with a Traffic Light / Pedestrian Signal:
+
+              *   **Wait for the "WALK" Signal:** Press the pedestrian button if there is one. Wait for the signal to change to a "WALK" symbol (a white walking person or the word "WALK").
+              *   **Look L-R-L:** Even with a signal, always check for turning vehicles or drivers running a red light.
+              *   **Cross Promptly:** Walk across the street within the crosswalk lines.
+              *   **Beware of Flashing "DON'T WALK":** If the "DON'T WALK" hand starts flashing while you're still on the curb, don't start crossing. If you've already started, continue to the other side quickly but safely.
+
+              ### 2. At a Marked Crosswalk (No Traffic Light):
+
+              *   **Stop at the Curb:** Position yourself clearly visible at the edge of the crosswalk.
+              *   **Look L-R-L:** Scan for approaching vehicles.
+              *   **Wait for Vehicles to Stop:** Drivers are generally required to yield to pedestrians in marked crosswalks. Wait until traffic in all lanes has come to a complete stop before you begin.
+              *   **Make Eye Contact:** Confirm drivers see you and intend to stop.
+              *   **Cross Carefully:** Even when cars have stopped, remain vigilant for other vehicles, especially in multi-lane roads where one car might stop and another in an adjacent lane might not.
+
+              ### 3. At an Unmarked Intersection (No Crosswalk Lines):
+
+              *   **Treat it Like a Crosswalk:** In many places, any intersection *is* legally considered a crosswalk, even if it's not painted. However, drivers might be less aware.
+              *   **Choose Wisely:** Only cross if you have clear visibility of traffic and there's a significant gap in vehicles.
+              *   **Extra Vigilance:** Be even more cautious than at a marked crosswalk, as drivers may be less expecting you.
+              *   **Look L-R-L and Make Eye Contact:** Absolutely critical here.
+
+              ### 4. Crossing Mid-Block (Not at an Intersection or Crosswalk - "Jaywalking"):
+
+              *   **Discouraged and Often Illegal:** It's generally safer and often legally required to cross at intersections or marked crosswalks.
+              *   **If You Must (and it's safe/legal in your area):**
+                  *   **Find a Clear Spot:** Choose an area where you have excellent visibility of oncoming traffic in both directions, and drivers can see you easily. Avoid crossing from behind parked cars or obstacles.
+                  *   **Wide Gap:** Wait for a very wide gap in traffic.
+                  *   **Cross Swiftly:** Get across the street as directly and quickly as possible once it's clear.
+                  *   **Be Prepared to Wait:** You might need to wait a long time for a safe opportunity.
+
+              ### 5. Using an Overpass or Underpass:
+
+              *   These are the safest options, as they completely separate pedestrians from vehicle traffic.
+              *   Always use them if they are available, especially on very busy or high-speed roads.
+
+              ---
+
+              ## Important Safety Considerations:
+
+              *   **Be Visible:** Wear bright or reflective clothing, especially at dawn, dusk, or night.
+              *   **Be Predictable:** Don't dart into traffic or suddenly change direction.
+              *   **Watch for Turning Vehicles:** Even if you have a "WALK" signal, always check for cars making right or left turns.
+              *   **Never Walk While Intoxicated/Impaired:** Your judgment and reaction time will be severely affected.
+              *   **Teach Children:** Always hold a child's hand when crossing and teach them these rules.
+              *   **Be Patient:** It's better to wait an extra minute than to take a risk.
+
+              By following these guidelines, you can cross the street safely and confidently!
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: lghYaaSmK7eomtkP_KDT6A0
+      responseId: Fxhfad0_29DPsg-UlsFJ
       usageMetadata:
-        candidatesTokenCount: 8
+        candidatesTokenCount: 1138
         promptTokenCount: 8
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 8
-        thoughtsTokenCount: 16
-        totalTokenCount: 32
+        thoughtsTokenCount: 849
+        totalTokenCount: 1995
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '5077'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: How do I cross the street?
+        role: user
+      - parts:
+        - text: |-
+            Crossing the street safely is a fundamental skill, and it's great you're asking! Here's a breakdown of how to do it, from basic principles to specific scenarios:
+
+            ## The Golden Rules of Crossing the Street:
+
+            1.  **Stop at the Curb:** Always stop at the edge of the sidewalk or street. Don't step into the street until you're ready to cross.
+            2.  **Look Left, Right, and Left Again:** This is crucial. Traffic patterns can vary, so make sure to check all directions. Look left first for oncoming traffic, then right, and then left again as you start to step out, as new traffic might have appeared.
+            3.  **Make Eye Contact with Drivers:** Don't just look at cars; try to make eye contact with drivers. This confirms that they see you. Never assume a driver sees you or will stop.
+            4.  **Wait for a Safe Gap or Signal:** Only cross when there's plenty of time and space for you to get to the other side safely.
+            5.  **Walk, Don't Run:** Cross the street at a steady, predictable pace. Running can make you lose balance or make it harder for drivers to react.
+            6.  **Stay Alert - No Distractions!** Put away your phone, take out your headphones, and pay full attention to your surroundings.
+
+            ---
+
+            ## Crossing in Different Scenarios:
+
+            ### 1. At a Marked Crosswalk with a Traffic Light / Pedestrian Signal:
+
+            *   **Wait for the "WALK" Signal:** Press the pedestrian button if there is one. Wait for the signal to change to a "WALK" symbol (a white walking person or the word "WALK").
+            *   **Look L-R-L:** Even with a signal, always check for turning vehicles or drivers running a red light.
+            *   **Cross Promptly:** Walk across the street within the crosswalk lines.
+            *   **Beware of Flashing "DON'T WALK":** If the "DON'T WALK" hand starts flashing while you're still on the curb, don't start crossing. If you've already started, continue to the other side quickly but safely.
+
+            ### 2. At a Marked Crosswalk (No Traffic Light):
+
+            *   **Stop at the Curb:** Position yourself clearly visible at the edge of the crosswalk.
+            *   **Look L-R-L:** Scan for approaching vehicles.
+            *   **Wait for Vehicles to Stop:** Drivers are generally required to yield to pedestrians in marked crosswalks. Wait until traffic in all lanes has come to a complete stop before you begin.
+            *   **Make Eye Contact:** Confirm drivers see you and intend to stop.
+            *   **Cross Carefully:** Even when cars have stopped, remain vigilant for other vehicles, especially in multi-lane roads where one car might stop and another in an adjacent lane might not.
+
+            ### 3. At an Unmarked Intersection (No Crosswalk Lines):
+
+            *   **Treat it Like a Crosswalk:** In many places, any intersection *is* legally considered a crosswalk, even if it's not painted. However, drivers might be less aware.
+            *   **Choose Wisely:** Only cross if you have clear visibility of traffic and there's a significant gap in vehicles.
+            *   **Extra Vigilance:** Be even more cautious than at a marked crosswalk, as drivers may be less expecting you.
+            *   **Look L-R-L and Make Eye Contact:** Absolutely critical here.
+
+            ### 4. Crossing Mid-Block (Not at an Intersection or Crosswalk - "Jaywalking"):
+
+            *   **Discouraged and Often Illegal:** It's generally safer and often legally required to cross at intersections or marked crosswalks.
+            *   **If You Must (and it's safe/legal in your area):**
+                *   **Find a Clear Spot:** Choose an area where you have excellent visibility of oncoming traffic in both directions, and drivers can see you easily. Avoid crossing from behind parked cars or obstacles.
+                *   **Wide Gap:** Wait for a very wide gap in traffic.
+                *   **Cross Swiftly:** Get across the street as directly and quickly as possible once it's clear.
+                *   **Be Prepared to Wait:** You might need to wait a long time for a safe opportunity.
+
+            ### 5. Using an Overpass or Underpass:
+
+            *   These are the safest options, as they completely separate pedestrians from vehicle traffic.
+            *   Always use them if they are available, especially on very busy or high-speed roads.
+
+            ---
+
+            ## Important Safety Considerations:
+
+            *   **Be Visible:** Wear bright or reflective clothing, especially at dawn, dusk, or night.
+            *   **Be Predictable:** Don't dart into traffic or suddenly change direction.
+            *   **Watch for Turning Vehicles:** Even if you have a "WALK" signal, always check for cars making right or left turns.
+            *   **Never Walk While Intoxicated/Impaired:** Your judgment and reaction time will be severely affected.
+            *   **Teach Children:** Always hold a child's hand when crossing and teach them these rules.
+            *   **Be Patient:** It's better to wait an extra minute than to take a risk.
+
+            By following these guidelines, you can cross the street safely and confidently!
+        role: model
+      - parts:
+        - text: Considering the way to cross the street, analogously, how do I cross the river?
+        role: user
+      generationConfig:
+        thinking_config:
+          includeThoughts: true
+          thinkingBudget: 1024
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '9584'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=16970
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |
+              **Deconstructing "Crossing the River": An Analogical Approach**
+
+              Alright, let's break this down. The user wants to map "crossing the street" principles onto "crossing a river." Essentially, it's about taking that fundamental safety mindset and adapting it to a totally different environment. First, I need to jog my memory of the street crossing principles, from that earlier answer: stop at the curb, look all directions, make eye contact, safe gap, steady pace, stay alert, different crossing scenarios. Got it. Now, how does that translate?
+
+              Okay, let's brainstorm river crossing methods - that's the equivalent of thinking about crosswalks, overpasses, etc. Swimming, boating, a bridge, a ford, a ferry, wading, maybe even a rope traverse if we're getting technical. And, of course, the hazards: current, depth, temperature, rocks, wildlife, weather - the whole gamut. Also, prep - gear, knowledge, planning, a buddy.
+
+              Now, the core of the analogy. "Stop at the Curb" - that needs to become "Assess from the Bank." You don't just leap into a river; you take a minute and observe. Like 'before you get wet, stop at the curb'.
+
+              "Look L-R-L" becomes "Look Upstream, Downstream, and At the Water Itself." It's about spotting those river hazards and conditions. Instead of traffic, it's the current, the rapids, the rocks, the depth.
+
+              "Make Eye Contact with Drivers" is a tricky one. No drivers, but you need to "read the water." That's the river's "intent." Understand its power.
+
+              Then there's "Wait for a Safe Gap/Signal" - which becomes waiting for "Safe Conditions/Right Time." Low water, calm conditions, good weather. It's about knowing when to go.
+
+              And finally, "Walk, Don't Run" is now "Move Deliberately and Appropriately for Method." Steady swim, careful wade, purposeful paddle - it's about being in control. Just as you do not run across the street, you do not rush the river.
+
+              The final piece is "Stay Alert, No Distractions" - that's fundamental situational awareness regardless of the environment. Focus on the task at hand. Keep an eye out.
+            thought: true
+          - text: |-
+              This is a fantastic analogy! Let's break down how to "cross the river" using the principles of "crossing the street."
+
+              The core idea is **assessment, preparation, timing, and respectful engagement with the force you're crossing.**
+
+              ---
+
+              ## Crossing the River: An Analogous Guide
+
+              ### The Golden Rules of "Crossing the River":
+
+              1.  **Stop at the Bank (Analogous to "Stop at the Curb"):**
+                  *   **Street:** Don't step into the street until you're ready.
+                  *   **River:** Don't just jump in. Get to the edge of the river (the bank) and take time to observe it. Never assume it's safe without looking.
+
+              2.  **Look Upstream, Downstream, and At the Water Itself (Analogous to "Look L-R-L"):**
+                  *   **Street:** Check for traffic coming from all directions.
+                  *   **River:**
+                      *   **Upstream (Left):** What's coming *towards* you? Rapids, waterfalls, debris, other boats, changing weather? What might influence the current from upriver?
+                      *   **Downstream (Right):** What's *below* you? Are there hazards you could be swept into? Strainers (fallen trees), rocks, rapids, dams, cold-water shock points? What are the potential consequences of losing control?
+                      *   **At the Water Itself (Left again):** What are the immediate conditions? Current speed, depth (if visible), clarity, temperature, hidden rocks, eddies, sandbars?
+
+              3.  **Read the Water's "Intent" / Understand its Power (Analogous to "Make Eye Contact with Drivers"):**
+                  *   **Street:** Confirm drivers see you and intend to stop.
+                  *   **River:** The river isn't a sentient being, but it *has* power and intent (its natural flow). You need to "read" the water's signals. Can you see rocks just below the surface? Is the current swirling strongly? Are there visible hazards? Understand that it will not stop for you, and you must respect its power.
+
+              4.  **Wait for Safe Conditions or the Right Opportunity (Analogous to "Wait for a Safe Gap or Signal"):**
+                  *   **Street:** Wait for a break in traffic or a "WALK" signal.
+                  *   **River:** Wait for:
+                      *   **Optimal Conditions:** Lower water levels, calmer weather, slower current (often in the morning or specific seasons).
+                      *   **A Clear "Path":** A visible ford, a calm eddy, a suitable landing spot on the other side.
+                      *   **The Right "Signal":** Perhaps you have a guide, a clear map of a known crossing point, or the weather forecast is perfect.
+
+              5.  **Move Deliberately and with Purpose (Analogous to "Walk, Don't Run"):**
+                  *   **Street:** Cross at a steady, predictable pace.
+                  *   **River:** Whether swimming, wading, or paddling, move with clear intention and control. Don't panic or make sudden, erratic movements. Every action should be planned and executed carefully.
+
+              6.  **Maintain Focus - No Distractions! (Analogous to "Stay Alert - No Distractions!"):**
+                  *   **Street:** Put away your phone, remove headphones.
+                  *   **River:** Your entire focus must be on the river, your technique, your equipment, and your surroundings. This is not the time for sightseeing or daydreaming.
+
+              ---
+
+              ## "Crossing the River" in Different Scenarios:
+
+              ### 1. Using a Bridge (Analogous to "Marked Crosswalk with a Traffic Light / Pedestrian Signal"):
+              *   **Description:** The safest and most controlled way. A dedicated, engineered structure.
+              *   **Analogy:** You are completely separated from the river's immediate flow. It's the "green light" equivalent - follow the path, and you're generally safe from the main "traffic" (current). Still, pay attention to the bridge's condition and other users.
+
+              ### 2. Using a Ferry or Known Boat Crossing (Analogous to "Marked Crosswalk, No Light"):
+              *   **Description:** You're using a specific, designated method of transport across.
+              *   **Analogy:** You're relying on a system (the ferry/boat operator) that knows the river's "traffic patterns" (currents, hazards). You wait for the "vehicle" to arrive and take you across. You've ceded control to a trusted system. Still, stay alert and follow instructions.
+
+              ### 3. Fording / Wading Across a Shallow Section (Analogous to "Unmarked Intersection"):
+              *   **Description:** You're walking directly through the river where it's shallow enough.
+              *   **Analogy:** This requires heightened awareness. There are no "lines" or "signals." You must:
+                  *   **Verify Depth and Bottom:** Can you see the bottom? Is it rocky, muddy, slippery?
+                  *   **Assess Current:** Even shallow water can have a strong current. Use a stick for balance.
+                  *   **Choose Your Path:** Find the clearest, most direct, and safest route across.
+                  *   **Look L-R-L (Upstream, Downstream, Water):** Especially critical here, as no one is expecting you.
+
+              ### 4. Swimming Directly Across (Analogous to "Crossing Mid-Block / Jaywalking"):
+              *   **Description:** The most direct, often riskiest, method, using your own ability.
+              *   **Analogy:** This is often discouraged unless you're highly skilled and prepared.
+                  *   **High Visibility & Clear Spot:** Like finding a clear spot to jaywalk, you need to ensure you can be seen and have a clear "path."
+                  *   **Wide Gap in "Traffic":** You need ample space and time, meaning very calm conditions, no immediate hazards, and plenty of time to reach the other side.
+                  *   **Preparedness:** You *must* be an excellent swimmer, understand river dynamics, and potentially have a personal flotation device (PFD). This is like needing specific gear for a risky street crossing (e.g., a high-visibility vest for a night crossing).
+                  *   **It Might Be Illegal/Dangerous:** Many rivers are unsafe for swimming, just as jaywalking is illegal/dangerous in many places.
+
+              ---
+
+              ## Important "River Crossing" Safety Considerations:
+
+              *   **Be Visible:** Wear bright colors, especially if others (boaters) are on the river.
+              *   **Be Predictable:** Don't suddenly change direction or stop mid-stream.
+              *   **Watch for Changing Conditions:** Rivers are dynamic. What was safe an hour ago might not be now (e.g., rain upstream, dam release).
+              *   **Never Cross Alone (If possible):** "Crossing with a buddy" is like having someone to spot for you on the street.
+              *   **Have the Right Gear:** PFD, appropriate footwear for wading, dry bag, map, communication device. This is like having appropriate clothing and awareness for street crossing.
+              *   **Know Your Limits:** Don't attempt to cross if you're not confident in your skills or the conditions.
+              *   **Be Patient:** Waiting for safer conditions or finding a better crossing point is always preferable to taking a risk.
+
+              In essence, crossing a river, like crossing a street, is about **respecting the environment's power, understanding its dynamics, and making informed, cautious decisions.**
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: KBhfab3gGIbOz7IPyJnhqAY
+      usageMetadata:
+        candidatesTokenCount: 1641
+        promptTokenCount: 1166
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 1166
+        thoughtsTokenCount: 940
+        totalTokenCount: 3747
     status:
       code: 200
       message: OK
