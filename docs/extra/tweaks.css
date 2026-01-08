@@ -80,6 +80,44 @@ img.index-header {
 .rating-2 { background-color: #f97316; } /* Orange */
 .rating-1 { background-color: #ef4444; } /* Red */
 
+/* Model card with two-column internal layout */
+.model-card {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.model-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+
+@media (max-width: 768px) {
+  .model-details {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Performance ratings list with aligned badges */
+.perf-list {
+  list-style: disc;
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+.perf-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.perf-list li span:first-child {
+  min-width: 5.5rem;
+}
+
 .md-search__input::-webkit-search-decoration,
 .md-search__input::-webkit-search-cancel-button,
 .md-search__input::-webkit-search-results-button,

@@ -26,6 +26,7 @@ nav:
           - direct.md
       - Models:
           - Overview: models/overview.md
+          - Popular Models: models/popular-models.md
           - models/anthropic.md
           - models/bedrock.md
           - models/cohere.md
