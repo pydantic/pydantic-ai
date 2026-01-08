@@ -60,7 +60,7 @@ dependencies = [
     "mcp[cli]>=1.4.1",
     "modal>=1.0.4",
     "duckdb>=1.3.2",
-    "surrealdb>=1.0.7",
+    "surrealdb>=1.0.8",
     "datasets>=4.0.0",
     "pandas>=2.2.3",
 ]
