@@ -37,7 +37,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsBytes, IsDatetime, IsNow, IsStr
+from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, try_import
+
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 # =============================================================================
 # ToolReturnPart property tests
@@ -359,15 +363,13 @@ def test_tool_return_mixed_list():
 
 
 @pytest.mark.anyio
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 async def test_openai_chat_video_url_raises():
     """Test that OpenAI Chat API raises NotImplementedError for VideoUrl in user prompts.
 
     OpenAI Chat sends multimodal tool returns via separate user messages,
     so VideoUrl is rejected when mapping the UserPromptPart.
     """
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     user_prompt = UserPromptPart(content=[VideoUrl(url='https://example.com/video.mp4')])
 
@@ -376,14 +378,13 @@ async def test_openai_chat_video_url_raises():
 
 
 @pytest.mark.anyio
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 async def test_openai_responses_audio_binary_raises():
     """Test that OpenAI Responses API raises RuntimeError for audio binary in tool returns.
 
     Note: Audio binary in tool returns falls to the unsupported content type handler.
     The NotImplementedError for audio is only raised for user prompts.
     """
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-
     tool_return = ToolReturnPart(
         tool_name='get_audio',
         content=BinaryContent(data=b'audio data', media_type='audio/mpeg'),
@@ -395,10 +396,9 @@ async def test_openai_responses_audio_binary_raises():
 
 
 @pytest.mark.anyio
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 async def test_openai_responses_video_url_raises():
     """Test that OpenAI Responses API raises NotImplementedError for VideoUrl in tool returns."""
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-
     tool_return = ToolReturnPart(
         tool_name='get_video',
         content=VideoUrl(url='https://example.com/video.mp4'),
