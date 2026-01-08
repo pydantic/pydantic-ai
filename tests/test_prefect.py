@@ -154,6 +154,31 @@ def flow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
     assert str(exc_info.value) == exc_message
 
 
+def test_prefect_client_uses_unlimited_connection_pool() -> None:
+    """Verify that the monkeypatch sets httpx defaults (unlimited connections).
+
+    Prefect's default limits (max_connections=16, max_keepalive_connections=8)
+    can cause PoolTimeout errors with nested flows. This test ensures our
+    monkeypatch correctly overrides these with httpx defaults.
+    """
+    import sys
+
+    from prefect.client.orchestration import PrefectClient
+
+    client = PrefectClient('http://localhost:4200/api')
+    # Access internal pool to verify connection limits (using getattr to avoid pyright warnings)
+    httpx_client: Any = getattr(client, '_client')
+    pool: Any = getattr(getattr(httpx_client, '_transport'), '_pool')
+
+    # httpx uses sys.maxsize internally to represent "unlimited" (None)
+    assert pool._max_connections == sys.maxsize, (
+        f'Expected unlimited max_connections (sys.maxsize), got {pool._max_connections}'
+    )
+    assert pool._max_keepalive_connections == sys.maxsize, (
+        f'Expected unlimited max_keepalive_connections (sys.maxsize), got {pool._max_keepalive_connections}'
+    )
+
+
 model = OpenAIChatModel(
     'gpt-4o',
     provider=OpenAIProvider(
