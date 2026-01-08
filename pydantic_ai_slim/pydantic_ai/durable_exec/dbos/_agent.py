@@ -944,7 +944,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
         """
-        if _utils.is_set(model) and not isinstance(model, (DBOSModel)):
+        if _utils.is_set(model) and not isinstance(model, DBOSModel):
             raise UserError(
                 'Non-DBOS model cannot be contextually overridden inside a DBOS workflow, it must be set at agent creation time.'
             )

@@ -167,7 +167,7 @@ class _ToXml:
         path: str = '',
     ):
         """Parse data structures as dataclasses or Pydantic models to extract element names and attributes."""
-        if value is None or isinstance(value, (str | int | float | date | time | timedelta | bytearray | bytes | bool)):
+        if value is None or isinstance(value, str | int | float | date | time | timedelta | bytearray | bytes | bool):
             return
         elif isinstance(value, Mapping):
             for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]

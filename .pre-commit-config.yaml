@@ -39,6 +39,13 @@ repos:
           - tomli
   - repo: local
     hooks:
+      - id: isinstance-union
+        name: isinstance union syntax
+        entry: uv
+        args: [run, python, scripts/check_isinstance_union.py, --fix]
+        language: system
+        types: [python]
+        pass_filenames: true
       - id: clai-help
         name: clai help output
         entry: uv
