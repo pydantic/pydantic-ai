@@ -4,7 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
@@ -18,14 +17,9 @@ from ._run_context import TemporalRunContext
 from ._toolset import (
     CallToolParams,
     CallToolResult,
+    GetToolsParams,
     TemporalWrapperToolset,
 )
-
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class _GetToolsParams:
-    serialized_run_context: Any
 
 
 @dataclass
@@ -58,7 +52,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        async def get_tools_activity(params: _GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
+        async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
             """Activity that calls the dynamic function and returns tool definitions."""
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
 
@@ -108,7 +102,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         tool_infos = await workflow.execute_activity(
             activity=self.get_tools_activity,
             args=[
-                _GetToolsParams(serialized_run_context=serialized_run_context),
+                GetToolsParams(serialized_run_context=serialized_run_context),
                 ctx.deps,
             ],
             **self.activity_config,
