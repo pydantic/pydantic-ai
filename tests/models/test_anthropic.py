@@ -1456,7 +1456,7 @@ async def test_stream_structured(allow_model_requests: None):
 
         # The tool output doesn't echo any content to the stream, so we only get the final payload once when
         # the block starts and once when it ends.
-        assert chunks == snapshot(['FINAL_PAYLOAD'])
+        assert chunks == snapshot(['FINAL_PAYLOAD', 'FINAL_PAYLOAD'])
         assert result.is_complete
         assert result.usage() == snapshot(
             RunUsage(
@@ -7818,6 +7818,7 @@ In 1939, Finnish runner Taisto Mäki made history by becoming the first person t
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he",
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its",
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
             ]
         )
