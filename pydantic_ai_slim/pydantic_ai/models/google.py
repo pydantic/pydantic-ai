@@ -747,7 +747,7 @@ class GoogleModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
-                elif isinstance(item, BinaryContent | FileUrl):
+                elif isinstance(item, (BinaryContent, FileUrl)):
                     file_part = await self._map_file_to_part(item)
                     content.append(file_part)
                 elif isinstance(item, CachePoint):

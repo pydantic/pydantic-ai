@@ -1992,8 +1992,7 @@ class OpenAIResponsesModel(Model):
         part: ToolReturnPart,
     ) -> str | list[ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam]:
         """Map a ToolReturnPart to OpenAI Responses API output format, supporting multimodal content."""
-        files = part.multimodal_content
-        if not files:
+        if not part.multimodal_content:
             return part.model_response_str()
 
         output: list[
@@ -2006,7 +2005,7 @@ class OpenAIResponsesModel(Model):
             output.append(ResponseInputTextContentParam(type='input_text', text=data_str))
 
         # Add multimodal files
-        for file in files:
+        for file in part.multimodal_content:
             if isinstance(file, BinaryContent):
                 if file.is_image:
                     detail: Literal['auto', 'low', 'high'] = 'auto'
