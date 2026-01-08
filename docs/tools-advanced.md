@@ -370,11 +370,11 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 
 | Value | Description |
 |-------|-------------|
-| `'auto'` (default) | Model decides whether to use tools. All function and output tools available. |
-| `'none'` | Disable function tools. Model can only respond with text or use output tools. |
-| `'required'` | Force the model to use a function tool. Output tools excluded. |
-| `['tool_a', ...]` | Restrict to specific function tools by name. Output tools excluded. |
-| [`ToolsPlusOutput`][pydantic_ai.settings.ToolsPlusOutput]`(function_tools=['...'])` | Restrict function tools while keeping output tools available. |
+| `'auto'` (default) | Model decides whether to use tools. All tools available. |
+| `'none'` | Disable function tools. Model can respond with text or use output tools. |
+| `'required'` | Force the model to use a tool. All tools remain available. |
+| `['tool_a', ...]` | Restrict to specific tools by name (can include output tool names). |
+| [`ToolsPlusOutput`][pydantic_ai.settings.ToolsPlusOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
 ### Example
 
