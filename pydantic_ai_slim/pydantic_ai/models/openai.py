@@ -1234,12 +1234,7 @@ class OpenAIResponsesModel(Model):
             instructions = OMIT
 
         if not openai_messages and not previous_response_id:
-            openai_messages.append(
-                responses.EasyInputMessageParam(
-                    role='user',
-                    content='',
-                )
-            )
+            raise UserError('Cannot count tokens without any messages or a previous response ID.')
 
         body = {
             'model': self.model_name,
@@ -1507,18 +1502,6 @@ class OpenAIResponsesModel(Model):
         if verbosity := model_settings.get('openai_text_verbosity'):
             text = text or {}
             text['verbosity'] = verbosity
-
-        # When there are no input messages and we're not reusing a previous response,
-        # the OpenAI API will reject a request without any input,
-        # even if there are instructions.
-        # To avoid this provide an explicit empty user message.
-        if not openai_messages and not previous_response_id:
-            openai_messages.append(
-                responses.EasyInputMessageParam(
-                    role='user',
-                    content='',
-                )
-            )
 
         unsupported_model_settings = profile.openai_unsupported_model_settings
         for setting in unsupported_model_settings:
