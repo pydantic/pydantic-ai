@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
@@ -38,6 +39,7 @@ __all__ = (
     'TestEnv',
     'ClientWithHandler',
     'try_import',
+    'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -110,6 +112,23 @@ else:
                 return super().equals(other)
             else:
                 return other == self._first_other
+
+
+SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
+
+
+@customize_repr
+def _(value: bytes):  # pragma: no cover
+    """Use IsBytes() for large byte sequences in snapshots."""
+    if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
+        return 'IsBytes()'
+    return bytes.__repr__(value)
+
+
+@customize_repr
+def _(value: datetime):  # pragma: no cover
+    """Use IsDatetime() for datetime values in snapshots."""
+    return 'IsDatetime()'
 
 
 class TestEnv:
