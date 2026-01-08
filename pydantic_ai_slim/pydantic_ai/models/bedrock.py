@@ -159,6 +159,15 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'tool_use': 'tool_call',
 }
 
+# Supported formats for Bedrock Converse API content blocks.
+# These match ImageFormatType, DocumentFormatType, VideoFormatType from mypy_boto3_bedrock_runtime.literals
+# See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ImageBlock.html
+_BEDROCK_IMAGE_FORMATS = ('gif', 'jpeg', 'png', 'webp')
+# See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html
+_BEDROCK_DOCUMENT_FORMATS = ('csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx')
+# See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_VideoBlock.html
+_BEDROCK_VIDEO_FORMATS = ('flv', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'three_gp', 'webm', 'wmv')
+
 
 class BedrockModelSettings(ModelSettings, total=False):
     """Settings for Bedrock models.
@@ -752,13 +761,13 @@ class BedrockConverseModel(Model):
             format = file.format
             if file.is_document:
                 name = f'Document {next(document_count)}'
-                assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+                assert format in _BEDROCK_DOCUMENT_FORMATS
                 return {'document': {'name': name, 'format': format, 'source': {'bytes': file.data}}}
             elif file.is_image:
-                assert format in ('jpeg', 'png', 'gif', 'webp')
+                assert format in _BEDROCK_IMAGE_FORMATS
                 return {'image': {'format': format, 'source': {'bytes': file.data}}}
             elif file.is_video:
-                assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+                assert format in _BEDROCK_VIDEO_FORMATS
                 return {'video': {'format': format, 'source': {'bytes': file.data}}}
             else:
                 return None
@@ -776,14 +785,14 @@ class BedrockConverseModel(Model):
 
             if isinstance(file, ImageUrl):
                 format = file.media_type.split('/')[1]
-                assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
+                assert format in _BEDROCK_IMAGE_FORMATS, f'Unsupported image format: {format}'
                 return {'image': {'format': format, 'source': source}}
             elif isinstance(file, DocumentUrl):
                 name = f'Document {next(document_count)}'
                 return {'document': {'name': name, 'format': file.format, 'source': source}}
             elif isinstance(file, VideoUrl):
                 format = file.media_type.split('/')[1]
-                assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+                assert format in _BEDROCK_VIDEO_FORMATS
                 return {'video': {'format': format, 'source': source}}
             else:
                 assert_never(file)
@@ -811,13 +820,13 @@ class BedrockConverseModel(Model):
                     format = item.format
                     if item.is_document:
                         name = f'Document {next(document_count)}'
-                        assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+                        assert format in _BEDROCK_DOCUMENT_FORMATS
                         content.append({'document': {'name': name, 'format': format, 'source': {'bytes': item.data}}})
                     elif item.is_image:
-                        assert format in ('jpeg', 'png', 'gif', 'webp')
+                        assert format in _BEDROCK_IMAGE_FORMATS
                         content.append({'image': {'format': format, 'source': {'bytes': item.data}}})
                     elif item.is_video:
-                        assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+                        assert format in _BEDROCK_VIDEO_FORMATS
                         content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
@@ -835,7 +844,7 @@ class BedrockConverseModel(Model):
 
                     if item.kind == 'image-url':
                         format = item.media_type.split('/')[1]
-                        assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
+                        assert format in _BEDROCK_IMAGE_FORMATS, f'Unsupported image format: {format}'
                         image: ImageBlockTypeDef = {'format': format, 'source': source}
                         content.append({'image': image})
 
@@ -850,17 +859,7 @@ class BedrockConverseModel(Model):
 
                     elif item.kind == 'video-url':  # pragma: no branch
                         format = item.media_type.split('/')[1]
-                        assert format in (
-                            'mkv',
-                            'mov',
-                            'mp4',
-                            'webm',
-                            'flv',
-                            'mpeg',
-                            'mpg',
-                            'wmv',
-                            'three_gp',
-                        ), f'Unsupported video format: {format}'
+                        assert format in _BEDROCK_VIDEO_FORMATS, f'Unsupported video format: {format}'
                         video: VideoBlockTypeDef = {'format': format, 'source': source}
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
