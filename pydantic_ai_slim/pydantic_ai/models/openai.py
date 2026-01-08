@@ -1183,6 +1183,103 @@ class OpenAIResponsesModel(Model):
         )
         return self._process_response(response, model_request_parameters)
 
+    async def count_tokens(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+
+        tools = (
+            self._get_builtin_tools(model_request_parameters)
+            + list(settings.get('openai_builtin_tools', []))
+            + self._get_tools(model_request_parameters)
+        )
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        if not tools:
+            tool_choice: Literal['none', 'required', 'auto'] | None = None
+        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
+            tool_choice = 'required'
+        else:
+            tool_choice = 'auto'
+
+        previous_response_id = settings.get('openai_previous_response_id')
+        if previous_response_id == 'auto':
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+
+        instructions, openai_messages = await self._map_messages(messages, settings, model_request_parameters)
+        reasoning = self._get_reasoning(settings)
+
+        text: responses.ResponseTextConfigParam | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            text = {'format': self._map_json_schema(output_object)}
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            text = {'format': {'type': 'json_object'}}
+
+            assert isinstance(instructions, str)
+            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            openai_messages.insert(
+                system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
+            )
+            instructions = OMIT
+
+        if not openai_messages and not previous_response_id:
+            openai_messages.append(
+                responses.EasyInputMessageParam(
+                    role='user',
+                    content='',
+                )
+            )
+
+        body = {
+            'model': self.model_name,
+            'input': openai_messages,
+            'instructions': None if instructions is OMIT else instructions,
+            'parallel_tool_calls': settings.get('parallel_tool_calls'),
+            'tools': tools or None,
+            'tool_choice': tool_choice,
+            'previous_response_id': previous_response_id,
+            'reasoning': None if reasoning is OMIT else reasoning,
+            'text': text,
+            'truncation': settings.get('openai_truncation'),
+        }
+        body = {k: v for k, v in body.items() if v is not None and v is not OMIT and v is not NOT_GIVEN}
+
+        try:
+            extra_headers = settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
+            response = await self.client.post(
+                '/responses/input_tokens',
+                cast_to=dict,
+                body=body,
+                options={'headers': extra_headers},
+            )
+        except APIStatusError as e:
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        input_tokens = response.get('input_tokens') if isinstance(response, dict) else None
+        if not isinstance(input_tokens, int):
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Input tokens missing from OpenAI response', str(response)
+            )
+        return usage.RequestUsage(
+            input_tokens=input_tokens,
+        )
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -1410,6 +1507,18 @@ class OpenAIResponsesModel(Model):
         if verbosity := model_settings.get('openai_text_verbosity'):
             text = text or {}
             text['verbosity'] = verbosity
+
+        # When there are no input messages and we're not reusing a previous response,
+        # the OpenAI API will reject a request without any input,
+        # even if there are instructions.
+        # To avoid this provide an explicit empty user message.
+        if not openai_messages and not previous_response_id:
+            openai_messages.append(
+                responses.EasyInputMessageParam(
+                    role='user',
+                    content='',
+                )
+            )
 
         unsupported_model_settings = profile.openai_unsupported_model_settings
         for setting in unsupported_model_settings:
