@@ -77,6 +77,7 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
+    pytest.mark.usefixtures('setup_prefect_test_harness'),
 ]
 
 
@@ -102,7 +103,7 @@ def setup_logfire_instrumentation() -> Iterator[None]:
     yield
 
 
-@pytest.fixture(autouse=True, scope='session')
+@pytest.fixture(scope='session')
 def setup_prefect_test_harness() -> Iterator[None]:
     """Set up Prefect test harness for tests with default httpx connection pool limits.
 
