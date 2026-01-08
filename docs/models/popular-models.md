@@ -12,7 +12,7 @@ For a quick overview of all supported providers, see the [Models Overview](overv
 
 ### Claude Opus 4.5
 
-ID: `gateway/anthropic:claude-opus-4-5`
+ID: `anthropic:claude-opus-4-5`
 
 Anthropic's most intelligent model for complex reasoning and research.
 
@@ -38,7 +38,8 @@ Anthropic's most intelligent model for complex reasoning and research.
 
 **Inference Providers:**
 
-- Anthropic: `'anthropic:claude-opus-4-5'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/anthropic:claude-opus-4-5'`
 - [AWS Bedrock](bedrock.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $5.00 / $25.00 per 1M tokens (in/out)
@@ -51,7 +52,7 @@ Anthropic's most intelligent model for complex reasoning and research.
 
 ### Claude Sonnet 4.5
 
-ID: `gateway/anthropic:claude-sonnet-4-5`
+ID: `anthropic:claude-sonnet-4-5`
 
 Best balance of speed, cost, and capability. Ideal for agents and coding.
 
@@ -77,7 +78,8 @@ Best balance of speed, cost, and capability. Ideal for agents and coding.
 
 **Inference Providers:**
 
-- Anthropic: `'anthropic:claude-sonnet-4-5'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/anthropic:claude-sonnet-4-5'`
 - [AWS Bedrock](bedrock.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $3.00 / $15.00 per 1M tokens (in/out)
@@ -90,7 +92,7 @@ Best balance of speed, cost, and capability. Ideal for agents and coding.
 
 ### Claude Haiku 4.5
 
-ID: `gateway/anthropic:claude-haiku-4-5`
+ID: `anthropic:claude-haiku-4-5`
 
 Fastest and most cost-effective. Ideal for high-volume tasks.
 
@@ -116,7 +118,8 @@ Fastest and most cost-effective. Ideal for high-volume tasks.
 
 **Inference Providers:**
 
-- Anthropic: `'anthropic:claude-haiku-4-5'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/anthropic:claude-haiku-4-5'`
 - [AWS Bedrock](bedrock.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $1.00 / $5.00 per 1M tokens (in/out)
@@ -133,7 +136,7 @@ Fastest and most cost-effective. Ideal for high-volume tasks.
 
 ### Gemini 3 Pro
 
-ID: `gateway/google-gla:gemini-3-pro-preview`
+ID: `google-gla:gemini-3-pro-preview`
 
 Google's most capable model for complex multimodal tasks.
 
@@ -159,7 +162,8 @@ Google's most capable model for complex multimodal tasks.
 
 **Inference Providers:**
 
-- Google GLA: `'google-gla:gemini-3-pro-preview'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/google-gla:gemini-3-pro-preview'`
 - [Vertex AI](google.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $2.00 / $12.00 per 1M tokens (in/out)
@@ -172,7 +176,7 @@ Google's most capable model for complex multimodal tasks.
 
 ### Gemini 3 Flash
 
-ID: `gateway/google-gla:gemini-3-flash-preview`
+ID: `google-gla:gemini-3-flash-preview`
 
 Fast and efficient with excellent performance-to-cost ratio.
 
@@ -198,7 +202,8 @@ Fast and efficient with excellent performance-to-cost ratio.
 
 **Inference Providers:**
 
-- Google GLA: `'google-gla:gemini-3-flash-preview'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/google-gla:gemini-3-flash-preview'`
 - [Vertex AI](google.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $0.50 / $3.00 per 1M tokens (in/out)
@@ -211,7 +216,7 @@ Fast and efficient with excellent performance-to-cost ratio.
 
 ### Gemini 2.5 Flash Lite
 
-ID: `gateway/google-gla:gemini-2.5-flash-lite`
+ID: `google-gla:gemini-2.5-flash-lite`
 
 Most cost-effective with ultra-low latency for high-volume apps.
 
@@ -237,7 +242,8 @@ Most cost-effective with ultra-low latency for high-volume apps.
 
 **Inference Providers:**
 
-- Google GLA: `'google-gla:gemini-2.5-flash-lite'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/google-gla:gemini-2.5-flash-lite'`
 - [Vertex AI](google.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $0.10 / $0.40 per 1M tokens (in/out)
@@ -254,7 +260,7 @@ Most cost-effective with ultra-low latency for high-volume apps.
 
 ### GPT-5.2 Pro
 
-ID: `gateway/openai:gpt-5.2-pro`
+ID: `openai:gpt-5.2-pro`
 
 Most intelligent reasoning model for complex tasks.
 
@@ -280,7 +286,8 @@ Most intelligent reasoning model for complex tasks.
 
 **Inference Providers:**
 
-- OpenAI: `'openai:gpt-5.2-pro'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/openai:gpt-5.2-pro'`
 - [Azure](azure.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $21.00 / $168.00 per 1M tokens (in/out)
@@ -293,7 +300,7 @@ Most intelligent reasoning model for complex tasks.
 
 ### GPT-5.2
 
-ID: `gateway/openai:gpt-5.2`
+ID: `openai:gpt-5.2`
 
 Flagship general-purpose model with excellent balance.
 
@@ -319,7 +326,8 @@ Flagship general-purpose model with excellent balance.
 
 **Inference Providers:**
 
-- OpenAI: `'openai:gpt-5.2'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/openai:gpt-5.2'`
 - [Azure](azure.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $1.75 / $14.00 per 1M tokens (in/out)
@@ -332,7 +340,7 @@ Flagship general-purpose model with excellent balance.
 
 ### GPT-4o
 
-ID: `gateway/openai:gpt-4o`
+ID: `openai:gpt-4o`
 
 Versatile multimodal model, widely used for reliability and vision.
 
@@ -358,7 +366,8 @@ Versatile multimodal model, widely used for reliability and vision.
 
 **Inference Providers:**
 
-- OpenAI: `'openai:gpt-4o'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/openai:gpt-4o'`
 - [Azure](azure.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $2.50 / $10.00 per 1M tokens (in/out)
@@ -371,7 +380,7 @@ Versatile multimodal model, widely used for reliability and vision.
 
 ### GPT-4o Mini
 
-ID: `gateway/openai:gpt-4o-mini`
+ID: `openai:gpt-4o-mini`
 
 Most cost-effective with multimodal support.
 
@@ -397,7 +406,8 @@ Most cost-effective with multimodal support.
 
 **Inference Providers:**
 
-- OpenAI: `'openai:gpt-4o-mini'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/openai:gpt-4o-mini'`
 - [Azure](azure.md), [OpenRouter](openrouter.md)
 
 **Pricing:** $0.15 / $0.60 per 1M tokens (in/out)
@@ -414,7 +424,7 @@ Most cost-effective with multimodal support.
 
 ### Grok 4
 
-ID: `gateway/grok:grok-4`
+ID: `grok:grok-4`
 
 Flagship reasoning model with excellent math and reasoning.
 
@@ -440,7 +450,8 @@ Flagship reasoning model with excellent math and reasoning.
 
 **Inference Providers:**
 
-- xAI: `'grok:grok-4'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/grok:grok-4'`
 - [OpenRouter](openrouter.md)
 
 **Pricing:** $3.00 / $15.00 per 1M tokens (in/out)
@@ -453,7 +464,7 @@ Flagship reasoning model with excellent math and reasoning.
 
 ### Grok 4.1 Fast
 
-ID: `gateway/grok:grok-4-1-fast`
+ID: `grok:grok-4-1-fast`
 
 Optimized for agentic tool calling with massive 2M context.
 
@@ -479,7 +490,8 @@ Optimized for agentic tool calling with massive 2M context.
 
 **Inference Providers:**
 
-- xAI: `'grok:grok-4-1-fast'`
+- [Gateway](https://gateway.pydantic.dev):<br>
+    `'gateway/grok:grok-4-1-fast'`
 - [OpenRouter](openrouter.md)
 
 **Pricing:** $0.20 / $0.50 per 1M tokens (in/out)
