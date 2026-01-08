@@ -173,6 +173,8 @@ class TemporalModel(WrapperModel):
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         deps = run_context.deps
 
+        model_name = model_id or f'{self.system}:{self.model_name}'
+        activity_config: ActivityConfig = {'summary': f'request model: {model_name}', **self.activity_config}
         return await workflow.execute_activity(
             activity=self.request_activity,
             args=[
@@ -185,7 +187,7 @@ class TemporalModel(WrapperModel):
                 ),
                 deps,
             ],
-            **self.activity_config,
+            **activity_config,
         )
 
     @asynccontextmanager
@@ -216,6 +218,8 @@ class TemporalModel(WrapperModel):
 
         model_id = self._current_model_id()
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
+        model_name = model_id or f'{self.system}:{self.model_name}'
+        activity_config: ActivityConfig = {'summary': f'request model: {model_name} (stream)', **self.activity_config}
         response = await workflow.execute_activity(
             activity=self.request_stream_activity,
             args=[
@@ -228,7 +232,7 @@ class TemporalModel(WrapperModel):
                 ),
                 run_context.deps,
             ],
-            **self.activity_config,
+            **activity_config,
         )
         yield TemporalStreamedResponse(model_request_parameters, response)
 
