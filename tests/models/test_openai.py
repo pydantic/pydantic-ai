@@ -3578,6 +3578,14 @@ async def test_responses_count_tokens_with_mock(allow_model_requests: None) -> N
     assert result.input_tokens == 11
 
 
+async def test_responses_count_tokens_no_messages(allow_model_requests: None) -> None:
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    with pytest.raises(UserError, match='Cannot count tokens without any messages or a previous response ID'):
+        await model.count_tokens([], None, ModelRequestParameters())
+
+
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
