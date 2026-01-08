@@ -787,7 +787,7 @@ class BedrockConverseModel(Model):
                 return {'video': {'format': format, 'source': source}}
             else:
                 assert_never(file)
-        elif isinstance(file, AudioUrl):  # pragma: no cover
+        elif isinstance(file, AudioUrl):
             # Audio not supported in Bedrock tool results, only in user messages
             # See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html
             return None

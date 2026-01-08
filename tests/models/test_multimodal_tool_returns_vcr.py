@@ -162,7 +162,7 @@ def get_model(provider: str, api_keys: dict[str, str], bedrock_provider: Any = N
         raise ValueError(f'Unknown provider: {provider}')
 
 
-def should_skip_case(case: Case) -> str | None:  # pragma: no cover
+def should_skip_case(case: Case) -> str | None:
     """Check if a case should be skipped based on provider availability."""
     _, is_available = PROVIDER_MODELS.get(case.provider, (None, lambda: False))
     if callable(is_available):
