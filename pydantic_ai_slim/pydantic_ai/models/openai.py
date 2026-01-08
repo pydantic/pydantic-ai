@@ -1211,7 +1211,9 @@ class OpenAIResponsesModel(Model):
 
         previous_response_id = settings.get('openai_previous_response_id')
         if previous_response_id == 'auto':  # pragma: no branch
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)  # pragma: no cover
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(
+                messages
+            )  # pragma: no cover
 
         instructions, openai_messages = await self._map_messages(messages, settings, model_request_parameters)
         reasoning = self._get_reasoning(settings)
