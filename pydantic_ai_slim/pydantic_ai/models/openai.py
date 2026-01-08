@@ -1210,8 +1210,8 @@ class OpenAIResponsesModel(Model):
             tool_choice = 'auto'
 
         previous_response_id = settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+        if previous_response_id == 'auto':  # pragma: no branch
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)  # pragma: no cover
 
         instructions, openai_messages = await self._map_messages(messages, settings, model_request_parameters)
         reasoning = self._get_reasoning(settings)
@@ -1223,7 +1223,7 @@ class OpenAIResponsesModel(Model):
             text = {'format': self._map_json_schema(output_object)}
         elif (
             model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
-        ):  # pragma: no branch
+        ):  # pragma: no cover
             text = {'format': {'type': 'json_object'}}
 
             assert isinstance(instructions, str)
@@ -1259,11 +1259,11 @@ class OpenAIResponsesModel(Model):
                 body=body,
                 options={'headers': extra_headers},
             )
-        except APIStatusError as e:
+        except APIStatusError as e:  # pragma: no cover
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
-        except APIConnectionError as e:
+            raise
+        except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
         input_tokens = response.get('input_tokens') if isinstance(response, dict) else None

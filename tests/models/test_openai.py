@@ -3586,6 +3586,49 @@ async def test_responses_count_tokens_no_messages(allow_model_requests: None) ->
         await model.count_tokens([], None, ModelRequestParameters())
 
 
+async def test_responses_count_tokens_with_tools(allow_model_requests: None) -> None:
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(input_tokens_response={'object': 'response.input_tokens', 'input_tokens': 25}),
+    )
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a location',
+        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
+    )
+    result = await model.count_tokens(
+        [ModelRequest.user_text_prompt('What is the weather in Paris?')],
+        None,
+        ModelRequestParameters(function_tools=[tool_def]),
+    )
+
+    assert result.input_tokens == 25
+
+
+async def test_responses_count_tokens_with_native_output(allow_model_requests: None) -> None:
+    from pydantic_ai._output import OutputObjectDefinition
+
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(input_tokens_response={'object': 'response.input_tokens', 'input_tokens': 30}),
+    )
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    output_object = OutputObjectDefinition(
+        json_schema={'type': 'object', 'properties': {'answer': {'type': 'string'}}},
+        name='Answer',
+    )
+    result = await model.count_tokens(
+        [ModelRequest.user_text_prompt('What is the capital of France?')],
+        None,
+        ModelRequestParameters(output_mode='native', output_object=output_object),
+    )
+
+    assert result.input_tokens == 30
+
+
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
