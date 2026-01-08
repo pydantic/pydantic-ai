@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from pytest_recording.plugin import get_default_cassette_name
+
 
 def get_all_cassettes() -> dict[str, set[str]]:
     """Return {test_file_stem: set of cassette names (without .yaml)}."""
@@ -36,7 +38,7 @@ def get_all_cassettes() -> dict[str, set[str]]:
 
 
 def get_all_tests() -> dict[str, set[str]]:
-    """Use pytest --collect-only to get all VCR-marked test names."""
+    """Use pytest --collect-only to get all VCR-marked tests and compute expected cassette names."""
     result = subprocess.run(
         ['uv', 'run', 'pytest', '--collect-only', '-q', '-m', 'vcr', 'tests/'],
         capture_output=True,
@@ -50,36 +52,17 @@ def get_all_tests() -> dict[str, set[str]]:
         match = re.match(r'tests/.*/?(test_\w+)\.py::(.+)', line)
         if match:
             test_file, test_name = match.groups()
-            tests.setdefault(test_file, set()).add(test_name)
+            # Extract class name if present (TestClass::test_method[param])
+            if '::' in test_name:
+                class_name, method_name = test_name.split('::', 1)
+                # Create a mock class for get_default_cassette_name
+                class_obj = type(class_name, (), {})
+                cassette_name = get_default_cassette_name(class_obj, method_name)
+            else:
+                cassette_name = get_default_cassette_name(None, test_name)
+            tests.setdefault(test_file, set()).add(cassette_name)
 
     return tests
-
-
-def normalize_cassette_name(cassette: str) -> str:
-    """Normalize cassette name for comparison with test names.
-
-    Handles:
-    - Parametrized tests: test_foo[param] -> test_foo
-    - Class-based tests: TestClass.test_method -> TestClass::test_method
-    """
-    # Strip parameter suffix
-    base_name = re.sub(r'\[.*\]$', '', cassette)
-    # Convert dot notation to pytest's :: notation for class methods
-    base_name = base_name.replace('.', '::')
-    return base_name
-
-
-def find_matching_test(cassette: str, test_names: set[str]) -> bool:
-    """Check if a cassette has a matching test."""
-    normalized = normalize_cassette_name(cassette)
-
-    for test_name in test_names:
-        # Strip parameters from test name for comparison
-        test_base = re.sub(r'\[.*\]$', '', test_name)
-        if test_base == normalized:
-            return True
-
-    return False
 
 
 def main() -> int:
@@ -99,13 +82,13 @@ def main() -> int:
     matched = 0
 
     for test_file, cassette_names in sorted(cassettes.items()):
-        test_names = tests.get(test_file, set())
+        expected_cassettes = tests.get(test_file, set())
 
-        if not test_names and verbose:
+        if not expected_cassettes and verbose:
             print(f'Warning: No tests found for module {test_file}')
 
         for cassette in sorted(cassette_names):
-            if find_matching_test(cassette, test_names):
+            if cassette in expected_cassettes:
                 matched += 1
                 if verbose:
                     print(f'  OK: {test_file}/{cassette}.yaml')
