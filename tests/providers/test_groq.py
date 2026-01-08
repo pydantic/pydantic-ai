@@ -10,7 +10,7 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
-from pydantic_ai.profiles.groq import GroqModelProfile, groq_gpt_oss_model_profile, groq_model_profile
+from pydantic_ai.profiles.groq import GroqModelProfile, groq_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
@@ -22,7 +22,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from groq import AsyncGroq
 
-    from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.groq import GroqProvider, groq_gpt_oss_model_profile
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='groq not installed')

@@ -10,11 +10,11 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.groq import groq_gpt_oss_model_profile, groq_model_profile
+from pydantic_ai.profiles.groq import GroqModelProfile, groq_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
@@ -29,8 +29,6 @@ except ImportError as _import_error:  # pragma: no cover
 
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an MoonshotAI model used with the Groq provider."""
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-
     return ModelProfile(
         supports_json_object_output=True,
         supports_json_schema_output=True,
@@ -42,8 +40,6 @@ def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
 def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Meta model used with the Groq provider."""
     if model_name in {'llama-4-maverick-17b-128e-instruct', 'llama-4-scout-17b-16e-instruct'}:
-        from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-
         base = meta_model_profile(model_name) or ModelProfile()
         return base.update(
             ModelProfile(
@@ -55,6 +51,20 @@ def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
         )
     else:
         return meta_model_profile(model_name)
+
+
+def groq_gpt_oss_model_profile(model_name: str) -> ModelProfile:
+    """Get profile for OpenAI GPT-OSS models on Groq.
+
+    GPT-OSS models (gpt-oss-20b, gpt-oss-120b) support strict native structured output
+    with 100% schema adherence.
+    """
+    return GroqModelProfile(
+        supports_json_schema_output=True,
+        supports_json_object_output=True,
+        default_structured_output_mode='native',
+        json_schema_transformer=OpenAIJsonSchemaTransformer,
+    )
 
 
 class GroqProvider(Provider[AsyncGroq]):
