@@ -191,6 +191,7 @@ class BedrockProvider(Provider[BaseClient]):
                 'read_timeout': read_timeout,
                 'connect_timeout': connect_timeout,
             }
+            api_key = api_key or os.getenv('AWS_BEARER_TOKEN_BEDROCK')
             try:
                 if api_key is not None:
                     session = boto3.Session(
