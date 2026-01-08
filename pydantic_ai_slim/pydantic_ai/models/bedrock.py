@@ -159,13 +159,9 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'tool_use': 'tool_call',
 }
 
-# Supported formats for Bedrock Converse API content blocks.
 # These match ImageFormatType, DocumentFormatType, VideoFormatType from mypy_boto3_bedrock_runtime.literals
-# See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ImageBlock.html
 _BEDROCK_IMAGE_FORMATS = ('gif', 'jpeg', 'png', 'webp')
-# See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html
 _BEDROCK_DOCUMENT_FORMATS = ('csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx')
-# See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_VideoBlock.html
 _BEDROCK_VIDEO_FORMATS = ('flv', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'three_gp', 'webm', 'wmv')
 
 
