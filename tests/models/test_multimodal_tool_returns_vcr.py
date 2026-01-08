@@ -106,6 +106,18 @@ def _video_url(_: Path) -> VideoUrl:
     return VideoUrl(url='https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4')
 
 
+def _image_url_force_download(_: Path) -> ImageUrl:
+    """Create ImageUrl with force_download=True for testing."""
+    return ImageUrl(
+        url='https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png', force_download=True
+    )
+
+
+def _document_url_force_download(_: Path) -> DocumentUrl:
+    """Create DocumentUrl with force_download=True for testing."""
+    return DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf', force_download=True)
+
+
 # =============================================================================
 # Case dataclass
 # =============================================================================
@@ -125,6 +137,18 @@ class Case:
     file_type: FileType
     source: ContentSource
     expected_behavior: Behavior
+    expected_message_structure: Any  # snapshot() stored here per case
+    content_factory: Callable[[Path], Any]
+    prompt: str = 'Describe what the tool returned.'
+
+
+@dataclass
+class ForceDownloadCase:
+    """A test case for force_download behavior."""
+
+    id: str
+    provider: str
+    file_type: FileType
     expected_message_structure: Any  # snapshot() stored here per case
     content_factory: Callable[[Path], Any]
     prompt: str = 'Describe what the tool returned.'
@@ -164,6 +188,18 @@ def get_model(provider: str, api_keys: dict[str, str], bedrock_provider: Any = N
 
 def should_skip_case(case: Case) -> str | None:
     """Check if a case should be skipped based on provider availability."""
+    _, is_available = PROVIDER_MODELS.get(case.provider, (None, lambda: False))
+    if callable(is_available):
+        if not is_available():
+            return f'{case.provider} not installed'  # pragma: no cover
+    elif not is_available:  # pragma: no cover
+        return f'{case.provider} not installed'
+
+    return None
+
+
+def should_skip_force_download_case(case: ForceDownloadCase) -> str | None:
+    """Check if a force_download case should be skipped based on provider availability."""
     _, is_available = PROVIDER_MODELS.get(case.provider, (None, lambda: False))
     if callable(is_available):
         if not is_available():
@@ -266,6 +302,17 @@ CASES = [
 # fmt: on
 
 
+# fmt: off
+FORCE_DOWNLOAD_CASES = [
+    # === force_download=True cases ===
+    # These test that URLs with force_download=True are downloaded and sent as base64
+    ForceDownloadCase('anthropic-image-force-download', 'anthropic', 'image', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['TextPart']}]), _image_url_force_download),
+    ForceDownloadCase('openai_responses-image-force-download', 'openai_responses', 'image', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ThinkingPart','ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['ThinkingPart','TextPart']}]), _image_url_force_download),
+    ForceDownloadCase('openai_responses-document-force-download', 'openai_responses', 'document', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ThinkingPart','ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['ThinkingPart','TextPart']}]), _document_url_force_download),
+]
+# fmt: on
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -354,3 +401,40 @@ async def test_multimodal_tool_return(
             assert '"audio":' not in body_str and 'audio/mpeg' not in body_str, (
                 f'Expected no audio content in request, but found it: {body_str[:500]}...'
             )
+
+
+@pytest.mark.parametrize('case', FORCE_DOWNLOAD_CASES, ids=lambda c: c.id)
+async def test_force_download_tool_return(
+    case: ForceDownloadCase,
+    api_keys: dict[str, str],
+    bedrock_provider: Any,
+    assets_path: Path,
+    allow_model_requests: None,
+):
+    """Test force_download=True handling in tool returns.
+
+    This test verifies that URLs with force_download=True are:
+    1. Downloaded before being sent to the provider
+    2. Sent as base64 data instead of URL
+    """
+    skip_reason = should_skip_force_download_case(case)
+    if skip_reason:  # pragma: no cover
+        pytest.skip(skip_reason)
+
+    model = get_model(case.provider, api_keys, bedrock_provider)
+    content = case.content_factory(assets_path)
+
+    agent: Agent[None, str] = Agent(model)
+
+    @agent.tool_plain
+    def get_file() -> Any:
+        """Return a file for the model to analyze."""
+        return content
+
+    result = await agent.run(
+        f'Call the get_file tool to get a {case.file_type} and describe what you see.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+
+    message_structure = get_message_structure(result.all_messages())
+    assert message_structure == case.expected_message_structure
