@@ -249,7 +249,7 @@ class SkillsToolset(FunctionToolset):
             self._skill_directories.append(skill_dir)
 
             # Discover skills from this directory (last one wins)
-            for _, skill in skill_dir.get_skills().items():
+            for skill in skill_dir.get_skills().values():
                 skill_name = skill.name
                 if skill_name in self._skills:
                     warnings.warn(
