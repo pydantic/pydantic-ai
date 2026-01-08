@@ -167,8 +167,8 @@ def should_skip_case(case: Case) -> str | None:
     _, is_available = PROVIDER_MODELS.get(case.provider, (None, lambda: False))
     if callable(is_available):
         if not is_available():
-            return f'{case.provider} not installed'
-    elif not is_available:
+            return f'{case.provider} not installed'  # pragma: no cover
+    elif not is_available:  # pragma: no cover
         return f'{case.provider} not installed'
 
     return None
