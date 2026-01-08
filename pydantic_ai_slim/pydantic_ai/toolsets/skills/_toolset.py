@@ -17,42 +17,35 @@ from ._exceptions import SkillNotFoundError
 from ._types import Skill
 
 # Default instruction template for skills system prompt
-DEFAULT_INSTRUCTION_TEMPLATE = """## Skills
-
-You have access to skills that extend your capabilities. Skills are modular packages containing instructions, resources, and scripts for specialized tasks.
-
-### Available Skills
-
-The following skills are available to you. Use them when relevant to the task:
+DEFAULT_INSTRUCTION_TEMPLATE = """<skills>
+Here is a list of skills that contain domain specific knowledge on a variety of topics.
+Each skill comes with a description of the topic and instructions on how to use it.
+When a user asks you to perform a task that falls within the domain of a skill, use the `load_skill` tool to acquire the full instructions.
 
 {skills_list}
 
-### How to Use Skills
-
-**Progressive disclosure**: Load skill information only when needed.
-
-1. **When a skill is relevant to the current task**: Use `load_skill(skill_name)` to read the full instructions.
-2. **For additional documentation**: Use `read_skill_resource(skill_name, resource_name)` to read FORMS.md, REFERENCE.md, or other resources.
-3. **To execute skill scripts**: Use `run_skill_script(skill_name, script_name, args)` with appropriate command-line arguments.
-
-**Best practices**:
-- Select skills based on task relevance and descriptions listed above
-- Use progressive disclosure: load only what you need, when you need it, starting with load_skill
-- Follow the skill's documented usage patterns and examples
+Use progressive disclosure: load only what you need, when you need it.
+- First, use `load_skill(skill_name)` to read the full instructions
+- To read additional resources within a skill, use `read_skill_resource(skill_name, resource_name)`
+- To execute skill scripts, use `run_skill_script(skill_name, script_name, args)`
+</skills>
 """
 
 # Template used by load_skill
-LOAD_SKILL_TEMPLATE = """# Skill: {skill_name}
-**Description:** {description}
-**Path:** {path}
-**Available Resources:**
-{resources_list}
-**Available Scripts:**
-{scripts_list}
+LOAD_SKILL_TEMPLATE = """<skill>
+<name>{skill_name}</name>
+<description>{description}</description>
+<path>{path}</path>
+<resources>{resources_list}</resources>
+<scripts>{scripts_list}</scripts>
 
----
+<instructions>
 
 {content}
+
+</instructions>
+
+</skill>
 """
 
 
@@ -314,15 +307,15 @@ class SkillsToolset(FunctionToolset):
 
             # Build resources list
             if skill.resources:
-                resources_list = '\n'.join(f'- {res.name}' for res in skill.resources)
+                resources_list = '\n'.join(f'<resource>{res.name}</resource>' for res in skill.resources)
             else:
-                resources_list = 'No resources available.'
+                resources_list = ''
 
             # Build scripts list
             if skill.scripts:
-                scripts_list = '\n'.join(f'- {scr.name}' for scr in skill.scripts)
+                scripts_list = '\n'.join(f'<script>{scr.name}</script>' for scr in skill.scripts)
             else:
-                scripts_list = 'No scripts available.'
+                scripts_list = ''
 
             # Format response
             return LOAD_SKILL_TEMPLATE.format(
@@ -408,7 +401,12 @@ class SkillsToolset(FunctionToolset):
         # Build skills list
         skills_list_lines: list[str] = []
         for skill in sorted(self._skills.values(), key=lambda s: s.name):
-            skills_list_lines.append(f'- **{skill.name}**: {skill.metadata.description}')
+            skills_list_lines.append('<skill>')
+            skills_list_lines.append(f'<name>{skill.name}</name>')
+            skills_list_lines.append(f'<description>{skill.metadata.description}</description>')
+            if skill.uri:
+                skills_list_lines.append(f'<path>{skill.uri}</path>')
+            skills_list_lines.append('</skill>')
         skills_list = '\n'.join(skills_list_lines)
 
         # Use custom template or default
