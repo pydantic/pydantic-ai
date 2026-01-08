@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
@@ -42,6 +43,27 @@ from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, try_import
 with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import() as bedrock_imports_successful:
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+    from tests.models.test_bedrock import _StubBedrockProvider  # pyright: ignore[reportPrivateUsage]
+
+with try_import() as mistral_imports_successful:
+    from mistralai.models import (
+        AssistantMessage,
+        FunctionCall,
+        TextChunk,
+        ToolCall,
+        ToolMessage,
+        UserMessage,
+    )
+
+    from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.providers.mistral import MistralProvider
 
 # =============================================================================
 # ToolReturnPart property tests
@@ -442,3 +464,212 @@ def test_many_multimodal_tool_response():
         match="The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly.",
     ):
         agent.run_sync('Please analyze the data')
+
+
+# =============================================================================
+# Provider-specific mapping tests
+# =============================================================================
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_image_url_force_download():
+    """Test that Anthropic handles ImageUrl with force_download=True in tool returns."""
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Get image')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='call1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=ImageUrl(url='https://example.com/image.png', force_download=True),
+                    tool_call_id='call1',
+                )
+            ]
+        ),
+    ]
+
+    with pytest.raises(Exception):
+        await model._map_message(messages, ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='bedrock not installed')
+async def test_bedrock_s3_url_document():
+    """Test that Bedrock handles S3 URLs for documents."""
+    s3_url = 's3://my-bucket/path/to/document.pdf?bucketOwner=123456789012'
+    doc_count = iter(range(1, 100))
+
+    result = await BedrockConverseModel._map_file_to_content_block(DocumentUrl(url=s3_url), doc_count)  # pyright: ignore[reportPrivateUsage]
+    assert result == snapshot(
+        {
+            'document': {
+                'name': 'Document 1',
+                'format': 'pdf',
+                'source': {'s3Location': {'uri': 's3://my-bucket/path/to/document.pdf', 'bucketOwner': '123456789012'}},
+            }
+        }
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_responses_tool_return_with_data_and_image():
+    """Test OpenAI Responses API tool return with both text and image content."""
+    tool_return = ToolReturnPart(
+        tool_name='get_data',
+        content=['analysis result', ImageUrl(url='https://example.com/chart.png')],
+        tool_call_id='test_call',
+    )
+
+    result = await OpenAIResponsesModel._map_tool_return_output(tool_return)  # pyright: ignore[reportPrivateUsage]
+    assert result == snapshot(
+        [
+            {'type': 'input_text', 'text': '["analysis result"]'},
+            {'type': 'input_image', 'image_url': 'https://example.com/chart.png', 'detail': 'auto'},
+        ]
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_responses_image_vendor_metadata():
+    """Test OpenAI Responses API handles vendor_metadata for images."""
+    png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde'
+    binary_image = BinaryContent(data=png_data, media_type='image/png', vendor_metadata={'detail': 'high'})
+    tool_return = ToolReturnPart(
+        tool_name='get_image',
+        content=binary_image,
+        tool_call_id='test_call',
+    )
+
+    result = await OpenAIResponsesModel._map_tool_return_output(tool_return)  # pyright: ignore[reportPrivateUsage]
+    assert result == snapshot(
+        [
+            {
+                'type': 'input_image',
+                'image_url': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1Pe',
+                'detail': 'high',
+            }
+        ]
+    )
+
+    image_url = ImageUrl(url='https://example.com/image.png', vendor_metadata={'detail': 'low'})
+    tool_return2 = ToolReturnPart(
+        tool_name='get_image',
+        content=image_url,
+        tool_call_id='test_call2',
+    )
+
+    result2 = await OpenAIResponsesModel._map_tool_return_output(tool_return2)  # pyright: ignore[reportPrivateUsage]
+    assert result2 == snapshot([{'type': 'input_image', 'image_url': 'https://example.com/image.png', 'detail': 'low'}])
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_responses_image_url_force_download():
+    """Test OpenAI Responses API handles ImageUrl with force_download."""
+    image_url = ImageUrl(url='https://example.com/image.png', force_download=True)
+    tool_return = ToolReturnPart(
+        tool_name='get_image',
+        content=image_url,
+        tool_call_id='test_call',
+    )
+
+    with pytest.raises(Exception):
+        await OpenAIResponsesModel._map_tool_return_output(tool_return)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_responses_document_url_force_download():
+    """Test OpenAI Responses API handles DocumentUrl with force_download."""
+    doc_url = DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
+    tool_return = ToolReturnPart(
+        tool_name='get_doc',
+        content=doc_url,
+        tool_call_id='test_call',
+    )
+
+    with pytest.raises(Exception):
+        await OpenAIResponsesModel._map_tool_return_output(tool_return)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='bedrock not installed')
+async def test_bedrock_empty_tool_result_json_format():
+    """Test Bedrock uses json format for empty tool results with Mistral models.
+
+    When a tool returns only a document (no text/json), the tool_result_content is empty.
+    For Mistral models on Bedrock, this should use {'json': {}} instead of {'text': ''}.
+    """
+    from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+    class _MistralProfileStubProvider(_StubBedrockProvider):
+        def model_profile(self, model_name: str):
+            return BedrockModelProfile(bedrock_tool_result_format='json')
+
+    model = BedrockConverseModel('mistral.mistral-large-2411-v1:0', provider=_MistralProfileStubProvider(None))  # pyright: ignore[reportArgumentType]
+    req = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_file', args={}, tool_call_id='call1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    content=DocumentUrl(url='s3://bucket/doc.pdf'),
+                    tool_call_id='call1',
+                )
+            ]
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hello'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 'call1', 'name': 'get_file', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'call1', 'content': [{'json': {}}], 'status': 'success'}},
+                    {'text': 'Additional file from tool result:'},
+                    {
+                        'document': {
+                            'name': 'Document 1',
+                            'format': 'pdf',
+                            'source': {'s3Location': {'uri': 's3://bucket/doc.pdf'}},
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed')
+async def test_mistral_tool_then_user_sequence():
+    """Test Mistral inserts dummy assistant message between tool result and user prompt."""
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='test'))
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Call the tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='tool result', tool_call_id='call1')]),
+        ModelRequest(parts=[UserPromptPart(content='Now do something else')]),
+    ]
+
+    result = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert result == snapshot(
+        [
+            UserMessage(content='Call the tool'),
+            AssistantMessage(
+                content=[],
+                tool_calls=[ToolCall(function=FunctionCall(name='my_tool', arguments={}), id='call1', type='function')],
+            ),
+            ToolMessage(content='tool result', tool_call_id='call1'),
+            AssistantMessage(content=[TextChunk(text='OK')]),
+            UserMessage(content='Now do something else'),
+        ]
+    )

@@ -686,12 +686,11 @@ class GoogleModel(Model):
         # Add multimodal files as separate parts
         for file in part.multimodal_content:
             file_part = await self._map_file_to_part(file)
-            if file_part is not None:
-                result.append(file_part)
+            result.append(file_part)
 
         return result
 
-    async def _map_file_to_part(self, file: FileUrl | BinaryContent) -> PartDict | None:
+    async def _map_file_to_part(self, file: FileUrl | BinaryContent) -> PartDict:
         """Map a multimodal file directly to a Google API part."""
         if isinstance(file, BinaryContent):
             inline_data_dict: BlobDict = {'data': file.data, 'mime_type': file.media_type}
@@ -748,10 +747,9 @@ class GoogleModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
-                elif isinstance(item, (BinaryContent, FileUrl)):
+                elif isinstance(item, BinaryContent | FileUrl):
                     file_part = await self._map_file_to_part(item)
-                    if file_part is not None:
-                        content.append(file_part)
+                    content.append(file_part)
                 elif isinstance(item, CachePoint):
                     # Google doesn't support inline CachePoint markers. Google's caching requires
                     # pre-creating cache objects via the API, then referencing them by name using

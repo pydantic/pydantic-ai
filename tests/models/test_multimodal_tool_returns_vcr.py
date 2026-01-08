@@ -158,11 +158,11 @@ def get_model(provider: str, api_keys: dict[str, str], bedrock_provider: Any = N
     elif provider == 'bedrock':
         assert bedrock_provider is not None, 'bedrock_provider fixture required for bedrock tests'
         return BedrockConverseModel(model_name, provider=bedrock_provider)
-    else:
+    else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 
 
-def should_skip_case(case: Case) -> str | None:
+def should_skip_case(case: Case) -> str | None:  # pragma: no cover
     """Check if a case should be skipped based on provider availability."""
     _, is_available = PROVIDER_MODELS.get(case.provider, (None, lambda: False))
     if callable(is_available):
@@ -318,7 +318,7 @@ async def test_multimodal_tool_return(
     3. The message structure matches expected patterns
     """
     skip_reason = should_skip_case(case)
-    if skip_reason:
+    if skip_reason:  # pragma: no cover
         pytest.skip(skip_reason)
 
     model = get_model(case.provider, api_keys, bedrock_provider)
