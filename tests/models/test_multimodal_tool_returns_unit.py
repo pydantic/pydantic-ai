@@ -501,7 +501,9 @@ async def test_bedrock_s3_url_document():
     s3_url = 's3://my-bucket/path/to/document.pdf?bucketOwner=123456789012'
     doc_count = iter(range(1, 100))
 
-    result = await BedrockConverseModel._map_file_to_content_block(DocumentUrl(url=s3_url), doc_count)  # pyright: ignore[reportPrivateUsage]
+    result = await BedrockConverseModel._map_file_to_content_block(  # pyright: ignore[reportPrivateUsage]
+        DocumentUrl(url=s3_url, media_type='application/pdf'), doc_count
+    )
     assert result == snapshot(
         {
             'document': {
