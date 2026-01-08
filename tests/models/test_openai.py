@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -1013,8 +1013,6 @@ async def test_document_url_input_force_download_response_api(allow_model_reques
 
 async def test_image_url_force_download_chat() -> None:
     """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1048,8 +1046,6 @@ async def test_image_url_force_download_chat() -> None:
 
 async def test_image_url_no_force_download_chat() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1077,8 +1073,6 @@ async def test_image_url_no_force_download_chat() -> None:
 
 async def test_document_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1112,8 +1106,6 @@ async def test_document_url_force_download_responses() -> None:
 
 async def test_document_url_no_force_download_responses() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1141,8 +1133,6 @@ async def test_document_url_no_force_download_responses() -> None:
 
 async def test_audio_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
