@@ -3601,7 +3601,7 @@ async def test_responses_count_tokens_with_tools(allow_model_requests: None) -> 
     result = await model.count_tokens(
         [ModelRequest.user_text_prompt('What is the weather in Paris?')],
         None,
-        ModelRequestParameters(function_tools=[tool_def]),
+        ModelRequestParameters(function_tools=[tool_def], allow_text_output=False),
     )
 
     assert result.input_tokens == 25
