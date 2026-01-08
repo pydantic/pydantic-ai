@@ -1260,7 +1260,7 @@ class OpenAIResponsesModel(Model):
             extra_headers.setdefault('User-Agent', get_user_agent())
             response = await self.client.post(
                 '/responses/input_tokens',
-                cast_to=dict,
+                cast_to=dict[str, Any],
                 body=body,
                 options={'headers': extra_headers},
             )
