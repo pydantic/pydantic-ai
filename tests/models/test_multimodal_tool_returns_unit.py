@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
+from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.exceptions import UserError
@@ -473,8 +474,12 @@ def test_many_multimodal_tool_response():
 
 @pytest.mark.anyio
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-async def test_anthropic_image_url_force_download():
+async def test_anthropic_image_url_force_download(mocker: MockerFixture):
     """Test that Anthropic handles ImageUrl with force_download=True in tool returns."""
+    mocker.patch(
+        'pydantic_ai.models.anthropic.download_item',
+        return_value={'data': b'fake image bytes', 'data_type': 'image/png'},
+    )
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Get image')]),
@@ -490,8 +495,26 @@ async def test_anthropic_image_url_force_download():
         ),
     ]
 
-    with pytest.raises(Exception):
-        await model._map_message(messages, ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    # Not using snapshot() here because Anthropic SDK uses BytesIO objects which don't
+    # compare equal after deepcopy (inline-snapshot requirement)
+    assert len(anthropic_messages) == 3
+    assert anthropic_messages[0] == {'role': 'user', 'content': [{'type': 'text', 'text': 'Get image'}]}
+    assert anthropic_messages[1] == {
+        'role': 'assistant',
+        'content': [{'type': 'tool_use', 'id': 'call1', 'name': 'get_image', 'input': {}}],
+    }
+    tool_result_msg = anthropic_messages[2]
+    assert tool_result_msg['role'] == 'user'
+    tool_result: Any = list(tool_result_msg['content'])[0]
+    assert tool_result['type'] == 'tool_result'
+    assert tool_result['tool_use_id'] == 'call1'
+    image_block = tool_result['content'][0]
+    assert image_block['type'] == 'image'
+    assert image_block['source']['type'] == 'base64'
+    assert image_block['source']['media_type'] == 'image/png'
+    image_block['source']['data'].seek(0)
+    assert image_block['source']['data'].read() == b'fake image bytes'
 
 
 @pytest.mark.anyio
@@ -570,8 +593,12 @@ async def test_openai_responses_image_vendor_metadata():
 
 @pytest.mark.anyio
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
-async def test_openai_responses_image_url_force_download():
+async def test_openai_responses_image_url_force_download(mocker: MockerFixture):
     """Test OpenAI Responses API handles ImageUrl with force_download."""
+    mocker.patch(
+        'pydantic_ai.models.openai.download_item',
+        return_value={'data': 'data:image/png;base64,ZmFrZWltYWdl', 'data_type': 'png'},
+    )
     image_url = ImageUrl(url='https://example.com/image.png', force_download=True)
     tool_return = ToolReturnPart(
         tool_name='get_image',
@@ -579,14 +606,20 @@ async def test_openai_responses_image_url_force_download():
         tool_call_id='test_call',
     )
 
-    with pytest.raises(Exception):
-        await OpenAIResponsesModel._map_tool_return_output(tool_return)  # pyright: ignore[reportPrivateUsage]
+    result = await OpenAIResponsesModel._map_tool_return_output(tool_return)  # pyright: ignore[reportPrivateUsage]
+    assert result == snapshot(
+        [{'type': 'input_image', 'image_url': 'data:image/png;base64,ZmFrZWltYWdl', 'detail': 'auto'}]
+    )
 
 
 @pytest.mark.anyio
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
-async def test_openai_responses_document_url_force_download():
+async def test_openai_responses_document_url_force_download(mocker: MockerFixture):
     """Test OpenAI Responses API handles DocumentUrl with force_download."""
+    mocker.patch(
+        'pydantic_ai.models.openai.download_item',
+        return_value={'data': 'data:application/pdf;base64,ZmFrZXBkZg==', 'data_type': 'pdf'},
+    )
     doc_url = DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
     tool_return = ToolReturnPart(
         tool_name='get_doc',
@@ -594,8 +627,10 @@ async def test_openai_responses_document_url_force_download():
         tool_call_id='test_call',
     )
 
-    with pytest.raises(Exception):
-        await OpenAIResponsesModel._map_tool_return_output(tool_return)  # pyright: ignore[reportPrivateUsage]
+    result = await OpenAIResponsesModel._map_tool_return_output(tool_return)  # pyright: ignore[reportPrivateUsage]
+    assert result == snapshot(
+        [{'type': 'input_file', 'file_data': 'data:application/pdf;base64,ZmFrZXBkZg==', 'filename': 'filename.pdf'}]
+    )
 
 
 @pytest.mark.anyio
