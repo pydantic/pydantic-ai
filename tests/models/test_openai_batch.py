@@ -1054,47 +1054,51 @@ class TestBatchJSONParseErrorHandling:
     async def test_batch_results_malformed_json(self, allow_model_requests: None):
         """Test batch_results handles malformed JSON lines gracefully."""
         # Mix of valid and invalid JSON
-        valid_line = json.dumps({
-            'id': 'resp_1',
-            'custom_id': 'req-1',
-            'response': {
-                'status_code': 200,
-                'body': {
-                    'id': 'chatcmpl-1',
-                    'object': 'chat.completion',
-                    'created': 1704067200,
-                    'model': 'gpt-4o-mini',
-                    'choices': [
-                        {
-                            'index': 0,
-                            'message': {'role': 'assistant', 'content': 'Success!'},
-                            'finish_reason': 'stop',
-                        }
-                    ],
+        valid_line = json.dumps(
+            {
+                'id': 'resp_1',
+                'custom_id': 'req-1',
+                'response': {
+                    'status_code': 200,
+                    'body': {
+                        'id': 'chatcmpl-1',
+                        'object': 'chat.completion',
+                        'created': 1704067200,
+                        'model': 'gpt-4o-mini',
+                        'choices': [
+                            {
+                                'index': 0,
+                                'message': {'role': 'assistant', 'content': 'Success!'},
+                                'finish_reason': 'stop',
+                            }
+                        ],
+                    },
                 },
-            },
-        })
+            }
+        )
         invalid_line = 'this is not valid json {'
-        another_valid = json.dumps({
-            'id': 'resp_2',
-            'custom_id': 'req-2',
-            'response': {
-                'status_code': 200,
-                'body': {
-                    'id': 'chatcmpl-2',
-                    'object': 'chat.completion',
-                    'created': 1704067200,
-                    'model': 'gpt-4o-mini',
-                    'choices': [
-                        {
-                            'index': 0,
-                            'message': {'role': 'assistant', 'content': 'Also success!'},
-                            'finish_reason': 'stop',
-                        }
-                    ],
+        another_valid = json.dumps(
+            {
+                'id': 'resp_2',
+                'custom_id': 'req-2',
+                'response': {
+                    'status_code': 200,
+                    'body': {
+                        'id': 'chatcmpl-2',
+                        'object': 'chat.completion',
+                        'created': 1704067200,
+                        'model': 'gpt-4o-mini',
+                        'choices': [
+                            {
+                                'index': 0,
+                                'message': {'role': 'assistant', 'content': 'Also success!'},
+                                'finish_reason': 'stop',
+                            }
+                        ],
+                    },
                 },
-            },
-        })
+            }
+        )
 
         output_content = '\n'.join([valid_line, invalid_line, another_valid])
 
