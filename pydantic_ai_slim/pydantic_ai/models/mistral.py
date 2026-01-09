@@ -806,7 +806,7 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
                 for thought in chunk.thinking:
                     if thought.type == 'text':  # pragma: no branch
                         thinking.append(thought.text)
-            elif isinstance(chunk, MistralReferenceChunk):  # pragma: no cover
+            elif isinstance(chunk, MistralReferenceChunk):
                 # References are not yet supported
                 pass
             elif isinstance(
