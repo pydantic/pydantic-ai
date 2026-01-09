@@ -855,6 +855,7 @@ Don't include any text or Markdown fencing before or after.
                             'name': 'Foo',
                             'description': None,
                             'strict': None,
+                            'text_format': None,
                         },
                         'output_tools': [],
                         'prompted_output_template': """\

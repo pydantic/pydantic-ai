@@ -1,0 +1,395 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '297'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Show me all users from the users table
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Execute SQL query on the database.
+        format:
+          type: text
+        name: execute_sql
+        type: custom
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2856'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767313315
+      created_at: 1767313312
+      error: null
+      id: resp_0d4820cbe4bab1940069570fa049e0819e87f69ff03f56f8eb
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpVw-jLavzRn6xIUyipQWAvJhEb98-1qSRPw3kGVYTONHN-yY7E24wnNA_E5ouEpbhYao0lZiarIA1AFGb-fWz205w6oaRvMT8iDtUaynZLe6fMY_eF-hZpDVeFZxI65NHuVr3mnZ42hZUW6LyU5KDwVgN_tKdjiZs6xKPoCOIxXVpzxEaeIHPL1fsbbcIu5Yr8EXjGtSii_q4f3KSCBFaoUOK6sZXdj3vwR14paOPGkg5ny4dB5govryIRYwjlRe4XkSY9WTDycH6Mmw8Zid5PwPMDF_hzjee8LoXSqV8JcRN_McNlj9b5-QfkgvxhsydYwT-b97cVPm8YgLFSzgsjmAdVpIY8tpWQ6wDfAa3VuolumDxUgoihuIR4vII6GIvdP2NId8CS5wC9wqpuTKo8lcwd_KfN9yZOOzDtvgmN7BONsJwJZrp9wDGTsK8ldqbmsdeZqEd3KkQtxop9auXkLMQp4LF-Coro71Fzalawk63MK1fd8k4ij52z-erbKit55r998o6qrZ9hEDspYFhinb1pXd7dUY-LhxwXdsWvLjP5tw6YmrmXKNe38Frs3Rs7zZ4lw5bZTC05EoQcXFi3HSPpsRdPC6ooLYLcDwCnbCuRxPx4M4egZ7eVXpx7l19xOVFn8qp1BG9tyq1pwCblzZdPIffGgug42lbt5z21oW5QbFxX37etLLYSlEqJk08e6Zl9_3AiG_MHoRiG64vQkBk4ZFWHlaBGNcZu_piqz3rdxqiIcn_shDt3_QFzBqGfvwLwVEBJKmYEd_44z6l_EGFuCVXe9leqJJg4H1oEelLhlDZWWqWHeW_1jv2lpeBp8gjEexoXjnuLz_wMDkll2CC3IVe5Ru8F3CEN0cE1GEtOlUaspn4zQ6BiNigJnRu7-UzMaJY9evfUTPFfWV9xV4o7KdQDVOF8zsTWmo1b8J3dd2Y5knFiAqJ6k3uxJuMJvAOK8hvEbgk8J0XZnjic4P3W2oDKKIfxVASdJEcIq2uoRLkgCL2pFN34_QnE1mWauCwpqYewKcyocgpMoW3_CCwT-lS89cXC5HKJ9a7fTBux-whtnCArPxsRS3zLzWOm6Anf6qFslPPo2UNtNwI23O9qt1wt8XshuXWm5bIDGWpw63ciqMsKTAEXC0RSbvsliyD6R6dOaVr0IakXaIDrT4GuV0D5YvL8cxTV7og3jqeytSo1BE8j1bF3Oi8OnBltV_LfqEuMXe9rBzE6zHU8QOxZ3G1Asf_ym_QZsaV6BYkxmMti4XrA3ajRLh1V-YFSFldlRra1L9-W8PpgqQ4YW8b6wwoSHDgu4BQJn20TPk6gHhbZs3xA9Bc5MIRXgZI1z9BX7j0nqjwXCRpQJHHiebHtAeFDeO9tS6RQBaejL_hkkrUEHEafbEeNUVNfHF3sXRoE8u1ZaC_qqRVf5UhL1G0zEeRp9GggDlIbpGtWCgkDvZIZfSe3jnuKnQHMbaTwHQx-GktPetRLWY7mO1Ju_XSSjUa1UTe3t6QPVhNHisEyoAGcC-atwZdy-SekGT5RcqTaWuVmiWN_ZgKDfa3NkWthTGgagppvNMbtUhZAc-5vUwfX9KPSe7pAaRuZL_iVoMt9S_s7TBWGIiScNMzELNwXT0s__v7gyk02L1MtfjIEccJVq7cNor0gyNH3f_-fl0h
+        id: rs_0d4820cbe4bab1940069570fa087a8819eaf009bbd6f57a4ff
+        summary: []
+        type: reasoning
+      - call_id: call_ehKeXqQM7YsBXWygeOoDztRm
+        id: ctc_0d4820cbe4bab1940069570fa2c930819e9a2464b54b83d4bb
+        input: SELECT * FROM users;
+        name: execute_sql
+        status: completed
+        type: custom_tool_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Execute SQL query on the database.
+        format:
+          type: text
+        name: execute_sql
+        type: custom
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 61
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 148
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 209
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2403'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=IwjZKEdemC1HbHPXV75ZFPXHXfGNCVsZksp9eRvrn10-1767313315-1.0.1.1-v17B3FyLshcg7qqDTrKhuhaLa1IM5RjQC2TZGN2zNjXtyPGjw0jtjx4PNfnpR98P3JJyR.0CXuy3e57W3Ehfch_0NOyiFYNXBtSr4gUBCSM;
+        _cfuvid=mtgRvrABWhxNS.a04ViJiSea23CZvuwhYq3e8eCU7g0-1767313315166-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Show me all users from the users table
+        role: user
+      - encrypted_content: gAAAAABpVw-jLavzRn6xIUyipQWAvJhEb98-1qSRPw3kGVYTONHN-yY7E24wnNA_E5ouEpbhYao0lZiarIA1AFGb-fWz205w6oaRvMT8iDtUaynZLe6fMY_eF-hZpDVeFZxI65NHuVr3mnZ42hZUW6LyU5KDwVgN_tKdjiZs6xKPoCOIxXVpzxEaeIHPL1fsbbcIu5Yr8EXjGtSii_q4f3KSCBFaoUOK6sZXdj3vwR14paOPGkg5ny4dB5govryIRYwjlRe4XkSY9WTDycH6Mmw8Zid5PwPMDF_hzjee8LoXSqV8JcRN_McNlj9b5-QfkgvxhsydYwT-b97cVPm8YgLFSzgsjmAdVpIY8tpWQ6wDfAa3VuolumDxUgoihuIR4vII6GIvdP2NId8CS5wC9wqpuTKo8lcwd_KfN9yZOOzDtvgmN7BONsJwJZrp9wDGTsK8ldqbmsdeZqEd3KkQtxop9auXkLMQp4LF-Coro71Fzalawk63MK1fd8k4ij52z-erbKit55r998o6qrZ9hEDspYFhinb1pXd7dUY-LhxwXdsWvLjP5tw6YmrmXKNe38Frs3Rs7zZ4lw5bZTC05EoQcXFi3HSPpsRdPC6ooLYLcDwCnbCuRxPx4M4egZ7eVXpx7l19xOVFn8qp1BG9tyq1pwCblzZdPIffGgug42lbt5z21oW5QbFxX37etLLYSlEqJk08e6Zl9_3AiG_MHoRiG64vQkBk4ZFWHlaBGNcZu_piqz3rdxqiIcn_shDt3_QFzBqGfvwLwVEBJKmYEd_44z6l_EGFuCVXe9leqJJg4H1oEelLhlDZWWqWHeW_1jv2lpeBp8gjEexoXjnuLz_wMDkll2CC3IVe5Ru8F3CEN0cE1GEtOlUaspn4zQ6BiNigJnRu7-UzMaJY9evfUTPFfWV9xV4o7KdQDVOF8zsTWmo1b8J3dd2Y5knFiAqJ6k3uxJuMJvAOK8hvEbgk8J0XZnjic4P3W2oDKKIfxVASdJEcIq2uoRLkgCL2pFN34_QnE1mWauCwpqYewKcyocgpMoW3_CCwT-lS89cXC5HKJ9a7fTBux-whtnCArPxsRS3zLzWOm6Anf6qFslPPo2UNtNwI23O9qt1wt8XshuXWm5bIDGWpw63ciqMsKTAEXC0RSbvsliyD6R6dOaVr0IakXaIDrT4GuV0D5YvL8cxTV7og3jqeytSo1BE8j1bF3Oi8OnBltV_LfqEuMXe9rBzE6zHU8QOxZ3G1Asf_ym_QZsaV6BYkxmMti4XrA3ajRLh1V-YFSFldlRra1L9-W8PpgqQ4YW8b6wwoSHDgu4BQJn20TPk6gHhbZs3xA9Bc5MIRXgZI1z9BX7j0nqjwXCRpQJHHiebHtAeFDeO9tS6RQBaejL_hkkrUEHEafbEeNUVNfHF3sXRoE8u1ZaC_qqRVf5UhL1G0zEeRp9GggDlIbpGtWCgkDvZIZfSe3jnuKnQHMbaTwHQx-GktPetRLWY7mO1Ju_XSSjUa1UTe3t6QPVhNHisEyoAGcC-atwZdy-SekGT5RcqTaWuVmiWN_ZgKDfa3NkWthTGgagppvNMbtUhZAc-5vUwfX9KPSe7pAaRuZL_iVoMt9S_s7TBWGIiScNMzELNwXT0s__v7gyk02L1MtfjIEccJVq7cNor0gyNH3f_-fl0h
+        id: rs_0d4820cbe4bab1940069570fa087a8819eaf009bbd6f57a4ff
+        summary: []
+        type: reasoning
+      - call_id: call_ehKeXqQM7YsBXWygeOoDztRm
+        id: ctc_0d4820cbe4bab1940069570fa2c930819e9a2464b54b83d4bb
+        input: '{"query":"SELECT * FROM users;"}'
+        name: execute_sql
+        type: custom_tool_call
+      - call_id: call_ehKeXqQM7YsBXWygeOoDztRm
+        output: 'Result: 3 rows returned'
+        type: custom_tool_call_output
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Execute SQL query on the database.
+        format:
+          type: text
+        name: execute_sql
+        type: custom
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '9636'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767313324
+      created_at: 1767313315
+      error: null
+      id: resp_0d4820cbe4bab1940069570fa35488819e97334f757218c636
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpVw-s8drZKjS9i3Wzord6CZxl29VBEUch3tGDSUuAX4JrEEQTt1V2a6uxc8e1FsGqsnmI1O_udwSvDnW6e4u1PM3aJ46tPOaz4qJYY5Yi3ExoU_M7RFo_Y901JCNr6YUPFkHKYFYYk2BU0OBAGJpCWSRRm91MDUTxVGoGECgDGR5Yh-HvuxQz1rCS73iPd2sVWL-k_vP7OI3NCIsGNJ1C-RA_HhE68kpmRh9sX8JNXXjyMADNqlHmxecUPxj4qKEj_D8Hi5vMrZxdWB_vO1QNmhta7SQzXefqMT0pGW6hIHR9kXFlZoGhDpQR8XyDklW1pH7s3g8jn8_h2kIjfe7t92mu-YNso17gXIDEsKkdv_sUO-H3LvHbx7jovBVdvfWeiOWIsn-o9-1sPqTcwnUjefB9k3wIoP9UjZy8cP9AWQ9NWvTnfryHUPc3IgYueFHUp9x0k7Bml9jly_bGq67xCiuagYsnnRDhYUbsqLvw7mnFvtoAXcorEvoNuvSiYRBczji3uocJxGnXYWx0N05LVFYUjlOJpGHuhE_HyfWrIPhxhxMgq5tEvIposIRcs6gMOWPAdnZkctX_osaezs1gFF9s_hlzyPgL64DfwLZ172pScv-IT2YyNdEjowhUhB8sicTVKQs3qF8CO89BZxWiFALmAI_YwZFlNrK4PvqfE9mCGR6oRQG_4wn-MP1EMZqrGFOQl9Hl0fUam4Ia0X0Asjt0VYePenxJ5APytjpCwa3xhgR_070uia7U2ErT2Zo9jJrKk7ETGISIWM7B9G_cSBQw5i6XUO4O-cB-__EfAeWTf9uivPR_7qnWEK5kKIJptbz6VyhiQ4cL3ZHIcpkobPoI0qQahjNVGO2mP_Y_lGaDUw86TbumPoQDDCPyqz4U_kvd8h4o8Zer5YsKefeSp97m7YtwP7CgKUTEYJMsxqp9ZKOpPqjOeLzyU1GHdxI3ErnvVVB_TbC0sBRFGP-_yiZf-cykcBydLMMNObKcor0vtrpBXp1DcAxWxhasQowWkDRQuwBSBn6ekocT2xBCWFWSvKrUr7qkAANUMal6fiL5wFZNx3tAlT9wDArCet0f4okFUlg7NveKgnfVnHKDcrIoY2r8SNsrwxkQZ5JA_ZF3t_avOQDWSkQElj_IKe36eacLGLnQz1O7SnqigWA2jWBSsqSOH9XHWSr4hCWUTBuG9BUKPPGLiCNVR26R570lNWMPTsM9QKCTEnm4wE-VDPSlKPscBGa-jDwb2v51JbvBvwgBVgD3FsnhwHl4NagG1yh8JsloXBwiu3uEohNgRRxcIERDS0pO71eUhhU0ig9dzeJ3imIGreMLSbxoA2G7vqilDKTLv1zZIDvEIQSeAl0y5P0UlZUuVQVmveYta6WQ44zT3ONe9kEp0E72smhQUd6ZRdm1tX-sE5fgaXnFlXrU7vHq91dSXs2N0k7GIFuXTjzw67dVRqbuMcUmYHdsUvCEAf5Xs16HWs9hTgmQGWWlkYy7zHdlwdKbybUq8fcN8FTm_NTkOOSFa849BDt7UUBOJx7WegjG52T9ZiXMw-KMWuBQY-6dVuqZrzdFUGEh53jpf2mqQtANIdA86zDjvmRI-rSbtg7Txx1EXA-zwgihph4pwxWtqDzzB9pip_aiqSrHC96puVovwHtEXKkG4mgbJgMYrrn-ClUpErghgfuT7KSWSzw6Pnt1hO-AadeiHOGL86fVNBmTpgZdzYLyuMQxkN2SGkKElyFpnot_kAFb-4rYu8ne67j6j053tOR91TgjqQR4VlYny2E-btpgh1JNV-PjQFIzpLW3V-Pk0-MAYMtOrbr3Tnd6pWBjpZtSgqrwtD4boiPjBqEj4TLXx1eU9WNkh4ctt8FT47bM1tpGgiDNG_e0K-3qLMysRRSLMy1bVZp_Xd4RiuI2rt33KzO0NJ_9ucw6NVTyCwANhKA8jEqtc7apO_t4AerS6nwuEndwzqtUkJd3wwpph6xncCq2lhoFM5lxDUf1oo3Bw1QMBdHm5twtXT5w0eUvlISkOWEc00xfeYmtEh_GGPzx2_18r6P55SMZ7Q-Sm-OUI2VJmkN3nMVAK5ZS-IkZS-u9hzX4n3iyJXiv7umJ0r05G9s-uFvSXZqzfNRieTbT5DT72_6akL-xcWQZm6AEZM5kehKPOVrgrGuBKnwm6x7VOSKGk0XSyJS_2-E5uI20xkKf71kq5ph_7WKxSYW5iolTiQNV34qc-CUj7dZyYSV5gl-wotbqlEs2L7CiMwP3wE91BZDry3fdFTjVbsymHBA5VjK5kkyxWzT4H_rnChkizjqoGwxxxhzmbmZQT6hs4nXlCy5skQ-eCWqVRuhDOtp6p25xbkiTJarVTFs5Hrgo0rkRuq6ubbQ-QmyK7_GGWoLjf5Y-LtjKdNMzvtfSJ8BvpeBvjkJSqZwSG9CETeyM__hFaiVxwTVXgjQmmh-FAo1sKDPnvIrqpU6nXqObCn_6rsBFGeCUcl0HV66trdwiUNZnblFF3hjK45AsP5S8Y3QRcA1RqkM5fzxPllYHDRd4sruVFCxKBssRgs3sMjFY9k-KlG_4zQ6Rz6MmdFvGqc30YzK2eSAPh4iowdXAXso9f_u20mjAWMOSwRK5mm80TauGcxHZu1cprYq9JqAFEym9fYYZVtzcbNQgwNnYFqzgVVN5WZ9kQOWdUMUYolU2dQKKPBX9rVQ6awARuFb_e0kFAh3e9eGlIsdtTUUKuJNkhemrH-m2OVNNHutHBY5lu-2gUREC9IbBq3kcyBmE5dhr_162iyQ0hlF9QmKwYcf845qp9SaikebXENN9TrnYcBKWpEJkeQLfS8uij7vUUY3BJ2dVfSbDT7Q16ypllSfrkKFB_0EGatHQW1ugxmz9nasMnFn0Sha1dL8WZh-074U4-jaajwVhUydyokKpZg1z9iU_Yt6h6u4n3sOttEobUNJHQNjbHUtj1zcbR-ts8nZOisOccoFvpoLq3UZBhl8tHYCSA1l1MdUBvqcJ5ua9YMtEOt1jptu7fY0hAZD3D2z2bAmwAanvlmRBJXJIoZVxvvAdDcZHyn-xPCu-RZ9TlTFrv57cVeTMYR7psmNXXAEa7UZS5Szvhmh7LMNcz7oatoV1WLyly6VW3DopCd6jxU0WBlQa7bWDXtoO4H6R_tfbCLJUXQmVmeDohpAEgDJZke2QwdsTCJphwou_Crqg6-ZFAYM75KO50-64SMbU5xAvB1UwOXRYJp_aGtuUxNICVg07mg9o_k90_Qr5Z0mm96HG184G0ytZMyZlvldmE8t3tkNSq7noX5hVIydm4G24SKGoLh8wVkVYtGmcK_UXwfUCVn74D0H6CJhv_ivqTJ4B1DSFXtNbVfqf97oWO-MwJy7M03_F94haj7d_hxYad46KnH2q99ECN6MygDYELMMuI0dApJIJ4ALBhat040-CENTuWzgA4oMcdigTSVKx2wRwQCWMARYh_3tZ0v-2FcvzXeezZI3-n1tBTRguUY8v2DOrtiNsMXwdUcv_sXtPk5jdicS7-nOeQqq33XKhBk1Kdu6fjya2Wh1aJEUmt_X8_eKRfpxMtHQc3pDgh56QkrQu5_8T8BoKF7_Fh1bbkIMrwDWwm-FLX91Y24g_X0TKiuMWeSp2VqmZsZOuT33iVbFuMraeJS3YLYMd-BfEwkiVKzCVYKVgJPea1qiajqqt6o6k8-03nOKg3tHn29fzMeSQUUUOZzxinQludbQKHImcKTV9a0vpDjRckrt3CwBYDsdn1NIM--pV1oVr1d1yPBzpHuxqZkMG2Ewwn8QW6zMlO-ObfJ_FpRV73D4PyRf3616byCErZYMjI28vsqHT0_zUgCW6aWI_1BABedBR7hC-tcEJLHLjcNESl9ctOKLUtkxWUmuXfThzsSPAS9LgwQRF5Eks9WpiQ46KI3aeMyf3bW1Vt9adid2VeFpG3D5GiJsTJwF6h7nVGLE2trF0T88Pyn-DwMIaXsNtfIWEIacDS0J4KJ7MCFRjUqQKzdiXCLccFNeqwZfPuP04iAMeoamn6zlwntmy_iV2OBuWEzrLLlDOQkop0mZGa72tV_KzsrD3nJY2bXKVU5_ab3wcxvmAZWG3rP6qoManukqTwL62sHonesrX3Xh2WFoAlOnjtJBZvyfbnayXWqs8fARE6ir-q1oK--7d0U2JHsrsD4lW34_s2q8T8qZ2XD0DSwy1SV_n1S9KMobKBXQOqXy_Q4B1-ZvO5-4yiJDlCjTaWT6xI5wMViON6lLX8Sv2AvqNZlq6SxPqGFhNPGBhVsbhAaRBlWuVBXsj5kxjZ9z-4M3pugCGiv8B2GJATlwLsztKAOWXFaU1rIjmMwnFI-XWXZD1rlcnTi1fRTXtqT_kjBmleSYn4BJwOZoNy9KQKzZ4SFmxZvCXTOV_P9VTkR5o7Ul9Sw3yJ_Vf9purtXpsgBvDbNwteIiY67iQqVeP8SDTPJMFNUcZrpUA3__3a5U04qcTYdcQct4Vx70aXNVYK0RRIcuzY-UvWVD_NxmrC5fs04IYZeTYx9pl0JoTmxUrX7V1i9n-0ePVNCdvivk8vpYClfBPZP49Apl8hoE26lIi2GQ5EyLERM2c_GFHO1JJdyk44Vv2dMmDmhdDTi_XKpqSNlj8lzvJ1FaViaizsB1XDREkrAXvSCQOjoADbug8TgIzV78OLpEr4QpTXm8ipz5SUMdri4IZaJ4VScfKxMjraafVkIEs3m2hdiWEsUG4lIVjnXau9FO5Ux4U-Ht9F4sVfmLiJJmF-V0CmkU-q2g_HmHn1WMKVk-PXU29sVhR1lU2wtFVgqzcRYNqmfnkMZ7moiuGdlWBvvKU4jMedV3tL2YmXIyqUcdDhPfHIZYEvXDqGjNJNB13grOx9nu04e5SlLlLjwtT3CpmV3zE-wavY0Zq55n8u0QT4onn3uh16emVPApXNM9DwpaZQm0d9tCw4PSk21xQWbhTF4U0dYMJGqos643_pxrl8Tw1Yb79b_6b0yGlIQz4ZA94PkthgHpkdPDa9YCLdHDdasoacRqLDGWrT047F9UUYaHNlQCfN2t0jvfrKadJRPT8l47dfJGrp314h3iAaVXaN_fhNzYa48nxJUzByHH-ej0qGuXVKEynOX3NY7-6-K5EW1DZyrMHVSTPVwZj-er1EWIaU8INP7KicGfhh6Bhwsd-ozYA478zzSiCY7rmi_ogag3ieJwYNwwXwHk4TKuUOvyeu5u1Gu1NwxDkzcbfQWM6_9iTv7NYzyCedYlS3S21ojXPZNglrvuKGl_TPgqesQh_C0XIwm1UQI27LeLzm6Oaf8Vqlt1odJbmhFPIp3VwgPD-xevNxxB_HnoharbI9u9LN7Ev075GdMylKkXEtI6tk-86cho0QnJ61Q4hVpT4gSkR9CjJpNylvvye-NitBzE7Er0d3YOEQeeT5tEgWBYaFJpKZKrMBcDRiDL3uoWFHk1iJJ4B5MNVmo6BeWmM4qxoEyWEB5s9pC4SrpUBciU1SqTg8bHVTp4l-7kzrANsUHdO5N1btnOCX_4HCzHeucFaydoPGc7U-zz2SHbIEko-ucAy1ABtB3ASiwrhsp5r8qmsreWQ7lpfv6FN2h4yiXLVBPuwFQ1bTJoM4oPcdHFYJew4quaM1X0Z87vfTLLhBga-xB8phRiSBb64BTDUFBVMd9b-wuNbbuyo_zhyhdEQdLnGjt0Voc1Fio4HI31suWxhMdxRSA==
+        id: rs_0d4820cbe4bab1940069570fa4c1dc819e9073e2994b684323
+        summary: []
+        type: reasoning
+      - call_id: call_HspKIF0pEXPVhnj358kKmF7N
+        id: ctc_0d4820cbe4bab1940069570fabc3cc819ea741d10a8178eb0e
+        input: PRAGMA table_info(users);
+        name: execute_sql
+        status: completed
+        type: custom_tool_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Execute SQL query on the database.
+        format:
+          type: text
+        name: execute_sql
+        type: custom
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 231
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 789
+        output_tokens_details:
+          reasoning_tokens: 768
+        total_tokens: 1020
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '8570'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=IwjZKEdemC1HbHPXV75ZFPXHXfGNCVsZksp9eRvrn10-1767313315-1.0.1.1-v17B3FyLshcg7qqDTrKhuhaLa1IM5RjQC2TZGN2zNjXtyPGjw0jtjx4PNfnpR98P3JJyR.0CXuy3e57W3Ehfch_0NOyiFYNXBtSr4gUBCSM;
+        _cfuvid=mtgRvrABWhxNS.a04ViJiSea23CZvuwhYq3e8eCU7g0-1767313315166-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Show me all users from the users table
+        role: user
+      - encrypted_content: gAAAAABpVw-jLavzRn6xIUyipQWAvJhEb98-1qSRPw3kGVYTONHN-yY7E24wnNA_E5ouEpbhYao0lZiarIA1AFGb-fWz205w6oaRvMT8iDtUaynZLe6fMY_eF-hZpDVeFZxI65NHuVr3mnZ42hZUW6LyU5KDwVgN_tKdjiZs6xKPoCOIxXVpzxEaeIHPL1fsbbcIu5Yr8EXjGtSii_q4f3KSCBFaoUOK6sZXdj3vwR14paOPGkg5ny4dB5govryIRYwjlRe4XkSY9WTDycH6Mmw8Zid5PwPMDF_hzjee8LoXSqV8JcRN_McNlj9b5-QfkgvxhsydYwT-b97cVPm8YgLFSzgsjmAdVpIY8tpWQ6wDfAa3VuolumDxUgoihuIR4vII6GIvdP2NId8CS5wC9wqpuTKo8lcwd_KfN9yZOOzDtvgmN7BONsJwJZrp9wDGTsK8ldqbmsdeZqEd3KkQtxop9auXkLMQp4LF-Coro71Fzalawk63MK1fd8k4ij52z-erbKit55r998o6qrZ9hEDspYFhinb1pXd7dUY-LhxwXdsWvLjP5tw6YmrmXKNe38Frs3Rs7zZ4lw5bZTC05EoQcXFi3HSPpsRdPC6ooLYLcDwCnbCuRxPx4M4egZ7eVXpx7l19xOVFn8qp1BG9tyq1pwCblzZdPIffGgug42lbt5z21oW5QbFxX37etLLYSlEqJk08e6Zl9_3AiG_MHoRiG64vQkBk4ZFWHlaBGNcZu_piqz3rdxqiIcn_shDt3_QFzBqGfvwLwVEBJKmYEd_44z6l_EGFuCVXe9leqJJg4H1oEelLhlDZWWqWHeW_1jv2lpeBp8gjEexoXjnuLz_wMDkll2CC3IVe5Ru8F3CEN0cE1GEtOlUaspn4zQ6BiNigJnRu7-UzMaJY9evfUTPFfWV9xV4o7KdQDVOF8zsTWmo1b8J3dd2Y5knFiAqJ6k3uxJuMJvAOK8hvEbgk8J0XZnjic4P3W2oDKKIfxVASdJEcIq2uoRLkgCL2pFN34_QnE1mWauCwpqYewKcyocgpMoW3_CCwT-lS89cXC5HKJ9a7fTBux-whtnCArPxsRS3zLzWOm6Anf6qFslPPo2UNtNwI23O9qt1wt8XshuXWm5bIDGWpw63ciqMsKTAEXC0RSbvsliyD6R6dOaVr0IakXaIDrT4GuV0D5YvL8cxTV7og3jqeytSo1BE8j1bF3Oi8OnBltV_LfqEuMXe9rBzE6zHU8QOxZ3G1Asf_ym_QZsaV6BYkxmMti4XrA3ajRLh1V-YFSFldlRra1L9-W8PpgqQ4YW8b6wwoSHDgu4BQJn20TPk6gHhbZs3xA9Bc5MIRXgZI1z9BX7j0nqjwXCRpQJHHiebHtAeFDeO9tS6RQBaejL_hkkrUEHEafbEeNUVNfHF3sXRoE8u1ZaC_qqRVf5UhL1G0zEeRp9GggDlIbpGtWCgkDvZIZfSe3jnuKnQHMbaTwHQx-GktPetRLWY7mO1Ju_XSSjUa1UTe3t6QPVhNHisEyoAGcC-atwZdy-SekGT5RcqTaWuVmiWN_ZgKDfa3NkWthTGgagppvNMbtUhZAc-5vUwfX9KPSe7pAaRuZL_iVoMt9S_s7TBWGIiScNMzELNwXT0s__v7gyk02L1MtfjIEccJVq7cNor0gyNH3f_-fl0h
+        id: rs_0d4820cbe4bab1940069570fa087a8819eaf009bbd6f57a4ff
+        summary: []
+        type: reasoning
+      - call_id: call_ehKeXqQM7YsBXWygeOoDztRm
+        id: ctc_0d4820cbe4bab1940069570fa2c930819e9a2464b54b83d4bb
+        input: '{"query":"SELECT * FROM users;"}'
+        name: execute_sql
+        type: custom_tool_call
+      - call_id: call_ehKeXqQM7YsBXWygeOoDztRm
+        output: 'Result: 3 rows returned'
+        type: custom_tool_call_output
+      - encrypted_content: gAAAAABpVw-s8drZKjS9i3Wzord6CZxl29VBEUch3tGDSUuAX4JrEEQTt1V2a6uxc8e1FsGqsnmI1O_udwSvDnW6e4u1PM3aJ46tPOaz4qJYY5Yi3ExoU_M7RFo_Y901JCNr6YUPFkHKYFYYk2BU0OBAGJpCWSRRm91MDUTxVGoGECgDGR5Yh-HvuxQz1rCS73iPd2sVWL-k_vP7OI3NCIsGNJ1C-RA_HhE68kpmRh9sX8JNXXjyMADNqlHmxecUPxj4qKEj_D8Hi5vMrZxdWB_vO1QNmhta7SQzXefqMT0pGW6hIHR9kXFlZoGhDpQR8XyDklW1pH7s3g8jn8_h2kIjfe7t92mu-YNso17gXIDEsKkdv_sUO-H3LvHbx7jovBVdvfWeiOWIsn-o9-1sPqTcwnUjefB9k3wIoP9UjZy8cP9AWQ9NWvTnfryHUPc3IgYueFHUp9x0k7Bml9jly_bGq67xCiuagYsnnRDhYUbsqLvw7mnFvtoAXcorEvoNuvSiYRBczji3uocJxGnXYWx0N05LVFYUjlOJpGHuhE_HyfWrIPhxhxMgq5tEvIposIRcs6gMOWPAdnZkctX_osaezs1gFF9s_hlzyPgL64DfwLZ172pScv-IT2YyNdEjowhUhB8sicTVKQs3qF8CO89BZxWiFALmAI_YwZFlNrK4PvqfE9mCGR6oRQG_4wn-MP1EMZqrGFOQl9Hl0fUam4Ia0X0Asjt0VYePenxJ5APytjpCwa3xhgR_070uia7U2ErT2Zo9jJrKk7ETGISIWM7B9G_cSBQw5i6XUO4O-cB-__EfAeWTf9uivPR_7qnWEK5kKIJptbz6VyhiQ4cL3ZHIcpkobPoI0qQahjNVGO2mP_Y_lGaDUw86TbumPoQDDCPyqz4U_kvd8h4o8Zer5YsKefeSp97m7YtwP7CgKUTEYJMsxqp9ZKOpPqjOeLzyU1GHdxI3ErnvVVB_TbC0sBRFGP-_yiZf-cykcBydLMMNObKcor0vtrpBXp1DcAxWxhasQowWkDRQuwBSBn6ekocT2xBCWFWSvKrUr7qkAANUMal6fiL5wFZNx3tAlT9wDArCet0f4okFUlg7NveKgnfVnHKDcrIoY2r8SNsrwxkQZ5JA_ZF3t_avOQDWSkQElj_IKe36eacLGLnQz1O7SnqigWA2jWBSsqSOH9XHWSr4hCWUTBuG9BUKPPGLiCNVR26R570lNWMPTsM9QKCTEnm4wE-VDPSlKPscBGa-jDwb2v51JbvBvwgBVgD3FsnhwHl4NagG1yh8JsloXBwiu3uEohNgRRxcIERDS0pO71eUhhU0ig9dzeJ3imIGreMLSbxoA2G7vqilDKTLv1zZIDvEIQSeAl0y5P0UlZUuVQVmveYta6WQ44zT3ONe9kEp0E72smhQUd6ZRdm1tX-sE5fgaXnFlXrU7vHq91dSXs2N0k7GIFuXTjzw67dVRqbuMcUmYHdsUvCEAf5Xs16HWs9hTgmQGWWlkYy7zHdlwdKbybUq8fcN8FTm_NTkOOSFa849BDt7UUBOJx7WegjG52T9ZiXMw-KMWuBQY-6dVuqZrzdFUGEh53jpf2mqQtANIdA86zDjvmRI-rSbtg7Txx1EXA-zwgihph4pwxWtqDzzB9pip_aiqSrHC96puVovwHtEXKkG4mgbJgMYrrn-ClUpErghgfuT7KSWSzw6Pnt1hO-AadeiHOGL86fVNBmTpgZdzYLyuMQxkN2SGkKElyFpnot_kAFb-4rYu8ne67j6j053tOR91TgjqQR4VlYny2E-btpgh1JNV-PjQFIzpLW3V-Pk0-MAYMtOrbr3Tnd6pWBjpZtSgqrwtD4boiPjBqEj4TLXx1eU9WNkh4ctt8FT47bM1tpGgiDNG_e0K-3qLMysRRSLMy1bVZp_Xd4RiuI2rt33KzO0NJ_9ucw6NVTyCwANhKA8jEqtc7apO_t4AerS6nwuEndwzqtUkJd3wwpph6xncCq2lhoFM5lxDUf1oo3Bw1QMBdHm5twtXT5w0eUvlISkOWEc00xfeYmtEh_GGPzx2_18r6P55SMZ7Q-Sm-OUI2VJmkN3nMVAK5ZS-IkZS-u9hzX4n3iyJXiv7umJ0r05G9s-uFvSXZqzfNRieTbT5DT72_6akL-xcWQZm6AEZM5kehKPOVrgrGuBKnwm6x7VOSKGk0XSyJS_2-E5uI20xkKf71kq5ph_7WKxSYW5iolTiQNV34qc-CUj7dZyYSV5gl-wotbqlEs2L7CiMwP3wE91BZDry3fdFTjVbsymHBA5VjK5kkyxWzT4H_rnChkizjqoGwxxxhzmbmZQT6hs4nXlCy5skQ-eCWqVRuhDOtp6p25xbkiTJarVTFs5Hrgo0rkRuq6ubbQ-QmyK7_GGWoLjf5Y-LtjKdNMzvtfSJ8BvpeBvjkJSqZwSG9CETeyM__hFaiVxwTVXgjQmmh-FAo1sKDPnvIrqpU6nXqObCn_6rsBFGeCUcl0HV66trdwiUNZnblFF3hjK45AsP5S8Y3QRcA1RqkM5fzxPllYHDRd4sruVFCxKBssRgs3sMjFY9k-KlG_4zQ6Rz6MmdFvGqc30YzK2eSAPh4iowdXAXso9f_u20mjAWMOSwRK5mm80TauGcxHZu1cprYq9JqAFEym9fYYZVtzcbNQgwNnYFqzgVVN5WZ9kQOWdUMUYolU2dQKKPBX9rVQ6awARuFb_e0kFAh3e9eGlIsdtTUUKuJNkhemrH-m2OVNNHutHBY5lu-2gUREC9IbBq3kcyBmE5dhr_162iyQ0hlF9QmKwYcf845qp9SaikebXENN9TrnYcBKWpEJkeQLfS8uij7vUUY3BJ2dVfSbDT7Q16ypllSfrkKFB_0EGatHQW1ugxmz9nasMnFn0Sha1dL8WZh-074U4-jaajwVhUydyokKpZg1z9iU_Yt6h6u4n3sOttEobUNJHQNjbHUtj1zcbR-ts8nZOisOccoFvpoLq3UZBhl8tHYCSA1l1MdUBvqcJ5ua9YMtEOt1jptu7fY0hAZD3D2z2bAmwAanvlmRBJXJIoZVxvvAdDcZHyn-xPCu-RZ9TlTFrv57cVeTMYR7psmNXXAEa7UZS5Szvhmh7LMNcz7oatoV1WLyly6VW3DopCd6jxU0WBlQa7bWDXtoO4H6R_tfbCLJUXQmVmeDohpAEgDJZke2QwdsTCJphwou_Crqg6-ZFAYM75KO50-64SMbU5xAvB1UwOXRYJp_aGtuUxNICVg07mg9o_k90_Qr5Z0mm96HG184G0ytZMyZlvldmE8t3tkNSq7noX5hVIydm4G24SKGoLh8wVkVYtGmcK_UXwfUCVn74D0H6CJhv_ivqTJ4B1DSFXtNbVfqf97oWO-MwJy7M03_F94haj7d_hxYad46KnH2q99ECN6MygDYELMMuI0dApJIJ4ALBhat040-CENTuWzgA4oMcdigTSVKx2wRwQCWMARYh_3tZ0v-2FcvzXeezZI3-n1tBTRguUY8v2DOrtiNsMXwdUcv_sXtPk5jdicS7-nOeQqq33XKhBk1Kdu6fjya2Wh1aJEUmt_X8_eKRfpxMtHQc3pDgh56QkrQu5_8T8BoKF7_Fh1bbkIMrwDWwm-FLX91Y24g_X0TKiuMWeSp2VqmZsZOuT33iVbFuMraeJS3YLYMd-BfEwkiVKzCVYKVgJPea1qiajqqt6o6k8-03nOKg3tHn29fzMeSQUUUOZzxinQludbQKHImcKTV9a0vpDjRckrt3CwBYDsdn1NIM--pV1oVr1d1yPBzpHuxqZkMG2Ewwn8QW6zMlO-ObfJ_FpRV73D4PyRf3616byCErZYMjI28vsqHT0_zUgCW6aWI_1BABedBR7hC-tcEJLHLjcNESl9ctOKLUtkxWUmuXfThzsSPAS9LgwQRF5Eks9WpiQ46KI3aeMyf3bW1Vt9adid2VeFpG3D5GiJsTJwF6h7nVGLE2trF0T88Pyn-DwMIaXsNtfIWEIacDS0J4KJ7MCFRjUqQKzdiXCLccFNeqwZfPuP04iAMeoamn6zlwntmy_iV2OBuWEzrLLlDOQkop0mZGa72tV_KzsrD3nJY2bXKVU5_ab3wcxvmAZWG3rP6qoManukqTwL62sHonesrX3Xh2WFoAlOnjtJBZvyfbnayXWqs8fARE6ir-q1oK--7d0U2JHsrsD4lW34_s2q8T8qZ2XD0DSwy1SV_n1S9KMobKBXQOqXy_Q4B1-ZvO5-4yiJDlCjTaWT6xI5wMViON6lLX8Sv2AvqNZlq6SxPqGFhNPGBhVsbhAaRBlWuVBXsj5kxjZ9z-4M3pugCGiv8B2GJATlwLsztKAOWXFaU1rIjmMwnFI-XWXZD1rlcnTi1fRTXtqT_kjBmleSYn4BJwOZoNy9KQKzZ4SFmxZvCXTOV_P9VTkR5o7Ul9Sw3yJ_Vf9purtXpsgBvDbNwteIiY67iQqVeP8SDTPJMFNUcZrpUA3__3a5U04qcTYdcQct4Vx70aXNVYK0RRIcuzY-UvWVD_NxmrC5fs04IYZeTYx9pl0JoTmxUrX7V1i9n-0ePVNCdvivk8vpYClfBPZP49Apl8hoE26lIi2GQ5EyLERM2c_GFHO1JJdyk44Vv2dMmDmhdDTi_XKpqSNlj8lzvJ1FaViaizsB1XDREkrAXvSCQOjoADbug8TgIzV78OLpEr4QpTXm8ipz5SUMdri4IZaJ4VScfKxMjraafVkIEs3m2hdiWEsUG4lIVjnXau9FO5Ux4U-Ht9F4sVfmLiJJmF-V0CmkU-q2g_HmHn1WMKVk-PXU29sVhR1lU2wtFVgqzcRYNqmfnkMZ7moiuGdlWBvvKU4jMedV3tL2YmXIyqUcdDhPfHIZYEvXDqGjNJNB13grOx9nu04e5SlLlLjwtT3CpmV3zE-wavY0Zq55n8u0QT4onn3uh16emVPApXNM9DwpaZQm0d9tCw4PSk21xQWbhTF4U0dYMJGqos643_pxrl8Tw1Yb79b_6b0yGlIQz4ZA94PkthgHpkdPDa9YCLdHDdasoacRqLDGWrT047F9UUYaHNlQCfN2t0jvfrKadJRPT8l47dfJGrp314h3iAaVXaN_fhNzYa48nxJUzByHH-ej0qGuXVKEynOX3NY7-6-K5EW1DZyrMHVSTPVwZj-er1EWIaU8INP7KicGfhh6Bhwsd-ozYA478zzSiCY7rmi_ogag3ieJwYNwwXwHk4TKuUOvyeu5u1Gu1NwxDkzcbfQWM6_9iTv7NYzyCedYlS3S21ojXPZNglrvuKGl_TPgqesQh_C0XIwm1UQI27LeLzm6Oaf8Vqlt1odJbmhFPIp3VwgPD-xevNxxB_HnoharbI9u9LN7Ev075GdMylKkXEtI6tk-86cho0QnJ61Q4hVpT4gSkR9CjJpNylvvye-NitBzE7Er0d3YOEQeeT5tEgWBYaFJpKZKrMBcDRiDL3uoWFHk1iJJ4B5MNVmo6BeWmM4qxoEyWEB5s9pC4SrpUBciU1SqTg8bHVTp4l-7kzrANsUHdO5N1btnOCX_4HCzHeucFaydoPGc7U-zz2SHbIEko-ucAy1ABtB3ASiwrhsp5r8qmsreWQ7lpfv6FN2h4yiXLVBPuwFQ1bTJoM4oPcdHFYJew4quaM1X0Z87vfTLLhBga-xB8phRiSBb64BTDUFBVMd9b-wuNbbuyo_zhyhdEQdLnGjt0Voc1Fio4HI31suWxhMdxRSA==
+        id: rs_0d4820cbe4bab1940069570fa4c1dc819e9073e2994b684323
+        summary: []
+        type: reasoning
+      - call_id: call_HspKIF0pEXPVhnj358kKmF7N
+        id: ctc_0d4820cbe4bab1940069570fabc3cc819ea741d10a8178eb0e
+        input: '{"query":"PRAGMA table_info(users);"}'
+        name: execute_sql
+        type: custom_tool_call
+      - call_id: call_HspKIF0pEXPVhnj358kKmF7N
+        output: 'Result: 3 rows returned'
+        type: custom_tool_call_output
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Execute SQL query on the database.
+        format:
+          type: text
+        name: execute_sql
+        type: custom
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '7350'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767313332
+      created_at: 1767313325
+      error: null
+      id: resp_0d4820cbe4bab1940069570fad21dc819e9e2c37047fc29ffb
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpVw-0saGu5T0RBd7FJ3H5OPdMWZdMKXKLDZjuB2h22WYuKTdShGxI2F5idEb6Yhe4f5FBjSxo0aB7C93mPDWESYiIA4yoXoyde4wF4czkHbJGAsuavKJ4hx8dllUPSnb0uJDC7VQjga5O1AIOSXqVBvwfslHQ9Atx655zQAj22JoYBlEJJa0iQ2jV2CGdAsXtMWsO39lOd6jsSJpVOY5Lwz6FhClYGxisPXq62fFJzh-joGyuPp8aU4zfNE0CYVWf6JvH_kTT23f1KueLk9Y_pgwtI3VEdBbbdhjiuCanCldQPSRx9OeBgEOVebWWp7zLAip-GV3VjFICkpZYRsMybKYVCQPKR7ZE2TdYx2uNfwTzewkNcdEdYbYG2yBgpNTx_nOxDqf5y9f8uLzzKRLiOtJGjs9urhZGfDS0B7bSDr9T-fOO9kSBF0_VXBngPE-7MDUH1iq0wrRANfSCspS7ZrueHOenZZpT8LpyfOmQJ2wtbTA9BUItWRx5r-oBbqIXHHvWfddBan70-BjUqJBQl34mGbHf3CXu1tGT-fieJCSFytfCyp0gi-5aS_MvEV_SIGJnCHZBaxZ0gQXtdysp8xvaiyOZVkJvZ65gJfxdk143gQnIKnX3xWmqODcapxpr73khmyp34nqntNrKo2zDr5oVIDlSITi-uQt4hFVMgJbYCDBa37IRsC8ixyLKPmtljEUfSHw8d-6zOHWJ3F_Z8JsONqSOXXnQHCOn-JK1JzPK3Jt4O1FNh9d3NX6kg_IyIfY6vCbqUZRI_5zjMA30gxHw1hOqqv5jJZHl6-YccJcD64kJr6hSgvWJ8wdl89NMk1MYxp9ndlvFiNsp_mmiAgzxV9eI9Z9FPj6PcyJ6SPc_LV5qRBBQx6isGzJK2YoOSW9zZkPkrWemNg9Apcpc5xyHF9WmbrrbhqrijvJ1e0GstkygM7Qu_D3aP3RQnV7VovsFN8wNDbMznJHucAbcVjlMwtlrGRDIJqNKdZ0qrqK1xgH7g_-4ENFc-7x7_ztpdzBrt5YYim2v5sqMtCo4qs3Rv7slrHwwRTuzsuJFrua4w52F7Jm8UQbT-w0P7qD0yKg7Ygszza4NX8MQe1V62lVwHeeJC0iMEwVJ8Ws1pk19JyApLYsq8hpz7EHv6wyc5kQbC1xjwCgZF-6EYzDKhy8Qrp48Dk08r_rcVDB8oA1KuE4RQKTz7a9aRI7mwPbJczGc4G9Cyi4x8ZZnl4GqelhX6LOm1Cr3mzhYzUcBtag4BXOX7GlRR5GRs-LXuiXsLiSQmqho7CPpvjarIr2Hv3gpzKvo59C4XozSvaqNWoAcnOW2DiOSbQlUztWR3-LpJvzHZxc3cwo-wKZMGyS-qK5whQbaxBL-q87jUqP1MuWhc17yQw8xQ3SlBozlxFFnNR2JA5dLoS-nJ8RTLGA4qGCMg9EflnhNrQcGM6ze3ccXzpb-p_jVe_pAre7cP5g3ls9HUdmVImbCTFqktUjtLV7HjlQv07TI8lU5guARxiIZAlMHg7M8eddOL419AiS10BuEMD4paaykEDq709uoB63_9O0ohLyHoGglxBwlgu_Jabp3U6rkbhxn02wIJoSwGdqHzoIGFEg3Js8KsuPOnUrOJKPkx6hyqoHV6eemrqH8BRdqCEi5gLq3hRZ0ilU2Bt6_JaLodqmX6kQ3t1QJDcT-r9fCg34nM07Ty1HK5ckTANCxQzoMhybQvnNhxLaQpt2S4gZXJII-dLDJuHvuPg7uohXVGrWxTD-0IwS0PJbxN0YGDZdAgtwxcahbWkUX33DxBpJtfr47qjbIF6VeBt27b3WcDMWGUoBgN5Zv8xANoZzNdoEepZg6L19e4hk08wxKE4-9Ha6yj0SWyYA1htLFl1UzsEcqDuewD837sPN0k-7CqPV26Q64PG2Hm5PeTRYkOQUfi5sluMlIGvJDEW8yxbniml6FCkKPVffCj-GaPTF52j5UO7sPqeI5DPydsAzCXsdkLcfUJX2FU1cnZd5SGKl66xhFuXE4w7qMJ-u2WK5yXvHj-8Lse6RxDTreMTezz4SSb9bqb1xgt1XEDYg_3irMKVIZlu5BOGvRB5MoFzGRZAaa-hI4mDdj2lWOUdFMXCxZji4XFZJ-WTEd7_rc1CY8Mx_G-Jj_5QYbCf-dA8OMPoZ2o73G3kslpWGTW8kHkYIRVG2GS_jJ_QboaBbqiwPkEykKLtfDCeOb-qIebd3UxmGLyer2LbvI9lkS8crxWNbVUkPPJ_IMTUjW4nUjG3iK-Vi50gDIIDJrdX6z-FZtefiBFDzZpeIqYV23cBTP2Y5Pmb2zpvWBli0xrTbL_GNxsuJfJJSizZm1JC5ifRosZscHHahGguYvTDm_o6ZmuYL_EFedk5xWuG4A48tYgE2ZdChUz0Y8hfgUW06LIscqOGbDKaIXczjLiBarQ7VM-KygbKpGtI0Pkfp9XKtfQiIDHPmcHWTd91ri4nBNOuQbzFFTHOWS5uozpest14l8qGBLaJVsrxgOe4F9Z8yHOU5EO2r2NDRo13RJWINWMauepQEMG4auOI89zyVNMsiGcWBeA9SNUdjHNf-9Pq4nFkuxgmxp_Y7jSA_1p_E0NbS-9wFv1GMYn8TW43t7KYbcaiJDFX7GtglMxGdCqHYD7SUVlAIyy7ll6Vac9FgqaAx6y3dGz4U7UnYb3lNbKeEejxzp8g6i7yF_cKbGecoBGedX0DzarP0Ur6S8yY53FuKIY9vYWWM5To-uLS9LfB2VseM7eos3LIP5wTq1ly7XxeJ5FO9sB0L2b_XHslM7MKsDQ5tCe3c8pv2t4Eul6r7nw0dBB20eDfxESWptOwV9qkJhH8Sjnc6Kje8YsG6s2QP7aXOr_6cc7NRxgQx0GVhE-RBaQfMpsG6amQa0k2aey78mDEBh_oWoVf0GcDnJMIuyBU7fjQu1UQR4QYAi2riN6rns8Gj6QpFuo9KHkIrUtnuKrnxY3XlT2ReYELCIuwJ4kccLDQw7HyEX2jZi0A-vqB1qTafFCH_wSZ4iYO8DZLXWfQ_EHSy2OsqkMWvfgTSEekH9KqbdpIauf9VDD3VMZnmWGZJdD10O63TDKNBmCAgQFHVAzHmtAZE26NweWWQWRS1DeAFoQTuutm9xydzH7LjPOxnmGU4Kzh1nCV2ei4uILDE58qwuhGk2qIn0Cs2OJrjjPCeSOQkydQTu-DXlpNQtwx83UQlVskHbELlTAr8ja36UyxApOg4RzQ1j9R8TwBEX254tthMeWjNb5mqH19-G57G5mhkgLvAzAuN2nEkubCEGg_1Hh8J5QiniP7mpkWix5_zFx8Yz5vNklMTFmiQN2qCzG9YAUBn7dSGP0se92v_iQBd2OI6NRDIDmY-_raRGZ5TPrkhsJav5Sn8-xP0Xa8NszpD2dIEBt2WGFZ8VkGxLLvF4PFdJ-1nFzTmuZGMrUf1Zg4JrZxKSl-FC0iRRjRUFy7Uw2l2Eh9VXAuS6P5rEdhBgVt2CQWAZ7FQ1RvPfFNKUZEerW0F_IjfRtDCheSfKHIHAaWY93KZzDZw0VEAe08vf64gGTCGgrvy10CdsK4NgrKOeEzY1kDgaOBAyKv2J09YkPKWsMIg-aMddZ8EzEvoveXzQJTK4HhmYPzPsnppLPcYgj2-LCLpAFp7UFk3Y_3nux8UJPpy4oL-NboiqBEhttpq2PFAu87nPrmYCvmt_RQqxb62SeWh32cSak-JR6k41fZPRzdmw7B73KauZGXsKN1knLxdP2uwTB2cEQUOHLuPj3zdSeSk8bV9tdlq54v1z8EPmFXzXMIvoHRGY7UKDoSoIsmwLu6nCFWYRI9PfKlhuZJidXrCt5ZkJ3_1ifmSi0BoVuvYPcy5onZuLwkDXGFoO4_g1wo1P7gHYgJcyo-kkKygvXQ3EilJIqY4J4EOFmspAfaQ27J-ijVpa9RWO9OgVDGskAngyzDOjkG5B1yq4DizhECFkIg55yzhlrnpH7mL-0f4cLIImIVOqP4Af5iLHQKc8gf68Re8Ibvc-aGq3FinrZPuJV9u5DvZaBQLYWyLQ4p3W6PBqxItn0cJq1lb_o3w5_X4Njmu_nb0epJ3N3vIDc4FSyafcgieaaLzH7cK9XN9kBL_VCxoNT2mXDByGJVSCGHa_rLCmJ_JHYWD5Vsj6VuKtIBYiSSHaeoCb28iugxvL9_I3rP9-vNy6tNfmVc9t8Gx-uxTAfdVJyH5VRfY_Lip_S20qgU409g0IPgeE82yl_KTAxJjTgpyh4HMbZ8Zx9VQ_C-a1OOsH_lPLS8vQauyzxWh4U-C5UctIRsu0QiT1cJY7ol6vA5v-XbZQOkLMzrE7hxjmpSWtS_wNLxA8EVS7LfShOuUwd5OqLuz86Up2NrW634vg4p7n_XJoamQYWbzP7B-HcDclrT0CVVQGyHwnVswLv0-SWCR6EcDU3tZbgrJgsR_uzYoZvnSWe-dllzkq3ZsjDf8Imz494Q0buoyn_YGr0SZIHaOeaCZY0d_6doHHQPxjAHvOf73AiWGInTR4FmBDCmkaovex6szhGaLHS5KYwALueM5yrK-IO63WbA==
+        id: rs_0d4820cbe4bab1940069570fae2954819e827eac058053d7b8
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            I queried the database and found 3 users in the users table.
+
+            Which columns would you like me to display? Common choices are id, username/name, email, and created_at. I can also show all columns, but that may include sensitive fields (e.g., password hashes).
+          type: output_text
+        id: msg_0d4820cbe4bab1940069570fb37de4819ead0f769d05abf981
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Execute SQL query on the database.
+        format:
+          type: text
+        name: execute_sql
+        type: custom
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 1081
+        input_tokens_details:
+          cached_tokens: 1024
+        output_tokens: 639
+        output_tokens_details:
+          reasoning_tokens: 576
+        total_tokens: 1720
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

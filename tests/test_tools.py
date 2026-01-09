@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import re
 from collections.abc import Callable
@@ -35,7 +36,13 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
@@ -147,6 +154,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -182,6 +190,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -225,6 +234,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -268,6 +278,7 @@ def test_google_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -309,6 +320,7 @@ def test_sphinx_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -356,6 +368,7 @@ def test_numpy_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -391,6 +404,7 @@ def test_only_returns_type():
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -417,6 +431,7 @@ def test_docstring_unknown():
             'parameters_json_schema': {'additionalProperties': {'type': 'integer'}, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -461,6 +476,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -498,6 +514,7 @@ def test_takes_just_model():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -544,6 +561,7 @@ def test_takes_model_and_int():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -910,6 +928,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'outer_typed_dict_key': None,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -983,6 +1002,7 @@ def test_json_schema_required_parameters():
                     'type': 'object',
                 },
                 'strict': None,
+                'text_format': None,
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
@@ -999,6 +1019,7 @@ def test_json_schema_required_parameters():
                     'type': 'object',
                 },
                 'strict': None,
+                'text_format': None,
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
@@ -1088,6 +1109,7 @@ def test_schema_generator():
                     'type': 'object',
                 },
                 'strict': None,
+                'text_format': None,
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
@@ -1102,6 +1124,7 @@ def test_schema_generator():
                     'type': 'object',
                 },
                 'strict': None,
+                'text_format': None,
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
@@ -1140,6 +1163,7 @@ def test_tool_parameters_with_attribute_docstrings():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
             'sequential': False,
             'metadata': None,
@@ -2098,6 +2122,134 @@ def test_parallel_tool_return_with_deferred():
             ),
         ]
     )
+
+
+def test_regex_grammar_valid():
+    from pydantic_ai.tools import RegexGrammar
+
+    grammar = RegexGrammar(pattern=r'\d+')
+    assert grammar.pattern == r'\d+'
+
+
+def test_regex_grammar_invalid():
+    from pydantic_ai.tools import RegexGrammar
+
+    with pytest.raises(ValueError, match='Regex pattern is invalid'):
+        RegexGrammar(pattern='[')
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
+def test_lark_grammar_valid():
+    from pydantic_ai.tools import LarkGrammar
+
+    grammar = LarkGrammar(definition='start: "hello"')
+    assert grammar.definition == 'start: "hello"'
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
+def test_lark_grammar_invalid():
+    from pydantic_ai.tools import LarkGrammar
+
+    with pytest.raises(ValueError, match='Lark grammar is invalid'):
+        LarkGrammar(definition='invalid grammar [')
+
+
+def test_tool_definition_single_string_argument():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}},
+        'required': ['text'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name == 'text'
+    assert tool_def.only_takes_string_argument
+
+
+def test_tool_definition_multiple_arguments():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}, 'count': {'type': 'integer'}},
+        'required': ['text', 'count'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_tool_definition_non_string_argument():
+    schema = {
+        'type': 'object',
+        'properties': {'count': {'type': 'integer'}},
+        'required': ['count'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_tool_definition_no_required_fields():
+    required: list[str] = []
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}},
+        'required': required,
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_tool_definition_no_properties():
+    required: list[str] = []
+    properties: dict[str, dict[str, str]] = {}
+    schema = {'type': 'object', 'properties': properties, 'required': required, 'additionalProperties': False}
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_tool_definition_mismatched_properties_required():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}, 'extra': {'type': 'string'}},
+        'required': ['text'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_agent_tool_with_freeform_text():
+    from pydantic_ai.tools import FreeformText
+
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def analyze_text(text: Annotated[str, FreeformText()]) -> str:
+        return f'Analyzed: {text}'  # pragma: no cover
+
+    tool_def = agent._function_toolset.tools['analyze_text'].tool_def
+    assert isinstance(tool_def.text_format, FreeformText)
+    assert tool_def.only_takes_string_argument
+
+
+def test_agent_tool_with_regex_grammar():
+    from pydantic_ai.tools import RegexGrammar
+
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def parse_numbers(numbers: Annotated[str, RegexGrammar(r'\d+')]) -> str:
+        return f'Parsed: {numbers}'  # pragma: no cover
+
+    tool_def = agent._function_toolset.tools['parse_numbers'].tool_def
+    assert isinstance(tool_def.text_format, RegexGrammar)
+    assert tool_def.text_format.pattern == r'\d+'
 
 
 def test_deferred_tool_call_approved_fails():

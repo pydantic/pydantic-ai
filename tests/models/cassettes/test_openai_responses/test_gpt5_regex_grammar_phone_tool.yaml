@@ -1,0 +1,254 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '359'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Look up the phone number 555-123-4567
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Look up a phone number in the directory.
+        format:
+          definition: \d{3}-\d{3}-\d{4}
+          syntax: regex
+          type: grammar
+        name: lookup_phone
+        type: custom
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3399'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767313336
+      created_at: 1767313333
+      error: null
+      id: resp_005262f48530aff80069570fb523a48192a0ee42118ede39c7
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpVw-4a12fSP3HTEEzGovcK6UhRRhhtPp2ya4MhxgFcxsWeUfcTFNd8eHrJRTt1zd5QFnFZSCyT1Bk3vsYOy4O978MaEH-_JtSqWhE0m0Tf3l-qln6zZcuoELwPM7sTNPp8Uzk3AMSjFpWq3IcuNpFgRod-spuRQElvv2PU0I9AbNjnyCcsHWihyCsYWDx2IsMUfStVrIvaRCljK3uP5S5D9taiqPC5irbbkKICpiggkKrUWA7L--ERIoavnfNjI9tZCQQVOc5Za_RjVgmWzSJjNWn9xZt8gON0XHQvaeMicXrpxsGfpBMwpmnJkuykdRR0j_brOC49Dd2w49s_lkWTdKY-Oni3PatKENUuftUPqH53G97dJz7yZ1VhVCWX9U3YB1CsjRiDKoZq9my7Qz58_KDlPz1HngwNNOvKuLQhFCgE_JP3CfsG4upGRoIQav2lbocaQ9Skrfe-ZdmO628HCazSOMWTlNupGUAsw_iRsKyeWv9PkUDnh-YhwVHNr8jjgfR-YhalQ0o5NekHL9F8oR_21YPOcT_TghpydwHdnYLeb9JP4bt-u63JfupnSq98Ghr1iDl72sXUrEoIC-KmLBFDFEeTGrTs51-khWFv_PT18RJVy7uru-aBCgd4gMZ-pgcehSykWlSC4c7ROExHLR_1fo705MLzihtMuDjUiP3cTraJIxOQeGpW63vf6KSZgqVEFS8OChmC2XxiRQVfV212j7YUq9mfvb5dJi31VsuP-11t7_sImch6v7cVpCOqxJ6A3T7XBGdTaAlD773m1MZ1m-i2iVZtR_IboGX8vWIO7ddUju5n88EUQWe8izaJmwrdbuMNhF4ZhdbjjDiErOFJw1yBqaiZRXhwFyXmM9ALQ6YTeHHBav2OfPNp-DnlT783zvvaG65WKffRc7mzmqJ6n3djIFUOgZVu9CiPDzzyq1ZiIfKutyU50IAzejpVZrYN7hgzCYIEUZ1eDtqJf-mf_cQ-CJMSC81KIZf4UE74spn1okXntQ6C1KxzsV6w7RHmr1n_PJSjCJhT5kISXieuBOFJQZKfApS4zIUlT6bcdGwLcuMJFHSLd4BHb8ktq3M3_oKKBWXb3BZM0HksNp0_09OyjgdPBkj3oyGCuFOoIFCosmBfZgXphrVNvaJZ2lX748_yWjY-_IwWGF1J8CsyIZlmJYIPA8Cc7APMipo11rRLONnaWhr0lgouVsjkoeXLWh6_2q__4w2T590EJjR2_garxaq8ZL__ugHk4_ZtGXlu7L2f7hirRexi3OX68158yC7Dg8V67zZmkTbZUVPSJ6li63MwA51dljy5_TWJkgYitSLqFWS-R9CbirvSGcXhZP6d1H7LICtKAvc45GbWFjDk5Qwy2I1wTcC0RsaJvB5AKbCj5C8tGnEhj8mpAkjjudkCvcW8LYtLc1d3qsAYafxEArLpo5kHury27S1xnk1mtO4WMxx1oaCe4Hmy9vArtc948RS4rzIvmmSUt_Us5Lh4FLqgewhEksQngXqex_52sRuwegAX6XzdiIBRnPPHJnqNjeS9bq-OIAvH_DYn-L7k7GrAqcahsGygpqwfc3hZtGESgrGaUR4aHHjnF23Lbr3TxRvBcoz6aIgDNvnV3HXEPnHP9VWK289doySJ9OgtoFAeYGFV5EjfRn42lTe7L4e8NHFaTWt4vZNgeFeuT4HRUn7J5AFVex2y3AnVN57FkwBK_K400lEejWHZNK4LGxsZlIfvd9daXgn9jEZazJUk1SNAO5L5Fu4XQhmkvFWWYua_hsW-FEwFfx35ISyKOnhF7LbAWH60V5XE7upZ0QDJmnVqe4LZ9YMcAoPPjQ1BjEaeCnxbTRVp1SUTRuX2hLIjffwpOHrcVEgKwQ0AM4vy7FxJ5gI2AV8rTNw5yshKeFIjtCC1M3uOA0uCI2VuHNwPT3eh7XuQ9uMBVgVodV5ozuL5q3lVQ4k4gPOBSuSHQes_KJ9Y2Fyk2vkroWi
+        id: rs_005262f48530aff80069570fb55f8c8192a0627dffcbccc33a
+        summary: []
+        type: reasoning
+      - call_id: call_KlekObMYqUM0kO4M5Nfl4Y4R
+        id: ctc_005262f48530aff80069570fb841bc8192abe3a2dd92ebc8c3
+        input: 555-123-4567
+        name: lookup_phone
+        status: completed
+        type: custom_tool_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Look up a phone number in the directory.
+        format:
+          definition: \d{3}-\d{3}-\d{4}
+          syntax: regex
+          type: grammar
+        name: lookup_phone
+        type: custom
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 115
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 213
+        output_tokens_details:
+          reasoning_tokens: 192
+        total_tokens: 328
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2770'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=nj3gvPXP_9Bs3LRMLJQn4Wh1URmCfO_AChKhiczvMus-1767313336-1.0.1.1-YPAAY9it4tE2HoKh8DAFOt0PHTB_hBwGgweyi3Mz1HEm1uWoncBj464mZ1G2UpCqEqyfAtcbsRJNv_b3V0eF8p0ziRTouQnJh2.RefJZJJc;
+        _cfuvid=O7GcTMSB08OxWJhtYjtG8ZGlWV8EWldiMG7vHK.oQWs-1767313336561-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Look up the phone number 555-123-4567
+        role: user
+      - encrypted_content: gAAAAABpVw-4a12fSP3HTEEzGovcK6UhRRhhtPp2ya4MhxgFcxsWeUfcTFNd8eHrJRTt1zd5QFnFZSCyT1Bk3vsYOy4O978MaEH-_JtSqWhE0m0Tf3l-qln6zZcuoELwPM7sTNPp8Uzk3AMSjFpWq3IcuNpFgRod-spuRQElvv2PU0I9AbNjnyCcsHWihyCsYWDx2IsMUfStVrIvaRCljK3uP5S5D9taiqPC5irbbkKICpiggkKrUWA7L--ERIoavnfNjI9tZCQQVOc5Za_RjVgmWzSJjNWn9xZt8gON0XHQvaeMicXrpxsGfpBMwpmnJkuykdRR0j_brOC49Dd2w49s_lkWTdKY-Oni3PatKENUuftUPqH53G97dJz7yZ1VhVCWX9U3YB1CsjRiDKoZq9my7Qz58_KDlPz1HngwNNOvKuLQhFCgE_JP3CfsG4upGRoIQav2lbocaQ9Skrfe-ZdmO628HCazSOMWTlNupGUAsw_iRsKyeWv9PkUDnh-YhwVHNr8jjgfR-YhalQ0o5NekHL9F8oR_21YPOcT_TghpydwHdnYLeb9JP4bt-u63JfupnSq98Ghr1iDl72sXUrEoIC-KmLBFDFEeTGrTs51-khWFv_PT18RJVy7uru-aBCgd4gMZ-pgcehSykWlSC4c7ROExHLR_1fo705MLzihtMuDjUiP3cTraJIxOQeGpW63vf6KSZgqVEFS8OChmC2XxiRQVfV212j7YUq9mfvb5dJi31VsuP-11t7_sImch6v7cVpCOqxJ6A3T7XBGdTaAlD773m1MZ1m-i2iVZtR_IboGX8vWIO7ddUju5n88EUQWe8izaJmwrdbuMNhF4ZhdbjjDiErOFJw1yBqaiZRXhwFyXmM9ALQ6YTeHHBav2OfPNp-DnlT783zvvaG65WKffRc7mzmqJ6n3djIFUOgZVu9CiPDzzyq1ZiIfKutyU50IAzejpVZrYN7hgzCYIEUZ1eDtqJf-mf_cQ-CJMSC81KIZf4UE74spn1okXntQ6C1KxzsV6w7RHmr1n_PJSjCJhT5kISXieuBOFJQZKfApS4zIUlT6bcdGwLcuMJFHSLd4BHb8ktq3M3_oKKBWXb3BZM0HksNp0_09OyjgdPBkj3oyGCuFOoIFCosmBfZgXphrVNvaJZ2lX748_yWjY-_IwWGF1J8CsyIZlmJYIPA8Cc7APMipo11rRLONnaWhr0lgouVsjkoeXLWh6_2q__4w2T590EJjR2_garxaq8ZL__ugHk4_ZtGXlu7L2f7hirRexi3OX68158yC7Dg8V67zZmkTbZUVPSJ6li63MwA51dljy5_TWJkgYitSLqFWS-R9CbirvSGcXhZP6d1H7LICtKAvc45GbWFjDk5Qwy2I1wTcC0RsaJvB5AKbCj5C8tGnEhj8mpAkjjudkCvcW8LYtLc1d3qsAYafxEArLpo5kHury27S1xnk1mtO4WMxx1oaCe4Hmy9vArtc948RS4rzIvmmSUt_Us5Lh4FLqgewhEksQngXqex_52sRuwegAX6XzdiIBRnPPHJnqNjeS9bq-OIAvH_DYn-L7k7GrAqcahsGygpqwfc3hZtGESgrGaUR4aHHjnF23Lbr3TxRvBcoz6aIgDNvnV3HXEPnHP9VWK289doySJ9OgtoFAeYGFV5EjfRn42lTe7L4e8NHFaTWt4vZNgeFeuT4HRUn7J5AFVex2y3AnVN57FkwBK_K400lEejWHZNK4LGxsZlIfvd9daXgn9jEZazJUk1SNAO5L5Fu4XQhmkvFWWYua_hsW-FEwFfx35ISyKOnhF7LbAWH60V5XE7upZ0QDJmnVqe4LZ9YMcAoPPjQ1BjEaeCnxbTRVp1SUTRuX2hLIjffwpOHrcVEgKwQ0AM4vy7FxJ5gI2AV8rTNw5yshKeFIjtCC1M3uOA0uCI2VuHNwPT3eh7XuQ9uMBVgVodV5ozuL5q3lVQ4k4gPOBSuSHQes_KJ9Y2Fyk2vkroWi
+        id: rs_005262f48530aff80069570fb55f8c8192a0627dffcbccc33a
+        summary: []
+        type: reasoning
+      - call_id: call_KlekObMYqUM0kO4M5Nfl4Y4R
+        id: ctc_005262f48530aff80069570fb841bc8192abe3a2dd92ebc8c3
+        input: '{"phone":"555-123-4567"}'
+        name: lookup_phone
+        type: custom_tool_call
+      - call_id: call_KlekObMYqUM0kO4M5Nfl4Y4R
+        output: 'Found: John Doe'
+        type: custom_tool_call_output
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Look up a phone number in the directory.
+        format:
+          definition: \d{3}-\d{3}-\d{4}
+          syntax: regex
+          type: grammar
+        name: lookup_phone
+        type: custom
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '957'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767313337
+      created_at: 1767313336
+      error: null
+      id: resp_005262f48530aff80069570fb8c204819297f5ad1cf8209684
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 'The number 555-123-4567 is listed to: John Doe'
+          type: output_text
+        id: msg_005262f48530aff80069570fb924e88192a50a0e62701a7671
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Look up a phone number in the directory.
+        format:
+          definition: \d{3}-\d{3}-\d{4}
+          syntax: regex
+          type: grammar
+        name: lookup_phone
+        type: custom
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 343
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 19
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 362
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,120 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '303'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Write a haiku about coding
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: required
+      tools:
+      - description: The final response which ends this conversation
+        format:
+          type: text
+        name: final_result
+        type: custom
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '9339'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767313421
+      created_at: 1767313411
+      error: null
+      id: resp_05a5c59bbb7804370069571003d6dc81a18f93d0b03dd8e456
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpVxANHTKzsEtd9MYSBm-Cw0cdEZ9PDDUAZRPwWmZ1bhHTkTYp52xhHSrCZaNX2uL4SPvJwfO1c_3s9HKcuTkbXnwM4Dl-j9nKqeOwRPTFBEczjKsExiQJ-CUgCKruRu7iV3uVbgTTh94eCef3-uPOIXBo2zNkdU6SYS0oUF1EdAKWodDSzav78WlXoLYBAODhrbBmdcrBg6diuCSNSkh19O53JfLhgCmBzYpFzFRMY65tg9602FqAmvxrI1V6HeZiz4Vnpb8vzrAYzZYBfaaLbdxXxB97tSVk03SccpQucgJA9GYUrb3dSwYzBGV1JT4jFM7etHnpNDRAKE8rCb-1IEcDZo9bdR2J-loBd6zzoweUaZIKqsyIsc8iNHPG6ZJR_nJTPBvPo8j5adueHeiv-PMxKXnFilBaCceFN9beFe_jN39ZFFZtzlEOjF1xy-d_I5BX5UF9R05uMXyCoxVyPoqTnsA50XdpP9MO4cCCcTwEuHqopSvF-9KsB27HoguRbcjBQ5wnNCrAxkKzQ4NnP7x_MlndHGiXEYGXnJ5H8MqN7cK9XwDBBCQSuH1p1b1Zr_IEcrhLl4HnGWm8xKy6ZoEoLL75LWvXcqm9B_avRKySqFuVQlUHj8bpgRjB1YShjdrPVUKKlF5oOU8_kPsnmwH1pBy_qITQ-L7bPgXrKL2wOdvI2WJtxcdBkdhiMW_QlU3NAjmquCQfGMCM2LvrBP7VlwI1GmNr5MlXWtBhPKTBFJujlam8-gjgn9iacsch5s7CQYlqkHgwF5hps73z44nQ1hfZtnUrh1jU5bfMc-0QE5qHMiZiSGei1vJZQDLpqQdgQ-Q0EDl1E1hzEdzn6RL7RDXBDhQvSbfHb81_XZb88-q8pEXk8Izy-mLfos-AcXFQti3eTMigGqqyaF0PHFYPuxVNrBCP_H8yXOl4oU6easqkEj87w4FojiZchpekxjEYZgzfoc6glHLmalpI3EHPWnzRITnr_28aLcDMwDPRHZMI15xJwVwgpGlzQqDgAivGgIN1OnE85rgtkd4MXFjxNQt36Qp9oP83w9VxRFDbntqR_pjZaGVD25jA5szW2x_2xdYz33pozEz4vMUasO1rZVsV9ZAVj6SUyaY308nk6Na6hLhomVzthbicsGEtpBC0qx6qdgx7rfY2YGpf7mn_bV3JVg037FPJ7qw-HI53agWoSHFHQiAHoEXnaghh6TUAyIZN2yn20LFJHxhzk5nSADTeGeZXik77UrIH32iS812I6kHttQGdJ0_hIiz6EDGh7PsR5kcTa_NrSo19Ob2EfY8gIqKlTZ94VJnpcDfkBw-IF_fpghuLQz2aPinHPZrxSJJjHXEjT0XrqnGOxqv70wYEp1vxYFPXNSfQfN8r1hHGSMc8VGsV67laUJV5N9ZVRUaqcPhTjU_PXYnJLhF4IcA5SeE-T1FhEc8OTuJ2giymyEo2_mR-RHMJdaUnmiuHMtpO0ABBY-x8ceMvmllr86_7LqvppGq896x-FlrR18pEF11ztXlirORd7c_8eQHXvcHk86jODwaMQeUiEtc1G46HmmUfTQUBlzjGTxEiAKcSWZrxVuNNLhH8HGQ26IRW8rbvsfxV7Sd9riV38B9Yq_aqWcsHgt0L9nSYMCgfMUyxggfAHATI3pof9AJkqD4J7yxwLUsYVB9RMj9gh0qk97F7ok09aAGA-Q3a4m_cxWhd-WkB7MhDy2mIqBILcMIEkwc_PpnpzsiDnVMfgzVViET0mAqPu2QBX1a7EjFM-U2cBXtWZnCFH16J4n2q3sMpgIYR_r2i2SgM0yM1GqtQpPY2HzXF2xAhVMhcu5frJ5wTv48N-4Cex_f6L4FlQ8KKCyw-08buMZaDw3OZ6JFe9QLHrRXmxO42h2XrjjlaX6fNMsDIE80HU-iQIbUTY-Fz0RCU7-DhG8Nr54E3oOaX000jsCtZ8pJnXgluvwO-y0tBbvtaFLYU6L4z4j1632gdAmc98Xl9nZb57yU6OjawSpvyvBw1vDWNLvM0wNI0lHEbChY6C4hw0PyWTtkqmM0LPGeOwneyxnMqH6ujv_jQXqnmtncfNdRwb8kT02yVg6bUNpY-xPU1CyAliYap95pyDBIl8jcP7cEhvVXIOZyUu7oWBYk5ppt7-pO5S_2POcZ60haaCUJPjn3SXUNqMMtpwfZboof82xEwQEJUakv8OigdewJNv5ukt0kfdTDaISFrpbrhYQtjxEclD3-0IdmV2i8Cl5HNSl9pGPfQ-HZujZC6nOTV0vovvYCdnRCyMcFPjZxcEG4oDcn0U_bJ8_4jp9oUW1Ag5PPMAcvUd51_4gm50tNV9B8wu5_thd1iMKnYypAgTwi-7KpARdUUU1KNHQq1FNE7Q11M4A46RE4opTSs6Ks7zmuumJWLbyZB3QbWfiQNQk7EJ1nLYwEcYM0gOGv3pufi-Icso4oIHzP7kZAvUlD1mmh-Egi8PCJ1zS7Lc4cbMC25OpfpAXVlFVYJ2ztkD0R643CUG7CH8L0u_0Hv64Vsae7wf-0Mcu68bIyO4UEZ3hyo7uthOxBRyvlZIwMmW3KYhaEP0zyZ8DRVUIte3zylHSy1ufvlXpNnISA-vo38n3AUzPt2vsOfdW71fgCySnICt3Bl7-EViLe48bnil4MTlAADscwV3bLGuc4M-HSS4Wipo0_FTLHnGrmVOsnX6AB_oKkgBnwTWx_CQcllUyyhPzEIu-mYzpNfEIkHEUz_HV-6wePmi8JV06oId9POG1Wsb9ZIHvitXXnSqaCSMu_gU627_EWkylQ4TTp_4AdKRHUBr98IoDcPeIhbqlg58OgC9CbwsVqllo83lUHzV7DWk2zhR4x8nQp78q7OuRo5YjTMviMJCMPMoTnAtGd7pXt8d2eebTzdk_Lyq-tVXBIxs-W5etgBvAKJxZjr_N5mzViZzPZ0nZvIGoib5Qc-502wK_yC2KfdyJ4EJ6iQQ27rN-yLwZwBX5De7xDKL45OaoqU2npTUt3aq1DknqXCzxaFKGlwy676vY_l17nng-NPIYeElNaLOyJuXtYkKWKotyFTisVaPjV_YtG_c9F7uR65J6MsFtmODpKVaQMIF-i9xGOj33cmRxOMTFxhYHuQPak-qN_mGkdZbuziUsHRnA_N7ATvEC1wM0GtDCVSFzy3XnKpIH6qemgptzANjzR5E1rmuP2y0bn5KV84RKcsFZ9SoHFY_5u_wa7xI1rgquIFNOfbIUkL9ymyDQlnep3J9al4oVj3oVVpFizW6rzMl4evdM0T5-Sc9NKtH6L3ub5LqZNbnufX-2TLwgSwQGtC8xj2Ei8Pre5Wpxuf-SAxiXPddBQxyxXmK_9TupQPYxtO6Ho8MwPxQ5zlTYv49iov35ucGlPBskgAlG53_b9TDEB_tJWrN54ltQB7eQAuwwmTmAZQul4_VJi4pJOod9qheKPqlJ8xcDmvtn0i2-ddgp54zXA_V0HADTE_nUTR9_V6BfCZu7gZVaDMTlLyz8gDzq4RAYuTZrdGBXvCbN6VFVsqaq8tRfQZQXrNrR-IaKaYZG71iC6F_1_8x0JFy1h4PY0s1I9iccHaKXhgEf_Sw_9ZbppKOi0HHxNlAdmNafQSzTJSubZVU8MnA9ksR_R8OPsKoxVZqkEHKbGxEySw_vSbcvNT6Hc6nfN8hbaBIQ2xi1LIEH254F3ncV3j7GciGI8dkFU4c0lbR3j7GEY9JWuwwzR4azxL6Y_goUHSGHBRBp4O6QmH77ymZx8fcBZL1cedkKldQYWpbVxKigzb_D7jC_f7SSvf__GRsK8lnWkzlvSnMpDM9o_WZU4gNQ22YuCvRpidXsEIBdQ_2ERAC5WT2fiaERx1jsvyYWAVli3x6mFKbwBNvwlUDvDLF6ecDfEeTX5OgYX9-yi3SWnpxZVDmYomkeiNZ1ypf3EpqxL6Zi9MKzXfFAKRz9sMBRQX5vpe73czYg6MIjgzW_e23HXT0YK29_BFtYKZWwsCJ0GMmE-JdvZwbHH0IIE9afv9MP3NWf2L6tFgMwroYnwUjqbN87w8Ly7bN4UIPXEWGOvi95eXq8VkT673uOPTExYV4KN0dctq3de2VRKrNtiRlI-eoYAFIdjFH2Uy6T0fTv90P1I4d08DTdih1trQzaasrRGBJYBfv35-GMrdHuuDMBiiM-eTOByY3sHRnlHfUJMXgN3gEG39etJsZ7F2FqSPwRDECQ3IYuuB0rLXS6mt6xlJIkuQ_zx-6JgPHezgyZ6dLmVxCIy4hJ-U6L_rgHcC5XShUX2gswQdawoz2-gQgACcKhUMm2NVrJaCoxxCRfTGKhGASisx-lkDWfkgZXkOJwG5Bv6DLHy0pf8uYM1_5LK9gAcuFSaTfgpeKFCq1OJdrmN4egpotY2RB8TzLWm13prd5jV0ztSnCTJpWM5uUaBHtiytaIK2_ByDqMa3wojLbtBcq-oZFMYfyCK9v9OYoCU8I8hR66vSIn0gUU-U16qCzFKUJt0rNxoBL4zxhpLcxGKoXRnIigBjLjAlbWW2kjaNhmKT490BUF7Fe9SXea6Jzpv75H5xoZY5qfVomo21i8Tko47aLLTAIvlZlzE8-Eh3O3PolgHVuhX_Sj0j4ovGphJ8mEDi7JYFzOp-9MYguqoqBTWBnDBDxA_brSKAc_pGVsJ6S7fQgRl3CK2_lQ_9Rit5sTGnv2FP8ZvDEFC2x0J7fhq-KB_VejvZdh5OsZkhAnel497CN2y5gKG5FxwntgjJgT2oQ5NgyT6qtxVwiu6tM2tHvyrc84k=
+        id: rs_05a5c59bbb7804370069571004131c81a185fb02e4ae09a7ce
+        summary: []
+        type: reasoning
+      - call_id: call_JmHcEvciXbyaQZfrgcKfuPAD
+        id: ctc_05a5c59bbb780437006957100cdeb881a1a3c753d636aacd36
+        input: |-
+          Keys tap like soft rain
+          Logic blooms in quiet light
+          Dawn debugs the sky
+        name: final_result
+        status: completed
+        type: custom_tool_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: The final response which ends this conversation
+        format:
+          type: text
+        name: final_result
+        type: custom
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 61
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 801
+        output_tokens_details:
+          reasoning_tokens: 768
+        total_tokens: 862
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

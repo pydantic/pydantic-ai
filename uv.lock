@@ -5903,7 +5903,7 @@ email = [
 name = "pydantic-ai"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "ui", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "lark", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "ui", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -5987,7 +5987,7 @@ lint = [
 requires-dist = [
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "ui", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "lark", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "ui", "vertexai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["outlines-llamacpp"], marker = "extra == 'outlines-llamacpp'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["outlines-mlxlm"], marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'outlines-mlxlm'", editable = "pydantic_ai_slim" },
@@ -6142,6 +6142,9 @@ groq = [
 huggingface = [
     { name = "huggingface-hub", extra = ["inference"] },
 ]
+lark = [
+    { name = "lark" },
+]
 logfire = [
     { name = "logfire", extra = ["httpx"] },
 ]
@@ -6229,6 +6232,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'web'", specifier = ">=0.27.0" },
     { name = "huggingface-hub", extras = ["inference"], marker = "extra == 'huggingface'", specifier = ">=0.33.5,<1.0.0" },
+    { name = "lark", marker = "extra == 'lark'", specifier = ">=1.2.2" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.18.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.11" },
@@ -6265,7 +6269,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "vllm", marker = "(python_full_version < '3.12' and platform_machine != 'x86_64' and extra == 'outlines-vllm-offline') or (python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'outlines-vllm-offline')", specifier = ">=0.11.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "web"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "fastmcp", "google", "groq", "huggingface", "lark", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "web"]
 
 [[package]]
 name = "pydantic-core"

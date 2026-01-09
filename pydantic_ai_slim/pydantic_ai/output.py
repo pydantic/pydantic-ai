@@ -13,7 +13,7 @@ from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, ObjectJsonSchema, ToolDefinition
+from .tools import DeferredToolRequests, ObjectJsonSchema, TextFormat, ToolDefinition
 
 __all__ = (
     # classes
@@ -264,6 +264,7 @@ class OutputObjectDefinition:
     name: str | None = None
     description: str | None = None
     strict: bool | None = None
+    text_format: TextFormat | None = None
 
 
 @dataclass

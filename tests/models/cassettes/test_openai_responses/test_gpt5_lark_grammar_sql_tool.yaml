@@ -1,0 +1,266 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '532'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get all data from the users table
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Execute a constrained SQL SELECT query.
+        format:
+          definition: "\n    start: select_stmt\n    select_stmt: \"SELECT\" columns \"FROM\" table\n    columns: \"*\" |
+            WORD (\",\" WORD)*\n    table: WORD\n    %import common.WORD\n    %import common.WS\n    %ignore WS\n    "
+          syntax: lark
+          type: grammar
+        name: run_sql
+        type: custom
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3815'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767313341
+      created_at: 1767313338
+      error: null
+      id: resp_0136e8c220478b070069570fba34588191a74f9d9166058685
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpVw--FRzGLuYKp6IbtWu45tkZ79St7I8yQGGZuOo1Og2EpJTK9rI01D9fPMduBmWCFCtg9UjfQwpV9gpsdBcbiCvO-aBewvZZmjM46tUxaYGYNM5LU7jax4LSnSGQUu7UwHgeslVU56Pa6CN2_bMxyjcjHI1X08MA4Q-WI_Adhtk8wdJi-rdg16g5IvNaB4PhMy49wbascxoTw-zyGcX1iqGdqn3DRASedNRgdxS5KErjxBAu8rErEQyKhuliBfzwrt7kaRD3xLB5A2tzjXZHAhWIafaHUYBj8s80gfoxY9BG19UNx2IU0HZQD8Lt7JlWbojuq-ywAaoFizxZ6_3WcziRr2M-hhW4e9H6sU6-oKasAx-SIssmwR9VQDnO9SE1djPyiRab6DoMllOilNHI0YEINBd_uS4RHFirMFGBqFDswKJ7WtSl4lOmzbKPA97z1xpkU3ccI8C7nL6-WHtjmjCtHgG28D6dsw6VSx5a7_MoirhHK3n2OD4tgmqawayZOfNVEDBII0_grqefI0cnupUGhdBePWGOafv2R5S_eZHO9mLNKgSMfj9C0Aare8o6wnLEC9QiaZj90K0c-PqA_7olAeO6XqVOvgox1tK9zRTPIVqIghkJPV_K-QG-iiAGRN7KM4i8AwdY_ubp5jvbemDoSTz8OA4EW4PO0_NnLyrXtT-VW1o2c6oq-dgZW8druXz3vvVYX5IPxIVnEPMbvTy3DzR9Yx0TLqHcSiqDfQrM2DKnJZImBWqxmn5Xo-yRVFy6W4JdBfZKJ8mFIaQB0GNEdRkDGzp3FTPwtlGD-UaK-gReLrUyUH02wKb19LwHDQT9T7NWvSFgGm11Hb14n9hJvBeVm4zY7-u768SZk5C20K3fv5ASU32DQWfSFuuliUwKYkQXPJthtR3Uog0aU_DMPCem9L7ch14G-1orRAvh7xcT5i_E2gYXurhredQFSFJWzFSJ3YIOEP69gLlu8z-5KHAULUdmGf-LYct5A2YzaACONEDWmdmpOICVuJUSZwmuFLZUqs2fZs1pAYGpJKTdezTCfjDJXeNc5yYsIWQn6FV5-1LzgO6PPUxJ6ZPZbW_wSP6M_spm0EYWu32TnRmIGQj2x9tsF5Y3f_lWH6zwXQQtPWD1cgW4WVpUetvlpwQy87Le4itSeFFRHIBNDlyItHOJ0ZIu1CIMu0EjR66eHsQzgTJM5xQvRYOA08Kq4kWmb1caqAlFb6ql9KoIavwlkt8hEcMIEIvNlKwgcvMoIw_JrNaTDIU8qLc83cashyVObMziHtJab8WJ-vKxA55qej9ZPBFOVs19HTCZzCu9X3zVIEVTpgEmxyR4oX4V5bTQM9w9o2VkkacWotiwNqswI_q2GAAnuF7A7VuQb6woT8lOgKdO0XzhUZB7d9xXSP1PQ0fabkLNzgDo8GEqMPVweEOcCLThbffn4ZHVcnI0992CWrwsxRVtIKXrzsw84ZpMyqnESoBSaknv7YocAxoriX2n7HGh19paQo6Vuh9JcV-6eFm-BhUewryWrL7GMOdJtlCoYsSErNbLtiqm9tRaDgfiSSbCiWmZR8Gmq4ef7giasoU55FzexgMjfadH2c95Wq-L8jo6ET4wEt8Eyl77JYpvuRaAVNAjib-i46zRZRIOAoJqL0ZR-VfehZm_X-WDs538vtg7r2n5MBhk0me5ZhaKeD1uVeESl_aswZg3K8JGYJ2cort5cOxAZHI8VyIa-G_cCsat2mpJMju37A_5QDWmzCYtm8InRCxpgtwiNFsCXG8pEpoQ-_6aFsKzqJxCqoWzzCVEqPAtrH1GCzpZu9cdkSRTXY6bk4usRB7OJrRMnK894Gr22xUgtTGULPpcasSrAzky4EwoLTXnPrXeSytUBruyU3R8bHcxRHXf1rlbQj8etGQBXnEh1wGZApVxsvF2DDZsu3fqWrfr2dU3G79bmf2coGRiVyBCl49MX-Kqu2tBQ0p9_MnivK1DDXtqF68RBxiG7xQ7xuq0yuBUpZzUHehQDQMIqvSKcy0g-XFuAYUHRsBM_KQtyUlawAyJS5yF9830dluZ9-Crtk4jJszcqcB1k3Ok2_4iMpmp3TED-w7mqTUamb3_UdS1F5iVi-81mcAeVwIYL4NOFlm5YowKEJymep2pkwtJ8RyMM3-ur7aTpy7H4pJxyEbTzl96scUjLjKeazBNUSvJqdkxXHOX62PKmlDZOjWGo9oTXkj_KRi0g55sAkWnxqwr_hw0OULgZ3r0uS_54xYmtZkcH4Ker5hHPAPKTKIkKkzm71rAX7sHl2QVh7mV3umvRmLKDd1OfYQVqFHkc7NAGYTkFfcVitHEb5pz9s3CtNtUc9oCxG2j5SBwOjZuBdViDiwNFWmxYKw0ntDUw2e6fB3VcYcyjFiS4321eXI7mNghHykL8h6_hDjywak41LEfJ_y8SSsq7nwWvCocTWYr9OAhdGeAUb6Zp9oKJyxSWOfzIe1ijuBjIIrXXSMKHk-8r7AvEObxuGIR-kQzVbIJqv0iQeVBw3rhF1NoA0v2ySTqYHC3J9UpYYhngCacwf-L_kFrrm2a9uFihniwLssELjuO3LL31Ua3kauXrnY4zvq17o69mKBED6__gsqpQPcemJF2uHECMNkOMu6tTkK6DZcrgWvJ_rZfPno-X9hj0onI4qgWim1piot33N0L4cI0T-hkSQVOUgO4B380K00DkXpXODz8hdDSCJlPG1rk74vSrYNh2kGDslwzGc1kAsYq-E3wE2MMFt5zWDz9vl53JEuOECUYNDSKkvtwo_s2t7a3pklazMtwFAmjrqs9lMCQw9kT
+        id: rs_0136e8c220478b070069570fbb294c81918125881e701ca63c
+        summary: []
+        type: reasoning
+      - call_id: call_hR80aw24wWb4MTIIVyoHMbLI
+        id: ctc_0136e8c220478b070069570fbdbe388191a87d002f6b984987
+        input: SELECT * FROM users
+        name: run_sql
+        status: completed
+        type: custom_tool_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Execute a constrained SQL SELECT query.
+        format:
+          definition: "\n    start: select_stmt\n    select_stmt: \"SELECT\" columns \"FROM\" table\n    columns: \"*\" |
+            WORD (\",\" WORD)*\n    table: WORD\n    %import common.WORD\n    %import common.WS\n    %ignore WS\n    "
+          syntax: lark
+          type: grammar
+        name: run_sql
+        type: custom
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 146
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 275
+        output_tokens_details:
+          reasoning_tokens: 256
+        total_tokens: 421
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '3791'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=MA7SQ5HOo3XdEaN9seUWGC9QuwI056LG_n8htvnok6M-1767313342-1.0.1.1-mXlRfU.nvWMCKYk3k7mtbiizydXjtLBwr.IyS.uUA2NHEDFfLN7RQNrcnyFKmlqTP2D1P.0q919WQpUb_uuIA2kJAo0UY_YIAdpyCviFNi0;
+        _cfuvid=eTOrbeu6e6DFh6BpmWjPIye.UYq65ruHgpdnxLihupo-1767313342041-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get all data from the users table
+        role: user
+      - encrypted_content: gAAAAABpVw--FRzGLuYKp6IbtWu45tkZ79St7I8yQGGZuOo1Og2EpJTK9rI01D9fPMduBmWCFCtg9UjfQwpV9gpsdBcbiCvO-aBewvZZmjM46tUxaYGYNM5LU7jax4LSnSGQUu7UwHgeslVU56Pa6CN2_bMxyjcjHI1X08MA4Q-WI_Adhtk8wdJi-rdg16g5IvNaB4PhMy49wbascxoTw-zyGcX1iqGdqn3DRASedNRgdxS5KErjxBAu8rErEQyKhuliBfzwrt7kaRD3xLB5A2tzjXZHAhWIafaHUYBj8s80gfoxY9BG19UNx2IU0HZQD8Lt7JlWbojuq-ywAaoFizxZ6_3WcziRr2M-hhW4e9H6sU6-oKasAx-SIssmwR9VQDnO9SE1djPyiRab6DoMllOilNHI0YEINBd_uS4RHFirMFGBqFDswKJ7WtSl4lOmzbKPA97z1xpkU3ccI8C7nL6-WHtjmjCtHgG28D6dsw6VSx5a7_MoirhHK3n2OD4tgmqawayZOfNVEDBII0_grqefI0cnupUGhdBePWGOafv2R5S_eZHO9mLNKgSMfj9C0Aare8o6wnLEC9QiaZj90K0c-PqA_7olAeO6XqVOvgox1tK9zRTPIVqIghkJPV_K-QG-iiAGRN7KM4i8AwdY_ubp5jvbemDoSTz8OA4EW4PO0_NnLyrXtT-VW1o2c6oq-dgZW8druXz3vvVYX5IPxIVnEPMbvTy3DzR9Yx0TLqHcSiqDfQrM2DKnJZImBWqxmn5Xo-yRVFy6W4JdBfZKJ8mFIaQB0GNEdRkDGzp3FTPwtlGD-UaK-gReLrUyUH02wKb19LwHDQT9T7NWvSFgGm11Hb14n9hJvBeVm4zY7-u768SZk5C20K3fv5ASU32DQWfSFuuliUwKYkQXPJthtR3Uog0aU_DMPCem9L7ch14G-1orRAvh7xcT5i_E2gYXurhredQFSFJWzFSJ3YIOEP69gLlu8z-5KHAULUdmGf-LYct5A2YzaACONEDWmdmpOICVuJUSZwmuFLZUqs2fZs1pAYGpJKTdezTCfjDJXeNc5yYsIWQn6FV5-1LzgO6PPUxJ6ZPZbW_wSP6M_spm0EYWu32TnRmIGQj2x9tsF5Y3f_lWH6zwXQQtPWD1cgW4WVpUetvlpwQy87Le4itSeFFRHIBNDlyItHOJ0ZIu1CIMu0EjR66eHsQzgTJM5xQvRYOA08Kq4kWmb1caqAlFb6ql9KoIavwlkt8hEcMIEIvNlKwgcvMoIw_JrNaTDIU8qLc83cashyVObMziHtJab8WJ-vKxA55qej9ZPBFOVs19HTCZzCu9X3zVIEVTpgEmxyR4oX4V5bTQM9w9o2VkkacWotiwNqswI_q2GAAnuF7A7VuQb6woT8lOgKdO0XzhUZB7d9xXSP1PQ0fabkLNzgDo8GEqMPVweEOcCLThbffn4ZHVcnI0992CWrwsxRVtIKXrzsw84ZpMyqnESoBSaknv7YocAxoriX2n7HGh19paQo6Vuh9JcV-6eFm-BhUewryWrL7GMOdJtlCoYsSErNbLtiqm9tRaDgfiSSbCiWmZR8Gmq4ef7giasoU55FzexgMjfadH2c95Wq-L8jo6ET4wEt8Eyl77JYpvuRaAVNAjib-i46zRZRIOAoJqL0ZR-VfehZm_X-WDs538vtg7r2n5MBhk0me5ZhaKeD1uVeESl_aswZg3K8JGYJ2cort5cOxAZHI8VyIa-G_cCsat2mpJMju37A_5QDWmzCYtm8InRCxpgtwiNFsCXG8pEpoQ-_6aFsKzqJxCqoWzzCVEqPAtrH1GCzpZu9cdkSRTXY6bk4usRB7OJrRMnK894Gr22xUgtTGULPpcasSrAzky4EwoLTXnPrXeSytUBruyU3R8bHcxRHXf1rlbQj8etGQBXnEh1wGZApVxsvF2DDZsu3fqWrfr2dU3G79bmf2coGRiVyBCl49MX-Kqu2tBQ0p9_MnivK1DDXtqF68RBxiG7xQ7xuq0yuBUpZzUHehQDQMIqvSKcy0g-XFuAYUHRsBM_KQtyUlawAyJS5yF9830dluZ9-Crtk4jJszcqcB1k3Ok2_4iMpmp3TED-w7mqTUamb3_UdS1F5iVi-81mcAeVwIYL4NOFlm5YowKEJymep2pkwtJ8RyMM3-ur7aTpy7H4pJxyEbTzl96scUjLjKeazBNUSvJqdkxXHOX62PKmlDZOjWGo9oTXkj_KRi0g55sAkWnxqwr_hw0OULgZ3r0uS_54xYmtZkcH4Ker5hHPAPKTKIkKkzm71rAX7sHl2QVh7mV3umvRmLKDd1OfYQVqFHkc7NAGYTkFfcVitHEb5pz9s3CtNtUc9oCxG2j5SBwOjZuBdViDiwNFWmxYKw0ntDUw2e6fB3VcYcyjFiS4321eXI7mNghHykL8h6_hDjywak41LEfJ_y8SSsq7nwWvCocTWYr9OAhdGeAUb6Zp9oKJyxSWOfzIe1ijuBjIIrXXSMKHk-8r7AvEObxuGIR-kQzVbIJqv0iQeVBw3rhF1NoA0v2ySTqYHC3J9UpYYhngCacwf-L_kFrrm2a9uFihniwLssELjuO3LL31Ua3kauXrnY4zvq17o69mKBED6__gsqpQPcemJF2uHECMNkOMu6tTkK6DZcrgWvJ_rZfPno-X9hj0onI4qgWim1piot33N0L4cI0T-hkSQVOUgO4B380K00DkXpXODz8hdDSCJlPG1rk74vSrYNh2kGDslwzGc1kAsYq-E3wE2MMFt5zWDz9vl53JEuOECUYNDSKkvtwo_s2t7a3pklazMtwFAmjrqs9lMCQw9kT
+        id: rs_0136e8c220478b070069570fbb294c81918125881e701ca63c
+        summary: []
+        type: reasoning
+      - call_id: call_hR80aw24wWb4MTIIVyoHMbLI
+        id: ctc_0136e8c220478b070069570fbdbe388191a87d002f6b984987
+        input: '{"query":"SELECT * FROM users"}'
+        name: run_sql
+        type: custom_tool_call
+      - call_id: call_hR80aw24wWb4MTIIVyoHMbLI
+        output: 'Executed successfully: 5 rows'
+        type: custom_tool_call_output
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Execute a constrained SQL SELECT query.
+        format:
+          definition: "\n    start: select_stmt\n    select_stmt: \"SELECT\" columns \"FROM\" table\n    columns: \"*\" |
+            WORD (\",\" WORD)*\n    table: WORD\n    %import common.WORD\n    %import common.WS\n    %ignore WS\n    "
+          syntax: lark
+          type: grammar
+        name: run_sql
+        type: custom
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '68923'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767313410
+      created_at: 1767313344
+      error: null
+      id: resp_0136e8c220478b070069570fbebc9081918c8f1b96e1018e76
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpVxADdsbvgnDlyJZURtXR6NK-BuK5PGtrGa-vSJXhom0eGD5dQjl67qAChV-nqGO4E541AvhmAKRWUOvhnMfQXPJMwssNY8uHFv4f3zK48GFbKtH5MVP1W4pZXndrmnQyNtevz83f0Lu6-k6ukDH3uYD3trDFEbtzB__vTBygANAvZV-Tkel7GnKQpLXqNxgaXJeQe-mMV1If2Z9LIbDxi5PZmsezFgD2w3swr8UBY4EFsCo8WF3M1cWyDFmSSEeGhMHmsBMKagyLTTr8mxar-tkhLHjE9oa_xIsEuRXRQ2qhyXLqtNgVO4ESTn6YmfVY2n_PZJ8jx2U9uy-dK_YvYUO1Uu5Nn4ZjXT7zTa7hXvwQcbP_ZPsFTJv6pmJ7Cdu6s7dMsroIvazxkycjBPrKoX02cbUU4x1BvnR7m4mds6D2hRZIQ9wf1D1zXusmuIZWsSESGgimtGR59bRS7828--YdM8VCM9gkorTWxZ3vogwGnXEa6AtdJI2aE3SAWcgBEczgOk7yVXZtObQhLzMzy2B-rIXUJypQD0NY08u19oxKBILwKVKX_2I67DVSQm5TPYgbYoCbNPqztx5cO8oTHapkgIpESqIqkbVrmSy-i8h_332XTsASZI-RZ1AKcUwKYtgsyUPE2L19dC68zip5TAVIY9sgHKenqlsuTXB4kTv1qEILifUUndY3tiLDMuHgSm1cttSWLbuEtFh10hSTRs0VKyfy5CyNjYg8UCXce8xJFxaLiUj4N0iYzCGBJqM-BlJUGCAdYWM7MGOHXLDZ5vzJQimLzCqa7ddsYE_NUdBgV99cCn-ct_w8vAdnK4EC3k7755gdx9IYpRhMFMC8eszZMY_1MQsFX1aSmYkDMxVKbZU6Edampjcm9-yt-XeaedRFQsdDo6-eS8-lYbGHlTueND19rQOlBC8VyO5SoTAabI-IXTfEIb69gZUWRDDPg78p9G1geKvx_Jg0ai6ajI8HRxgE6qmzENSdNiQUVD5cJJRQFaK8TH0juaOhCR42oJukTTTbLX-eYGYQhQmf_7XHQDAu347uK6xaVNSkxnbwhQcrUy9hYrYPNLl3CtaRYkGjUbh73JajBO2kxdABx3QMLMy7g-Twp9jpRUoPGZcXsreDVw8SVDxAE2p3Mzwd3wEdmVXf3loHucNmW5d_-KbtTS-VQ9LtlaTPwz8nawcSvLdg8DLVPJeVHwvro0q6g7b85654LLqbyBzdT2scCxDSBAN8d1oWNZJRALsjVqf_CKozwHDLHN8Na6VZUktd2aZoBRMww58NCFhIacXw7K2b29_qtx1ir7hgHKKMo9QNrlakMreAJbdkk-Zreh4ZtXudZVsK8Y8CMouMgQuBvebxZEMbTF3PJPey4EBLR79Z6Mi7Uptx9QZ0va1j-dD4UwWH_5Zd-srbAvv9E5-wHdCREEMn9TVAOinYC3qYiNY_wVmRb9bvfKs9M-9nQn6Fpw6AXdXx3__Dt5jVdUNUT2QTaXaKwge72gEt9ssNjQ1e9e5v7Xk5ZL09d2xEocAKs7KqBhi0etyBW9d8TzRQdjW2alzyz4YOsRwPrBXOMVL3te2BNLC_iYWb0mZ8FMSXKOsCd1pLwFEJBAqsFWMWSl4bhciJhoQ6aj3KlpQUrQeh1aOZwa7thO3tvSFp5zCo_BD0SixVBuilM64lUADtt8lBprMb0xrtzQs8RjGKgKJKCzJumu5XAjvlHj6nJzYkEhxnODK8HZfIW7LWIeSVoNq8ibQX72RBG39oRl6Ob2yZzQ5cwqeezkMTQJu7Ia2whI-PGkXMmkOyQLnwQwZGA423cIam97hjs0E_yfkX_wP7JUgFstOL05WAFpe4Db1z7ImwFI2CuqMfDwjRtDZaEVYEWWrw3zrN8Ox67CnVRzXBCkLTg2fr16jsG8nHBuKUJ3J_uCaZGYLrTql9fq73uhAtJuFkmwqLqtv-i4bMVoDS7pq48cOHATigQRT_Ny225yqUDXHyAWLR7LJuulsjuem793pKdbZ0MjVjhIA5xO1gby8KUyhy5HguXSVaEo1gU3p7gmAjONQqthamRQpgIyOYDE331HXoUWoYICZw13ztSlv1FLwW7vAEtfBI63bVabQiE9mZ0VvNOv8B0dVGc7Sf8M6E9JSC-Rwi8tt4YxpslcdTjhhkV5HO4iDqVEb_tUvLU3eqPkf8l_cK8U4YBTb84jRRnSzPxCfsNJ-MpVazKyp9iIFnOlK2C_3lStgo6B4k1f72Ps4RGt72n0sU-xZ2d67IIXikDJRo4JZ29Db16wt1Gq2bv4BNr9q0HWyJTgfFKYlK0Sxre_5X051pY5-p3WI38WfIaL3W9zkQ02nQXXu8JJ_QSZU-AenySkBxzpEYCJ7MeqRs1nmj5KX_BdzZ7fJcHi9vvDbbXBWel-9HiMG1StpIOyxeciPGWpOfv1OFI3v-6Y7DCHoBy5mFAHNSwB-dVXGmEgxSxnM1XIdJ6hyTe2471FYuaKS1xeR2MS7cwMgKNVcue4Qb3kKiCFu1IzdSXX-r6GaE88GjLrtp1qlugtJ467wsUN17em1XB99qpHMtPyYF6yAumbU9P7bLh1ND3LW1rvn2Dfr5tPGYAYIaokM8xHn2q-PXzVi61pwZmO_kzxlVMn0u_h6cNpS2RNGXg3tDp3VH-6QVKc84tokI0Cc3kGpN7TZhgNSO798Hn8PlOIazKz8jGjy2wQnmfdQSyuZDY-bQpr7HEIA1oSNE7lqmVN0z-lk1tyhAiUgrWz_CC6SfeyXWtkZjaYJWEmUrurad6GH6Ajt5lbG4Ay6c3pQ2rJHhUqvhmbsTYI1_VUKu-3OqgnB2h-5a1JzxmLiukuV1C15WTr8JxPhrOcdFgI15_MCVAhcq08g9OwfCdJFRhK7HrlCo58mJ3l83D69_O7uQbHy0awo5beZaN94yWZvPNv9tTgjXO88iiBUX3OE7v2EyBIkPMemUNXiKFP9ePkKS6nmDXNhrRezCFAULRREhWwvGjr7hQJtnPvSLVK41Hw7ZLwzqf2kTQK7M1Ch6W8V13PsVt23qX9_8EK_Gu89KBoTIOz02lbkYqljRZJlKLFvw1IOFXN9jpP7aYF26h8VcR3Ow2V0Ao-emTWwiPEoxeOFtpfWJq4DVle_GXUpXUHO-I3iy_k2irKQE0Vnxk_9BVUwwnkDBZFwOcwbhST3cLueP5Kldd2MCXKVrIG5Gq0ZpuczTrDpy-GMRwJXyXGN-iWluEA_Dxx3jioF4tBhNBhzBo9Gu_Eec2goy8z9Igd1BQWQZyWwXh8dS1I4rtxoOAhGPqhlNzDEVnZz6_Y6Uv3fgpJ6_OyOjpsREu9tmFUsr-Qr3_ZYE2hRgACujz1g_3f-FGg810trGG8eZ8qeuXTQSWIILqyneSR53imAdn572c4FcS9eYP2hxn1T2-YwP-6-4gTVBacOI7EI5l9vahgx7ndzvbYcpHRXLuxoTaaSqGoeDKEvIqpY8zT0VFhUV8_Owc-css1Vqzrt9PYX4bR2Mq452Us2O5MkmFM1RbuBAdB5-sxKLtLtMqERLLhDGhzw_yahgcilWI-2HEgZ0lTZK-OojFDBmJvMKa2TNFXSiYcxArhJMAE-TJQn20d0Drpf__1iHaj4MK1Uf1GYyToFoxsceA6Zy8bsVruEWA2KzVcV6BlnsgZBLFpW0-EBHb959nGSRNF98oadyYhEetogHyg2WGmNTj03Vzz4BCw3l8N107mmfV-sBvrKkbdTlsri7jpa6mWGkbbkp6atB_cNn7b0ph2YWm2odvhbkZss-vZr9C43vc__zpSmmHBvUE8dAGUTBslXzK5FZugOdZS77C6Zg_ptQey8X18LX7nVjWfVnCwOlWdCwEGjnIqE2oy1ZzsOVkkf9DNytAAxAfKRNb0NBrcZmLzL9qLT3PfmMqp9zu-4Iy4gyf1LX77ZgzPi_T6HrYuR4ZDAzW0xBMOsbp5GgGHTLxHF9SxpNJ7SU93jukTcSga1Xfc6K0s9SrZsj2lvPI97_eaF5I976dYHEq08FKlIHyavcF8icL1aEgXTVDpDw3UnZ-O3tzdNGTOcwL3blJEg8-Gc=
+        id: rs_0136e8c220478b070069570fc2301481919ce2ba58ca9161f6
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            I ran:
+            SELECT * FROM users
+
+            Result: executed successfully, 5 rows found. Do you want me to display all rows here, paginate them, or export to CSV/JSON?
+          type: output_text
+        id: msg_0136e8c220478b070069570ffde00081918e25d3ca12558678
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Execute a constrained SQL SELECT query.
+        format:
+          definition: "\n    start: select_stmt\n    select_stmt: \"SELECT\" columns \"FROM\" table\n    columns: \"*\" |
+            WORD (\",\" WORD)*\n    table: WORD\n    %import common.WORD\n    %import common.WS\n    %ignore WS\n    "
+          syntax: lark
+          type: grammar
+        name: run_sql
+        type: custom
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 498
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 556
+        output_tokens_details:
+          reasoning_tokens: 512
+        total_tokens: 1054
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
