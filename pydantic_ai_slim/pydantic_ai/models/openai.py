@@ -1894,30 +1894,15 @@ class OpenAIResponsesModel(Model):
 
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system and send_item_ids:  # pragma: no branch
-                            if (
-                                item.tool_name == CodeExecutionTool.kind
-                                and code_interpreter_item is not None
-                                and isinstance(item.content, dict)
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
-                                and (status := content.get('status'))
-                            ):
-                                code_interpreter_item['status'] = status
-                            elif (
-                                item.tool_name == WebSearchTool.kind
-                                and web_search_item is not None
-                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
-                                and (status := content.get('status'))
-                            ):
-                                web_search_item['status'] = status
-                            elif (  # pragma: no cover
-                                item.tool_name == FileSearchTool.kind
-                                and file_search_item is not None
-                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
-                                and (status := content.get('status'))
-                            ):
-                                file_search_item['status'] = status
+                            content_is_dict = isinstance(item.content, dict)
+                            status = item.content.get('status') if content_is_dict else None
+                            kind_to_item = {
+                                CodeExecutionTool.kind: code_interpreter_item,
+                                WebSearchTool.kind: web_search_item,
+                                FileSearchTool.kind: file_search_item,
+                            }
+                            if status and (builtin_item := kind_to_item.get(item.tool_name)) is not None:
+                                builtin_item['status'] = status
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
