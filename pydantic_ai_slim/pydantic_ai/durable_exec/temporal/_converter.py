@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import is_dataclass, replace
+from dataclasses import replace
 from functools import lru_cache
 from typing import Any
 
 import temporalio.api.common.v1
-from pydantic import BaseModel, TypeAdapter
+from pydantic import TypeAdapter
 from pydantic_core import to_json
 from temporalio.contrib.pydantic import PydanticPayloadConverter
 from temporalio.converter import (
@@ -17,6 +17,8 @@ from temporalio.converter import (
     JSONPlainPayloadConverter,
 )
 
+from pydantic_ai.messages import FileUrl
+
 
 @lru_cache(maxsize=128)
 def _get_type_adapter(cls: type[Any]) -> TypeAdapter[Any]:
@@ -24,14 +26,18 @@ def _get_type_adapter(cls: type[Any]) -> TypeAdapter[Any]:
 
 
 class PydanticAIJSONPayloadConverter(EncodingPayloadConverter):
-    """JSON payload converter using TypeAdapter for Pydantic models."""
+    """JSON payload converter using TypeAdapter for FileUrl to preserve computed fields."""
 
     @property
     def encoding(self) -> str:
         return 'json/plain'
 
     def to_payload(self, value: Any) -> temporalio.api.common.v1.Payload | None:
-        if isinstance(value, BaseModel) or is_dataclass(value):
+        # Use TypeAdapter only for FileUrl subclasses to preserve computed fields
+        # (like media_type which has an excluded backing field _media_type).
+        # For other types, use pydantic_core.to_json which handles runtime values
+        # without relying on type annotations that may not match actual values.
+        if isinstance(value, FileUrl):
             data = _get_type_adapter(type(value)).dump_json(value)
         else:
             data = to_json(value)
