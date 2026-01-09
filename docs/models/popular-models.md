@@ -45,7 +45,7 @@ Anthropic's most intelligent model for complex reasoning and research.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/anthropic:claude-opus-4-5'`
@@ -88,7 +88,7 @@ Best balance of speed, cost, and capability. Ideal for agents and coding.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/anthropic:claude-sonnet-4-5'`
@@ -131,7 +131,7 @@ Fastest and most cost-effective. Ideal for high-volume tasks.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/anthropic:claude-haiku-4-5'`
@@ -178,7 +178,7 @@ Google's most capable model for complex multimodal tasks.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/google-gla:gemini-3-pro-preview'`
@@ -221,7 +221,7 @@ Fast and efficient with excellent performance-to-cost ratio.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/google-gla:gemini-3-flash-preview'`
@@ -264,7 +264,7 @@ Most cost-effective with ultra-low latency for high-volume apps.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/google-gla:gemini-2.5-flash-lite'`
@@ -311,7 +311,7 @@ Most intelligent reasoning model for complex tasks.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/openai:gpt-5.2-pro'`
@@ -354,7 +354,7 @@ Flagship general-purpose model with excellent balance.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/openai:gpt-5.2'`
@@ -401,7 +401,7 @@ Flagship reasoning model with excellent math and reasoning.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/grok:grok-4'`
@@ -442,7 +442,7 @@ Optimized for agentic tool calling with massive 2M context.
 </div>
 <div markdown>
 
-**Inference Providers:**
+**Alternative Providers:**
 
 - [Gateway](https://gateway.pydantic.dev):<br>
     `'gateway/grok:grok-4-1-fast'`
