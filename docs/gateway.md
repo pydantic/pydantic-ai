@@ -7,8 +7,8 @@ status: new
 
 **[Pydantic AI Gateway](https://pydantic.dev/gateway)** (PAIG) is a unified interface for accessing multiple AI providers with a single key. Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
 
-!!! note "Free while in Beta"
-    The Pydantic AI Gateway is currently in Beta. You can bring your own key (BYOK) or buy inference through the Gateway (we will eat the card fee for now).
+!!! note "Free while we collect feedback"
+    The Pydantic AI Gateway is currently free. You can bring your own key (BYOK) or buy inference through the Gateway (we will eat the card fee for now).
 
 Sign up at [gateway.pydantic.dev](https://gateway.pydantic.dev/).
 
@@ -17,13 +17,13 @@ Sign up at [gateway.pydantic.dev](https://gateway.pydantic.dev/).
 
 ## Documentation Integration
 
-To help you get started with [Pydantic AI Gateway](https://gateway.pydantic.dev), some code examples on the Pydantic AI documentation include a "Via Pydantic AI Gateway" tab, alongside a "Direct to Provider API" tab with the standard Pydantic AI model string. The main difference between them is that when using Gateway, model strings use the `gateway/` prefix.
+To help you get started with [Pydantic AI Gateway](https://gateway.pydantic.dev), some code examples on the Pydantic AI documentation include a "With Pydantic AI Gateway" tab, alongside a "Directly to Provider API" tab with the standard Pydantic AI model string. The main difference between them is that when using Gateway, model strings use the `gateway/` prefix.
 
 ## Key features
 
 - **API key management**: access multiple LLM providers with a single Gateway key.
 - **Cost Limits**: set spending limits at project, user, and API key levels with daily, weekly, and monthly caps.
-- **BYOK and managed providers:** Bring your own API keys (BYOK) from LLM providers, or pay for inference directly through the platform.
+- **BYOK and built-in providers:** Bring your own API keys (BYOK) from LLM providers, or pay for inference directly through the platform.
 - **Multi-provider support:** Access models from OpenAI, Anthropic, Google Vertex, Groq, and AWS Bedrock. _More providers coming soon_.
 - **Backend observability:** Log every request through [Pydantic Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend (_coming soon_).
 - **Zero translation**: Unlike traditional AI gateways that translate everything to one common schema, PAIG allows requests to flow through directly in each provider's native format. This gives you immediate access to the new model features as soon as they are released.
@@ -53,6 +53,7 @@ Choose a name for your organization (or accept the default). You will automatica
 A default project will be created for you. You can choose to use it, or create a new one on the [Projects](https://gateway.pydantic.dev/admin/projects) page.
 
 ## Add **Providers**
+
 There are two ways to use Providers in the Pydantic AI Gateway: you can bring your own key (BYOK) or buy inference through the platform.
 
 ### Bringing your own API key (BYOK)
@@ -60,6 +61,7 @@ There are two ways to use Providers in the Pydantic AI Gateway: you can bring yo
 On the [Providers](https://gateway.pydantic.dev/admin/providers) page, fill in the form to add a provider. Paste your API key into the form under Credentials, and make sure to **select the Project that will be associated to this provider**. It is possible to add multiple keys from the same provider.
 
 ### Use Built-in Providers
+
 On the top of the dashboard page, click in the 'Add billing details' button, and put in your credit card details to enable the built-in providers. This will allow you to buy inference through the available providers.
 
 ## Grant access to your team
