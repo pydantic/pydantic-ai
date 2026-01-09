@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
@@ -37,7 +36,6 @@ from pydantic_ai.usage import RequestUsage
 
 try:
     from prefect import flow, task
-    from prefect.cache_policies import TASK_SOURCE, CachePolicy
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
@@ -1182,10 +1180,7 @@ async def test_repeated_run_hits_cache():
     If caching is broken, the model will be called twice instead of once.
     """
     call_count = 0
-    id = uuid.uuid4()
-    CROSS_FLOW_CACHE_POLICY = (
-        PrefectAgentInputs() + TASK_SOURCE + CachePolicy.from_cache_key_fn(lambda _ctx, _inputs: str(id))
-    )
+    CROSS_FLOW_CACHE_POLICY = PrefectAgentInputs()
 
     def counting_model(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
         nonlocal call_count
@@ -1196,7 +1191,7 @@ async def test_repeated_run_hits_cache():
     prefect_agent = PrefectAgent(
         agent,
         model_task_config=TaskConfig(
-            cache_policy=CROSS_FLOW_CACHE_POLICY,  # Adding for this run only to avoid caching across test runs itself
+            cache_policy=CROSS_FLOW_CACHE_POLICY,
         ),
     )
 
