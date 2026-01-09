@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
@@ -10,6 +11,7 @@ from typing import Literal
 from unittest.mock import MagicMock
 
 import pytest
+from prefect.cache_policies import CachePolicy
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -36,6 +38,7 @@ from pydantic_ai.usage import RequestUsage
 
 try:
     from prefect import flow, task
+    from prefect.cache_policies import TASK_SOURCE
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
@@ -44,10 +47,12 @@ try:
         PrefectFunctionToolset,
         PrefectMCPServer,
         PrefectModel,
+        TaskConfig,
     )
     from pydantic_ai.durable_exec.prefect._cache_policies import PrefectAgentInputs
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
+
 
 try:
     import logfire
@@ -1169,9 +1174,19 @@ async def test_cache_policy_empty_inputs():
 async def test_repeated_run_hits_cache():
     """Test that running the same prompt twice hits the cache on the second run.
 
+    By default, the cache policy includes RUN_ID which means each flow run has
+    its own cache namespace. To enable cross-flow caching, we use CROSS_FLOW_CACHE_POLICY
+    which excludes RUN_ID.
+
+    We use tmp_path for result_storage to isolate this test from other runs.
+
     If caching is broken, the model will be called twice instead of once.
     """
     call_count = 0
+    id = uuid.uuid4()
+    CROSS_FLOW_CACHE_POLICY = (
+        PrefectAgentInputs() + TASK_SOURCE + CachePolicy.from_cache_key_fn(lambda _ctx, _inputs: str(id))
+    )
 
     def counting_model(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
         nonlocal call_count
@@ -1179,12 +1194,17 @@ async def test_repeated_run_hits_cache():
         return ModelResponse(parts=[TextPart('4')])
 
     agent = Agent(FunctionModel(counting_model), name='cache_test_agent')
-    prefect_agent = PrefectAgent(agent)
+    prefect_agent = PrefectAgent(
+        agent,
+        model_task_config=TaskConfig(
+            cache_policy=CROSS_FLOW_CACHE_POLICY,  # Adding for this run only to avoid caching across test runs itself
+        ),
+    )
 
     prefect_agent.run_sync('What is 2+2?')
     assert call_count == 1
 
-    # Cache hit here, should not call the model again
+    # Cache hit here, should not call the model again (cross-flow caching enabled)
     prefect_agent.run_sync('What is 2+2?')
     assert call_count == 1
 
