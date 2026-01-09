@@ -1,4 +1,4 @@
-# Models
+# Models and Providers
 
 Pydantic AI is model-agnostic and has built-in support for multiple model providers.
 
@@ -6,26 +6,26 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 
 Pydantic AI supports three types of providers:
 
-- **Model Providers**: Companies that develop and train their own AI models
+- **First-Party Providers**: Companies that develop and train their own AI models, accessed directly via their APIs
 - **Inference Providers**: Services that host and serve models from various sources
-- **Both**: Companies that train their own models AND provide inference for other models
+- **Gateways**: Services that provide unified access to multiple model providers
 
-| Model Providers | Both | Inference Providers |
-|-----------------|------|---------------------|
-| [Anthropic](anthropic.md) - Claude | [Alibaba (DashScope)](alibaba.md) - Qwen + inference | [Azure AI Foundry](azure.md) |
-| [Cohere](cohere.md) - Command R | [Bedrock](bedrock.md) - Nova + AWS inference | [Cerebras](cerebras.md) - Fast inference |
-| [DeepSeek](deepseek.md) - DeepSeek | | [Fireworks AI](fireworks.md) - Fast inference |
-| [Google](google.md) - Gemini | | [GitHub Models](github-models.md) |
-| [Mistral](mistral.md) - Mistral | | [Groq](groq.md) - Fast inference |
-| [MoonshotAI](moonshotai.md) - Kimi | | [Heroku AI](heroku.md) |
-| [OpenAI](openai.md) - GPT | | [HuggingFace](huggingface.md) |
-| [Perplexity](perplexity.md) - Sonar | | [LiteLLM](litellm.md) - Unified interface |
-| [xAI](xai.md) - Grok | | [Nebius AI Studio](nebius.md) |
-| | | [Ollama](ollama.md) - Local models |
-| | | [OpenRouter](openrouter.md) - Multi-provider gateway |
-| | | [OVHcloud](ovhcloud.md) |
-| | | [Together AI](together.md) - Fast inference |
-| | | [Vercel AI Gateway](vercel.md) |
+| First-Party Providers | Inference Providers | Gateways |
+|-----------------------|---------------------|----------|
+| [Anthropic](anthropic.md) - Claude | [Alibaba (DashScope)](alibaba.md) | [Pydantic AI Gateway](../gateway.md) |
+| [Cohere](cohere.md) - Command R | [Azure AI Foundry](azure.md) | [OpenRouter](openrouter.md) |
+| [DeepSeek](deepseek.md) - DeepSeek | [Bedrock](bedrock.md) | [Vercel AI Gateway](vercel.md) |
+| [Google](google.md) - Gemini | [Cerebras](cerebras.md) | |
+| [Mistral](mistral.md) - Mistral | [Fireworks AI](fireworks.md) | |
+| [MoonshotAI](moonshotai.md) - Kimi | [GitHub Models](github-models.md) | |
+| [OpenAI](openai.md) - GPT | [Groq](groq.md) | |
+| [Perplexity](perplexity.md) - Sonar | [Heroku AI](heroku.md) | |
+| [xAI](xai.md) - Grok | [HuggingFace](huggingface.md) | |
+| | [LiteLLM](litellm.md) | |
+| | [Nebius AI Studio](nebius.md) | |
+| | [Ollama](ollama.md) | |
+| | [OVHcloud](ovhcloud.md) | |
+| | [Together AI](together.md) | |
 
 Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.
@@ -33,35 +33,7 @@ for testing and development.
 To use each provider, you need to configure your local environment and make sure you have the right
 packages installed. If you try to use the model without having done so, you'll be told what to install.
 
-## Model Comparison
-
-Quick reference for popular models. Use the `Agent String` column to configure your agent:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('anthropic:claude-sonnet-4-5')  # Copy from Agent String column
-```
-
-| Provider | Model | Agent String | Cost | Speed | Intelligence |
-|----------|-------|--------------|:----:|:-----:|:------------:|
-| Anthropic | Claude Opus 4.5 | `'anthropic:claude-opus-4-5'` | <span class="rating-badge rating-5">5</span> | <span class="rating-badge rating-2">2</span> | <span class="rating-badge rating-5">5</span> |
-| Anthropic | Claude Sonnet 4.5 | `'anthropic:claude-sonnet-4-5'` | <span class="rating-badge rating-3">3</span> | <span class="rating-badge rating-4">4</span> | <span class="rating-badge rating-4">4</span> |
-| Anthropic | Claude Haiku 4.5 | `'anthropic:claude-haiku-4-5'` | <span class="rating-badge rating-1">1</span> | <span class="rating-badge rating-5">5</span> | <span class="rating-badge rating-3">3</span> |
-| Google | Gemini 3 Pro | `'google-gla:gemini-3-pro-preview'` | <span class="rating-badge rating-4">4</span> | <span class="rating-badge rating-3">3</span> | <span class="rating-badge rating-5">5</span> |
-| Google | Gemini 3 Flash | `'google-gla:gemini-3-flash-preview'` | <span class="rating-badge rating-2">2</span> | <span class="rating-badge rating-5">5</span> | <span class="rating-badge rating-4">4</span> |
-| Google | Gemini 2.5 Flash Lite | `'google-gla:gemini-2.5-flash-lite'` | <span class="rating-badge rating-1">1</span> | <span class="rating-badge rating-5">5</span> | <span class="rating-badge rating-2">2</span> |
-| OpenAI | GPT-5.2 Pro | `'openai:gpt-5.2-pro'` | <span class="rating-badge rating-4">4</span> | <span class="rating-badge rating-3">3</span> | <span class="rating-badge rating-5">5</span> |
-| OpenAI | GPT-5.2 | `'openai:gpt-5.2'` | <span class="rating-badge rating-3">3</span> | <span class="rating-badge rating-4">4</span> | <span class="rating-badge rating-4">4</span> |
-| OpenAI | GPT-4o | `'openai:gpt-4o'` | <span class="rating-badge rating-2">2</span> | <span class="rating-badge rating-4">4</span> | <span class="rating-badge rating-3">3</span> |
-| OpenAI | GPT-4o Mini | `'openai:gpt-4o-mini'` | <span class="rating-badge rating-1">1</span> | <span class="rating-badge rating-5">5</span> | <span class="rating-badge rating-2">2</span> |
-| xAI | Grok 4 | `'grok:grok-4'` | <span class="rating-badge rating-2">2</span> | <span class="rating-badge rating-4">4</span> | <span class="rating-badge rating-4">4</span> |
-| xAI | Grok 4.1 Fast | `'grok:grok-4-1-fast'` | <span class="rating-badge rating-1">1</span> | <span class="rating-badge rating-5">5</span> | <span class="rating-badge rating-3">3</span> |
-
-<small>**Ratings:** 1 = lowest, 5 = highest. Cost based on $/1M tokens, Speed on tokens/sec, Intelligence on benchmarks.<br>
-**Sources:** [OpenRouter Rankings](https://openrouter.ai/rankings), [Artificial Analysis](https://artificialanalysis.ai/)</small>
-
-## Models and Providers
+## Terminology
 
 Pydantic AI uses a few key terms to describe how it interacts with different LLMs:
 

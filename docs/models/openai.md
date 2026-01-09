@@ -263,18 +263,18 @@ agent = Agent(model)
 
 The following providers offer OpenAI-compatible APIs and have dedicated documentation pages:
 
-- [Alibaba Cloud Model Studio (DashScope)](alibaba.md) - Qwen models
-- [Azure AI Foundry](azure.md) - Azure-hosted OpenAI models
-- [DeepSeek](deepseek.md) - DeepSeek models
-- [Fireworks AI](fireworks.md) - Fast inference for open-source models
-- [GitHub Models](github-models.md) - Models via GitHub
-- [Heroku AI](heroku.md) - Heroku-hosted models
-- [LiteLLM](litellm.md) - Unified interface to 100+ LLM APIs
-- [MoonshotAI](moonshotai.md) - Kimi models
-- [Nebius AI Studio](nebius.md) - Various AI models
-- [Ollama](ollama.md) - Local open-source LLMs
-- [OVHcloud AI Endpoints](ovhcloud.md) - OVHcloud-hosted models
-- [Perplexity](perplexity.md) - Search-optimized models
-- [Together AI](together.md) - Fast inference for open-source models
-- [Vercel AI Gateway](vercel.md) - Unified gateway to multiple providers
-- [xAI (Grok)](xai.md) - Grok models
+- [Alibaba Cloud Model Studio (DashScope)](alibaba.md)
+- [Azure AI Foundry](azure.md)
+- [DeepSeek](deepseek.md)
+- [Fireworks AI](fireworks.md)
+- [GitHub Models](github-models.md)
+- [Heroku AI](heroku.md)
+- [LiteLLM](litellm.md)
+- [MoonshotAI](moonshotai.md)
+- [Nebius AI Studio](nebius.md)
+- [Ollama](ollama.md)
+- [OVHcloud AI Endpoints](ovhcloud.md)
+- [Perplexity](perplexity.md)
+- [Together AI](together.md)
+- [Vercel AI Gateway](vercel.md)
+- [xAI (Grok)](xai.md)

@@ -134,3 +134,23 @@ img.index-header {
   flex-direction: row;
   gap: 10px;
 }
+
+/* Copyable model shorthands */
+code.shorthand-copyable {
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+code.shorthand-copyable:hover {
+  background-color: var(--md-accent-fg-color, #ff007f);
+  color: white;
+  padding: 0.05rem 0.1rem;
+  border-radius: 0.1rem;
+}
+
+code.shorthand-copyable.copied {
+  background-color: #22c55e;
+  color: white;
+  padding: 0.05rem 0.1rem;
+  border-radius: 0.1rem;
+}
