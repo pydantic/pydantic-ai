@@ -130,8 +130,9 @@ async def output_validator_wrong(ctx: RunContext[int], result: str) -> str:
 
 def run_sync() -> None:
     result = typed_agent.run_sync('testing', deps=MyDeps(foo=1, bar=2))
-    assert_type(result, AgentRunResult[str])
+    assert_type(result, AgentRunResult[MyDeps, str])
     assert_type(result.output, str)
+    assert_type(result.deps, MyDeps)
 
 
 async def run_stream() -> None:
@@ -165,8 +166,9 @@ assert_type(union_agent, Agent[None, Foo | Bar])
 
 def run_sync3() -> None:
     result = union_agent.run_sync('testing')
-    assert_type(result, AgentRunResult[Foo | Bar])
+    assert_type(result, AgentRunResult[None, Foo | Bar])
     assert_type(result.output, Foo | Bar)
+    assert_type(result.deps, None)
 
 
 MyUnion: TypeAlias = 'Foo | Bar'

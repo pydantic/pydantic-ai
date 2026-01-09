@@ -1333,7 +1333,7 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(index=0, part=TextPart(content='The capital of Mexico is Mexico City.')),
-            AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.')),
+            AgentRunResultEvent(result=AgentRunResult(None, output='The capital of Mexico is Mexico City.')),
         ]
     )
 
@@ -1981,7 +1981,7 @@ class HitlAgentWorkflow:
         self._deferred_tool_results: DeferredToolResults | None = None
 
     @workflow.run
-    async def run(self, prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+    async def run(self, prompt: str) -> AgentRunResult[None, str | DeferredToolRequests]:
         messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         while True:
             result = await hitl_temporal_agent.run(
@@ -2162,7 +2162,7 @@ model_retry_temporal_agent = TemporalAgent(model_retry_agent, activity_config=BA
 @workflow.defn
 class ModelRetryWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> AgentRunResult[str]:
+    async def run(self, prompt: str) -> AgentRunResult[None, str]:
         result = await model_retry_temporal_agent.run(prompt)
         return result
 

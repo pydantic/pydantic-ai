@@ -1351,7 +1351,7 @@ hitl_dbos_agent = DBOSAgent(hitl_agent)
 async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS):
     # Main loop for the agent, keep running until we get a final string output.
     @DBOS.workflow()
-    async def hitl_main_loop(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+    async def hitl_main_loop(prompt: str) -> AgentRunResult[None, str | DeferredToolRequests]:
         messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         deferred_tool_results: DeferredToolResults | None = None
         while True:
@@ -1495,7 +1495,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
 def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
     # Main loop for the agent, keep running until we get a final string output.
     @DBOS.workflow()
-    def hitl_main_loop_sync(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+    def hitl_main_loop_sync(prompt: str) -> AgentRunResult[None, str | DeferredToolRequests]:
         messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         deferred_tool_results: DeferredToolResults | None = None
         while True:

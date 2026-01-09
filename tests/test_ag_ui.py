@@ -1315,12 +1315,11 @@ async def test_request_with_state() -> None:
 
     for run_input in run_inputs:
         events = list[dict[str, Any]]()
-        deps = StateDeps(StateInt(value=0))
 
-        async def on_complete(result: AgentRunResult[Any]):
-            seen_deps_states.append(deps.state.value)
+        async def on_complete(result: AgentRunResult[StateDeps[StateInt], Any]):
+            seen_deps_states.append(result.deps.state.value)
 
-        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete):
+        async for event in run_ag_ui(agent, run_input, deps=StateDeps(StateInt(value=0)), on_complete=on_complete):
             events.append(json.loads(event.removeprefix('data: ')))
 
         assert events == simple_result()

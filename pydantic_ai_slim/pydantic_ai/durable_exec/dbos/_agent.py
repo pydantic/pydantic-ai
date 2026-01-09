@@ -143,7 +143,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
             **_deprecated_kwargs: Never,
-        ) -> AgentRunResult[Any]:
+        ) -> AgentRunResult[AgentDepsT, Any]:
             with self._dbos_overrides():
                 return await super(WrapperAgent, self).run(
                     user_prompt,
@@ -186,7 +186,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
             **_deprecated_kwargs: Never,
-        ) -> AgentRunResult[Any]:
+        ) -> AgentRunResult[AgentDepsT, Any]:
             with self._dbos_overrides():
                 return super(DBOSAgent, self).run_sync(
                     user_prompt,
@@ -279,7 +279,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[OutputDataT]: ...
+    ) -> AgentRunResult[AgentDepsT, OutputDataT]: ...
 
     @overload
     async def run(
@@ -300,7 +300,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[RunOutputDataT]: ...
+    ) -> AgentRunResult[AgentDepsT, RunOutputDataT]: ...
 
     async def run(
         self,
@@ -321,7 +321,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
-    ) -> AgentRunResult[Any]:
+    ) -> AgentRunResult[AgentDepsT, Any]:
         """Run the agent with a user prompt in async mode.
 
         This method builds an internal agent graph (using system prompts, tools and result schemas) and then
@@ -403,7 +403,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[OutputDataT]: ...
+    ) -> AgentRunResult[AgentDepsT, OutputDataT]: ...
 
     @overload
     def run_sync(
@@ -424,7 +424,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[RunOutputDataT]: ...
+    ) -> AgentRunResult[AgentDepsT, RunOutputDataT]: ...
 
     def run_sync(
         self,
@@ -445,7 +445,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
-    ) -> AgentRunResult[Any]:
+    ) -> AgentRunResult[AgentDepsT, Any]:
         """Synchronously run the agent with a user prompt.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] with `loop.run_until_complete(...)`.
@@ -650,7 +650,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[AgentDepsT, OutputDataT]]: ...
 
     @overload
     def run_stream_events(
@@ -670,7 +670,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[AgentDepsT, RunOutputDataT]]: ...
 
     def run_stream_events(
         self,
@@ -689,7 +689,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and

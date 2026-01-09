@@ -169,7 +169,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[OutputDataT]: ...
+    ) -> AgentRunResult[AgentDepsT, OutputDataT]: ...
 
     @overload
     async def run(
@@ -190,7 +190,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[RunOutputDataT]: ...
+    ) -> AgentRunResult[AgentDepsT, RunOutputDataT]: ...
 
     async def run(
         self,
@@ -210,7 +210,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[Any]:
+    ) -> AgentRunResult[AgentDepsT, Any]:
         """Run the agent with a user prompt in async mode.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
@@ -299,7 +299,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[OutputDataT]: ...
+    ) -> AgentRunResult[AgentDepsT, OutputDataT]: ...
 
     @overload
     def run_sync(
@@ -320,7 +320,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[RunOutputDataT]: ...
+    ) -> AgentRunResult[AgentDepsT, RunOutputDataT]: ...
 
     def run_sync(
         self,
@@ -340,7 +340,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[Any]:
+    ) -> AgentRunResult[AgentDepsT, Any]:
         """Synchronously run the agent with a user prompt.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] with `loop.run_until_complete(...)`.
@@ -797,7 +797,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[AgentDepsT, OutputDataT]]: ...
 
     @overload
     def run_stream_events(
@@ -817,7 +817,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[AgentDepsT, RunOutputDataT]]: ...
 
     def run_stream_events(
         self,
@@ -836,7 +836,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -931,9 +931,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[AgentDepsT, Any]]:
         send_stream, receive_stream = anyio.create_memory_object_stream[
-            _messages.AgentStreamEvent | AgentRunResultEvent[Any]
+            _messages.AgentStreamEvent | AgentRunResultEvent[AgentDepsT, Any]
         ]()
 
         async def event_stream_handler(
@@ -942,7 +942,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             async for event in events:
                 await send_stream.send(event)
 
-        async def run_agent() -> AgentRunResult[Any]:
+        async def run_agent() -> AgentRunResult[AgentDepsT, Any]:
             async with send_stream:
                 return await self.run(
                     user_prompt,

@@ -693,7 +693,7 @@ async def test_prefect_agent_run_stream_events(allow_model_requests: None):
     """Test that agent.run_stream_events() works."""
     events = [event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')]
     assert events == snapshot(
-        [AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.'))]
+        [AgentRunResultEvent(result=AgentRunResult(None, output='The capital of Mexico is Mexico City.'))]
     )
 
 
@@ -887,7 +887,7 @@ async def test_prefect_agent_with_hitl_tool(allow_model_requests: None) -> None:
     """Test human-in-the-loop with deferred tool calls and approvals."""
 
     @flow(name='test_hitl_tool')
-    async def hitl_main_loop(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+    async def hitl_main_loop(prompt: str) -> AgentRunResult[None, str | DeferredToolRequests]:
         messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         deferred_tool_results: DeferredToolResults | None = None
 
@@ -916,7 +916,7 @@ def test_prefect_agent_with_hitl_tool_sync(allow_model_requests: None) -> None:
     """Test human-in-the-loop with sync version."""
 
     @flow(name='test_hitl_tool_sync')
-    def hitl_main_loop_sync(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+    def hitl_main_loop_sync(prompt: str) -> AgentRunResult[None, str | DeferredToolRequests]:
         messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         deferred_tool_results: DeferredToolResults | None = None
 

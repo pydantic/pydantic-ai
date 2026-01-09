@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, MutableMapping
+from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
@@ -1619,6 +1620,52 @@ async def test_run_stream_on_complete():
     )
 
 
+async def test_run_stream_on_complete_deps():
+    @dataclass
+    class Deps:
+        country: str | None = None
+
+    agent = Agent(model=TestModel(), deps_type=Deps)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    async def on_complete(run_result: AgentRunResult[Deps, str]) -> AsyncIterator[BaseChunk]:
+        assert run_result == snapshot(AgentRunResult(deps=Deps(country='USA'), output='success (no tool calls)'))
+        yield DataChunk(type='data-custom', data={'foo': 'bar'})
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(deps=Deps(country='USA'), on_complete=on_complete))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'success ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '(no ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'tool ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'calls)', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'data-custom', 'data': {'foo': 'bar'}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_data_chunk_with_id_and_transient():
     """Test DataChunk supports optional id and transient fields for AI SDK compatibility."""
     agent = Agent(model=TestModel())
@@ -1634,7 +1681,7 @@ async def test_data_chunk_with_id_and_transient():
         ],
     )
 
-    async def on_complete(run_result: AgentRunResult[Any]) -> AsyncIterator[BaseChunk]:
+    async def on_complete(run_result: AgentRunResult[None, Any]) -> AsyncIterator[BaseChunk]:
         # Yield a data chunk with id for reconciliation
         yield DataChunk(type='data-task', id='task-123', data={'status': 'complete'})
         # Yield a transient data chunk (not persisted to history)

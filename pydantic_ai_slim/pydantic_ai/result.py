@@ -319,7 +319,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     _stream_response: AgentStream[AgentDepsT, OutputDataT] | None = None
     _on_complete: Callable[[], Awaitable[None]] | None = None
 
-    _run_result: AgentRunResult[OutputDataT] | None = None
+    _run_result: AgentRunResult[AgentDepsT, OutputDataT] | None = None
 
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
@@ -346,7 +346,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         all_messages: list[_messages.ModelMessage],
         new_message_index: int,
         *,
-        run_result: AgentRunResult[OutputDataT],
+        run_result: AgentRunResult[AgentDepsT, OutputDataT],
     ) -> None: ...
 
     def __init__(
@@ -355,7 +355,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         new_message_index: int,
         stream_response: AgentStream[AgentDepsT, OutputDataT] | None = None,
         on_complete: Callable[[], Awaitable[None]] | None = None,
-        run_result: AgentRunResult[OutputDataT] | None = None,
+        run_result: AgentRunResult[AgentDepsT, OutputDataT] | None = None,
     ) -> None:
         self._all_messages = all_messages
         self._new_message_index = new_message_index

@@ -121,7 +121,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return self._task_to_node(task)
 
     @property
-    def result(self) -> AgentRunResult[OutputDataT] | None:
+    def result(self) -> AgentRunResult[AgentDepsT, OutputDataT] | None:
         """The final result of the run if it has ended, otherwise `None`.
 
         Once the run returns an [`End`][pydantic_graph.nodes.End] node, `result` is populated
@@ -131,6 +131,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         if graph_run_output is None:
             return None
         return AgentRunResult(
+            self._graph_run.deps.user_deps,
             graph_run_output.output,
             graph_run_output.tool_name,
             self._graph_run.state,
@@ -302,8 +303,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
 
 @dataclasses.dataclass
-class AgentRunResult(Generic[OutputDataT]):
+class AgentRunResult(Generic[AgentDepsT, OutputDataT]):
     """The final result of an agent run."""
+
+    deps: AgentDepsT
+    """Dependencies provided to the agent run."""
 
     output: OutputDataT
     """The output data from the agent run."""
@@ -441,10 +445,10 @@ class AgentRunResult(Generic[OutputDataT]):
 
 
 @dataclasses.dataclass(repr=False)
-class AgentRunResultEvent(Generic[OutputDataT]):
+class AgentRunResultEvent(Generic[AgentDepsT, OutputDataT]):
     """An event indicating the agent run ended and containing the final result of the agent run."""
 
-    result: AgentRunResult[OutputDataT]
+    result: AgentRunResult[AgentDepsT, OutputDataT]
     """The result of the run."""
 
     _: dataclasses.KW_ONLY

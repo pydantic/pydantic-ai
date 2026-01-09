@@ -599,11 +599,47 @@ async def test_run_stream_on_complete():
 
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
 
-    async def on_complete(run_result: AgentRunResult[Any]) -> AsyncIterator[str]:
+    async def on_complete(run_result: AgentRunResult[None, str]) -> AsyncIterator[str]:
         yield '<custom>'
 
     adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream(on_complete=on_complete)]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>',
+            '<final-result tool_name=None />',
+            'success ',
+            '(no ',
+            'tool ',
+            'calls)',
+            '</text followed_by_text=False>',
+            '</response>',
+            '<custom>',
+            '<run-result>success (no tool calls)</run-result>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_on_complete_deps():
+    @dataclass
+    class Deps:
+        country: str
+
+    agent = Agent(model=TestModel(), deps_type=Deps)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def on_complete(run_result: AgentRunResult[Deps, str]) -> AsyncIterator[str]:
+        assert run_result == snapshot(AgentRunResult(deps=Deps(country='Canada'), output='success (no tool calls)'))
+        yield '<custom>'
+
+    adapter = DummyUIAdapter(agent, request)
+    deps = Deps(country='Canada')
+    events = [event async for event in adapter.run_stream(deps=deps, on_complete=on_complete)]
 
     assert events == snapshot(
         [
@@ -676,6 +712,77 @@ async def test_adapter_dispatch_request():
 
     response = await DummyUIAdapter.dispatch_request(
         starlette_request, agent=agent, metadata={'ui': 'dispatch'}, on_complete=on_complete
+    )
+
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[MutableMapping[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        chunks.append(data)
+
+    await response.stream_response(send)
+
+    assert chunks == snapshot(
+        [
+            {
+                'type': 'http.response.start',
+                'status': 200,
+                'headers': [(b'x-test', b'test'), (b'content-type', b'text/event-stream; charset=utf-8')],
+            },
+            {'type': 'http.response.body', 'body': b'<stream>', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'<response>', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'<text follows_text=False>', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'<final-result tool_name=None />', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'success ', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'(no ', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'tool ', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'calls)', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'</text followed_by_text=False>', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'</response>', 'more_body': True},
+            {
+                'type': 'http.response.body',
+                'body': b'<run-result>success (no tool calls)</run-result>',
+                'more_body': True,
+            },
+            {'type': 'http.response.body', 'body': b'</stream>', 'more_body': True},
+            {'type': 'http.response.body', 'body': b'', 'more_body': False},
+        ]
+    )
+    assert captured_metadata == [{'ui': 'dispatch'}]
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_adapter_dispatch_request_deps():
+    @dataclass
+    class Deps:
+        country: str
+
+    agent = Agent(model=TestModel(), deps_type=Deps)
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [
+                (b'content-type', b'application/json'),
+            ],
+        },
+        receive=receive,
+    )
+
+    captured_metadata: list[dict[str, Any] | None] = []
+
+    def on_complete(run_result: AgentRunResult[Deps, Any]) -> None:
+        captured_metadata.append(run_result.metadata)
+        assert run_result.deps == snapshot(Deps(country='USA'))
+
+    response = await DummyUIAdapter.dispatch_request(
+        starlette_request, agent=agent, metadata={'ui': 'dispatch'}, deps=Deps(country='USA'), on_complete=on_complete
     )
 
     assert isinstance(response, StreamingResponse)

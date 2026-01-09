@@ -47,13 +47,13 @@ EventT = TypeVar('EventT')
 RunInputT = TypeVar('RunInputT')
 """Type variable for protocol-specific run input types."""
 
-NativeEvent: TypeAlias = AgentStreamEvent | AgentRunResultEvent[Any]
+NativeEvent: TypeAlias = AgentStreamEvent | AgentRunResultEvent[Any, Any]
 """Type alias for the native event type, which is either an `AgentStreamEvent` or an `AgentRunResultEvent`."""
 
 OnCompleteFunc: TypeAlias = (
-    Callable[[AgentRunResult[Any]], None]
-    | Callable[[AgentRunResult[Any]], Awaitable[None]]
-    | Callable[[AgentRunResult[Any]], AsyncIterator[EventT]]
+    Callable[[AgentRunResult[Any, Any]], None]
+    | Callable[[AgentRunResult[Any, Any]], Awaitable[None]]
+    | Callable[[AgentRunResult[Any, Any]], AsyncIterator[EventT]]
 )
 """Callback function type that receives the `AgentRunResult` of the completed run. Can be sync, async, or an async generator of protocol-specific events."""
 
@@ -75,7 +75,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     _turn: Literal['request', 'response'] | None = None
 
-    _result: AgentRunResult[OutputDataT] | None = None
+    _result: AgentRunResult[AgentDepsT, OutputDataT] | None = None
     _final_result_event: FinalResultEvent | None = None
 
     def new_message_id(self) -> str:
@@ -175,7 +175,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         async for e in self.handle_function_tool_result(output_tool_result_event):
                             yield e
 
-                    result = cast(AgentRunResult[OutputDataT], event.result)
+                    result = cast(AgentRunResult[AgentDepsT, OutputDataT], event.result)
                     self._result = result
 
                     async for e in self._turn_to(None):

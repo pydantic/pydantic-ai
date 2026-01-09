@@ -2787,6 +2787,19 @@ async def test_agent_run_result_metadata_available() -> None:
     assert result.metadata == {'prompt': 'metadata prompt'}
 
 
+async def test_agent_run_result_deps_available() -> None:
+    @dataclass
+    class AgentDeps:
+        country: str | None = None
+
+    agent = Agent(TestModel(), deps_type=AgentDeps)
+
+    result = await agent.run('deps prompt', deps=AgentDeps(country='Italy'))
+    assert result.deps == snapshot(AgentDeps(country='Italy'))
+    assert isinstance(result.deps, AgentDeps)
+    assert result.deps.country == 'Italy'
+
+
 async def test_agent_iter_metadata_surfaces_on_result() -> None:
     agent = Agent(TestModel(custom_output_text='iter metadata output'), metadata={'env': 'tests'})
 
@@ -5455,7 +5468,7 @@ def test_agent_run_result_serialization() -> None:
     result = agent.run_sync('Hello')
 
     # Check that dump_json doesn't raise an error
-    adapter = TypeAdapter(AgentRunResult[Foo])
+    adapter = TypeAdapter(AgentRunResult[None, Foo])
     serialized_data = adapter.dump_json(result)
 
     # Check that we can load the data back

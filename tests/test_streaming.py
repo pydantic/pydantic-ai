@@ -5,7 +5,7 @@ import json
 import re
 from collections.abc import AsyncIterable, AsyncIterator
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any
 from unittest.mock import MagicMock
@@ -2365,11 +2365,11 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
     assert stream.metadata == {'source': 'run-context'}
 
 
-def _make_run_result(*, metadata: dict[str, Any] | None) -> AgentRunResult[str]:
+def _make_run_result(*, metadata: dict[str, Any] | None) -> AgentRunResult[None, str]:
     state = GraphAgentState(metadata=metadata)
     response_message = ModelResponse(parts=[TextPart('final')], model_name='test')
     state.message_history.append(response_message)
-    return AgentRunResult('final', _state=state)
+    return AgentRunResult(None, 'final', _state=state)
 
 
 def test_streamed_run_result_metadata_prefers_run_result_state() -> None:
@@ -3122,16 +3122,20 @@ async def test_stream_tool_returning_user_content():
 
 
 async def test_run_stream_events():
+    @dataclass
+    class Deps:
+        country: str
+
     m = TestModel()
 
-    test_agent = Agent(m)
+    test_agent = Agent(m, deps_type=Deps)
     assert test_agent.name is None
 
     @test_agent.tool_plain
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events = [event async for event in test_agent.run_stream_events('Hello')]
+    events = [event async for event in test_agent.run_stream_events('Hello', deps=Deps(country='Italy'))]
     assert test_agent.name == 'test_agent'
 
     assert events == snapshot(
@@ -3158,7 +3162,7 @@ async def test_run_stream_events():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
-            AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
+            AgentRunResultEvent(result=AgentRunResult(deps=Deps(country='Italy'), output='{"ret_a":"a-apple"}')),
         ]
     )
 
