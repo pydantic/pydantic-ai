@@ -869,7 +869,7 @@ class TestBatchAPIErrorHandling:
                     status='validating',
                 )
 
-            async def retrieve(self, batch_id: str) -> OpenAIBatchResponse:  # pragma: no cover
+            async def retrieve(self, batch_id: str) -> OpenAIBatchResponse:
                 if self.parent.error_on == 'batches.retrieve':
                     self.parent._raise_error()
                 return OpenAIBatchResponse(
@@ -882,7 +882,7 @@ class TestBatchAPIErrorHandling:
                     status='completed',
                 )
 
-            async def cancel(self, batch_id: str) -> OpenAIBatchResponse:  # pragma: no cover
+            async def cancel(self, batch_id: str) -> OpenAIBatchResponse:
                 if self.parent.error_on == 'batches.cancel':
                     self.parent._raise_error()
                 return OpenAIBatchResponse(
@@ -899,14 +899,14 @@ class TestBatchAPIErrorHandling:
         class _FilesNamespace:
             parent: TestBatchAPIErrorHandling.MockOpenAIWithAPIError
 
-            async def create(self, **kwargs: Any) -> MagicMock:  # pragma: no cover
+            async def create(self, **kwargs: Any) -> MagicMock:
                 if self.parent.error_on == 'files.create':
                     self.parent._raise_error()
                 mock_file = MagicMock()
                 mock_file.id = 'file_uploaded_123'
                 return mock_file
 
-            async def content(self, file_id: str) -> MagicMock:  # pragma: no cover
+            async def content(self, file_id: str) -> MagicMock:
                 if self.parent.error_on == 'files.content':
                     self.parent._raise_error()
                 mock_response = MagicMock()
