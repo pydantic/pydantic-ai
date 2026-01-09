@@ -33,10 +33,20 @@ class PydanticAIJSONPayloadConverter(EncodingPayloadConverter):
         return 'json/plain'
 
     def to_payload(self, value: Any) -> temporalio.api.common.v1.Payload | None:
-        # Use TypeAdapter only for FileUrl subclasses to preserve computed fields
-        # (like media_type which has an excluded backing field _media_type).
-        # For other types, use pydantic_core.to_json which handles runtime values
-        # without relying on type annotations that may not match actual values.
+        """FileUrl has computed fields (media_type, identifier) backed by excluded private fields (_media_type, _identifier).
+
+        pydantic_core.to_json() doesn't preserve these computed fields correctly,
+        so we need `TypeAdapter.dump_json()` for proper serialization.
+
+        We can't use `TypeAdapter` for all BaseModel/dataclass types
+        because it causes hangs in Temporal workflows.
+
+        For example, `CallToolParams` has `tool_args: dict[str, Any]` but at runtime contains
+        a Pydantic model. `TypeAdapter.dump_json()` tries to serialize through the dict[str, Any] schema,
+        which hangs in Temporal's threading context (works fine in isolation, hangs in workflows).
+
+        So we use `TypeAdapter` only for `FileUrl` (which needs it), and to_json() for everything else.
+        """
         if isinstance(value, FileUrl):
             data = _get_type_adapter(type(value)).dump_json(value)
         else:

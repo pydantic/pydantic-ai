@@ -3123,6 +3123,15 @@ def test_pydantic_ai_plugin_with_pydantic_payload_converter_upgraded() -> None:
     assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
+def test_pydantic_ai_plugin_with_pydantic_ai_payload_converter_unchanged() -> None:
+    """When converter already uses PydanticAIPayloadConverter, return it as-is."""
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is converter
+
+
 def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
     """When converter uses a custom subclass of PydanticPayloadConverter, preserve it (no upgrade)."""
     plugin = PydanticAIPlugin()
