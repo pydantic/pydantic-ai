@@ -23,3 +23,4 @@ node_modules/
 .claude/
 /.cursor/
 /.devcontainer/
+docs/.model-prices-cache.json

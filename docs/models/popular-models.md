@@ -97,7 +97,7 @@ Best balance of speed, cost, and capability. Ideal for agents and coding.
 - [OpenRouter](openrouter.md):<br>
     `'openrouter:anthropic/claude-sonnet-4.5'`
 
-**Pricing:** $3.00 / $15.00 per 1M tokens (in/out)
+**Pricing:** $3.00-6.00 / $15.00-22.50 per 1M tokens (in/out)
 
 </div>
 </div>
@@ -187,7 +187,7 @@ Google's most capable model for complex multimodal tasks.
 - [OpenRouter](openrouter.md):<br>
     `'openrouter:google/gemini-3-pro-preview'`
 
-**Pricing:** $2.00 / $12.00 per 1M tokens (in/out)
+**Pricing:** $2.00-4.00 / $12.00-18.00 per 1M tokens (in/out)
 
 </div>
 </div>
