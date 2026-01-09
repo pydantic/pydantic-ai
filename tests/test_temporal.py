@@ -3091,8 +3091,6 @@ def test_pydantic_ai_json_payload_converter_preserves_document_url_media_type() 
     where DocumentUrl.media_type (a computed field) was lost during serialization
     because the backing field _media_type was excluded from serialization.
     """
-    from pydantic_ai import DocumentUrl
-    from pydantic_ai.durable_exec.temporal import PydanticAIPayloadConverter
 
     converter = PydanticAIPayloadConverter()
     json_converter = converter.converters[b'json/plain']

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import is_dataclass, replace
+from functools import lru_cache
 from typing import Any
 
 import temporalio.api.common.v1
@@ -17,6 +18,11 @@ from temporalio.converter import (
 )
 
 
+@lru_cache(maxsize=128)
+def _get_type_adapter(cls: type[Any]) -> TypeAdapter[Any]:
+    return TypeAdapter(cls)
+
+
 class PydanticAIJSONPayloadConverter(EncodingPayloadConverter):
     """JSON payload converter using TypeAdapter for Pydantic models."""
 
@@ -26,7 +32,7 @@ class PydanticAIJSONPayloadConverter(EncodingPayloadConverter):
 
     def to_payload(self, value: Any) -> temporalio.api.common.v1.Payload | None:
         if isinstance(value, BaseModel) or is_dataclass(value):
-            data = TypeAdapter(type(value)).dump_json(value)
+            data = _get_type_adapter(type(value)).dump_json(value)
         else:
             data = to_json(value)
         return temporalio.api.common.v1.Payload(metadata={'encoding': self.encoding.encode()}, data=data)
@@ -36,7 +42,7 @@ class PydanticAIJSONPayloadConverter(EncodingPayloadConverter):
         payload: temporalio.api.common.v1.Payload,
         type_hint: type[Any] | None = None,
     ) -> Any:
-        return TypeAdapter(type_hint if type_hint is not None else Any).validate_json(payload.data)
+        return _get_type_adapter(type_hint if type_hint is not None else Any).validate_json(payload.data)
 
 
 class PydanticAIPayloadConverter(CompositePayloadConverter):
