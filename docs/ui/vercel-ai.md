@@ -1,6 +1,6 @@
 ---
 title: "Pydantic AI: Vercel AI Data Stream Protocol"
-description: "Connect Pydantic AI to Vercel's AI SDK. Use the data stream protocol to power interactive React frontends with streaming AI agent responses."
+description: "Connect Pydantic AI agents to your React app with native streaming support. Build chat interfaces faster with automatic event protocol translation to Vercel AI Elements in Python."
 ---
 # Vercel AI Data Stream Protocol
 
