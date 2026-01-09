@@ -872,7 +872,7 @@ class TestBatchAPIErrorHandling:
             async def retrieve(self, batch_id: str) -> OpenAIBatchResponse:
                 if self.parent.error_on == 'batches.retrieve':
                     self.parent._raise_error()
-                return OpenAIBatchResponse(
+                return OpenAIBatchResponse(  # pragma: no cover
                     id=batch_id,
                     completion_window='24h',
                     created_at=1704067200,
@@ -885,7 +885,7 @@ class TestBatchAPIErrorHandling:
             async def cancel(self, batch_id: str) -> OpenAIBatchResponse:
                 if self.parent.error_on == 'batches.cancel':
                     self.parent._raise_error()
-                return OpenAIBatchResponse(
+                return OpenAIBatchResponse(  # pragma: no cover
                     id=batch_id,
                     completion_window='24h',
                     created_at=1704067200,
@@ -902,16 +902,16 @@ class TestBatchAPIErrorHandling:
             async def create(self, **kwargs: Any) -> MagicMock:
                 if self.parent.error_on == 'files.create':
                     self.parent._raise_error()
-                mock_file = MagicMock()
-                mock_file.id = 'file_uploaded_123'
-                return mock_file
+                mock_file = MagicMock()  # pragma: no cover
+                mock_file.id = 'file_uploaded_123'  # pragma: no cover
+                return mock_file  # pragma: no cover
 
             async def content(self, file_id: str) -> MagicMock:
                 if self.parent.error_on == 'files.content':
                     self.parent._raise_error()
-                mock_response = MagicMock()
-                mock_response.text = ''
-                return mock_response
+                mock_response = MagicMock()  # pragma: no cover
+                mock_response.text = ''  # pragma: no cover
+                return mock_response  # pragma: no cover
 
     async def test_batch_create_api_status_error(self, allow_model_requests: None):
         """Test batch_create raises ModelHTTPError on APIStatusError."""
