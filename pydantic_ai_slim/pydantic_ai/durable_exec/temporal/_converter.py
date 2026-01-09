@@ -40,7 +40,7 @@ class PydanticAIJSONPayloadConverter(EncodingPayloadConverter):
 
 
 class PydanticAIPayloadConverter(CompositePayloadConverter):
-    """Composite payload converter with PydanticAI JSON serialization."""
+    """Composite payload converter with Pydantic AI JSON serialization."""
 
     def __init__(self) -> None:
         json_payload_converter = PydanticAIJSONPayloadConverter()
@@ -59,6 +59,8 @@ def make_data_converter(converter: DataConverter | None) -> DataConverter:
     if converter is None:
         return pydantic_ai_data_converter
 
+    # If the payload converter class is already a subclass of PydanticPayloadConverter,
+    # the converter is already compatible with Pydantic AI - return it as-is.
     if issubclass(converter.payload_converter_class, PydanticAIPayloadConverter):
         return converter
 
@@ -73,7 +75,8 @@ def make_data_converter(converter: DataConverter | None) -> DataConverter:
     if converter.payload_converter_class is PydanticPayloadConverter:
         return replace(converter, payload_converter_class=PydanticAIPayloadConverter)
 
-    # Preserve codec and failure handler configs
+    # If using a non-Pydantic payload converter, warn and replace just the payload converter class,
+    # preserving any custom payload_codec or failure_converter_class.
     if converter.payload_converter_class is not DefaultPayloadConverter:
         warnings.warn(
             'A non-Pydantic Temporal payload converter was used which has been replaced with PydanticAIPayloadConverter. '
