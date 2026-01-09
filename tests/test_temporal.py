@@ -17,6 +17,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     AgentStreamEvent,
     BinaryImage,
+    DocumentUrl,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -59,7 +60,7 @@ try:
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
-    from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+    from temporalio.contrib.pydantic import PydanticPayloadConverter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
@@ -69,9 +70,11 @@ try:
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
+        PydanticAIPayloadConverter,
         PydanticAIPlugin,
         PydanticAIWorkflow,
         TemporalAgent,
+        pydantic_ai_data_converter,
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
@@ -2374,6 +2377,63 @@ async def test_image_agent(allow_model_requests: None, client: Client):
             )
 
 
+# ============================================================================
+# DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
+# media_type is properly serialized through Temporal activities
+# ============================================================================
+
+
+def document_url_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Return a DocumentUrl with a custom media_type that cannot be inferred from the URL."""
+    # Return the DocumentUrl directly via the output tool
+    assert info.output_tools is not None
+    document_url_json = '{"url": "https://example.com/doc/12345", "media_type": "application/pdf"}'
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, document_url_json)])
+
+
+document_url_model = FunctionModel(document_url_response)
+
+document_url_agent = Agent(
+    document_url_model,
+    name='document_url_agent',
+    output_type=DocumentUrl,
+)
+
+document_url_temporal_agent = TemporalAgent(document_url_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class DocumentUrlAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> DocumentUrl:
+        result = await document_url_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_document_url_serialization_preserves_media_type(allow_model_requests: None, client: Client):
+    """Test that DocumentUrl with custom media_type is preserved through Temporal serialization.
+
+    This is a regression test for https://github.com/pydantic/pydantic-ai/issues/3949
+    where DocumentUrl.media_type (a computed field) was lost during Temporal activity
+    serialization because the backing field _media_type was excluded from serialization.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DocumentUrlAgentWorkflow],
+        plugins=[AgentPlugin(document_url_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DocumentUrlAgentWorkflow.run,
+            args=['Return a document'],
+            id=DocumentUrlAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            DocumentUrl(url='https://example.com/doc/12345', _media_type='application/pdf', _identifier='eb8998')
+        )
+
+
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
 web_search_model = OpenAIResponsesModel(
     'gpt-5',
@@ -3024,26 +3084,49 @@ class MockPayloadCodec(PayloadCodec):
         return list(payloads)
 
 
-def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> None:
-    """When no converter is provided, PydanticAIPlugin uses the standard pydantic_data_converter."""
+def test_pydantic_ai_json_payload_converter_preserves_document_url_media_type() -> None:
+    """Test that PydanticAIJSONPayloadConverter preserves DocumentUrl.media_type during round-trip.
+
+    This is a regression test for https://github.com/pydantic/pydantic-ai/issues/3949
+    where DocumentUrl.media_type (a computed field) was lost during serialization
+    because the backing field _media_type was excluded from serialization.
+    """
+    from pydantic_ai import DocumentUrl
+    from pydantic_ai.durable_exec.temporal import PydanticAIPayloadConverter
+
+    converter = PydanticAIPayloadConverter()
+    json_converter = converter.converters[b'json/plain']
+
+    original = DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf')
+
+    payload = json_converter.to_payload(original)
+    assert payload is not None
+
+    restored = json_converter.from_payload(payload, DocumentUrl)  # pyright: ignore[reportUnknownMemberType]
+    assert restored.url == 'https://example.com/doc/12345'
+    assert restored.media_type == 'application/pdf'
+
+
+def test_pydantic_ai_plugin_no_converter_returns_pydantic_ai_data_converter() -> None:
+    """When no converter is provided, PydanticAIPlugin uses pydantic_ai_data_converter."""
     plugin = PydanticAIPlugin()
-    # Create a minimal config without data_converter
     config: dict[str, Any] = {}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is pydantic_data_converter
+    assert result['data_converter'] is pydantic_ai_data_converter
 
 
-def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
-    """When converter already uses PydanticPayloadConverter, return it unchanged."""
+def test_pydantic_ai_plugin_with_pydantic_payload_converter_upgraded() -> None:
+    """When converter uses PydanticPayloadConverter, upgrade to PydanticAIPayloadConverter."""
     plugin = PydanticAIPlugin()
     converter = DataConverter(payload_converter_class=PydanticPayloadConverter)
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is converter
+    assert result['data_converter'] is not converter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
-    """When converter uses a subclass of PydanticPayloadConverter, return it unchanged (no warning)."""
+    """When converter uses a custom subclass of PydanticPayloadConverter, preserve it (no upgrade)."""
     plugin = PydanticAIPlugin()
     converter = DataConverter(payload_converter_class=CustomPydanticPayloadConverter)
     config: dict[str, Any] = {'data_converter': converter}
@@ -3053,13 +3136,13 @@ def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
 
 
 def test_pydantic_ai_plugin_with_default_payload_converter_replaced() -> None:
-    """When converter uses DefaultPayloadConverter, replace payload_converter_class without warning."""
+    """When converter uses DefaultPayloadConverter, replace with PydanticAIPayloadConverter."""
     plugin = PydanticAIPlugin()
     converter = DataConverter(payload_converter_class=DefaultPayloadConverter)
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
@@ -3073,7 +3156,7 @@ def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
 
 
@@ -3084,10 +3167,10 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     with pytest.warns(
         UserWarning,
-        match='A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter',
+        match='A non-Pydantic Temporal payload converter was used which has been replaced with PydanticAIPayloadConverter',
     ):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> None:
@@ -3101,5 +3184,5 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
     config: dict[str, Any] = {'data_converter': converter}
     with pytest.warns(UserWarning):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
