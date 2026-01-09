@@ -109,11 +109,9 @@ DOCS_JSON = (
 )
 
 # Create a chunker for splitting large content
-# Using recursive chunking with 512 tokens and 50 token overlap
-chunker = RecursiveChunker(
-    chunk_size=512,
-    chunk_overlap=50,
-)
+# Using recursive chunking with 512 tokens
+# Note: RecursiveChunker uses a rules-based system, not overlap
+chunker = RecursiveChunker(chunk_size=512)
 
 
 async def build_search_db():

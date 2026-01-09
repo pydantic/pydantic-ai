@@ -35,7 +35,7 @@ python/uv-run -m pydantic_ai_examples.rag_lancedb build
 The build process:
 
 1. Fetches documentation sections from a JSON file
-2. Chunks each section using [`RecursiveChunker`](https://github.com/chonkie-inc/chonkie) (512 tokens, 50 token overlap)
+2. Chunks each section using [`RecursiveChunker`](https://github.com/chonkie-inc/chonkie) (512 tokens)
 3. Generates embeddings using pydantic-ai's [`Embedder`][pydantic_ai.embeddings.Embedder] with OpenAI's `text-embedding-3-small`
 4. Stores everything in a local LanceDB table
 
