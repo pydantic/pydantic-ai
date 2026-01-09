@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from pydantic import BaseModel
@@ -53,11 +53,14 @@ from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.join import reduce_list_append
 
 try:
+    import temporalio.api.common.v1
     from temporalio import workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
+    from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+    from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
@@ -2993,3 +2996,110 @@ async def test_temporal_model_request_stream_outside_workflow():
 
     # Verify response comes from the wrapped TestModel
     assert any(isinstance(part, TextPart) and part.content == 'Direct stream response' for part in response.parts)
+
+
+class CustomPydanticPayloadConverter(PydanticPayloadConverter):
+    """A custom payload converter that inherits from PydanticPayloadConverter."""
+
+    pass
+
+
+class CustomPayloadConverter(DefaultPayloadConverter):
+    """A custom payload converter that does not inherit from PydanticPayloadConverter."""
+
+    pass
+
+
+class MockPayloadCodec(PayloadCodec):
+    """A mock payload codec for testing (simulates encryption codec)."""
+
+    async def encode(
+        self, payloads: Sequence[temporalio.api.common.v1.Payload]
+    ) -> list[temporalio.api.common.v1.Payload]:  # pragma: no cover
+        return list(payloads)
+
+    async def decode(
+        self, payloads: Sequence[temporalio.api.common.v1.Payload]
+    ) -> list[temporalio.api.common.v1.Payload]:  # pragma: no cover
+        return list(payloads)
+
+
+def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> None:
+    """When no converter is provided, PydanticAIPlugin uses the standard pydantic_data_converter."""
+    plugin = PydanticAIPlugin()
+    # Create a minimal config without data_converter
+    config: dict[str, Any] = {}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is pydantic_data_converter
+
+
+def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
+    """When converter already uses PydanticPayloadConverter, return it unchanged."""
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(payload_converter_class=PydanticPayloadConverter)
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is converter
+
+
+def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
+    """When converter uses a subclass of PydanticPayloadConverter, return it unchanged (no warning)."""
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(payload_converter_class=CustomPydanticPayloadConverter)
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is converter
+    assert result['data_converter'].payload_converter_class is CustomPydanticPayloadConverter
+
+
+def test_pydantic_ai_plugin_with_default_payload_converter_replaced() -> None:
+    """When converter uses DefaultPayloadConverter, replace payload_converter_class without warning."""
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(payload_converter_class=DefaultPayloadConverter)
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is not converter
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+
+
+def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
+    """When converter has a custom payload_codec, preserve it while replacing payload_converter_class."""
+    plugin = PydanticAIPlugin()
+    codec = MockPayloadCodec()
+    converter = DataConverter(
+        payload_converter_class=DefaultPayloadConverter,
+        payload_codec=codec,
+    )
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'] is not converter
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_codec is codec
+
+
+def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
+    """When converter uses a non-Pydantic payload converter, warn and replace."""
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(payload_converter_class=CustomPayloadConverter)
+    config: dict[str, Any] = {'data_converter': converter}
+    with pytest.warns(
+        UserWarning,
+        match='A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter',
+    ):
+        result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+
+
+def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> None:
+    """When converter uses a non-Pydantic payload converter with custom codec, warn but preserve codec."""
+    plugin = PydanticAIPlugin()
+    codec = MockPayloadCodec()
+    converter = DataConverter(
+        payload_converter_class=CustomPayloadConverter,
+        payload_codec=codec,
+    )
+    config: dict[str, Any] = {'data_converter': converter}
+    with pytest.warns(UserWarning):
+        result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_codec is codec

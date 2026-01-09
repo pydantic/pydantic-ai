@@ -231,6 +231,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         async for event in stream:
+            activity_config: ActivityConfig = {'summary': f'handle event: {event.event_kind}', **self.activity_config}
             await workflow.execute_activity(
                 activity=self.event_stream_handler_activity,
                 args=[
@@ -240,7 +241,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     ),
                     ctx.deps,
                 ],
-                **self.activity_config,
+                **activity_config,
             )
 
     @property
