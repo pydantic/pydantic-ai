@@ -22,6 +22,7 @@ from ...messages import (
     ModelMessage,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -228,7 +229,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
 
-                case ActivityMessage():
-                    pass
+                case ActivityMessage() as activity_msg:
+                    if activity_msg.activity_type == 'pydantic_ai_thinking':
+                        content = activity_msg.content
+                        builder.add(
+                            ThinkingPart(
+                                content=content.get('content', ''),
+                                id=content.get('id'),
+                                signature=content.get('signature'),
+                                provider_name=content.get('provider_name'),
+                                provider_details=content.get('provider_details'),
+                            )
+                        )
 
         return builder.messages

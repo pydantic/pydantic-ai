@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 from ..._utils import now_utc
 from ...messages import (
@@ -171,7 +171,23 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             self._thinking_text = False
 
         if not followed_by_thinking:
-            yield ThinkingEndEvent(type=EventType.THINKING_END)
+            pydantic_ai_meta: dict[str, Any] = {}
+            if part.id is not None:
+                pydantic_ai_meta['id'] = part.id
+            if part.signature is not None:
+                pydantic_ai_meta['signature'] = part.signature
+            if part.provider_name is not None:
+                pydantic_ai_meta['provider_name'] = part.provider_name
+            if part.provider_details is not None:
+                pydantic_ai_meta['provider_details'] = part.provider_details
+
+            raw_event = {'pydantic_ai': pydantic_ai_meta} if pydantic_ai_meta else None
+
+            yield ThinkingEndEvent(
+                type=EventType.THINKING_END,
+                raw_event=raw_event,
+                encryptedContent=part.signature,  # pyright: ignore[reportCallIssue]
+            )
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         return self._handle_tool_call_start(part)
