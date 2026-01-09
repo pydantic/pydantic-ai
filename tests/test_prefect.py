@@ -11,7 +11,6 @@ from typing import Literal
 from unittest.mock import MagicMock
 
 import pytest
-from prefect.cache_policies import CachePolicy
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -38,7 +37,7 @@ from pydantic_ai.usage import RequestUsage
 
 try:
     from prefect import flow, task
-    from prefect.cache_policies import TASK_SOURCE
+    from prefect.cache_policies import TASK_SOURCE, CachePolicy
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
