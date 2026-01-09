@@ -41,8 +41,8 @@ def system_prompt_ok2() -> str:
 
 
 # we have overloads for every possible signature of system_prompt, so the type of decorated functions is correct
-assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str]])
-assert_type(system_prompt_ok2, Callable[[], str])
+assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str | None]])
+assert_type(system_prompt_ok2, Callable[[], str | None])
 
 
 @typed_agent.tool
