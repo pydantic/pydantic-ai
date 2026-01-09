@@ -1101,6 +1101,43 @@ wheels = [
 ]
 
 [[package]]
+name = "chonkie"
+version = "1.5.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b2/ce/720071ab252c087c2075142f90c41dea0fa1864e5b7cbd176ccb4caa74dc/chonkie-1.5.2.tar.gz", hash = "sha256:75b020b4202b74ee248d4aef000e70caab2af766ffa4fd181eb48005b612bda2", size = 411129, upload-time = "2026-01-05T20:36:28.48Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/14/3e/dd5e586ce58f675dba05669c73a5261c257ff8894762d8b4e0adf33e5463/chonkie-1.5.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:2e01967fbaaef8f07e3539f687d3d297a563cc3f9bb56a363727f9ca0ad75d5c", size = 538897, upload-time = "2026-01-05T20:35:52.479Z" },
+    { url = "https://files.pythonhosted.org/packages/38/39/c6e0a97b2bcc73068a28b9f1ea46f6902cae854f666dbacbe02d60f1484e/chonkie-1.5.2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:75b0298758bab58a5475e0dee40b8b1cc69bccf56635101293e79104943c50c9", size = 540645, upload-time = "2026-01-05T20:35:54.286Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/c1/e4d275e1ebbb6e94ea2e37e8e808d39274ef643dafbaf7f4d284976c3ce6/chonkie-1.5.2-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:96d4e4ccbf2d419b4b3556364fc084e2faf3f01be22a26d54c7c38a496e4caa1", size = 962862, upload-time = "2026-01-05T20:35:55.666Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/b2/905e6722457b7b6bd0f612d75c07e332816b98d5d462dee6c95a160424b1/chonkie-1.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e2a7f09a28a54c0cb55ea965eeb39418349f5ebc4f89ac0e7587aa4839972e4e", size = 961665, upload-time = "2026-01-05T20:35:58.675Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/90/b9b428e8ed179feed7a9765926561c3bb0f409c207adc4a6cbfec7c4c15d/chonkie-1.5.2-cp310-cp310-win_amd64.whl", hash = "sha256:33d16ba4c1190ae1208ae43d1bc44f9ec9a5bedc1334e4d332833e93e14a8728", size = 538353, upload-time = "2026-01-05T20:35:59.766Z" },
+    { url = "https://files.pythonhosted.org/packages/74/8e/838fd50559729647d4894327a41202912536ffe6a79d6cec8087a498edd6/chonkie-1.5.2-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:04d039cd45a58e0bf8806f850e245e4d8a1ace1a2d48241990f97c9832a101aa", size = 539098, upload-time = "2026-01-05T20:36:00.806Z" },
+    { url = "https://files.pythonhosted.org/packages/23/6d/ac3255efa9df1b0df8ff7980709b08ac35666b2bb74a058db040ff2caecc/chonkie-1.5.2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:f3a424cb1777d1436a36dfb67f5d5cbec0b1e9f5c0d0dc44c360edd3dde7530c", size = 540823, upload-time = "2026-01-05T20:36:02.411Z" },
+    { url = "https://files.pythonhosted.org/packages/13/16/80fd902ba70b9467a1ae89c2d9a25f0f0c2dceacaa9372f514072a994b4d/chonkie-1.5.2-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ffe7ece0a1e9a1ea1bb2dd6475bb710f20a15e4265ae37f63d5a9b86adc994e8", size = 996923, upload-time = "2026-01-05T20:36:03.939Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/1e/24b1bc96d57749778eb54fb825c5c59da875998349f60969a60f45403f68/chonkie-1.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b92e67f53bb784dedfa5397279b6ad790526afc3a8be29d3fc468050aa4c45e3", size = 997226, upload-time = "2026-01-05T20:36:05.508Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/62/fcb3a8753cbb976b5e0b2d14380712bed3619986dc8dbd01ba5fe0ed77a7/chonkie-1.5.2-cp311-cp311-win_amd64.whl", hash = "sha256:a92eaa800de20b4eb81de7aad15196c7a0be42926abfc919d906571d23fd24c8", size = 538540, upload-time = "2026-01-05T20:36:06.574Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/79/4805bd05a9ab6f9c91446f0b6e83766336ade8b335e14d9db301fc98d03a/chonkie-1.5.2-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:74aca1c226f916837626b17c529d56e23de11435ca5e39f913db60980ee6e524", size = 540722, upload-time = "2026-01-05T20:36:07.742Z" },
+    { url = "https://files.pythonhosted.org/packages/83/ed/4bd1454b5846d3c299e2b597057fd88c16d2d2d38b2ef5c2a604cd606cba/chonkie-1.5.2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:f16f136ca97f8d48969f7d1c0decba926c32f358417adcfafeeae0e55f5dcb08", size = 541143, upload-time = "2026-01-05T20:36:09.085Z" },
+    { url = "https://files.pythonhosted.org/packages/33/fa/f3d82c1e7845670f3ff9046397b929982f3d5cd8b479c6d80e299cfe9e92/chonkie-1.5.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0f9c901fa44a8620144cf82abcc5d7020829a54286af64808a179e72a3ea9693", size = 1023489, upload-time = "2026-01-05T20:36:10.18Z" },
+    { url = "https://files.pythonhosted.org/packages/72/30/b97342bc51b12349e8e3bd11288648bb5e4c1bc7fd86f973bb045c033781/chonkie-1.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e759beb046daf12f1168194b9d9e54ef68831db25fea47d8200ae939b96d6a07", size = 1032546, upload-time = "2026-01-05T20:36:11.665Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/13/bcb643a9075988c43dedca0acfd0c29d02af89d61562edd66a8da64eb8b7/chonkie-1.5.2-cp312-cp312-win_amd64.whl", hash = "sha256:6fedf5cb0b2b27b0502a6bc364071352e5d742618b26dee752e9a67b45d9395f", size = 540171, upload-time = "2026-01-05T20:36:12.829Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/28/7fcaa8f076a1c7fa373389c7327c4e38de1598652d76531e02c773f96f4d/chonkie-1.5.2-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:cfdbf524802958b0bbfebc445e337a79996b21de06622882800dc2b32d61f434", size = 540288, upload-time = "2026-01-05T20:36:13.905Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/d3/6400d618c60168f3dd64843c3213b0b219d43f2de33331940229351f509b/chonkie-1.5.2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:2df8d92f3a42ff94ad55d7e2f73b204aa1fc53c60ece4038721b1421654948f4", size = 540700, upload-time = "2026-01-05T20:36:14.994Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/9b/e6ac0a6af7620bddfcab9022044dee600fd74032a6f9043e482cbaaba071/chonkie-1.5.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:994f948bb20f301f110ef911845588bbf0f5d2862576f5a11a9b950486174b1a", size = 1017209, upload-time = "2026-01-05T20:36:16.065Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/f0/ae16e9c6ef95e6729d234b99b0f15dd285cd1f576f46a2bcbae45fc9e02e/chonkie-1.5.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:07a59d5ce578c6410d9e72efa5d7411a14f7151acdd81f7a4a6b64f11fe6f1fe", size = 1026885, upload-time = "2026-01-05T20:36:17.346Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/14/5712fe7b163e84e6b55f1dce3fb919651c9fc7ca18481773486a0f073539/chonkie-1.5.2-cp313-cp313-win_amd64.whl", hash = "sha256:a34a7cc80ce20df20b7edda99afd53f1f9c16e0b6237fb26b9d6f07627fd97f2", size = 539894, upload-time = "2026-01-05T20:36:18.812Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/a5/700be717efe0e8bc434f39c2c5a49bb3f607954c73fc98395539f255007b/chonkie-1.5.2-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:86e0d5e4e9e203a1d01435a32c1568bf5816898fd55ef3f3590ce6ef3c8eab56", size = 546578, upload-time = "2026-01-05T20:36:19.895Z" },
+    { url = "https://files.pythonhosted.org/packages/48/8e/5b9376f9f61725b5e390110a4831965f44f57aa63092a68adcff6cec5d8b/chonkie-1.5.2-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:7c0df296fedd82bc57665e3541a08a2e9a43c6a81d19f30cf2bdc8b151179b54", size = 546864, upload-time = "2026-01-05T20:36:21.375Z" },
+    { url = "https://files.pythonhosted.org/packages/14/1d/ec498008f2275b62bc2d799248b56c41ad3aa44b4977894b77a5c512b201/chonkie-1.5.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c6d98cdd94196717acc7dcf642ad7fb2dc6e545e690cbb81b1af821b95050138", size = 1027895, upload-time = "2026-01-05T20:36:23.582Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/0b/3c7f87b2ed277897d401ef090f7b98ca50febbc02b4336dc57fe9f67fb41/chonkie-1.5.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:55fcb8eeb720db6ad7d4fb98868dbe354ee6e9eddc66859a85f3259928caab50", size = 1030059, upload-time = "2026-01-05T20:36:25.655Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/13/e1314d12d3c4a10051f2722c2a437eeb6a574675b02c389da6745a11a945/chonkie-1.5.2-cp314-cp314-win_amd64.whl", hash = "sha256:f54b7b8aae45d81939040c30c2be84cff6a7a6fbd09192a7446fc16300ae32c0", size = 546377, upload-time = "2026-01-05T20:36:27.155Z" },
+]
+
+[[package]]
 name = "clai"
 source = { editable = "clai" }
 dependencies = [
@@ -1485,6 +1522,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0f/d5/c66da9b79e5bdb124974bfe172b4daf3c984ebd9c2a06e2b8a4dc7331c72/defusedxml-0.7.1.tar.gz", hash = "sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69", size = 75520, upload-time = "2021-03-08T10:59:26.269Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl", hash = "sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61", size = 25604, upload-time = "2021-03-08T10:59:24.45Z" },
+]
+
+[[package]]
+name = "deprecation"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/d3/8ae2869247df154b64c1884d7346d412fed0c49df84db635aab2d1c40e62/deprecation-2.1.0.tar.gz", hash = "sha256:72b3bde64e5d778694b0cf68178aed03d15e15477116add3fb773e581f9518ff", size = 173788, upload-time = "2020-04-20T14:23:38.738Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/c3/253a89ee03fc9b9682f1541728eb66db7db22148cd94f89ab22528cd1e1b/deprecation-2.1.0-py2.py3-none-any.whl", hash = "sha256:a10811591210e1fb0e768a8c25517cabeabcba6f0bf96564f8ff45189f90b14a", size = 11178, upload-time = "2020-04-20T14:23:36.581Z" },
 ]
 
 [[package]]
@@ -2967,6 +3016,56 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe", size = 18437, upload-time = "2025-09-08T01:34:57.871Z" },
+]
+
+[[package]]
+name = "lance-namespace"
+version = "0.4.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lance-namespace-urllib3-client" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b4/b5/0c3c55cf336b1e90392c2e24ac833551659e8bb3c61644b2d94825eb31bd/lance_namespace-0.4.5.tar.gz", hash = "sha256:0aee0abed3a1fa762c2955c7d12bb3004cea5c82ba28f6fcb9fe79d0cc19e317", size = 9827, upload-time = "2026-01-07T19:20:23.005Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/88/173687dad72baf819223e3b506898e386bc88c26ff8da5e8013291e02daf/lance_namespace-0.4.5-py3-none-any.whl", hash = "sha256:cd1a4f789de03ba23a0c16f100b1464cca572a5d04e428917a54d09db912d548", size = 11703, upload-time = "2026-01-07T19:20:25.394Z" },
+]
+
+[[package]]
+name = "lance-namespace-urllib3-client"
+version = "0.4.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "python-dateutil" },
+    { name = "typing-extensions" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/97/a9/4e527c2f05704565618b239b0965f829d1a194837f01234af3f8e2f33d92/lance_namespace_urllib3_client-0.4.5.tar.gz", hash = "sha256:184deda8cf8700926d994618187053c644eb1f2866a4479e7b80843cacc92b1c", size = 159726, upload-time = "2026-01-07T19:20:24.025Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/86/0adee7190408a28dcc5a0562c674537457e3de59ee51d1c724ecdc4a9930/lance_namespace_urllib3_client-0.4.5-py3-none-any.whl", hash = "sha256:2ee154d616ba4721f0bfdf043d33c4fef2e79d380653e2f263058ab00fb4adf4", size = 277969, upload-time = "2026-01-07T19:20:26.597Z" },
+]
+
+[[package]]
+name = "lancedb"
+version = "0.26.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "deprecation" },
+    { name = "lance-namespace" },
+    { name = "numpy" },
+    { name = "overrides", marker = "python_full_version < '3.12'" },
+    { name = "packaging" },
+    { name = "pyarrow" },
+    { name = "pydantic" },
+    { name = "tqdm" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/b5/110651418ceb1fa4ff2eb74ce4bad911ecf49dc765b134f0201d5564aab8/lancedb-0.26.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:b1c4389134ede49e4be0497b9719f573f447e627426bb9e6fc1b642db11fb22d", size = 43416143, upload-time = "2026-01-02T17:57:07.232Z" },
+    { url = "https://files.pythonhosted.org/packages/81/8a/b48a14281d7875e5bfccf22d911d9e1fa019c1fe7b805d290a4449e3cf60/lancedb-0.26.1-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:07abd18e0aa4730442d0361bab4491ad469de14f9087c3542e56ca6d7fcda473", size = 45302392, upload-time = "2026-01-02T18:04:55.963Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/d0/8f6bc531f290206c7a0061236928710506598a2591ff1fcaea477fc52e7f/lancedb-0.26.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:df8eb631519c6ede9975099bea187ea25a09e4617a421fe19e5e1613651cd62f", size = 48372676, upload-time = "2026-01-02T18:08:12.373Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/13/d8db83335ddf28afe1fb814ca995da7f67826f337d547e54471d7d425dd1/lancedb-0.26.1-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:2941c9f8aa22244002307c4da5d19f12ab77dcb0569eb4f8a48b60e9c4fdee79", size = 45318771, upload-time = "2026-01-02T18:04:26.429Z" },
+    { url = "https://files.pythonhosted.org/packages/08/94/10e9d4b5ba49eeba72024d310dc42e0c24feb8d5676f48e989198121a8a0/lancedb-0.26.1-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:0d5f125b98836a49095c492085f5ecf3a78906fafcab59c367d9347eb372a4cc", size = 48425627, upload-time = "2026-01-02T18:11:57.443Z" },
+    { url = "https://files.pythonhosted.org/packages/17/5d/d7a834ce8dd9c5e6ef7a0e308c7de5f87bb8f04c0944a1bea617d9d42dc7/lancedb-0.26.1-cp39-abi3-win_amd64.whl", hash = "sha256:9338d34c6e7472c97e49fd6b2638b29d3d087e8b002d92cafdbb46a8b0b1480e", size = 53214501, upload-time = "2026-01-02T22:34:06.836Z" },
 ]
 
 [[package]]
@@ -4949,6 +5048,15 @@ wheels = [
 ]
 
 [[package]]
+name = "overrides"
+version = "7.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/86/b585f53236dec60aba864e050778b25045f857e17f6e5ea0ae95fe80edd2/overrides-7.7.0.tar.gz", hash = "sha256:55158fa3d93b98cc75299b1e67078ad9003ca27945c76162c1c0766d6f91820a", size = 22812, upload-time = "2024-01-27T21:01:33.423Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/ab/fc8290c6a4c722e5514d80f62b2dc4c4df1a68a41d1364e625c35990fcf3/overrides-7.7.0-py3-none-any.whl", hash = "sha256:c7ed9d062f78b8e4c1a7b70bd8796b35ead4d9f510227ef9c5dc7626c60d7e49", size = 17832, upload-time = "2024-01-27T21:01:31.393Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "25.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6049,11 +6157,13 @@ name = "pydantic-ai-examples"
 source = { editable = "examples" }
 dependencies = [
     { name = "asyncpg" },
+    { name = "chonkie" },
     { name = "datasets" },
     { name = "devtools" },
     { name = "duckdb" },
     { name = "fastapi" },
     { name = "gradio" },
+    { name = "lancedb" },
     { name = "logfire", extra = ["asyncpg", "fastapi", "httpx", "sqlite3"] },
     { name = "mcp", extra = ["cli"] },
     { name = "modal" },
@@ -6068,11 +6178,13 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "chonkie", specifier = ">=0.4" },
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "duckdb", specifier = ">=1.3.2" },
     { name = "fastapi", specifier = ">=0.115.4" },
     { name = "gradio", specifier = ">=5.9.0" },
+    { name = "lancedb", specifier = ">=0.15" },
     { name = "logfire", extras = ["asyncpg", "fastapi", "httpx", "sqlite3"], specifier = ">=3.14.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.4.1" },
     { name = "modal", specifier = ">=1.0.4" },

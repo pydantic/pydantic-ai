@@ -1,5 +1,11 @@
 """RAG example with pydantic-ai — using vector search to augment a chat agent.
 
+This example demonstrates:
+- Using pydantic-ai's Embedder for generating embeddings
+- Chunking documents with chonkie before embedding
+- Storing embeddings in pgvector for similarity search
+- Building a RAG agent that retrieves relevant context
+
 Run pgvector with:
 
     mkdir postgres-data
@@ -31,25 +37,28 @@ import httpx
 import logfire
 import pydantic_core
 from anyio import create_task_group
-from openai import AsyncOpenAI
+from chonkie import RecursiveChunker
 from pydantic import TypeAdapter
 from typing_extensions import AsyncGenerator
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, Embedder, RunContext
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
 logfire.instrument_pydantic_ai()
 
+# Create an embedder using pydantic-ai's unified interface
+embedder = Embedder('openai:text-embedding-3-small')
+
 
 @dataclass
 class Deps:
-    openai: AsyncOpenAI
+    embedder: Embedder
     pool: asyncpg.Pool
 
 
-agent = Agent('openai:gpt-5', deps_type=Deps)
+agent = Agent('openai:gpt-4o', deps_type=Deps)
 
 
 @agent.tool
@@ -63,16 +72,9 @@ async def retrieve(context: RunContext[Deps], search_query: str) -> str:
     with logfire.span(
         'create embedding for {search_query=}', search_query=search_query
     ):
-        embedding = await context.deps.openai.embeddings.create(
-            input=search_query,
-            model='text-embedding-3-small',
-        )
+        result = await context.deps.embedder.embed_query(search_query)
 
-    assert len(embedding.data) == 1, (
-        f'Expected 1 embedding, got {len(embedding.data)}, doc query: {search_query!r}'
-    )
-    embedding = embedding.data[0].embedding
-    embedding_json = pydantic_core.to_json(embedding).decode()
+    embedding_json = pydantic_core.to_json(result.embeddings[0]).decode()
     rows = await context.deps.pool.fetch(
         'SELECT url, title, content FROM doc_sections ORDER BY embedding <-> $1 LIMIT 8',
         embedding_json,
@@ -85,13 +87,10 @@ async def retrieve(context: RunContext[Deps], search_query: str) -> str:
 
 async def run_agent(question: str):
     """Entry point to run the agent and perform RAG based question answering."""
-    openai = AsyncOpenAI()
-    logfire.instrument_openai(openai)
-
     logfire.info('Asking "{question}"', question=question)
 
     async with database_connect(False) as pool:
-        deps = Deps(openai=openai, pool=pool)
+        deps = Deps(embedder=embedder, pool=pool)
         answer = await agent.run(question, deps=deps)
     print(answer.output)
 
@@ -109,6 +108,13 @@ DOCS_JSON = (
     '80c5925c42f1442c24963aaf5eb1a324d47afe95/logfire_docs.json'
 )
 
+# Create a chunker for splitting large content
+# Using recursive chunking with 512 tokens and 50 token overlap
+chunker = RecursiveChunker(
+    chunk_size=512,
+    chunk_overlap=50,
+)
+
 
 async def build_search_db():
     """Build the search database."""
@@ -116,9 +122,6 @@ async def build_search_db():
         response = await client.get(DOCS_JSON)
         response.raise_for_status()
     sections = sections_ta.validate_json(response.content)
-
-    openai = AsyncOpenAI()
-    logfire.instrument_openai(openai)
 
     async with database_connect(True) as pool:
         with logfire.span('create schema'):
@@ -129,12 +132,11 @@ async def build_search_db():
         sem = asyncio.Semaphore(10)
         async with create_task_group() as tg:
             for section in sections:
-                tg.start_soon(insert_doc_section, sem, openai, pool, section)
+                tg.start_soon(insert_doc_section, sem, pool, section)
 
 
 async def insert_doc_section(
     sem: asyncio.Semaphore,
-    openai: AsyncOpenAI,
     pool: asyncpg.Pool,
     section: DocsSection,
 ) -> None:
@@ -145,16 +147,21 @@ async def insert_doc_section(
             logfire.info('Skipping {url=}', url=url)
             return
 
+        # Get the content to embed
+        content = section.embedding_content()
+
+        # Chunk the content if it's large
+        # The JSON data already has sections, but we chunk them further if needed
+        chunks = chunker.chunk(content)
+
+        # For this example, we embed the first chunk if content was split
+        # In production, you might want to store multiple chunks per section
+        chunk_text = chunks[0].text if chunks else content
+
         with logfire.span('create embedding for {url=}', url=url):
-            embedding = await openai.embeddings.create(
-                input=section.embedding_content(),
-                model='text-embedding-3-small',
-            )
-        assert len(embedding.data) == 1, (
-            f'Expected 1 embedding, got {len(embedding.data)}, doc section: {section}'
-        )
-        embedding = embedding.data[0].embedding
-        embedding_json = pydantic_core.to_json(embedding).decode()
+            result = await embedder.embed_documents([chunk_text])
+
+        embedding_json = pydantic_core.to_json(result.embeddings[0]).decode()
         await pool.execute(
             'INSERT INTO doc_sections (url, title, content, embedding) VALUES ($1, $2, $3, $4)',
             url,
