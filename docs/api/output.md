@@ -1,3 +1,7 @@
+---
+title: Pydantic AI Structured Output Reference
+description: API documentation for processing LLM results. Explore how Pydantic AI validates structured outputs and handles streaming model responses.
+---
 # `pydantic_ai.output`
 
 ::: pydantic_ai.output

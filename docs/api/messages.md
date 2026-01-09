@@ -1,3 +1,7 @@
+---
+title: "pydantic_ai.messages: Documentation"
+description: "Explore the messages module in Pydantic AI. Detailed guide on message types, prompt construction, and internal data structures for LLM communication."
+---
 # `pydantic_ai.messages`
 
 The structure of [`ModelMessage`][pydantic_ai.messages.ModelMessage] can be shown as a graph:

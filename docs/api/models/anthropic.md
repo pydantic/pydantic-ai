@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI: Anthropic AI Model Reference"
+description: "Technical API reference for the AnthropicModel class. Configure Claude models with Pydantic AI for production-grade agent applications."
+---
 # `pydantic_ai.models.anthropic`
 
 ## Setup

@@ -1,3 +1,7 @@
+---
+title: "SQL Generation with Pydantic AI: Example"
+description: Practical example of using Pydantic AI to generate valid SQL queries. Includes schema validation and structured output for database interaction.
+---
 # SQL Generation
 
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.

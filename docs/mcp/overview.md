@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI: Model Context Protocol (MCP) Support"
+description: Integrate Pydantic AI with the Model Context Protocol (MCP). Connect your AI agents to external tools and data sources using the standardized MCP framework.
+---
 # Model Context Protocol (MCP)
 
 Pydantic AI supports [Model Context Protocol (MCP)](https://modelcontextprotocol.io) in multiple ways:

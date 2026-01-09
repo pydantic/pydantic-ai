@@ -1,3 +1,7 @@
+---
+title: Pydantic AI fasta2a Documentation
+description: "API reference for fasta2a, the high-performance implementation of the Agent2Agent protocol. Build scalable multi-agent systems with Pydantic AI."
+---
 # `fasta2a`
 
 ::: fasta2a
