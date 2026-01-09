@@ -369,7 +369,7 @@ def test_output_validator():
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
-    # NOTE: When changing these tests:
+    # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_streaming.py::TestPartialOutput` as well
 
@@ -450,6 +450,50 @@ class TestPartialOutput:
 
         assert result.output == Foo(a=42, b='FOO')
         assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
+
+    def test_output_function_structured_get_output(self):
+        """Test that output functions receive correct value for `partial_output` with sync run."""
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 21, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
+
+        agent = Agent(FunctionModel(return_model), output_type=ToolOutput(process_foo, name='my_output'))
+        result = agent.run_sync('test')
+
+        assert result.output == Foo(a=42, b='FOO')
+        assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
+
+    def test_output_function_structured_stream_output_only(self):
+        """Test that output functions receive correct value for `partial_output` with sync run."""
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool_name = info.output_tools[0].name
+            args_json = '{"a": 21, "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(tool_name, args_json)])
+
+        agent = Agent(FunctionModel(return_model), output_type=ToolOutput(process_foo, name='my_output'))
+        result = agent.run_sync('test')
+
+        assert result.output == Foo(a=42, b='FOO')
+        assert call_log == snapshot([(Foo(a=21, b='foo'), False)])
+
+    # NOTE: When changing tests in this class:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_streaming.py::TestPartialOutput` as well
 
 
 def test_plain_response_then_tuple():
@@ -2945,6 +2989,73 @@ def test_unknown_tool_fix():
     )
 
 
+def test_unknown_tool_multiple_retries():
+    num_retries = 2
+
+    def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
+
+    agent = Agent(FunctionModel(empty), retries=num_retries)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+            agent.run_sync('Hello')
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:empty:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='foobar',
+                        content="Unknown tool name: 'foobar'. No tools available.",
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=65, output_tokens=4),
+                model_name='function:empty:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='foobar',
+                        content="Unknown tool name: 'foobar'. No tools available.",
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=79, output_tokens=6),
+                model_name='function:empty:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 def test_tool_exceeds_token_limit_error():
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
@@ -3112,7 +3223,7 @@ class OutputType(BaseModel):
 class TestMultipleToolCalls:
     """Tests for scenarios where multiple tool calls are made in a single response."""
 
-    # NOTE: When changing these tests:
+    # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_streaming.py::TestMultipleToolCallsStreaming` as well
 
@@ -4253,6 +4364,10 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    # NOTE: When changing tests in this class:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_streaming.py::TestMultipleToolCallsStreaming` as well
 
 
 async def test_model_settings_override() -> None:
