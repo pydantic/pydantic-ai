@@ -52,15 +52,31 @@ def _sanitize_version(version: str) -> str:
     return re.sub(r'[^a-zA-Z0-9._-]', '_', version)
 
 
-async def _get_ui_html(version: str) -> bytes:
-    """Get UI HTML content from filesystem cache or fetch from CDN."""
+async def _get_ui_html(version: str, cdn_url_template: str | None = None) -> bytes:
+    """Get UI HTML content from filesystem cache or fetch from CDN.
+
+    Args:
+        version: The UI version to fetch.
+        cdn_url_template: Optional custom URL or file path for the chat UI.
+            Falls back to the default CDN if not provided.
+    """
+    cdn_url_template = cdn_url_template or CDN_URL_TEMPLATE
+
     cache_dir = _get_cache_dir()
     cache_file = cache_dir / f'{_sanitize_version(version)}.html'
 
     if cache_file.exists():
         return cache_file.read_bytes()
 
-    cdn_url = CDN_URL_TEMPLATE.format(version=version)
+    cdn_url = cdn_url_template.format(version=version)
+
+    # Support local file paths
+    if cdn_url.startswith(('/', '.', '~')) or (len(cdn_url) > 1 and cdn_url[1] == ':'):
+        local_path = Path(cdn_url).expanduser()
+        if local_path.is_file():
+            return local_path.read_bytes()
+        raise FileNotFoundError(f'Local UI file not found: {cdn_url}')
+
     async with httpx.AsyncClient() as client:
         response = await client.get(cdn_url)
         response.raise_for_status()
@@ -77,6 +93,7 @@ def create_web_app(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
+    custom_cdn_url: str | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -92,6 +109,8 @@ def create_web_app(
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
+        custom_cdn_url: Optional custom URL or file path for the chat UI.
+            Useful for enterprise environments behind proxies or with no internet access.
 
     Returns:
         A configured Starlette application ready to be served
@@ -114,7 +133,7 @@ def create_web_app(
         ui_version = version or DEFAULT_UI_VERSION
 
         try:
-            content = await _get_ui_html(ui_version)
+            content = await _get_ui_html(ui_version, custom_cdn_url)
         except httpx.HTTPStatusError as e:
             return HTMLResponse(
                 content=f'Failed to fetch UI version "{ui_version}": {e.response.status_code}',

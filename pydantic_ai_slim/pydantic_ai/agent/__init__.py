@@ -1618,6 +1618,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
+        custom_cdn_url: str | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -1644,6 +1645,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
+            custom_cdn_url: Optional custom URL or file path for the chat UI.
+                Useful for enterprise environments behind proxies or with no internet access.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -1673,6 +1676,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
+            custom_cdn_url=custom_cdn_url,
         )
 
     @asynccontextmanager

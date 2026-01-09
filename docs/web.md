@@ -101,3 +101,15 @@ The web UI app uses the following routes which should not be overwritten:
 - `/api/health` - Health check (GET)
 
 The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
+
+## Custom CDN or Local File Path
+
+You can provide a `custom_cdn_url` to serve the UI from a specific URL or local file path. This is useful for enterprise environments or offline usage.
+
+```python
+# Use a custom CDN
+app = agent.to_web(custom_cdn_url='https://cdn.example.com/ui/index.html')
+
+# Or use a local file path
+app = agent.to_web(custom_cdn_url='/path/to/local/ui.html')
+```

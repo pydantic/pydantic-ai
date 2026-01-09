@@ -399,6 +399,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         tools=['web_search'],
         instructions=None,
         default_model='openai:gpt-5',
+        custom_cdn_url=None,
     )
 
 
@@ -420,6 +421,7 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         tools=[],
         instructions=None,
         default_model='openai:gpt-5',
+        custom_cdn_url=None,
     )
 
 
@@ -456,6 +458,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         tools=[],
         instructions=None,
         default_model='openai:gpt-5',
+        custom_cdn_url=None,
     )
 
 
@@ -483,6 +486,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         tools=['web_search', 'code_execution'],
         instructions=None,
         default_model='openai:gpt-5',
+        custom_cdn_url=None,
     )
 
 
@@ -502,6 +506,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         tools=[],
         instructions='You are a helpful coding assistant',
         default_model='openai:gpt-5',
+        custom_cdn_url=None,
     )
 
 
@@ -527,6 +532,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         tools=[],
         instructions=None,
         default_model='openai:gpt-5',
+        custom_cdn_url=None,
     )
 
 
@@ -685,3 +691,23 @@ def test_run_web_command_cli_models_passed_to_create_web_app(
     call_kwargs = mock_create_app.call_args.kwargs
     # CLI models passed as list; agent model merging/deduplication happens in create_web_app
     assert call_kwargs.get('models') == ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+
+
+def test_clai_web_with_custom_cdn_url(mocker: MockerFixture, env: TestEnv):
+    """Test web command with --custom-cdn-url flag."""
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    custom_url = 'https://internal.company.com/pydantic-ai-ui/{version}/index.html'
+    assert cli(['web', '-m', 'openai:gpt-5', '--custom-cdn-url', custom_url], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5'],
+        tools=[],
+        instructions=None,
+        default_model='openai:gpt-5',
+        custom_cdn_url=custom_url,
+    )
