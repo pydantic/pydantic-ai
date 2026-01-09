@@ -6,9 +6,6 @@ This page provides detailed information about the most popular AI models support
 from pydantic_ai import Agent
 
 agent = Agent('anthropic:claude-opus-4-5')
-
-# or using Gateway
-agent = Agent('gateway/anthropic:claude-opus-4-5')
 ```
 
 All popular models can be used via the [Gateway](https://gateway.pydantic.dev).
