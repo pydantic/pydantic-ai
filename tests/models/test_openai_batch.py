@@ -35,10 +35,11 @@ from pydantic_ai.usage import RequestUsage
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
     from openai.types import Batch as OpenAIBatchResponse
     from openai.types.batch_request_counts import BatchRequestCounts
 
+    from pydantic_ai import ModelAPIError, ModelHTTPError
     from pydantic_ai.models.openai import OpenAIBatch, OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -820,3 +821,312 @@ class TestBatchErrorHandling:
         results = await model.batch_results(batch)
 
         assert results == []
+
+
+class TestBatchAPIErrorHandling:
+    """Tests for batch API error handling (APIStatusError and APIConnectionError)."""
+
+    @dataclass
+    class MockOpenAIWithAPIError:
+        """Mock OpenAI client that raises API errors."""
+
+        error_type: str = 'status'  # 'status' or 'connection'
+        error_on: str = 'batches.create'  # which method should error
+        base_url: str = 'https://api.openai.com/v1'
+
+        @property
+        def batches(self) -> Any:
+            return self._BatchesNamespace(self)
+
+        @property
+        def files(self) -> Any:
+            return self._FilesNamespace(self)
+
+        def _raise_error(self) -> None:
+            if self.error_type == 'status':
+                raise APIStatusError(
+                    message='Rate limit exceeded',
+                    response=MagicMock(status_code=429),
+                    body={'error': {'message': 'Rate limit exceeded'}},
+                )
+            else:
+                raise APIConnectionError(message='Connection failed', request=MagicMock())
+
+        @dataclass
+        class _BatchesNamespace:
+            parent: TestBatchAPIErrorHandling.MockOpenAIWithAPIError
+
+            async def create(self, **kwargs: Any) -> OpenAIBatchResponse:
+                if self.parent.error_on == 'batches.create':
+                    self.parent._raise_error()
+                return OpenAIBatchResponse(
+                    id='batch_abc123',
+                    completion_window='24h',
+                    created_at=1704067200,
+                    endpoint='/v1/chat/completions',
+                    input_file_id='file_xyz',
+                    object='batch',
+                    status='validating',
+                )
+
+            async def retrieve(self, batch_id: str) -> OpenAIBatchResponse:
+                if self.parent.error_on == 'batches.retrieve':
+                    self.parent._raise_error()
+                return OpenAIBatchResponse(
+                    id=batch_id,
+                    completion_window='24h',
+                    created_at=1704067200,
+                    endpoint='/v1/chat/completions',
+                    input_file_id='file_xyz',
+                    object='batch',
+                    status='completed',
+                )
+
+            async def cancel(self, batch_id: str) -> OpenAIBatchResponse:
+                if self.parent.error_on == 'batches.cancel':
+                    self.parent._raise_error()
+                return OpenAIBatchResponse(
+                    id=batch_id,
+                    completion_window='24h',
+                    created_at=1704067200,
+                    endpoint='/v1/chat/completions',
+                    input_file_id='file_xyz',
+                    object='batch',
+                    status='cancelling',
+                )
+
+        @dataclass
+        class _FilesNamespace:
+            parent: TestBatchAPIErrorHandling.MockOpenAIWithAPIError
+
+            async def create(self, **kwargs: Any) -> MagicMock:
+                if self.parent.error_on == 'files.create':
+                    self.parent._raise_error()
+                mock_file = MagicMock()
+                mock_file.id = 'file_uploaded_123'
+                return mock_file
+
+            async def content(self, file_id: str) -> MagicMock:
+                if self.parent.error_on == 'files.content':
+                    self.parent._raise_error()
+                mock_response = MagicMock()
+                mock_response.text = ''
+                return mock_response
+
+    async def test_batch_create_api_status_error(self, allow_model_requests: None):
+        """Test batch_create raises ModelHTTPError on APIStatusError."""
+        mock_client = self.MockOpenAIWithAPIError(error_type='status', error_on='files.create')
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        requests = [
+            ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+            ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+        ]
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.batch_create(requests)
+
+        assert exc_info.value.status_code == 429
+
+    async def test_batch_create_api_connection_error(self, allow_model_requests: None):
+        """Test batch_create raises ModelAPIError on APIConnectionError."""
+        mock_client = self.MockOpenAIWithAPIError(error_type='connection', error_on='files.create')
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        requests = [
+            ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+            ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+        ]
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.batch_create(requests)
+
+        assert 'Connection failed' in str(exc_info.value)
+
+    async def test_batch_status_api_status_error(self, allow_model_requests: None):
+        """Test batch_status raises ModelHTTPError on APIStatusError."""
+        mock_client = self.MockOpenAIWithAPIError(error_type='status', error_on='batches.retrieve')
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        batch = OpenAIBatch(
+            id='batch_123',
+            status=BatchStatus.IN_PROGRESS,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_file_id='file_input',
+        )
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.batch_status(batch)
+
+        assert exc_info.value.status_code == 429
+
+    async def test_batch_status_api_connection_error(self, allow_model_requests: None):
+        """Test batch_status raises ModelAPIError on APIConnectionError."""
+        mock_client = self.MockOpenAIWithAPIError(error_type='connection', error_on='batches.retrieve')
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        batch = OpenAIBatch(
+            id='batch_123',
+            status=BatchStatus.IN_PROGRESS,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_file_id='file_input',
+        )
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.batch_status(batch)
+
+        assert 'Connection failed' in str(exc_info.value)
+
+    async def test_batch_cancel_api_status_error(self, allow_model_requests: None):
+        """Test batch_cancel raises ModelHTTPError on APIStatusError."""
+        mock_client = self.MockOpenAIWithAPIError(error_type='status', error_on='batches.cancel')
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        batch = OpenAIBatch(
+            id='batch_123',
+            status=BatchStatus.IN_PROGRESS,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_file_id='file_input',
+        )
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.batch_cancel(batch)
+
+        assert exc_info.value.status_code == 429
+
+    async def test_batch_cancel_api_connection_error(self, allow_model_requests: None):
+        """Test batch_cancel raises ModelAPIError on APIConnectionError."""
+        mock_client = self.MockOpenAIWithAPIError(error_type='connection', error_on='batches.cancel')
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        batch = OpenAIBatch(
+            id='batch_123',
+            status=BatchStatus.IN_PROGRESS,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_file_id='file_input',
+        )
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.batch_cancel(batch)
+
+        assert 'Connection failed' in str(exc_info.value)
+
+    async def test_batch_results_api_status_error(self, allow_model_requests: None):
+        """Test batch_results raises ModelHTTPError on APIStatusError when fetching file."""
+        mock_client = self.MockOpenAIWithAPIError(error_type='status', error_on='files.content')
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        batch = OpenAIBatch(
+            id='batch_123',
+            status=BatchStatus.COMPLETED,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_file_id='file_input',
+            output_file_id='file_output',
+        )
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.batch_results(batch)
+
+        assert exc_info.value.status_code == 429
+
+    async def test_batch_results_api_connection_error(self, allow_model_requests: None):
+        """Test batch_results raises ModelAPIError on APIConnectionError when fetching file."""
+        mock_client = self.MockOpenAIWithAPIError(error_type='connection', error_on='files.content')
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        batch = OpenAIBatch(
+            id='batch_123',
+            status=BatchStatus.COMPLETED,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_file_id='file_input',
+            output_file_id='file_output',
+        )
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.batch_results(batch)
+
+        assert 'Connection failed' in str(exc_info.value)
+
+
+class TestBatchJSONParseErrorHandling:
+    """Tests for JSON parse error handling in batch results."""
+
+    async def test_batch_results_malformed_json(self, allow_model_requests: None):
+        """Test batch_results handles malformed JSON lines gracefully."""
+        # Mix of valid and invalid JSON
+        valid_line = json.dumps({
+            'id': 'resp_1',
+            'custom_id': 'req-1',
+            'response': {
+                'status_code': 200,
+                'body': {
+                    'id': 'chatcmpl-1',
+                    'object': 'chat.completion',
+                    'created': 1704067200,
+                    'model': 'gpt-4o-mini',
+                    'choices': [
+                        {
+                            'index': 0,
+                            'message': {'role': 'assistant', 'content': 'Success!'},
+                            'finish_reason': 'stop',
+                        }
+                    ],
+                },
+            },
+        })
+        invalid_line = 'this is not valid json {'
+        another_valid = json.dumps({
+            'id': 'resp_2',
+            'custom_id': 'req-2',
+            'response': {
+                'status_code': 200,
+                'body': {
+                    'id': 'chatcmpl-2',
+                    'object': 'chat.completion',
+                    'created': 1704067200,
+                    'model': 'gpt-4o-mini',
+                    'choices': [
+                        {
+                            'index': 0,
+                            'message': {'role': 'assistant', 'content': 'Also success!'},
+                            'finish_reason': 'stop',
+                        }
+                    ],
+                },
+            },
+        })
+
+        output_content = '\n'.join([valid_line, invalid_line, another_valid])
+
+        mock_client = MockOpenAIBatch()
+        mock_client.file_content_responses['file_output'] = output_content
+
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        batch = OpenAIBatch(
+            id='batch_123',
+            status=BatchStatus.COMPLETED,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_file_id='file_input',
+            output_file_id='file_output',
+        )
+
+        results = await model.batch_results(batch)
+
+        # Should have 3 results: 2 successful + 1 JSON parse error
+        assert len(results) == 3
+
+        # First result should be successful
+        assert results[0].custom_id == 'req-1'
+        assert results[0].is_successful is True
+
+        # Second result should be the JSON parse error
+        assert results[1].custom_id == 'parse_error_1'
+        assert results[1].is_successful is False
+        assert results[1].error is not None
+        assert results[1].error.code == 'json_parse_error'
+        assert 'Failed to parse result line' in results[1].error.message
+
+        # Third result should also be successful
+        assert results[2].custom_id == 'req-2'
+        assert results[2].is_successful is True
