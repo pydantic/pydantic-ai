@@ -42,6 +42,7 @@ with try_import() as cohere_imports_successful:
 
 with try_import() as voyageai_imports_successful:
     from pydantic_ai.embeddings.voyageai import LatestVoyageAIEmbeddingModelNames, VoyageAIEmbeddingModel
+    from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as sentence_transformers_imports_successful:
     from sentence_transformers import SentenceTransformer
@@ -330,9 +331,11 @@ class TestVoyageAI:
         assert isinstance(model, VoyageAIEmbeddingModel)
         assert model.model_name == 'voyage-3.5'
         assert model.system == 'voyageai'
+        assert model.base_url == 'https://api.voyageai.com/v1'
+        assert isinstance(model._provider, VoyageAIProvider)  # type: ignore[reportAttributeAccess]
 
     async def test_query(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-3.5', api_key=voyage_api_key)
+        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
@@ -340,6 +343,7 @@ class TestVoyageAI:
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
+                usage=RequestUsage(input_tokens=3),
                 model_name='voyage-3.5',
                 timestamp=IsDatetime(),
                 provider_name='voyageai',
@@ -347,7 +351,7 @@ class TestVoyageAI:
         )
 
     async def test_documents(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-3.5', api_key=voyage_api_key)
+        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
@@ -355,6 +359,7 @@ class TestVoyageAI:
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
                 inputs=['hello', 'world'],
                 input_type='document',
+                usage=RequestUsage(),
                 model_name='voyage-3.5',
                 timestamp=IsDatetime(),
                 provider_name='voyageai',
@@ -362,13 +367,13 @@ class TestVoyageAI:
         )
 
     async def test_max_input_tokens(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-3.5', api_key=voyage_api_key)
+        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(32000)
 
     async def test_embed_error(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('nonexistent', api_key=voyage_api_key)
+        model = VoyageAIEmbeddingModel('nonexistent', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         with pytest.raises(ModelAPIError, match='not supported'):
             await embedder.embed_query('Hello, world!')

@@ -12,8 +12,8 @@ interactions:
       input_type: document
       model: voyage-3.5
       output_dimension: null
-      output_dtype: float
-      truncation: true
+      output_dtype: null
+      truncation: false
     uri: https://api.voyageai.com/v1/embeddings
   response:
     headers:

@@ -5,10 +5,11 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
-from .base import EmbeddingModel
-from .result import EmbeddingResult, EmbedInputType
+from .base import EmbeddingModel, EmbedInputType
+from .result import EmbeddingResult
 from .settings import EmbeddingSettings
 
 try:
@@ -16,7 +17,8 @@ try:
     from voyageai.error import VoyageError
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `voyageai` to use the VoyageAI embeddings model, you can use — `pip install voyageai`'
+        'Please install `voyageai` to use the VoyageAI embeddings model, '
+        'you can use the `voyageai` optional group — `pip install "pydantic-ai-slim[voyageai]"`'
     ) from _import_error
 
 LatestVoyageAIEmbeddingModelNames = Literal[
@@ -50,17 +52,7 @@ class VoyageAIEmbeddingSettings(EmbeddingSettings, total=False):
     voyageai_truncation: bool
     """Whether to truncate inputs that exceed the model's context length.
 
-    Defaults to True. If False, an error is raised for inputs that are too long.
-    """
-
-    voyageai_output_dtype: Literal['float', 'int8', 'uint8', 'binary', 'ubinary']
-    """The output data type for embeddings.
-
-    - `'float'` (default): 32-bit floats
-    - `'int8'`: Signed 8-bit integers (quantized)
-    - `'uint8'`: Unsigned 8-bit integers (quantized)
-    - `'binary'`: Binary embeddings
-    - `'ubinary'`: Unsigned binary embeddings
+    Defaults to False. If True, inputs that are too long will be truncated.
     """
 
 
@@ -91,15 +83,13 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
     """
 
     _model_name: VoyageAIEmbeddingModelName = field(repr=False)
-    _client: AsyncClient = field(repr=False)
+    _provider: Provider[AsyncClient] = field(repr=False)
 
     def __init__(
         self,
         model_name: VoyageAIEmbeddingModelName,
         *,
-        api_key: str | None = None,
-        max_retries: int = 0,
-        timeout: int | None = None,
+        provider: Literal['voyageai'] | Provider[AsyncClient] = 'voyageai',
         settings: EmbeddingSettings | None = None,
     ):
         """Initialize a VoyageAI embedding model.
@@ -108,21 +98,26 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
             model_name: The name of the VoyageAI model to use.
                 See [VoyageAI models](https://docs.voyageai.com/docs/embeddings)
                 for available options.
-            api_key: The VoyageAI API key. If not provided, uses the
-                `VOYAGE_API_KEY` environment variable.
-            max_retries: Maximum number of retries for failed requests.
-            timeout: Request timeout in seconds.
+            provider: The provider to use for authentication and API access. Can be:
+
+                - `'voyageai'` (default): Uses the standard VoyageAI API
+                - A [`VoyageAIProvider`][pydantic_ai.providers.voyageai.VoyageAIProvider] instance
+                  for custom configuration
             settings: Model-specific [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings]
                 to use as defaults for this model.
         """
         self._model_name = model_name
-        self._client = AsyncClient(
-            api_key=api_key,
-            max_retries=max_retries,
-            timeout=timeout,
-        )
+
+        if isinstance(provider, str):
+            provider = infer_provider(provider)
+        self._provider = provider
 
         super().__init__(settings=settings)
+
+    @property
+    def base_url(self) -> str:
+        """The base URL for the provider API."""
+        return self._provider.base_url
 
     @property
     def model_name(self) -> VoyageAIEmbeddingModelName:
@@ -132,7 +127,7 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
     @property
     def system(self) -> str:
         """The embedding model provider."""
-        return 'voyageai'
+        return self._provider.name
 
     async def embed(
         self,
@@ -147,12 +142,11 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
         voyageai_input_type = 'document' if input_type == 'document' else 'query'
 
         try:
-            response = await self._client.embed(
+            response = await self._provider.client.embed(
                 texts=list(inputs),
                 model=self.model_name,
                 input_type=voyageai_input_type,
-                truncation=settings.get('voyageai_truncation', True),
-                output_dtype=settings.get('voyageai_output_dtype', 'float'),
+                truncation=settings.get('voyageai_truncation', False),
                 output_dimension=settings.get('dimensions'),
             )
         except VoyageError as e:
@@ -162,7 +156,7 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
             embeddings=response.embeddings,
             inputs=inputs,
             input_type=input_type,
-            usage=_map_usage(response.total_tokens, self.model_name),
+            usage=_map_usage(response.total_tokens),
             model_name=self.model_name,
             provider_name=self.system,
         )
@@ -171,14 +165,5 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(self.model_name)
 
 
-def _map_usage(total_tokens: int, model: str) -> RequestUsage:
-    usage_data = {'total_tokens': total_tokens}
-    response_data = {'model': model, 'usage': usage_data}
-
-    return RequestUsage.extract(
-        response_data,
-        provider='voyageai',
-        provider_url='https://api.voyageai.com',
-        provider_fallback='voyageai',
-        api_flavor='embeddings',
-    )
+def _map_usage(total_tokens: int) -> RequestUsage:
+    return RequestUsage(input_tokens=total_tokens)

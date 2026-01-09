@@ -88,10 +88,6 @@ def infer_embedding_model(
         from .sentence_transformers import SentenceTransformerEmbeddingModel
 
         return SentenceTransformerEmbeddingModel(model_name)
-    elif model_kind == 'voyageai':
-        from .voyageai import VoyageAIEmbeddingModel
-
-        return VoyageAIEmbeddingModel(model_name)
 
     # For provider-based models, infer the provider
     provider = provider_factory(provider_name)
@@ -110,6 +106,10 @@ def infer_embedding_model(
         from .cohere import CohereEmbeddingModel
 
         return CohereEmbeddingModel(model_name, provider=provider)
+    elif model_kind == 'voyageai':
+        from .voyageai import VoyageAIEmbeddingModel
+
+        return VoyageAIEmbeddingModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown embeddings model: {model}')  # pragma: no cover
 
