@@ -8,14 +8,51 @@ indicate dead code that should be removed.
 Usage:
     python scripts/check_cassettes.py [--verbose]
 """
+
 from __future__ import annotations
 
-import re
-import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
 
-from pytest_recording.plugin import get_default_cassette_name
+import pytest
+
+
+def _remove_yaml_ext(s: str) -> str:
+    """Remove .yaml extension if present."""
+    if s.endswith('.yaml'):
+        return s[:-5]
+    return s
+
+
+class _CollectCassettes:
+    """Pytest plugin to collect cassette names from VCR-marked tests."""
+
+    def __init__(self) -> None:
+        self.tests: dict[str, set[str]] = defaultdict(set)
+
+    def pytest_collection_modifyitems(
+        self, session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
+    ) -> None:
+        from pytest_recording.plugin import get_default_cassette_name
+
+        for item in items:
+            if not any(item.iter_markers('vcr')):
+                continue
+
+            test_file_stem = Path(item.location[0]).stem
+
+            m = item.get_closest_marker('default_cassette')
+            if m and m.args:
+                self.tests[test_file_stem].add(_remove_yaml_ext(m.args[0]))
+            else:
+                self.tests[test_file_stem].add(
+                    _remove_yaml_ext(get_default_cassette_name(getattr(item, 'cls', None), item.name))
+                )
+
+            for vm in item.iter_markers('vcr'):
+                for arg in vm.args:
+                    self.tests[test_file_stem].add(_remove_yaml_ext(arg))
 
 
 def get_all_cassettes() -> dict[str, set[str]]:
@@ -27,42 +64,20 @@ def get_all_cassettes() -> dict[str, set[str]]:
             continue
         for subdir in cassette_dir.iterdir():
             if subdir.is_dir():
-                test_stem = subdir.name  # e.g., 'test_bedrock'
+                test_stem = subdir.name
                 cassette_names = {f.stem for f in subdir.glob('*.yaml')}
-                if test_stem in cassettes:
-                    cassettes[test_stem].update(cassette_names)
-                else:
-                    cassettes[test_stem] = cassette_names
+                cassettes.setdefault(test_stem, set()).update(cassette_names)
 
     return cassettes
 
 
 def get_all_tests() -> dict[str, set[str]]:
-    """Use pytest --collect-only to get all VCR-marked tests and compute expected cassette names."""
-    result = subprocess.run(
-        ['uv', 'run', 'pytest', '--collect-only', '-q', '-m', 'vcr', 'tests/'],
-        capture_output=True,
-        text=True,
-    )
-
-    tests: dict[str, set[str]] = {}
-    for line in result.stdout.splitlines():
-        # Parse lines like: tests/models/test_bedrock.py::test_name[param]
-        # or: tests/models/test_bedrock.py::TestClass::test_method[param]
-        match = re.match(r'tests/.*/?(test_\w+)\.py::(.+)', line)
-        if match:
-            test_file, test_name = match.groups()
-            # Extract class name if present (TestClass::test_method[param])
-            if '::' in test_name:
-                class_name, method_name = test_name.split('::', 1)
-                # Create a mock class for get_default_cassette_name
-                class_obj = type(class_name, (), {})
-                cassette_name = get_default_cassette_name(class_obj, method_name)
-            else:
-                cassette_name = get_default_cassette_name(None, test_name)
-            tests.setdefault(test_file, set()).add(cassette_name)
-
-    return tests
+    """Use pytest collection to get all VCR-marked tests and their cassette names."""
+    collector = _CollectCassettes()
+    rc = pytest.main(['--collect-only', '-q', 'tests/'], plugins=[collector])
+    if rc not in (pytest.ExitCode.OK, pytest.ExitCode.NO_TESTS_COLLECTED):
+        raise SystemExit(rc)
+    return dict(collector.tests)
 
 
 def main() -> int:
