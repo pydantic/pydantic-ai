@@ -918,9 +918,11 @@ class TestBatchAPIErrorHandling:
         mock_client = self.MockOpenAIWithAPIError(error_type='status', error_on='files.create')
         model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
 
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
         requests = [
-            ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
-            ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ('req-1', messages_1, ModelRequestParameters()),
+            ('req-2', messages_2, ModelRequestParameters()),
         ]
 
         with pytest.raises(ModelHTTPError) as exc_info:
@@ -933,9 +935,11 @@ class TestBatchAPIErrorHandling:
         mock_client = self.MockOpenAIWithAPIError(error_type='connection', error_on='files.create')
         model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
 
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
         requests = [
-            ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
-            ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ('req-1', messages_1, ModelRequestParameters()),
+            ('req-2', messages_2, ModelRequestParameters()),
         ]
 
         with pytest.raises(ModelAPIError) as exc_info:
