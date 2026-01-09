@@ -796,7 +796,7 @@ Fix the errors and try again.\
                         'gen_ai.input.messages': [
                             {'role': 'system', 'parts': [{'type': 'text', 'content': 'system_prompt'}]},
                             {
-                                'role': 'tool',
+                                'role': 'user',
                                 'parts': [
                                     {'type': 'text', 'content': 'user_prompt'},
                                     {
@@ -1018,7 +1018,7 @@ def test_messages_to_otel_events_serialization_errors():
                 'parts': [{'type': 'tool_call', 'id': 'tool_call_id', 'name': 'tool', 'arguments': {'arg': 'Foo()'}}],
             },
             {
-                'role': 'tool',
+                'role': 'user',
                 'parts': [
                     {
                         'type': 'tool_call_response',
@@ -1410,8 +1410,8 @@ def test_messages_without_content(document_content: BinaryContent):
                     {'type': 'tool_call', 'id': IsStr(), 'name': 'my_tool'},
                 ],
             },
-            {'role': 'tool', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
-            {'role': 'tool', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
+            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
+            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'binary', 'media_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'assistant', 'parts': [{'type': 'binary', 'media_type': 'application/pdf'}]},

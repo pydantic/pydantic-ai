@@ -51,7 +51,7 @@ class ThinkingPart(TypedDict):
 MessagePart: TypeAlias = 'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | BinaryDataPart | ThinkingPart'
 
 
-Role = Literal['system', 'user', 'assistant', 'tool']
+Role = Literal['system', 'user', 'assistant']
 
 
 class ChatMessage(TypedDict):

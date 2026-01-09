@@ -229,15 +229,9 @@ class InstrumentationSettings:
                         if hasattr(part, 'otel_message_parts'):
                             message_parts.extend(part.otel_message_parts(self))
 
-                    has_tool_response = any(p.get('type') == 'tool_call_response' for p in message_parts)
-                    if has_tool_response:
-                        role: _otel_messages.Role = 'tool'
-                    elif is_system:
-                        role = 'system'
-                    else:
-                        role = 'user'
-
-                    result.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
+                    result.append(
+                        _otel_messages.ChatMessage(role='system' if is_system else 'user', parts=message_parts)
+                    )
             elif isinstance(message, ModelResponse):  # pragma: no branch
                 otel_message = _otel_messages.OutputMessage(role='assistant', parts=message.otel_message_parts(self))
                 if message.finish_reason is not None:
@@ -279,9 +273,9 @@ class InstrumentationSettings:
             instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
             system_instructions_attributes: dict[str, str] = {}
             if instructions and self.include_content:
-                system_instructions_attributes['gen_ai.system_instructions'] = json.dumps([
-                    _otel_messages.TextPart(type='text', content=instructions)
-                ])
+                system_instructions_attributes['gen_ai.system_instructions'] = json.dumps(
+                    [_otel_messages.TextPart(type='text', content=instructions)]
+                )
 
             attributes: dict[str, AttributeValue] = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
@@ -354,7 +348,7 @@ GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
 
 
-def _build_tool_definitions(model_request_parameters: 'ModelRequestParameters') -> list[dict[str, Any]]:
+def _build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
     """Build OTel-compliant tool definitions from model request parameters.
 
     Extracts tool metadata from function_tools and output_tools into a list of
