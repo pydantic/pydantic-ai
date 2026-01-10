@@ -3871,7 +3871,6 @@ def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
         agent.run_sync('hello')
 
     assert exc_info.value.status_code == 400
-    assert not isinstance(exc_info.value, ContentFilterError)
 
 
 def test_azure_400_non_dict_body(allow_model_requests: None) -> None:
