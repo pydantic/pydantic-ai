@@ -452,15 +452,24 @@ def bedrock_provider():
 
         from pydantic_ai.providers.bedrock import BedrockProvider
 
-        bedrock_client = boto3.client(
-            'bedrock-runtime',
-            region_name=os.getenv('AWS_REGION', 'us-east-1'),
-            aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
-            aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
-            aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
-        )
-        yield BedrockProvider(bedrock_client=bedrock_client)
-        bedrock_client.close()
+        bearer_token = os.getenv('AWS_BEARER_TOKEN_BEDROCK')
+        if bearer_token:  # pragma: no cover
+            provider = BedrockProvider(
+                api_key=bearer_token,
+                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+            )
+            yield provider
+            provider.client.close()
+        else:
+            bedrock_client = boto3.client(
+                'bedrock-runtime',
+                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
+                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+                aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+            )
+            yield BedrockProvider(bedrock_client=bedrock_client)
+            bedrock_client.close()
     except ImportError:  # pragma: lax no cover
         pytest.skip('boto3 is not installed')
 

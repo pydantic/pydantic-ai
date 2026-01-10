@@ -20,6 +20,12 @@ from ._run_context import TemporalRunContext
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
+class GetToolsParams:
+    serialized_run_context: Any
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
 class CallToolParams:
     name: str
     tool_args: dict[str, Any]
