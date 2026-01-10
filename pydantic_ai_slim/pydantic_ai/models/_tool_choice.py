@@ -43,7 +43,7 @@ def resolve_tool_choice(  # noqa: C901
         - `ToolsPlusOutput`: Combines specified function tools with all output tools.
           Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
     """
-    tool_choice = (model_settings or {}).get('tool_choice')
+    function_tool_choice = (model_settings or {}).get('tool_choice')
 
     allow_direct_output = model_request_parameters.allow_text_output or model_request_parameters.allow_image_output
 
@@ -58,11 +58,11 @@ def resolve_tool_choice(  # noqa: C901
             raise UserError(f'Invalid tool names in `tool_choice`: {invalid}. {available_label}: {available or "none"}')
 
     # Default / auto
-    if tool_choice in (None, 'auto'):
+    if function_tool_choice in (None, 'auto'):
         return 'auto' if allow_direct_output else 'required'
 
     # none / []: disable function tools, but output tools may still exist
-    elif tool_choice in ('none', []):
+    elif function_tool_choice in ('none', []):
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
 
         if output_tool_names:
@@ -88,7 +88,7 @@ def resolve_tool_choice(  # noqa: C901
         assert False, 'Either output_tools or allow_text_output/allow_image_output must be set'
 
     # required (only function tools allowed)
-    elif tool_choice == 'required':
+    elif function_tool_choice == 'required':
         if not model_request_parameters.function_tools:
             raise UserError(
                 '`tool_choice` was set to "required", but no function tools are defined. '
@@ -97,11 +97,11 @@ def resolve_tool_choice(  # noqa: C901
         return 'required'
 
     # list[str]: required, restricted to these tools
-    elif isinstance(tool_choice, list):
+    elif isinstance(function_tool_choice, list):
         # dict.fromkeys keeps the order while removing duplicates
         # set() doesn't preserve order
         # and we need both the list (for the return value) and the set (for validation)
-        chosen = list(dict.fromkeys(tool_choice))
+        chosen = list(dict.fromkeys(function_tool_choice))
         chosen_set = set(chosen)
         _invalid_tool_names(chosen_set, tool_names, available_label='Available tools')
 
@@ -111,18 +111,18 @@ def resolve_tool_choice(  # noqa: C901
         return ('required', chosen)
 
     # ToolsPlusOutput: specific function tools + all output tools or direct text/image output
-    elif isinstance(tool_choice, ToolOrOutput):
+    elif isinstance(function_tool_choice, ToolOrOutput):
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
 
         # stable order, unique
-        if not tool_choice.function_tools:
+        if not function_tool_choice.function_tools:
             if output_tool_names:
                 _warn('ToolsPlusOutput with empty function_tools - using output tools only')
                 return 'auto' if allow_direct_output else 'required'
             _warn("ToolsPlusOutput with empty function_tools - defaulting to 'none'")
             return 'none'
 
-        chosen_function = list(dict.fromkeys(tool_choice.function_tools))
+        chosen_function = list(dict.fromkeys(function_tool_choice.function_tools))
         chosen_function_set = set(chosen_function)
         all_function_tool_names = {t.name for t in model_request_parameters.function_tools}
 
@@ -140,4 +140,4 @@ def resolve_tool_choice(  # noqa: C901
         mode: _AutoOrRequired = 'auto' if allow_direct_output else 'required'
         return (mode, allowed_tools)
     else:
-        assert_never(tool_choice)
+        assert_never(function_tool_choice)
