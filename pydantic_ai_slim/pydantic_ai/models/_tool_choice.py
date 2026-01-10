@@ -66,8 +66,6 @@ def resolve_tool_choice(  # noqa: C901
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
 
         if output_tool_names:
-            # If direct output is allowed, output-tools-only behaves like "auto";
-            # otherwise if function tools exist, enforce "required" to avoid silent dead-ends.
             if allow_direct_output:
                 mode: _AutoOrRequired = 'auto'
             elif model_request_parameters.function_tools:
