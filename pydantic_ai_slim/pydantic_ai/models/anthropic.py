@@ -689,18 +689,15 @@ class AnthropicModel(Model):
             tool_choice = {'type': 'none'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            if tool_choice_mode == 'auto':
-                # Breaks caching, but Anthropic doesn't support limiting tools via API arg
-                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = {'type': 'auto'}
-            elif len(tool_names) == 1:
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
                 _raise_incompatible_thinking_and_tool_forcing(thinking_enabled)
                 tool_choice = {'type': 'tool', 'name': tool_names[0]}
             else:
-                _raise_incompatible_thinking_and_tool_forcing(thinking_enabled)
+                if tool_choice_mode == 'required':
+                    _raise_incompatible_thinking_and_tool_forcing(thinking_enabled)
                 # Breaks caching, but Anthropic doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = {'type': 'any'}
+                tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' else {'type': 'any'}
         else:
             assert_never(resolved_tool_choice)
 

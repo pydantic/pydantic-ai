@@ -391,11 +391,7 @@ class GroqModel(Model):
             tool_choice = 'none'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            if tool_choice_mode == 'auto':
-                # Breaks caching, but Groq doesn't support limiting tools via API arg
-                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = 'auto'
-            elif len(tool_names) == 1:
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
                 tool_choice = ChatCompletionNamedToolChoiceParam(
                     type='function',
                     function={'name': tool_names[0]},
@@ -403,7 +399,7 @@ class GroqModel(Model):
             else:
                 # Breaks caching, but Groq doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = 'required'
+                tool_choice = tool_choice_mode
         else:
             assert_never(resolved_tool_choice)
 
