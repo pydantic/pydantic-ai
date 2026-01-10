@@ -390,15 +390,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     response_object = builtin_return.model_response_object()
                     # These `is_error`/`error_text` fields are only present when the BuiltinToolReturnPart
                     # was parsed from an incoming VercelAI request. We can't detect errors for other sources
-                    # until BuiltinToolReturnPart has standardized error fields (see https://github.com/pydantic/pydantic-ai/issues/3561).
-                    is_error = response_object.get('is_error') is True and 'error_text' in response_object
-                    if is_error:
+                    # until BuiltinToolReturnPart has standardized error fields (see https://github.com/pydantic/pydantic-ai/issues/3561).3
+                    if response_object.get('is_error') is True and (
+                        (error_text := response_object.get('error_text')) is not None
+                    ):
                         ui_parts.append(
                             ToolOutputErrorPart(
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
                                 input=part.args_as_json_str(),
-                                error_text=response_object.get('error_text', ''),
+                                error_text=error_text,
                                 state='output-error',
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
