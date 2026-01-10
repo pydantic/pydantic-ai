@@ -47,17 +47,15 @@ class BedrockModelProfile(ModelProfile):
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
-    profile = amazon_model_profile(model_name)
-    assert profile is not None
-    profile.supported_builtin_tools = frozenset()
+    profile = _without_builtin_tools(amazon_model_profile(model_name))
     if 'nova' in model_name:
         profile = BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_prompt_caching=True,
         ).update(profile)
 
-        if 'nova-2' in model_name:
-            profile.supported_builtin_tools = frozenset({CodeExecutionTool})
+    if 'nova-2' in model_name:
+        profile.supported_builtin_tools = frozenset({CodeExecutionTool})
 
     return profile
 

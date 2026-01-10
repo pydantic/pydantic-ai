@@ -117,6 +117,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(amazon_profile, BedrockModelProfile)
     assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert amazon_profile.bedrock_supports_tool_choice is True
+    assert amazon_profile.bedrock_supports_prompt_caching is True
     assert amazon_profile.supported_builtin_tools == frozenset()
 
     amazon_profile = provider.model_profile('us.amazon.nova-2-lite-v1:0')
@@ -124,6 +125,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(amazon_profile, BedrockModelProfile)
     assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert amazon_profile.bedrock_supports_tool_choice is True
+    assert amazon_profile.bedrock_supports_prompt_caching is True
     assert amazon_profile.supported_builtin_tools == frozenset({CodeExecutionTool})
 
     amazon_profile = provider.model_profile('us.amazon.titan-text-express-v1:0')

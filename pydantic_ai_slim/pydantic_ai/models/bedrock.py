@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
-from typing_extensions import ParamSpec, TypedDict, assert_never
+from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import (
     AudioUrl,
@@ -163,18 +163,6 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
-
-
-class _BedrockBuiltinTool(TypedDict):
-    name: str
-    result_type: str
-
-
-_BUILTIN_TOOL_TO_BEDROCK: dict[str, _BedrockBuiltinTool] = {
-    CodeExecutionTool.kind: {'name': 'nova_code_interpreter', 'result_type': 'nova_code_interpreter_result'}
-}
-_BEDROCK_TO_BUILTIN: dict[str, str] = {bbt['name']: kind for kind, bbt in _BUILTIN_TOOL_TO_BEDROCK.items()}
-_RESULT_TYPE_TO_BUILTIN_TOOL = {bbt['result_type']: kind for kind, bbt in _BUILTIN_TOOL_TO_BEDROCK.items()}
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -421,14 +409,15 @@ class BedrockConverseModel(Model):
                     items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
-                        items.append(
-                            BuiltinToolCallPart(
-                                provider_name=self.system,
-                                tool_name=_BEDROCK_TO_BUILTIN[tool_use['name']],
-                                args=tool_use['input'],
-                                tool_call_id=tool_use['toolUseId'],
+                        if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
+                            items.append(
+                                BuiltinToolCallPart(
+                                    provider_name=self.system,
+                                    tool_name=CodeExecutionTool.kind,
+                                    args=tool_use['input'],
+                                    tool_call_id=tool_use['toolUseId'],
+                                )
                             )
-                        )
                     else:
                         items.append(
                             ToolCallPart(
@@ -438,15 +427,16 @@ class BedrockConverseModel(Model):
                             ),
                         )
                 elif tool_result := item.get('toolResult'):
-                    items.append(
-                        BuiltinToolReturnPart(
-                            provider_name=self.system,
-                            tool_name=_RESULT_TYPE_TO_BUILTIN_TOOL[tool_result.get('type', '')],
-                            content=tool_result.get('content'),
-                            tool_call_id=tool_result.get('toolUseId'),
-                            provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
+                    if tool_result.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                        items.append(
+                            BuiltinToolReturnPart(
+                                provider_name=self.system,
+                                tool_name=CodeExecutionTool.kind,
+                                content=tool_result.get('content'),
+                                tool_call_id=tool_result.get('toolUseId'),
+                                provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
+                            )
                         )
-                    )
 
         input_tokens = response['usage']['inputTokens']
         output_tokens = response['usage']['outputTokens']
@@ -577,8 +567,8 @@ class BedrockConverseModel(Model):
     ) -> ToolConfigurationTypeDef | None:
         tools = self._get_tools(model_request_parameters)
         for tool in model_request_parameters.builtin_tools:
-            if bedrock_tool := _BUILTIN_TOOL_TO_BEDROCK.get(tool.kind):
-                tools.append({'systemTool': {'name': bedrock_tool['name']}})
+            if tool.kind == CodeExecutionTool.kind:
+                tools.append({'systemTool': {'name': 'nova_code_interpreter'}})
             else:
                 raise NotImplementedError(
                     f"Builtin tool '{tool.kind}' is not supported yet. If it should be, please file an issue."
@@ -699,23 +689,25 @@ class BedrockConverseModel(Model):
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
                     elif isinstance(item, BuiltinToolCallPart):
                         if item.provider_name == self.system:
-                            server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
-                                'toolUseId': _utils.guard_tool_call_id(t=item),
-                                'name': _BUILTIN_TOOL_TO_BEDROCK[item.tool_name]['name'],
-                                'input': item.args_as_dict(),
-                                'type': 'server_tool_use',
-                            }
-                            content.append({'toolUse': server_tool_use_block_param})
+                            if item.tool_name == CodeExecutionTool.kind:
+                                server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
+                                    'toolUseId': _utils.guard_tool_call_id(t=item),
+                                    'name': 'nova_code_interpreter',
+                                    'input': item.args_as_dict(),
+                                    'type': 'server_tool_use',
+                                }
+                                content.append({'toolUse': server_tool_use_block_param})
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system:
-                            tool_result: ToolResultBlockOutputTypeDef = {
-                                'toolUseId': _utils.guard_tool_call_id(t=item),
-                                'content': item.content,
-                                'type': _BUILTIN_TOOL_TO_BEDROCK[item.tool_name]['result_type'],
-                            }
-                            if item.provider_details and 'status' in item.provider_details:
-                                tool_result['status'] = item.provider_details['status']
-                            content.append({'toolResult': tool_result})
+                            if item.tool_name == CodeExecutionTool.kind:
+                                tool_result: ToolResultBlockOutputTypeDef = {
+                                    'toolUseId': _utils.guard_tool_call_id(t=item),
+                                    'content': item.content,
+                                    'type': 'nova_code_interpreter_result',
+                                }
+                                if item.provider_details and 'status' in item.provider_details:
+                                    tool_result['status'] = item.provider_details['status']
+                                content.append({'toolResult': tool_result})
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
@@ -1004,12 +996,13 @@ class BedrockStreamedResponse(StreamedResponse):
                         tool_ids[index] = tool_id
                         tool_name = tool_use_start['name']
                         if tool_use_start.get('type') == 'server_tool_use':
-                            part = BuiltinToolCallPart(
-                                tool_name=_BEDROCK_TO_BUILTIN[tool_name],
-                                tool_call_id=tool_id,
-                                provider_name=self.provider_name,
-                            )
-                            yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
+                            if tool_name == 'nova_code_interpreter':  # pragma: no branch
+                                part = BuiltinToolCallPart(
+                                    tool_name=CodeExecutionTool.kind,
+                                    tool_call_id=tool_id,
+                                    provider_name=self.provider_name,
+                                )
+                                yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
                         elif maybe_event := self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=index,
                             tool_name=tool_name,
@@ -1021,19 +1014,19 @@ class BedrockStreamedResponse(StreamedResponse):
                         tool_result_start = start['toolResult']
                         tool_id = tool_result_start['toolUseId']
 
-                        return_part = BuiltinToolReturnPart(
-                            provider_name=self.provider_name,
-                            tool_name=_RESULT_TYPE_TO_BUILTIN_TOOL[tool_result_start.get('type', '')],
-                            content=[],
-                            tool_call_id=tool_id,
-                            provider_details={'status': tool_result_start['status']}
-                            if 'status' in tool_result_start
-                            else {},
-                        )
-                        builtin_tool_returns[index] = return_part
+                        if tool_result_start.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                            return_part = BuiltinToolReturnPart(
+                                provider_name=self.provider_name,
+                                tool_name=CodeExecutionTool.kind,
+                                content=[],
+                                tool_call_id=tool_id,
+                                provider_details={'status': tool_result_start['status']}
+                                if 'status' in tool_result_start
+                                else {},
+                            )
+                            builtin_tool_returns[index] = return_part
+                            # Don't yield anything yet - we wait for content block end
 
-                        # Don't emit/yield the event until block is complete.
-                        self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
                 case {'contentBlockDelta': content_block_delta}:
                     index = content_block_delta['contentBlockIndex']
                     delta = content_block_delta['delta']
@@ -1064,16 +1057,15 @@ class BedrockStreamedResponse(StreamedResponse):
                             vendor_part_id=index,
                             tool_name=tool_use.get('name'),
                             args=tool_use.get('input'),
-                            tool_call_id=tool_ids.get(index),
+                            tool_call_id=tool_ids[index],
                         )
                         if maybe_event:  # pragma: no branch
                             yield maybe_event
                     if 'toolResult' in delta:  # pragma: no branch
                         if return_part := builtin_tool_returns.get(index):  # pragma: no branch
                             return_part.content.extend(delta['toolResult'])
+                            # Don't yield anything yet - we wait for content block end
 
-                            # Update state without emitting; we only emit once on contentBlockStop.
-                            self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
                 case {'contentBlockStop': content_block_stop}:
                     index = content_block_stop['contentBlockIndex']
                     if return_part := builtin_tool_returns.get(index):
