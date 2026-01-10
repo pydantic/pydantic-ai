@@ -207,7 +207,12 @@ def test_handle_tool_call_deltas():
     )
 
     event = manager.handle_tool_call_delta(
-        vendor_part_id='first', tool_name='1', args=None, tool_call_id=None, provider_details={'baz': 'qux'}
+        vendor_part_id='first',
+        tool_name='1',
+        args=None,
+        tool_call_id=None,
+        provider_name='updated_provider',
+        provider_details={'baz': 'qux'},
     )
     assert event == snapshot(
         PartDeltaEvent(
@@ -217,6 +222,7 @@ def test_handle_tool_call_deltas():
                 args_delta=None,
                 tool_call_id='call',
                 part_delta_kind='tool_call',
+                provider_name='updated_provider',
                 provider_details={'baz': 'qux'},
             ),
             event_kind='part_delta',
@@ -229,7 +235,7 @@ def test_handle_tool_call_deltas():
                 args='{"arg1":',
                 tool_call_id='call',
                 part_kind='tool-call',
-                provider_name='test_provider',
+                provider_name='updated_provider',
                 provider_details={'foo': 'bar', 'baz': 'qux'},
             ),
         ]
@@ -251,7 +257,7 @@ def test_handle_tool_call_deltas():
                 tool_name='tool1',
                 args='{"arg1":"value1"}',
                 tool_call_id='call',
-                provider_name='test_provider',
+                provider_name='updated_provider',
                 provider_details={'foo': 'bar', 'baz': 'qux'},
                 part_kind='tool-call',
             )
