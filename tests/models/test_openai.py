@@ -3607,6 +3607,27 @@ async def test_responses_count_tokens_with_tools(allow_model_requests: None) -> 
     assert result.input_tokens == 25
 
 
+async def test_responses_count_tokens_tool_choice_auto(allow_model_requests: None) -> None:
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(input_tokens_response={'object': 'response.input_tokens', 'input_tokens': 20}),
+    )
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a location',
+        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
+    )
+    result = await model.count_tokens(
+        [ModelRequest.user_text_prompt('What is the weather?')],
+        None,
+        ModelRequestParameters(function_tools=[tool_def], allow_text_output=True),
+    )
+
+    assert result.input_tokens == 20
+
+
 async def test_responses_count_tokens_with_native_output(allow_model_requests: None) -> None:
     from pydantic_ai._output import OutputObjectDefinition
 
