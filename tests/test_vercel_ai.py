@@ -3197,13 +3197,14 @@ async def test_adapter_dump_messages_with_cache_point():
     )
 
 
-async def test_adapter_dump_messages_text_with_provider_details():
-    """Test dumping TextPart with provider_name and provider_details preserves metadata."""
-    messages = [
+async def test_adapter_text_part_with_provider_metadata():
+    """Test TextPart with provider_name and provider_details preserves metadata and roundtrips."""
+    messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
                 TextPart(
                     content='Hello with metadata',
+                    id='text_123',
                     provider_name='openai',
                     provider_details={'model': 'gpt-4', 'finish_reason': 'stop'},
                 ),
@@ -3227,6 +3228,7 @@ async def test_adapter_dump_messages_text_with_provider_details():
                         'state': 'done',
                         'provider_metadata': {
                             'pydantic_ai': {
+                                'id': 'text_123',
                                 'provider_name': 'openai',
                                 'provider_details': {'model': 'gpt-4', 'finish_reason': 'stop'},
                             }
@@ -3236,6 +3238,11 @@ async def test_adapter_dump_messages_text_with_provider_details():
             }
         ]
     )
+
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
 
 
 async def test_adapter_load_messages_text_with_provider_metadata():
@@ -3278,34 +3285,9 @@ async def test_adapter_load_messages_text_with_provider_metadata():
     )
 
 
-async def test_adapter_text_roundtrip_with_provider_details():
-    """Test TextPart with provider_name and provider_details survives dump/load roundtrip."""
-    original_messages = [
-        ModelResponse(
-            parts=[
-                TextPart(
-                    content='Roundtrip text',
-                    id='text_456',
-                    provider_name='google',
-                    provider_details={'completion_tokens': 100},
-                ),
-            ]
-        ),
-    ]
-
-    ui_messages = VercelAIAdapter.dump_messages(original_messages)
-    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-
-    # Sync timestamps for comparison
-    for orig_msg, new_msg in zip(original_messages, reloaded_messages):
-        new_msg.timestamp = orig_msg.timestamp
-
-    assert reloaded_messages == original_messages
-
-
-async def test_adapter_dump_messages_tool_call_with_provider_details():
-    """Test dumping ToolCallPart with provider_name and provider_details preserves metadata."""
-    messages = [
+async def test_adapter_tool_call_part_with_provider_metadata():
+    """Test ToolCallPart with provider_name and provider_details preserves metadata and roundtrips."""
+    messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(
             parts=[
@@ -3367,6 +3349,11 @@ async def test_adapter_dump_messages_tool_call_with_provider_details():
         ]
     )
 
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
 
 async def test_adapter_load_messages_tool_call_with_provider_metadata():
     """Test loading dynamic tool part with provider_metadata preserves metadata on ToolCallPart."""
@@ -3412,45 +3399,14 @@ async def test_adapter_load_messages_tool_call_with_provider_metadata():
     )
 
 
-async def test_adapter_tool_call_roundtrip_with_provider_details():
-    """Test ToolCallPart with provider_name and provider_details survives dump/load roundtrip."""
-    original_messages = [
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='roundtrip_tool',
-                    args={'param': 'val'},
-                    tool_call_id='tc_roundtrip',
-                    provider_name='google',
-                    provider_details={'model_internal_id': 'xyz'},
-                ),
-            ]
-        ),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='roundtrip_tool',
-                    content='done',
-                    tool_call_id='tc_roundtrip',
-                )
-            ]
-        ),
-    ]
-
-    ui_messages = VercelAIAdapter.dump_messages(original_messages)
-    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    _sync_timestamps(original_messages, reloaded_messages)
-
-    assert reloaded_messages == original_messages
-
-
-async def test_adapter_dump_messages_file_part_with_metadata():
-    """Test dumping FilePart with provider metadata preserves id, provider_name, and provider_details."""
-    messages = [
+async def test_adapter_file_part_with_provider_metadata():
+    """Test FilePart with provider metadata preserves id, provider_name, provider_details and roundtrips."""
+    # Use BinaryImage (not BinaryContent) since that's what load_messages produces for images
+    messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
                 FilePart(
-                    content=BinaryContent(data=b'file_data', media_type='image/png'),
+                    content=BinaryImage(data=b'file_data', media_type='image/png'),
                     id='file_123',
                     provider_name='openai',
                     provider_details={'generation_id': 'gen_abc'},
@@ -3486,6 +3442,11 @@ async def test_adapter_dump_messages_file_part_with_metadata():
             }
         ]
     )
+
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
 
 
 async def test_adapter_load_messages_file_with_provider_metadata():
@@ -3528,9 +3489,10 @@ async def test_adapter_load_messages_file_with_provider_metadata():
     )
 
 
-async def test_adapter_dump_messages_builtin_tool_with_full_metadata():
-    """Test dumping BuiltinToolCallPart with id, provider_name, and provider_details."""
-    messages = [
+async def test_adapter_builtin_tool_part_with_provider_metadata():
+    """Test BuiltinToolCallPart with id, provider_name, provider_details and roundtrips."""
+    # Use JSON string for content since that's what load_messages produces
+    messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
             parts=[
@@ -3544,7 +3506,7 @@ async def test_adapter_dump_messages_builtin_tool_with_full_metadata():
                 ),
                 BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'results': []},
+                    content='{"results":[]}',  # JSON string for roundtrip compatibility
                     tool_call_id='bt_123',
                     provider_name='openai',
                     provider_details={'execution_time_ms': 150},
@@ -3596,10 +3558,15 @@ async def test_adapter_dump_messages_builtin_tool_with_full_metadata():
         ]
     )
 
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
 
-async def test_adapter_dump_messages_builtin_tool_error_with_metadata():
-    """Test dumping BuiltinToolReturnPart with error content creates ToolOutputErrorPart."""
-    messages = [
+
+async def test_adapter_builtin_tool_error_part_with_provider_metadata():
+    """Test BuiltinToolReturnPart with error content creates ToolOutputErrorPart and roundtrips."""
+    messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
             parts=[
@@ -3665,36 +3632,10 @@ async def test_adapter_dump_messages_builtin_tool_error_with_metadata():
         ]
     )
 
-
-async def test_adapter_builtin_tool_error_roundtrip():
-    """Test that BuiltinToolReturnPart with error content survives dump/load roundtrip."""
-    original_messages: list[ModelMessage] = [
-        ModelResponse(
-            parts=[
-                BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'test'},
-                    tool_call_id='bt_err_roundtrip',
-                    id='call_err_rt',
-                    provider_name='openai',
-                    provider_details={'tool_type': 'web_search_preview'},
-                ),
-                BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content={'error_text': 'Search failed: rate limit exceeded', 'is_error': True},
-                    tool_call_id='bt_err_roundtrip',
-                    provider_name='openai',
-                    provider_details={'error_code': 'RATE_LIMIT'},
-                ),
-            ]
-        ),
-    ]
-
-    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+    # Verify roundtrip
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    _sync_timestamps(original_messages, reloaded_messages)
-
-    assert reloaded_messages == original_messages
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
 
 
 async def test_adapter_load_messages_builtin_tool_with_provider_details():
