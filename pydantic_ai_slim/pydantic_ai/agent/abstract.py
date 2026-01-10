@@ -862,7 +862,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     index=0, part=TextPart(content='The capital of France is Paris. ')
                 ),
                 AgentRunResultEvent(
-                    result=AgentRunResult(output='The capital of France is Paris. ')
+                    result=AgentRunResult(deps=None, output='The capital of France is Paris. ')
                 ),
             ]
             '''
