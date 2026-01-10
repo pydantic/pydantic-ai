@@ -338,6 +338,7 @@ class HuggingFaceModel(Model):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'auto':
+                # Breaks caching, but HuggingFace doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = 'auto'
             elif len(tool_names) == 1:
@@ -345,6 +346,7 @@ class HuggingFaceModel(Model):
                     function=ChatCompletionInputFunctionName(name=tool_names[0])  # pyright: ignore[reportCallIssue]
                 )
             else:
+                # Breaks caching, but HuggingFace doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = 'required'
         else:

@@ -466,8 +466,7 @@ class GoogleModel(Model):
         if isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'auto':
-                # Google doesn't support AUTO mode with allowed_function_names (even though the types allow it),
-                # so we filter tool_defs instead
+                # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
                 # Use ANY mode with allowed_function_names to force one of the specified tools
