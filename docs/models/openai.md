@@ -774,7 +774,7 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-For a complete list of available models, see the [SambaNova Model Library](https://community.sambanova.ai/t/supported-models/193).
+For a complete list of available models, see the [SambaNova supported models documentation](https://docs.sambanova.ai/docs/en/models/sambacloud-models).
 
 You can customize the base URL if needed:
 
