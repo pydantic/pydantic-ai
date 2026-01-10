@@ -211,9 +211,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             has_tool_output = isinstance(part, (ToolOutputAvailablePart, ToolOutputErrorPart))
 
                             if has_tool_output:
-                                loaded_call_meta, loaded_return_meta = cls._load_builtin_tool_meta(provider_meta)
-                                call_meta = loaded_call_meta or {}
-                                return_meta = loaded_return_meta or {}
+                                call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
 
                             builder.add(
                                 BuiltinToolCallPart(
@@ -292,9 +290,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     @staticmethod
     def _load_builtin_tool_meta(
         provider_metadata: ProviderMetadata,
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Use special keys (call_meta and return_meta) to load combined provider metadata."""
-        return provider_metadata.get('call_meta'), provider_metadata.get('return_meta')
+        return provider_metadata.get('call_meta') or {}, provider_metadata.get('return_meta') or {}
 
     @staticmethod
     def _dump_request_message(msg: ModelRequest) -> tuple[list[UIMessagePart], list[UIMessagePart]]:
@@ -390,6 +388,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     combined_provider_meta = cls._dump_builtin_tool_meta(call_meta, return_meta)
 
                     response_object = builtin_return.model_response_object()
+                    # These `is_error`/`error_text` fields are only present when the BuiltinToolReturnPart
+                    # was parsed from an incoming VercelAI request. We can't detect errors for other sources
+                    # until BuiltinToolReturnPart has standardized error fields (see https://github.com/pydantic/pydantic-ai/issues/3561).
                     is_error = response_object.get('is_error') is True and 'error_text' in response_object
                     if is_error:
                         ui_parts.append(
