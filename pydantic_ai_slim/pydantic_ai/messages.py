@@ -7,7 +7,6 @@ from abc import ABC
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
-from importlib.util import find_spec
 from mimetypes import MimeTypes, knownfiles
 from os import PathLike
 from pathlib import Path
@@ -26,8 +25,6 @@ from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
-    from magika import Magika
-
     from .models.instrumented import InstrumentationSettings
 
 _mime_types = MimeTypes()
@@ -68,7 +65,6 @@ _mime_types.add_type('application/yaml', '.yml')
 _mime_types.add_type('application/toml', '.toml')
 _mime_types.add_type('audio/aac', '.aac')
 
-_magika_instance: Magika | None = None
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -1426,30 +1422,36 @@ class ModelResponse:
         body = new_event_body()
         for part in self.parts:
             if isinstance(part, ToolCallPart):
-                body.setdefault('tool_calls', []).append({
-                    'id': part.tool_call_id,
-                    'type': 'function',
-                    'function': {
-                        'name': part.tool_name,
-                        **({'arguments': part.args} if settings.include_content else {}),
-                    },
-                })
+                body.setdefault('tool_calls', []).append(
+                    {
+                        'id': part.tool_call_id,
+                        'type': 'function',
+                        'function': {
+                            'name': part.tool_name,
+                            **({'arguments': part.args} if settings.include_content else {}),
+                        },
+                    }
+                )
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
-                body.setdefault('content', []).append({
-                    'kind': kind,
-                    **({'text': part.content} if settings.include_content else {}),
-                })
+                body.setdefault('content', []).append(
+                    {
+                        'kind': kind,
+                        **({'text': part.content} if settings.include_content else {}),
+                    }
+                )
             elif isinstance(part, FilePart):
-                body.setdefault('content', []).append({
-                    'kind': 'binary',
-                    'media_type': part.content.media_type,
-                    **(
-                        {'binary_content': part.content.base64}
-                        if settings.include_content and settings.include_binary_content
-                        else {}
-                    ),
-                })
+                body.setdefault('content', []).append(
+                    {
+                        'kind': 'binary',
+                        'media_type': part.content.media_type,
+                        **(
+                            {'binary_content': part.content.base64}
+                            if settings.include_content and settings.include_binary_content
+                            else {}
+                        ),
+                    }
+                )
 
         if content := body.get('content'):
             text_content = content[0].get('text')
