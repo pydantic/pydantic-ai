@@ -885,7 +885,7 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     _: KW_ONLY
 
     provider_name: str | None = None
-    """The name of the provider that generated the response."""
+    """The name of the provider that generated the response. Set this when provider_details exists."""
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
@@ -1042,7 +1042,7 @@ class TextPart:
     """An optional identifier of the text part."""
 
     provider_name: str | None = None
-    """The name of the provider that generated the response."""
+    """The name of the provider that generated the response. Set this when provider_details exists."""
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
@@ -1083,9 +1083,9 @@ class ThinkingPart:
     """
 
     provider_name: str | None = None
-    """The name of the provider that generated the response.
+    """The name of the provider that generated the response. 
 
-    Signatures are only sent back to the same provider.
+    Signatures are only sent back to the same provider. Set this when provider_details exists.
     """
 
     provider_details: dict[str, Any] | None = None
@@ -1116,7 +1116,7 @@ class FilePart:
     """The identifier of the file part."""
 
     provider_name: str | None = None
-    """The name of the provider that generated the response.
+    """The name of the provider that generated the response. Set this when provider_details exists.
     """
 
     provider_details: dict[str, Any] | None = None
@@ -1163,7 +1163,7 @@ class BaseToolCallPart:
     provider_name: str | None = None
     """The name of the provider that generated the response.
 
-    Tool calls are only sent back to the same provider.
+    Builtin tool calls are only sent back to the same provider. Set this when provider_details exists.
     """
 
     provider_details: dict[str, Any] | None = None
@@ -1509,7 +1509,7 @@ class TextPartDelta:
     _: KW_ONLY
 
     provider_name: str | None = None
-    """The name of the provider that generated the response."""
+    """The name of the provider that generated the response. Set this when provider_details exists."""
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
@@ -1559,7 +1559,7 @@ class ThinkingPartDelta:
     provider_name: str | None = None
     """Optional provider name for the thinking part.
 
-    Signatures are only sent back to the same provider.
+    Signatures are only sent back to the same provider. Set this when provider_details exists.
     """
 
     provider_details: ProviderDetailsDelta = None
@@ -1670,7 +1670,7 @@ class ToolCallPartDelta:
     non-matching value is provided an error will be raised."""
 
     provider_name: str | None = None
-    """The name of the provider that generated the response."""
+    """The name of the provider that generated the response. Set this when provider_details exists."""
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
