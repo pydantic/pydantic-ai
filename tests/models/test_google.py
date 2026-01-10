@@ -3189,7 +3189,9 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
 
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='b6e95a'))
+    assert result.output == snapshot(
+        BinaryImage(data=IsBytes(), media_type='image/jpeg', _media_type='image/jpeg', _identifier='b6e95a')
+    )
     assert messages == snapshot(
         [
             ModelRequest(
@@ -3208,6 +3210,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/jpeg',
+                            _media_type='image/jpeg',
                             _identifier='b6e95a',
                         ),
                         provider_details={'thought_signature': IsStr()},
@@ -3231,7 +3234,9 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     )
 
     result = await agent.run('Now give it a sombrero.', message_history=messages)
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='14bec0'))
+    assert result.output == snapshot(
+        BinaryImage(data=IsBytes(), media_type='image/jpeg', _media_type='image/jpeg', _identifier='14bec0')
+    )
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -3250,6 +3255,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/jpeg',
+                            _media_type='image/jpeg',
                             _identifier='14bec0',
                         ),
                         provider_details={'thought_signature': IsStr()},
@@ -3287,6 +3293,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
+                _media_type='image/png',
                 _identifier='9ff9cc',
                 identifier='9ff9cc',
             )
@@ -3305,6 +3312,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _media_type='image/png',
             _identifier='2af2a7',
             identifier='2af2a7',
         )
@@ -3328,6 +3336,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _media_type='image/png',
                             _identifier='2af2a7',
                             identifier='2af2a7',
                         )
@@ -3360,6 +3369,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                     content=BinaryImage(
                         data=IsBytes(),
                         media_type='image/png',
+                        _media_type='image/png',
                         _identifier='2af2a7',
                     )
                 ),
@@ -3408,6 +3418,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/jpeg',
+                            _media_type='image/jpeg',
                             _identifier='00f2af',
                             identifier=IsStr(),
                         ),
@@ -3447,6 +3458,7 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _media_type='image/png',
             _identifier='f82faf',
             identifier='f82faf',
         )
@@ -3466,6 +3478,7 @@ async def test_google_image_and_text_output(allow_model_requests: None, google_p
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
+                _media_type='image/png',
                 _identifier='67b12f',
                 identifier='67b12f',
             )
@@ -3519,6 +3532,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/jpeg',
+                            _media_type='image/jpeg',
                             _identifier='4e5b3e',
                         ),
                         provider_details={'thought_signature': IsStr()},
@@ -3612,7 +3626,9 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
     result = await agent.run(
         'Visualize the current weather forecast for the next 5 days in Mexico City as a clean, modern weather chart. Add a visual on what I should wear each day'
     )
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='787c28'))
+    assert result.output == snapshot(
+        BinaryImage(data=IsBytes(), media_type='image/jpeg', _media_type='image/jpeg', _identifier='787c28')
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -3660,6 +3676,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/jpeg',
+                            _media_type='image/jpeg',
                             _identifier='787c28',
                         ),
                         provider_details={'thought_signature': IsStr()},

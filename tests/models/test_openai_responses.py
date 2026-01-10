@@ -3924,6 +3924,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _media_type='image/png',
             _identifier='653a61',
             identifier='653a61',
         )
@@ -3985,6 +3986,7 @@ plt.show()\r
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _media_type='image/png',
                             _identifier='653a61',
                             identifier='653a61',
                         ),
@@ -4025,6 +4027,7 @@ plt.show()\r
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _media_type='image/png',
             _identifier='81863d',
             identifier='81863d',
         )
@@ -4134,6 +4137,7 @@ out_path\
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _media_type='image/png',
                             _identifier='81863d',
                             identifier='81863d',
                         ),
@@ -4207,6 +4211,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _media_type='image/png',
             _identifier='df0d78',
             identifier='df0d78',
         )
@@ -4241,6 +4246,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _media_type='image/png',
                             _identifier='df0d78',
                             identifier='df0d78',
                         ),
@@ -5601,7 +5607,9 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartStartEvent(
                 index=2,
                 part=FilePart(
-                    content=BinaryImage(data=IsBytes(), media_type='image/png', _identifier='df0d78'),
+                    content=BinaryImage(
+                        data=IsBytes(), media_type='image/png', _media_type='image/png', _identifier='df0d78'
+                    ),
                     id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
                 ),
                 previous_part_kind='builtin-tool-call',
@@ -5700,6 +5708,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
     assert result.output == snapshot(
         BinaryImage(
             data=IsBytes(),
+            _media_type='image/png',
             media_type='image/png',
             identifier='68b13f',
         )
@@ -5732,6 +5741,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='68b13f',
                         ),
@@ -5777,6 +5787,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
     assert result.output == snapshot(
         BinaryImage(
             data=IsBytes(),
+            _media_type='image/png',
             media_type='image/png',
             identifier='2b4fea',
         )
@@ -5809,6 +5820,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='2b4fea',
                         ),
@@ -5859,6 +5871,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
         assert await result.get_output() == snapshot(
             BinaryImage(
                 data=IsBytes(),
+                _media_type='image/png',
                 media_type='image/png',
                 identifier='be46a2',
             )
@@ -5876,6 +5889,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
     assert agent_run.result.output == snapshot(
         BinaryImage(
             data=IsBytes(),
+            _media_type='image/png',
             media_type='image/png',
             identifier='69eaa4',
         )
@@ -5908,6 +5922,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='69eaa4',
                         ),
@@ -5990,6 +6005,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 part=FilePart(
                     content=BinaryImage(
                         data=IsBytes(),
+                        _media_type='image/png',
                         media_type='image/png',
                     ),
                     id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
@@ -6002,6 +6018,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 part=FilePart(
                     content=BinaryImage(
                         data=IsBytes(),
+                        _media_type='image/png',
                         media_type='image/png',
                         identifier='69eaa4',
                     ),
@@ -6093,6 +6110,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='c51b7b',
                         ),
@@ -6155,6 +6173,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='c9d559',
                         ),
@@ -6205,6 +6224,7 @@ async def test_openai_responses_image_or_text_output(allow_model_requests: None,
     assert result.output == snapshot(
         BinaryImage(
             data=IsBytes(),
+            _media_type='image/png',
             media_type='image/png',
             identifier='f77253',
         )
@@ -6221,6 +6241,7 @@ async def test_openai_responses_image_and_text_output(allow_model_requests: None
         [
             BinaryImage(
                 data=IsBytes(),
+                _media_type='image/png',
                 media_type='image/png',
                 identifier='fbb409',
             )
@@ -6266,6 +6287,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='918a98',
                         ),
@@ -6392,6 +6414,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='4ed317',
                         ),
@@ -6470,6 +6493,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='958792',
                         ),
@@ -6522,6 +6546,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
     assert result.output == snapshot(
         BinaryImage(
             data=IsBytes(),
+            _media_type='image/png',
             media_type='image/png',
             identifier='160d47',
         )
@@ -6588,6 +6613,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='160d47',
                         ),
@@ -6634,6 +6660,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
     assert result.output == snapshot(
         BinaryImage(
             data=IsBytes(),
+            _media_type='image/png',
             media_type='image/png',
             identifier='2a8c51',
         )
@@ -6666,6 +6693,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='2a8c51',
                         ),
@@ -6692,6 +6720,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/png',
                             media_type='image/png',
                             identifier='dd7c41',
                         ),
@@ -6742,6 +6771,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
     assert result.output == snapshot(
         BinaryImage(
             data=IsBytes(),
+            _media_type='image/jpeg',
             media_type='image/jpeg',
             identifier='df8cd2',
         )
@@ -6774,6 +6804,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
+                            _media_type='image/jpeg',
                             media_type='image/jpeg',
                             identifier='df8cd2',
                         ),
