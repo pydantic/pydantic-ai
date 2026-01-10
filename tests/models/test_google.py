@@ -81,7 +81,6 @@ with try_import() as imports_successful:
         HarmCategory,
         MediaModality,
         ModalityTokenCount,
-        Part,
     )
 
     from pydantic_ai.models.google import (
@@ -90,7 +89,6 @@ with try_import() as imports_successful:
         GoogleModelSettings,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
-        _process_part,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
