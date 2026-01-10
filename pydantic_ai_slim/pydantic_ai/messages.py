@@ -199,7 +199,7 @@ class FileUrl(ABC):
         self.vendor_metadata = vendor_metadata
 
     @staticmethod
-    def create(
+    def from_url(
         url: str,
         *,
         media_type: str | None = None,
@@ -467,6 +467,9 @@ class BinaryContent:
     Use `.base64` to get the base64-encoded string.
     """
 
+    file_name: str | None = None
+    """The file name of the binary content, e.g. "image.png"."""
+
     _: KW_ONLY
 
     vendor_metadata: dict[str, Any] | None = None
@@ -484,12 +487,6 @@ class BinaryContent:
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
         compare=False, default=None
     )
-    _type: Annotated[str | None, pydantic.Field(alias='type', default=None, exclude=True)] = field(
-        compare=False, default=None
-    )
-    _extension: Annotated[str | None, pydantic.Field(alias='extension', default=None, exclude=True)] = field(
-        compare=False, default=None
-    )
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
@@ -497,6 +494,7 @@ class BinaryContent:
         self,
         data: bytes,
         *,
+        file_name: str | None = None,
         media_type: str | None = None,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
@@ -504,13 +502,10 @@ class BinaryContent:
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
         _media_type: str | None = None,
-        _type: str | None = None,
-        _extension: str | None = None,
     ) -> None:
         self.data = data
+        self.file_name = file_name
         self._media_type = media_type or _media_type
-        self._type = _type
-        self._extension = _extension
         self._identifier = identifier or _identifier
         self.vendor_metadata = vendor_metadata
         self.kind = kind
@@ -550,13 +545,8 @@ class BinaryContent:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
-        if find_spec('magika'):
-            return cls.narrow_type(cls(data=path.read_bytes()))
-        media_type, _ = _mime_types.guess_type(path)
-        if media_type is None:
-            media_type = 'application/octet-stream'
 
-        return cls.narrow_type(cls(data=path.read_bytes(), media_type=media_type))
+        return cls.narrow_type(cls(data=path.read_bytes(), file_name=path.name))
 
     @pydantic.computed_field
     @property
@@ -580,29 +570,21 @@ class BinaryContent:
     def media_type(self) -> str:
         """The media type of the binary content.
 
-        Automatically detects the media type using Magika if not provided.
+        Automatically detects the media type from the file name if not provided.
         """
         return self._media_type or self._infer_media_type()
 
     def _infer_media_type(self) -> str:
-        """Infer the media type of the binary content."""
-        global _magika_instance
-
-        # Try Magika first (more accurate, especially for documents)
-        try:
-            from magika import Magika
-
-            if _magika_instance is None:
-                _magika_instance = Magika()
-            result = _magika_instance.identify_bytes(self.data).output
-            self._media_type = result.mime_type
-            self._type = result.group
-            self._extension = result.extensions[0] if result.extensions else None
-            return self._media_type
-        except ImportError as e:
-            raise ImportError(
-                'Magika is not installed. Please install magika to enable media type detection for BinaryContent.'
-            ) from e
+        """Infer the media type of the file name."""
+        if self.file_name:
+            mime_type, _ = _mime_types.guess_type(self.file_name)
+            if mime_type is not None:
+                self._media_type = mime_type
+                return mime_type
+            else:
+                raise ValueError(f'Could not infer media type from file name: {self.file_name}')
+        else:
+            raise ValueError('Media type could not be inferred. Please provide a media type or file name.')
 
     @property
     def data_uri(self) -> str:
@@ -617,28 +599,29 @@ class BinaryContent:
     @property
     def is_audio(self) -> bool:
         """Return `True` if the media type is an audio type."""
-        return self._type == 'audio' or self.media_type.startswith('audio/')
+        return self.media_type.startswith('audio/')
 
     @property
     def is_image(self) -> bool:
         """Return `True` if the media type is an image type."""
-        return self._type == 'image' or self.media_type.startswith('image/')
+        return self.media_type.startswith('image/')
 
     @property
     def is_video(self) -> bool:
         """Return `True` if the media type is a video type."""
-        return self._type == 'video' or self.media_type.startswith('video/')
+        return self.media_type.startswith('video/')
 
     @property
     def is_document(self) -> bool:
         """Return `True` if the media type is a document type."""
-        return self._type == 'document' or self.media_type in _document_format_lookup
+        return self.media_type in _document_format_lookup or self.is_text
+        # text files send as documents until we have a separate TextContent type
 
     @property
     def is_text(self) -> bool:
         """Return `True` if the media type is a text type."""
         # TODO: consider to read text content and send as text in user_prompt to the model?
-        return self._type == 'text' or self.media_type.startswith('text/')
+        return self.media_type.startswith('text/')
 
     @property
     def format(self) -> str:
@@ -650,7 +633,7 @@ class BinaryContent:
         Raises:
             ValueError: If file format cannot be inferred from media type.
         """
-        ext = self._extension or _all_format_lookup.get(self.media_type) or _mime_types.guess_extension(self.media_type)
+        ext = _all_format_lookup.get(self.media_type) or _mime_types.guess_extension(self.media_type)
 
         # Fallback to mimetypes.guess_extension
         if ext is None:
@@ -668,6 +651,7 @@ class BinaryImage(BinaryContent):
         self,
         data: bytes,
         *,
+        file_name: str | None = None,
         media_type: str | None = None,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
@@ -675,11 +659,10 @@ class BinaryImage(BinaryContent):
         kind: Literal['binary'] = 'binary',
         _identifier: str | None = None,
         _media_type: str | None = None,
-        _type: str | None = None,
-        _extension: str | None = None,
     ):
         super().__init__(
             data=data,
+            file_name=file_name,
             media_type=media_type or _media_type,
             identifier=identifier or _identifier,
             vendor_metadata=vendor_metadata,
@@ -1436,36 +1419,30 @@ class ModelResponse:
         body = new_event_body()
         for part in self.parts:
             if isinstance(part, ToolCallPart):
-                body.setdefault('tool_calls', []).append(
-                    {
-                        'id': part.tool_call_id,
-                        'type': 'function',
-                        'function': {
-                            'name': part.tool_name,
-                            **({'arguments': part.args} if settings.include_content else {}),
-                        },
-                    }
-                )
+                body.setdefault('tool_calls', []).append({
+                    'id': part.tool_call_id,
+                    'type': 'function',
+                    'function': {
+                        'name': part.tool_name,
+                        **({'arguments': part.args} if settings.include_content else {}),
+                    },
+                })
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
-                body.setdefault('content', []).append(
-                    {
-                        'kind': kind,
-                        **({'text': part.content} if settings.include_content else {}),
-                    }
-                )
+                body.setdefault('content', []).append({
+                    'kind': kind,
+                    **({'text': part.content} if settings.include_content else {}),
+                })
             elif isinstance(part, FilePart):
-                body.setdefault('content', []).append(
-                    {
-                        'kind': 'binary',
-                        'media_type': part.content.media_type,
-                        **(
-                            {'binary_content': part.content.base64}
-                            if settings.include_content and settings.include_binary_content
-                            else {}
-                        ),
-                    }
-                )
+                body.setdefault('content', []).append({
+                    'kind': 'binary',
+                    'media_type': part.content.media_type,
+                    **(
+                        {'binary_content': part.content.base64}
+                        if settings.include_content and settings.include_binary_content
+                        else {}
+                    ),
+                })
 
         if content := body.get('content'):
             text_content = content[0].get('text')
