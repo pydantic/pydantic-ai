@@ -774,12 +774,7 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-SambaNova supports multiple model families:
-
-- **Meta Llama**: `Meta-Llama-3.1-8B-Instruct`, `Meta-Llama-3.3-70B-Instruct`, `Llama-4-Maverick-17B-128E-Instruct`
-- **DeepSeek**: `DeepSeek-R1-0528`, `DeepSeek-V3-0324`, `DeepSeek-R1-Distill-Llama-70B`
-- **Qwen**: `Qwen3-32B`
-- **Other**: `E5-Mistral-7B-Instruct` (embeddings), `Whisper-Large-v3` (audio), `gpt-oss-120b`
+For a complete list of available models, see the [SambaNova Model Library](https://community.sambanova.ai/t/supported-models/193).
 
 You can customize the base URL if needed:
 
