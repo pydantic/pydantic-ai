@@ -564,7 +564,9 @@ class BinaryContent:
         It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
         distinguish multiple files.
         """
-        return self._identifier or _multi_modal_content_identifier(self.data)
+        return self._identifier or (
+            _multi_modal_content_identifier(self.data) + ('-' + self.file_name if self.file_name else '')
+        )
 
     @pydantic.computed_field
     @property

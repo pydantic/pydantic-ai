@@ -733,7 +733,7 @@ def test_binary_content_from_path(tmp_path: Path):
             data=b'\xff\xd8\xff\xe0' + b'0' * 100,
             media_type='image/jpeg',
             _media_type='image/jpeg',
-            _identifier='bc8d49',
+            _identifier='bc8d49-test.jpg',
         )
     )
 
