@@ -15,7 +15,12 @@ def resolve_tool_choice(  # noqa: C901
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
 ) -> ResolvedToolChoice:
-    """Validate and normalize tool_choice settings into a canonical form for providers.
+    """Resolve user-facing tool_choice into a canonical form for providers.
+
+    Pydantic AI distinguishes between function tools (e.g. user-registered via @agent.tool)
+    and output tools (framework-internal for structured output). The user-facing
+    `tool_choice` setting controls function tools only - this function resolves that
+    into a canonical form that providers can use, incorporating output tools as needed.
 
     Args:
         model_settings: Optional settings containing the tool_choice value.
