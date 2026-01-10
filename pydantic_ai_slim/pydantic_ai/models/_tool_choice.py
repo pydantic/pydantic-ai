@@ -49,9 +49,9 @@ def resolve_tool_choice(  # noqa: C901
     tool_names = set(model_request_parameters.tool_defs.keys())
 
     def _warn(msg: str) -> None:
-        warnings.warn(msg, UserWarning, stacklevel=6)
+        warnings.warn(msg, UserWarning)
 
-    def _invalid(names: set[str], available: set[str], *, available_label: str) -> None:
+    def _invalid_tool_names(names: set[str], available: set[str], *, available_label: str) -> None:
         invalid = names - available
         if invalid:
             raise UserError(f'Invalid tool names in `tool_choice`: {invalid}. {available_label}: {available or "none"}')
@@ -102,7 +102,7 @@ def resolve_tool_choice(  # noqa: C901
         # and we need both the list (for the return value) and the set (for validation)
         chosen = list(dict.fromkeys(tool_choice))
         chosen_set = set(chosen)
-        _invalid(chosen_set, tool_names, available_label='Available tools')
+        _invalid_tool_names(chosen_set, tool_names, available_label='Available tools')
 
         if chosen_set == tool_names:
             return 'required'
@@ -125,7 +125,7 @@ def resolve_tool_choice(  # noqa: C901
         chosen_function_set = set(chosen_function)
         all_function_tool_names = {t.name for t in model_request_parameters.function_tools}
 
-        _invalid(
+        _invalid_tool_names(
             chosen_function_set,
             all_function_tool_names,
             available_label='Available function tools',
