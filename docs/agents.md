@@ -107,7 +107,9 @@ async def main():
             index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
         ),
         AgentRunResultEvent(
-            result=AgentRunResult(deps=None, output='The capital of Mexico is Mexico City.')
+            result=AgentRunResult(
+                deps=None, output='The capital of Mexico is Mexico City.'
+            )
         ),
     ]
     """
