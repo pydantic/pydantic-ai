@@ -10,7 +10,7 @@ ToolChoiceScalar = Literal['none', 'required', 'auto']
 
 
 @dataclass
-class ToolsPlusOutput:
+class ToolOrOutput:
     """Restricts function tools while keeping output tools available.
 
     Use this when you want to control which function tools the model can use
@@ -24,7 +24,7 @@ class ToolsPlusOutput:
     """The names of function tools available to the model."""
 
 
-ToolChoice = ToolChoiceScalar | list[str] | ToolsPlusOutput | None
+ToolChoice = ToolChoiceScalar | list[str] | ToolOrOutput | None
 """Type alias for all valid tool_choice values."""
 
 

@@ -5,7 +5,7 @@ from typing_extensions import assert_never
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.settings import ModelSettings, ToolsPlusOutput
+from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
 ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[list[str], Literal['auto', 'required']]
 
@@ -110,7 +110,7 @@ def resolve_tool_choice(  # noqa: C901
         return (chosen, 'required')
 
     # ToolsPlusOutput: specific function tools + all output tools or direct text/image output
-    if isinstance(tool_choice, ToolsPlusOutput):
+    if isinstance(tool_choice, ToolOrOutput):
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
 
         # stable order, unique

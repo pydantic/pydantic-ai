@@ -26,7 +26,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import Agent, ModelRequest, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.output import OutputSpec
-from pydantic_ai.settings import ModelSettings, ToolChoice, ToolsPlusOutput
+from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 
@@ -337,21 +337,21 @@ CASES = [
          expected_warning_match="tool_choice='none'"),
 
     # === ToolsPlusOutput - specific function tools + output tools ===
-    Case('openai-tools-plus-output', 'openai', ToolsPlusOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
+    Case('openai-tools-plus-output', 'openai', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('anthropic-tools-plus-output', 'anthropic', ToolsPlusOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
+    Case('anthropic-tools-plus-output', 'anthropic', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('groq-tools-plus-output', 'groq', ToolsPlusOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart','ToolReturnPart']}]),
+    Case('groq-tools-plus-output', 'groq', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart','ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('mistral-tools-plus-output', 'mistral', ToolsPlusOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
+    Case('mistral-tools-plus-output', 'mistral', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('google-tools-plus-output', 'google', ToolsPlusOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
+    Case('google-tools-plus-output', 'google', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('bedrock-tools-plus-output', 'bedrock', ToolsPlusOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
+    Case('bedrock-tools-plus-output', 'bedrock', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('huggingface-tools-plus-output', 'huggingface', ToolsPlusOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart','ToolReturnPart']}]),
+    Case('huggingface-tools-plus-output', 'huggingface', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart','ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('openai_responses-tools-plus-output', 'openai_responses', ToolsPlusOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ThinkingPart','ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
+    Case('openai_responses-tools-plus-output', 'openai_responses', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ThinkingPart','ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
 ]
 # fmt: on

@@ -13,7 +13,7 @@ import pytest
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
-from pydantic_ai.settings import ModelSettings, ToolChoice, ToolsPlusOutput
+from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition, ToolKind
 
 
@@ -205,7 +205,7 @@ CASES = [
     # === ToolsPlusOutput behavior ===
     Case(
         'tpo-text-allowed',
-        ToolsPlusOutput(function_tools=['tool_a']),
+        ToolOrOutput(function_tools=['tool_a']),
         (['tool_a', 'final_result'], 'auto'),
         function_tools=['tool_a', 'tool_b'],
         output_tools=['final_result'],
@@ -213,14 +213,14 @@ CASES = [
     ),
     Case(
         'tpo-no-text',
-        ToolsPlusOutput(function_tools=['tool_a']),
+        ToolOrOutput(function_tools=['tool_a']),
         (['tool_a', 'final_result'], 'required'),
         function_tools=['tool_a', 'tool_b'],
         output_tools=['final_result'],
     ),
     Case(
         'tpo-multiple',
-        ToolsPlusOutput(function_tools=['tool_a', 'tool_b']),
+        ToolOrOutput(function_tools=['tool_a', 'tool_b']),
         (['tool_a', 'tool_b', 'final_result'], 'auto'),
         function_tools=['tool_a', 'tool_b', 'tool_c'],
         output_tools=['final_result'],
@@ -228,45 +228,45 @@ CASES = [
     ),
     Case(
         'tpo-all-tools',
-        ToolsPlusOutput(function_tools=['tool_a']),
+        ToolOrOutput(function_tools=['tool_a']),
         'required',
         function_tools=['tool_a'],
         output_tools=['final_result'],
     ),
     Case(
         'tpo-empty-text',
-        ToolsPlusOutput(function_tools=[]),
+        ToolOrOutput(function_tools=[]),
         ExpectWarning('empty function_tools', 'auto'),
         output_tools=['final_result'],
         allow_text_output=True,
     ),
     Case(
         'tpo-empty-no-text',
-        ToolsPlusOutput(function_tools=[]),
+        ToolOrOutput(function_tools=[]),
         ExpectWarning('empty function_tools', 'required'),
         output_tools=['final_result'],
     ),
     Case(
         'tpo-empty-no-output',
-        ToolsPlusOutput(function_tools=[]),
+        ToolOrOutput(function_tools=[]),
         ExpectWarning('empty function_tools', 'none'),
     ),
     Case(
         'tpo-no-output',
-        ToolsPlusOutput(function_tools=['tool_a']),
+        ToolOrOutput(function_tools=['tool_a']),
         (['tool_a'], 'auto'),
         function_tools=['tool_a', 'tool_b'],
         allow_text_output=True,
     ),
     Case(
         'tpo-invalid-error',
-        ToolsPlusOutput(function_tools=['nonexistent']),
+        ToolOrOutput(function_tools=['nonexistent']),
         ExpectError('Invalid tool names'),
         output_tools=['final_result'],
     ),
     Case(
         'tpo-dedup',
-        ToolsPlusOutput(function_tools=['tool_b', 'tool_a', 'tool_b']),
+        ToolOrOutput(function_tools=['tool_b', 'tool_a', 'tool_b']),
         (['tool_b', 'tool_a', 'final_result'], 'auto'),
         function_tools=['tool_a', 'tool_b', 'tool_c'],
         output_tools=['final_result'],
