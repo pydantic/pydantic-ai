@@ -1111,8 +1111,7 @@ def _process_part(
 
     if provider_details:
         item.provider_details = {**(item.provider_details or {}), **provider_details}
-        if provider_name:
-            item.provider_name = item.provider_name or provider_name
+        item.provider_name = provider_name
 
     return item, code_execution_tool_call_id
 
