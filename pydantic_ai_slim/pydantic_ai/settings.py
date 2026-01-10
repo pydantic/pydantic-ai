@@ -16,7 +16,7 @@ class ToolsPlusOutput:
     Use this when you want to control which function tools the model can use
     in an agent run while still allowing the agent to complete with structured output.
 
-    See the [Tool Choice guide](https://ai.pydantic.dev/tool-choice/#toolsplusoutput---specific-tools-with-output)
+    See the [Tool Choice guide](tool-choice.md#toolsplusoutput---specific-tools-with-output)
     for examples.
     """
 
@@ -117,7 +117,7 @@ class ModelSettings(TypedDict, total=False):
     tool_choice: ToolChoice
     """Control which function tools the model can use.
 
-    See the [Tool Choice guide](https://ai.pydantic.dev/tool-choice/) for detailed documentation
+    See the [Tool Choice guide](tool-choice.md) for detailed documentation
     and examples.
 
     Warning: when using `'required'` or passing a list of tool names, the model will be unable to
