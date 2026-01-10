@@ -15,7 +15,7 @@ from typing_extensions import assert_never
 from ... import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from ..._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from ..._run_context import RunContext
-from ..._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
+from ..._utils import guard_tool_call_id, now_utc, number_to_datetime
 from ...builtin_tools import (
     AbstractBuiltinTool,
     CodeExecutionTool,
@@ -68,10 +68,10 @@ from ._shared import (
     MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME,
     OpenAIModelName,
     OpenAIResponsesModelSettings,
-    make_raw_content_updater as _make_raw_content_updater,
-    map_logprobs as _map_logprobs,
-    map_usage as _map_usage,
-    resolve_openai_image_generation_size as _resolve_openai_image_generation_size,
+    make_raw_content_updater,
+    map_logprobs,
+    map_usage,
+    resolve_openai_image_generation_size,
 )
 
 try:
@@ -100,6 +100,8 @@ _RESPONSES_FINISH_REASON_MAP: dict[
     'cancelled': 'error',
     'failed': 'error',
 }
+
+__all__ = ['OpenAIResponsesModel', 'OpenAIResponsesStreamedResponse']
 
 
 @dataclass(init=False)
@@ -246,7 +248,7 @@ class OpenAIResponsesModel(Model):
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
-                            part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
+                            part_provider_details = {'logprobs': map_logprobs(content.logprobs)}
                         items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
@@ -309,10 +311,10 @@ class OpenAIResponsesModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
+            usage=map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
-            timestamp=_now_utc(),
+            timestamp=now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
@@ -549,7 +551,7 @@ class OpenAIResponsesModel(Model):
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
-                size = _resolve_openai_image_generation_size(tool)
+                size = resolve_openai_image_generation_size(tool)
                 output_compression = tool.output_compression if tool.output_compression is not None else 100
                 tools.append(
                     responses.tool_param.ImageGeneration(
@@ -635,7 +637,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        call_id = _guard_tool_call_id(t=part)
+                        call_id = guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
                         item = FunctionCallOutput(
                             type='function_call_output',
@@ -649,7 +651,7 @@ class OpenAIResponsesModel(Model):
                                 Message(role='user', content=[{'type': 'input_text', 'text': part.model_response()}])
                             )
                         else:
-                            call_id = _guard_tool_call_id(t=part)
+                            call_id = guard_tool_call_id(t=part)
                             call_id, _ = _split_combined_tool_call_id(call_id)
                             item = FunctionCallOutput(
                                 type='function_call_output',
@@ -691,7 +693,7 @@ class OpenAIResponsesModel(Model):
                                 responses.EasyInputMessageParam(role='assistant', content=item.content)
                             )
                     elif isinstance(item, ToolCallPart):
-                        call_id = _guard_tool_call_id(t=item)
+                        call_id = guard_tool_call_id(t=item)
                         call_id, id = _split_combined_tool_call_id(call_id)
                         id = id or item.id
 
@@ -973,7 +975,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
-    _timestamp: datetime = field(default_factory=_now_utc)
+    _timestamp: datetime = field(default_factory=now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:  # pragma: no branch
@@ -1176,7 +1178,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 for event in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=chunk.item_id,
                     id=chunk.item_id,
-                    provider_details=_make_raw_content_updater(chunk.delta, chunk.content_index),
+                    provider_details=make_raw_content_updater(chunk.delta, chunk.content_index),
                 ):
                     yield event
 
@@ -1306,7 +1308,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
+        return map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     @property
     def model_name(self) -> OpenAIModelName:

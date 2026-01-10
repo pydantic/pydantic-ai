@@ -63,8 +63,8 @@ from .. import (
 from ._shared import (
     OpenAIChatModelSettings,
     OpenAIModelName,
-    map_provider_details as _map_provider_details,
-    map_usage as _map_usage,
+    map_provider_details,
+    map_usage,
 )
 
 _CHAT_FINISH_REASON_MAP: dict[
@@ -393,7 +393,7 @@ class OpenAIChatModel(Model):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
-        return _map_provider_details(response.choices[0])
+        return map_provider_details(response.choices[0])
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -523,7 +523,7 @@ class OpenAIChatModel(Model):
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+        return map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -997,10 +997,10 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
         """
-        return _map_provider_details(chunk.choices[0])
+        return map_provider_details(chunk.choices[0])
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
+        return map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
