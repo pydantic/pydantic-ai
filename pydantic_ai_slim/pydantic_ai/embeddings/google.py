@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -45,42 +45,11 @@ GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 """Possible Google embeddings model names."""
 
 
-@dataclass
-class _GoogleEmbeddingModelConfig:
-    max_input_tokens: int
-    """Maximum number of input tokens supported by the model."""
-
-
-_GOOGLE_EMBEDDING_MODELS: dict[GoogleEmbeddingModelName, _GoogleEmbeddingModelConfig] = {
-    'gemini-embedding-001': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
-    'text-embedding-005': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
-    'text-multilingual-embedding-002': _GoogleEmbeddingModelConfig(max_input_tokens=2048),
+_MAX_INPUT_TOKENS: dict[GoogleEmbeddingModelName, int] = {
+    'gemini-embedding-001': 2048,
+    'text-embedding-005': 2048,
+    'text-multilingual-embedding-002': 2048,
 }
-
-
-GoogleTaskType = Literal[
-    'SEMANTIC_SIMILARITY',
-    'CLASSIFICATION',
-    'CLUSTERING',
-    'RETRIEVAL_DOCUMENT',
-    'RETRIEVAL_QUERY',
-    'CODE_RETRIEVAL_QUERY',
-    'QUESTION_ANSWERING',
-    'FACT_VERIFICATION',
-]
-"""Task types for Google embeddings.
-
-Different task types optimize embeddings for specific use cases:
-
-- `SEMANTIC_SIMILARITY`: Optimized for measuring text similarity
-- `CLASSIFICATION`: Optimized for text categorization
-- `CLUSTERING`: Optimized for grouping similar texts
-- `RETRIEVAL_DOCUMENT`: Optimized for document indexing in search
-- `RETRIEVAL_QUERY`: Optimized for search queries
-- `CODE_RETRIEVAL_QUERY`: Optimized for code search queries
-- `QUESTION_ANSWERING`: Optimized for QA systems
-- `FACT_VERIFICATION`: Optimized for fact-checking tasks
-"""
 
 
 class GoogleEmbeddingSettings(EmbeddingSettings, total=False):
@@ -92,11 +61,12 @@ class GoogleEmbeddingSettings(EmbeddingSettings, total=False):
 
     # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    google_task_type: GoogleTaskType
+    google_task_type: str
     """The task type for the embedding.
 
     Overrides the automatic task type selection based on `input_type`.
-    See [`GoogleTaskType`][pydantic_ai.embeddings.google.GoogleTaskType] for available options.
+    See [Google's task type documentation](https://ai.google.dev/gemini-api/docs/embeddings#task-types)
+    for available options.
     """
 
     google_title: str
@@ -208,11 +178,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
                 ) from e
             raise  # pragma: no cover
 
-        embeddings: list[list[float]] = []
-        if response.embeddings:
-            for emb in response.embeddings:
-                if emb.values is not None:
-                    embeddings.append(emb.values)
+        embeddings: list[list[float]] = [emb.values for emb in (response.embeddings or []) if emb.values is not None]
 
         return EmbeddingResult(
             embeddings=embeddings,
@@ -224,8 +190,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
         )
 
     async def max_input_tokens(self) -> int | None:
-        config = _GOOGLE_EMBEDDING_MODELS.get(self._model_name)
-        return config.max_input_tokens if config else None
+        return _MAX_INPUT_TOKENS.get(self._model_name)
 
     async def count_tokens(self, text: str) -> int:
         response = await self._client.aio.models.count_tokens(
@@ -233,7 +198,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
             contents=text,
         )
         if response.total_tokens is None:
-            raise NotImplementedError('Token counting returned no result')  # pragma: no cover
+            raise UnexpectedModelBehavior('Token counting returned no result')  # pragma: no cover
         return response.total_tokens
 
 

@@ -223,15 +223,27 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
-#### Available Models
+##### Vertex AI
 
-Google provides several embedding models:
+To use Google's embedding models via Vertex AI instead of the Gemini API, use the `google-vertex` provider prefix:
 
-| Model | Dimensions | Availability |
-|-------|------------|--------------|
-| `gemini-embedding-001` | 128-3072 | Gemini API + Vertex AI |
-| `text-embedding-005` | 768 | Vertex AI only |
-| `text-multilingual-embedding-002` | 768 | Vertex AI only |
+```python {title="google_vertex_embeddings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingModel
+from pydantic_ai.providers.google import GoogleProvider
+
+# Using provider prefix
+embedder = Embedder('google-vertex:gemini-embedding-001')
+
+# Or with explicit provider configuration
+model = GoogleEmbeddingModel(
+    'gemini-embedding-001',
+    provider=GoogleProvider(vertexai=True, project='my-project', location='us-central1'),
+)
+embedder = Embedder(model)
+```
+
+See the [Google provider documentation](models/google.md#vertex-ai-enterprisecloud) for more details on Vertex AI authentication options, including application default credentials, service accounts, and API keys.
 
 #### Dimension Control
 
@@ -272,36 +284,7 @@ embedder = Embedder(
 )
 ```
 
-Available task types optimize embeddings for specific use cases:
-
-- `RETRIEVAL_QUERY` — Optimized for search queries (default for `embed_query()`)
-- `RETRIEVAL_DOCUMENT` — Optimized for document indexing (default for `embed_documents()`)
-- `SEMANTIC_SIMILARITY` — Optimized for measuring text similarity
-- `CLASSIFICATION` — Optimized for text categorization
-- `CLUSTERING` — Optimized for grouping similar texts
-- `CODE_RETRIEVAL_QUERY` — Optimized for code search queries
-- `QUESTION_ANSWERING` — Optimized for QA systems
-- `FACT_VERIFICATION` — Optimized for fact-checking tasks
-
-#### Vertex AI
-
-To use Google's embedding models via Vertex AI instead of the Gemini API, use the `google-vertex` provider prefix:
-
-```python {title="google_vertex_embeddings.py"}
-from pydantic_ai import Embedder
-from pydantic_ai.embeddings.google import GoogleEmbeddingModel
-from pydantic_ai.providers.google import GoogleProvider
-
-# Using provider prefix
-embedder = Embedder('google-vertex:gemini-embedding-001')
-
-# Or with explicit provider configuration
-model = GoogleEmbeddingModel(
-    'gemini-embedding-001',
-    provider=GoogleProvider(vertexai=True, project='my-project', location='us-central1'),
-)
-embedder = Embedder(model)
-```
+See [Google's task type documentation](https://ai.google.dev/gemini-api/docs/embeddings#task-types) for available task types. By default, `embed_query()` uses `RETRIEVAL_QUERY` and `embed_documents()` uses `RETRIEVAL_DOCUMENT`.
 
 ### Cohere
 

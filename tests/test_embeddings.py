@@ -411,6 +411,28 @@ class TestGoogle:
         with pytest.raises(ModelHTTPError, match='not found'):
             await embedder.embed_query('Hello, world!')
 
+    @pytest.mark.skipif(
+        not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+    )
+    @pytest.mark.vcr()
+    async def test_vertex_query(
+        self, allow_model_requests: None, vertex_provider: GoogleProvider
+    ):  # pragma: lax no cover
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=vertex_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=4),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-vertex',
+            )
+        )
+
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, gemini_api_key: str, capfire: CaptureLogfire):
         model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))

@@ -100,7 +100,7 @@ class TestEmbeddingModel(EmbeddingModel):
         inputs, settings = self.prepare_embed(inputs, settings)
         self.last_settings = settings
 
-        dimensions = (settings.get('dimensions') if settings else None) or self._dimensions
+        dimensions = settings.get('dimensions') or self._dimensions
 
         return EmbeddingResult(
             embeddings=[[1.0] * dimensions] * len(inputs),
