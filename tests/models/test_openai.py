@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -40,6 +40,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
+from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -48,7 +49,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -1040,8 +1041,6 @@ async def test_document_url_input_force_download_response_api(allow_model_reques
 
 async def test_image_url_force_download_chat() -> None:
     """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1075,8 +1074,6 @@ async def test_image_url_force_download_chat() -> None:
 
 async def test_image_url_no_force_download_chat() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1104,8 +1101,6 @@ async def test_image_url_no_force_download_chat() -> None:
 
 async def test_document_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1139,8 +1134,6 @@ async def test_document_url_force_download_responses() -> None:
 
 async def test_document_url_no_force_download_responses() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1168,8 +1161,6 @@ async def test_document_url_no_force_download_responses() -> None:
 
 async def test_audio_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1251,20 +1242,12 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file bd38f5',
+                        content=ImageUrl(
+                            url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                        ),
                         tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file bd38f5:',
-                            ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
-                                identifier='bd38f5',
-                            ),
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1345,11 +1328,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
+                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
                         tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

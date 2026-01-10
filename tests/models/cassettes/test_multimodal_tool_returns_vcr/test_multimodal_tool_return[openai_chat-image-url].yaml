@@ -1,0 +1,210 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '357'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Call the get_file tool to get a image and describe what you see.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Return a file for the model to analyze.
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1029'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1727'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_file
+            id: call_4nFRIsmeFGRh2FYYuIaBR8rr
+            type: function
+      created: 1767739130
+      id: chatcmpl-Cv9zOU6E7j7gjWcfFlyNfuEczxfZj
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 19
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 136
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 155
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '743'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=j6CL33Wx32b.SkDvtcx1..Z_xzHQ65xyj99upOaMP1A-1767739132-1.0.1.1-VJf_QUPJhDkyudlilLrA_u4rclZmpS49er8ld.LBgKcf01fAZL4ihZdArGgjrLlLPIkviuiAMXjjLJW9M4Rhn75HrT6QaJYn.xXSdzp_STI;
+        _cfuvid=p0c5w.paBJPw6E7oQh5s0PeNhnaqzQy6rFjnmckjkRM-1767739132658-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Call the get_file tool to get a image and describe what you see.
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_file
+          id: call_4nFRIsmeFGRh2FYYuIaBR8rr
+          type: function
+      - content: ''
+        role: tool
+        tool_call_id: call_4nFRIsmeFGRh2FYYuIaBR8rr
+      - content:
+        - image_url:
+            url: https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png
+          type: image_url
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Return a file for the model to analyze.
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1463'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '6214'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: |-
+            The image is the Google wordmark/logo in lowercase letters. Details:
+            - Letters: "Google"
+            - Colors (left to right): G = blue, first o = red, second o = yellow, g = blue, l = green, e = red
+            - Style: geometric, rounded sans‑serif (the modern Google/“Product Sans” wordmark)
+            - Background: white/transparent
+            - I see faint horizontal scan lines/artifacts across the image (likely from saving or resizing).
+
+            If you want, I can:
+            - Extract approximate official hex colors (common Google palette: blue #4285F4, red #EA4335, yellow #FBBC05, green #34A853),
+            - Remove artifacts or clean/resize the image,
+            - Convert to vector (SVG) or provide a transparent PNG. Which would you like?
+          refusal: null
+          role: assistant
+      created: 1767739133
+      id: chatcmpl-Cv9zRaNNVBY3I7UJIrInfRVOTcenX
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 501
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 320
+          rejected_prediction_tokens: 0
+        prompt_tokens: 289
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 790
+    status:
+      code: 200
+      message: OK
+version: 1

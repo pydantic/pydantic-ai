@@ -118,7 +118,7 @@ SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
 
 
 @customize_repr
-def _(value: bytes):  # pragma: no cover
+def _(value: bytes):
     """Use IsBytes() for large byte sequences in snapshots."""
     if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
         return 'IsBytes()'

@@ -36,6 +36,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
     GeminiModel,
@@ -63,7 +64,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
+from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1233,17 +1234,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
+                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 241a70:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
