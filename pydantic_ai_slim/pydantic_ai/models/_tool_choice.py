@@ -1,4 +1,3 @@
-import warnings
 from typing import Literal
 
 from typing_extensions import assert_never
@@ -42,7 +41,7 @@ def resolve_tool_choice(  # noqa: C901
 
         - `None` / `'auto'`: Returns `'auto'` if direct output allowed, else `'required'`.
         - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
-          appropriate mode and warns. Otherwise returns `'none'`.
+          appropriate mode. Otherwise returns `'none'`.
         - `'required'`: Requires function tool use. Raises if no function tools are defined.
         - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
         - `ToolOrOutput`: Combines specified function tools with all output tools.
@@ -53,9 +52,6 @@ def resolve_tool_choice(  # noqa: C901
     allow_direct_output = model_request_parameters.allow_text_output or model_request_parameters.allow_image_output
 
     available_tools = set(model_request_parameters.tool_defs.keys())
-
-    def _warn(msg: str) -> None:
-        warnings.warn(msg, UserWarning)
 
     def _invalid_tools(chosen_tool_names: set[str], available_tools: set[str], *, available_label: str) -> None:
         invalid = chosen_tool_names - available_tools
@@ -118,9 +114,7 @@ def resolve_tool_choice(  # noqa: C901
         # stable order, unique
         if not function_tool_choice.function_tools:
             if output_tool_names:
-                _warn('ToolOrOutput with empty function_tools - using output tools only')
                 return 'auto' if allow_direct_output else 'required'
-            _warn("ToolOrOutput with empty function_tools - defaulting to 'none'")
             return 'none'
 
         chosen_function_set = set(function_tool_choice.function_tools)

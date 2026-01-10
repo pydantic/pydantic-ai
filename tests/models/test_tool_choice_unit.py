@@ -55,14 +55,6 @@ class ExpectError:
     match: str
 
 
-@dataclass
-class ExpectWarning:
-    """Test should emit warning and return result."""
-
-    match: str
-    result: ResolvedToolChoice
-
-
 # =============================================================================
 # Test case dataclass
 # =============================================================================
@@ -74,7 +66,7 @@ class Case:
 
     id: str
     tool_choice: ToolChoice
-    expected: ResolvedToolChoice | ExpectError | ExpectWarning
+    expected: ResolvedToolChoice | ExpectError
     function_tools: list[str] = field(default_factory=lambda: ['tool_a'])
     output_tools: list[str] = field(default_factory=list)
     allow_text_output: bool = False
@@ -94,44 +86,45 @@ CASES = [
     Case('none-text-not-allowed', None, 'required'),
     Case('none-settings', None, 'auto', allow_text_output=True, none_settings=True),
     # === None/Empty list: with output tools ===
+    # No warning: tool_choice='none' disables function tools but output tools remain available
     Case(
         'none-output-text',
         'none',
-        ExpectWarning("tool_choice='none'", ('auto', ['final_result'])),
+        ('auto', ['final_result']),
         output_tools=['final_result'],
         allow_text_output=True,
     ),
     Case(
         'empty-output-text',
         [],
-        ExpectWarning("tool_choice='none'", ('auto', ['final_result'])),
+        ('auto', ['final_result']),
         output_tools=['final_result'],
         allow_text_output=True,
     ),
     Case(
         'none-output-image',
         'none',
-        ExpectWarning("tool_choice='none'", ('auto', ['final_result'])),
+        ('auto', ['final_result']),
         output_tools=['final_result'],
         allow_image_output=True,
     ),
     Case(
         'empty-output-image',
         [],
-        ExpectWarning("tool_choice='none'", ('auto', ['final_result'])),
+        ('auto', ['final_result']),
         output_tools=['final_result'],
         allow_image_output=True,
     ),
     Case(
         'none-output-no-direct-with-func',
         'none',
-        ExpectWarning("tool_choice='none'", ('required', ['final_result'])),
+        ('required', ['final_result']),
         output_tools=['final_result'],
     ),
     Case(
         'empty-output-no-direct-with-func',
         [],
-        ExpectWarning("tool_choice='none'", ('required', ['final_result'])),
+        ('required', ['final_result']),
         output_tools=['final_result'],
     ),
     Case(
@@ -233,23 +226,24 @@ CASES = [
         function_tools=['tool_a'],
         output_tools=['final_result'],
     ),
+    # No warning: ToolOrOutput with empty function_tools is valid (uses output tools or direct output)
     Case(
         'tpo-empty-text',
         ToolOrOutput(function_tools=[]),
-        ExpectWarning('empty function_tools', 'auto'),
+        'auto',
         output_tools=['final_result'],
         allow_text_output=True,
     ),
     Case(
         'tpo-empty-no-text',
         ToolOrOutput(function_tools=[]),
-        ExpectWarning('empty function_tools', 'required'),
+        'required',
         output_tools=['final_result'],
     ),
     Case(
         'tpo-empty-no-output',
         ToolOrOutput(function_tools=[]),
-        ExpectWarning('empty function_tools', 'none'),
+        'none',
     ),
     Case(
         'tpo-no-output',
@@ -301,10 +295,6 @@ def test_validate_tool_choice(case: Case):
     if isinstance(case.expected, ExpectError):
         with pytest.raises(UserError, match=case.expected.match):
             resolve_tool_choice(settings, params)
-    elif isinstance(case.expected, ExpectWarning):
-        with pytest.warns(UserWarning, match=case.expected.match):
-            result = resolve_tool_choice(settings, params)
-        assert result == case.expected.result
     else:
         result = resolve_tool_choice(settings, params)
         assert result == case.expected

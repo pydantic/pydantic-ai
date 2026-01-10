@@ -126,7 +126,6 @@ class Case:
     # Expected values - set to None to skip assertion
     expected_tool_choice_in_request: Any = None
     skip_reason: str | None = None
-    expected_warning_match: str | None = None  # Regex pattern for expected UserWarning
     use_direct_request: bool = False  # Use model.request() instead of agent.run() for required/list
 
 
@@ -408,8 +407,6 @@ async def test_tool_choice(
     model = get_model(case.provider, api_keys, bedrock_provider)
     settings: ModelSettings = {'tool_choice': case.tool_choice}
 
-    import warnings
-
     if case.use_direct_request:
         # Direct model.request() for required/list - single API call
         tool_defs = [make_tool_def('get_weather', 'Get weather for a city', 'city')]
@@ -444,20 +441,11 @@ async def test_tool_choice(
         else:
             agent = Agent(model, tools=case.tools)
 
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            warnings.simplefilter('always')
-            result = await agent.run(
-                case.prompt,
-                model_settings=settings,
-                usage_limits=UsageLimits(output_tokens_limit=5000),
-            )
-
-            # Check expected warning was raised
-            if case.expected_warning_match:
-                matching = [w for w in caught_warnings if case.expected_warning_match in str(w.message)]
-                assert matching, (
-                    f"Expected warning matching '{case.expected_warning_match}', got {[str(w.message) for w in caught_warnings]}"
-                )
+        result = await agent.run(
+            case.prompt,
+            model_settings=settings,
+            usage_limits=UsageLimits(output_tokens_limit=5000),
+        )
 
         # Verify tool_choice was sent correctly (if expected value provided and cassette has requests)
         if case.expected_tool_choice_in_request is not None and vcr and vcr.requests:
