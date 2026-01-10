@@ -33,6 +33,19 @@ def test_bedrock_provider(env: TestEnv):
     assert provider.base_url == 'https://bedrock-runtime.us-east-1.amazonaws.com'
 
 
+def test_bedrock_provider_bearer_token_env_var(env: TestEnv, mocker: MockerFixture):
+    """Test that AWS_BEARER_TOKEN_BEDROCK env var is used for bearer token auth."""
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    env.set('AWS_BEARER_TOKEN_BEDROCK', 'test-bearer-token')
+
+    mock_session = mocker.patch('pydantic_ai.providers.bedrock._BearerTokenSession')
+
+    provider = BedrockProvider()
+
+    mock_session.assert_called_once_with('test-bearer-token')
+    assert provider.name == 'bedrock'
+
+
 def test_bedrock_provider_timeout(env: TestEnv):
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     env.set('AWS_READ_TIMEOUT', '1')
