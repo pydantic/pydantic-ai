@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -3875,8 +3874,8 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     assert audio_part['input_audio']['format'] == 'mp3'
 
 
-async def test_openai_tool_choice_required_fallback_warning(allow_model_requests: None):
-    """Test warning when tool_choice='required' is set on a model that doesn't support it."""
+async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_requests: None):
+    """Test error when tool_choice='required' is set on a model that doesn't support it."""
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 
@@ -3890,10 +3889,5 @@ async def test_openai_tool_choice_required_fallback_warning(allow_model_requests
     agent = Agent(model, tools=[get_weather])
 
     settings: ModelSettings = {'tool_choice': 'required'}
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+    with pytest.raises(UserError, match="tool_choice='required' is not supported by model 'custom-model'"):
         await agent.run('What is the weather?', model_settings=settings)
-
-        # Check the warning was emitted
-        matching = [w for w in caught if "tool_choice='required' is not supported" in str(w.message)]
-        assert len(matching) == 1, f'Expected 1 warning, got {[str(w.message) for w in caught]}'

@@ -774,7 +774,7 @@ class OpenAIChatModel(Model):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
             tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
-            _warn_tool_choice_required_fallback(self.model_name, openai_profile, model_settings)
+            _raise_if_tool_choice_forcing_unsupported(self.model_name, openai_profile, model_settings)
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             tool_choice = ChatCompletionAllowedToolChoiceParam(
@@ -1544,7 +1544,7 @@ class OpenAIResponsesModel(Model):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
             tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
-            _warn_tool_choice_required_fallback(self.model_name, openai_profile, model_settings)
+            _raise_if_tool_choice_forcing_unsupported(self.model_name, openai_profile, model_settings)
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             tool_choice = ToolChoiceAllowedParam(
@@ -2594,19 +2594,18 @@ def _map_logprobs(
     ]
 
 
-def _warn_tool_choice_required_fallback(
+def _raise_if_tool_choice_forcing_unsupported(
     model_name: str,
     openai_profile: OpenAIModelProfile,
     model_settings: ModelSettings | None,
 ) -> None:
-    """Warn if user explicitly set tool_choice='required' but model doesn't support it."""
+    """Raise UserError if user explicitly set tool_choice to force tool use but model doesn't support it."""
     if not openai_profile.openai_supports_tool_choice_required:
         explicit_choice = (model_settings or {}).get('tool_choice')
-        if explicit_choice == 'required':
-            warnings.warn(
-                f"tool_choice='required' is not supported by model {model_name!r}, falling back to 'auto'",
-                UserWarning,
-                stacklevel=7,
+        if explicit_choice == 'required' or isinstance(explicit_choice, list):
+            raise UserError(
+                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
+                f'This model does not support forcing tool use.'
             )
 
 

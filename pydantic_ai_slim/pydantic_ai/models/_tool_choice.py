@@ -80,10 +80,6 @@ def resolve_tool_choice(  # noqa: C901
             else:
                 return 'required'  # only output tools exist and direct output isn't allowed
 
-            _warn(
-                f"tool_choice='none' but output tools {output_tool_names} are defined - "
-                f'defaulting to tool_choice={mode!r} for output tools only'
-            )
             return (mode, output_tool_names)
 
         if allow_direct_output:
