@@ -34,7 +34,7 @@ class ModelSettings(TypedDict, total=False):
     Includes only settings which apply to multiple models / model providers,
     though not all of these settings are supported by all models.
 
-    All types must be JSON-serializable.
+    All types must be serializable using Pydantic.
     """
 
     max_tokens: int
