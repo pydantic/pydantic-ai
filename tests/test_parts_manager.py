@@ -176,6 +176,7 @@ def test_handle_tool_call_deltas():
         tool_name='tool',
         args=None,
         tool_call_id='call',
+        provider_name='test_provider',
         provider_details={'foo': 'bar'},
     )
     assert event == snapshot(
@@ -186,6 +187,7 @@ def test_handle_tool_call_deltas():
                 args='{"arg1":',
                 tool_call_id='call',
                 part_kind='tool-call',
+                provider_name='test_provider',
                 provider_details={'foo': 'bar'},
             ),
             event_kind='part_start',
@@ -198,6 +200,7 @@ def test_handle_tool_call_deltas():
                 args='{"arg1":',
                 tool_call_id='call',
                 part_kind='tool-call',
+                provider_name='test_provider',
                 provider_details={'foo': 'bar'},
             ),
         ]
@@ -226,6 +229,7 @@ def test_handle_tool_call_deltas():
                 args='{"arg1":',
                 tool_call_id='call',
                 part_kind='tool-call',
+                provider_name='test_provider',
                 provider_details={'foo': 'bar', 'baz': 'qux'},
             ),
         ]
@@ -247,6 +251,7 @@ def test_handle_tool_call_deltas():
                 tool_name='tool1',
                 args='{"arg1":"value1"}',
                 tool_call_id='call',
+                provider_name='test_provider',
                 provider_details={'foo': 'bar', 'baz': 'qux'},
                 part_kind='tool-call',
             )
