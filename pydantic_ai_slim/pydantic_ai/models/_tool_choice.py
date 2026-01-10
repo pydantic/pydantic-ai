@@ -47,15 +47,17 @@ def resolve_tool_choice(  # noqa: C901
 
     allow_direct_output = model_request_parameters.allow_text_output or model_request_parameters.allow_image_output
 
-    tool_names = set(model_request_parameters.tool_defs.keys())
+    available_tools = set(model_request_parameters.tool_defs.keys())
 
     def _warn(msg: str) -> None:
         warnings.warn(msg, UserWarning)
 
-    def _invalid_tool_names(names: set[str], available: set[str], *, available_label: str) -> None:
-        invalid = names - available
+    def _invalid_tools(chosen_tool_names: set[str], available_tools: set[str], *, available_label: str) -> None:
+        invalid = chosen_tool_names - available_tools
         if invalid:
-            raise UserError(f'Invalid tool names in `tool_choice`: {invalid}. {available_label}: {available or "none"}')
+            raise UserError(
+                f'Invalid tool names in `tool_choice`: {invalid}. {available_label}: {available_tools or "none"}'
+            )
 
     # Default / auto
     if function_tool_choice in (None, 'auto'):
@@ -96,17 +98,16 @@ def resolve_tool_choice(  # noqa: C901
 
     # list[str]: required, restricted to these tools
     elif isinstance(function_tool_choice, list):
-        # dict.fromkeys keeps the order while removing duplicates
-        # set() doesn't preserve order
-        # and we need both the list (for the return value) and the set (for validation)
-        chosen = list(dict.fromkeys(function_tool_choice))
-        chosen_set = set(chosen)
-        _invalid_tool_names(chosen_set, tool_names, available_label='Available tools')
+        # unique names; doesn't retain order, but that's ok https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r2677595474
+        chosen_set = set(function_tool_choice)
+        # we'll only raise here if none of the chosen tools are valid https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r2677602549
+        if chosen_set - available_tools == chosen_set:
+            _invalid_tools(chosen_set, available_tools, available_label='Available tools')
 
-        if chosen_set == tool_names:
+        if chosen_set == available_tools:
             return 'required'
 
-        return ('required', chosen)
+        return ('required', list(chosen_set))
 
     # ToolOrOutput: specific function tools + all output tools or direct text/image output
     elif isinstance(function_tool_choice, ToolOrOutput):
@@ -124,14 +125,14 @@ def resolve_tool_choice(  # noqa: C901
         chosen_function_set = set(chosen_function)
         all_function_tool_names = {t.name for t in model_request_parameters.function_tools}
 
-        _invalid_tool_names(
+        _invalid_tools(
             chosen_function_set,
             all_function_tool_names,
             available_label='Available function tools',
         )
 
         allowed_tools = chosen_function + output_tool_names
-        if set(allowed_tools) == tool_names:
+        if set(allowed_tools) == available_tools:
             return 'required'
 
         # If direct output is allowed, use 'auto' mode to permit text/image responses

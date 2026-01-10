@@ -187,7 +187,7 @@ CASES = [
     Case(
         'list-dedup',
         ['tool_b', 'tool_a', 'tool_b'],
-        ('required', ['tool_b', 'tool_a']),
+        ('required', ['tool_a', 'tool_b']),
         function_tools=['tool_a', 'tool_b', 'tool_c'],
     ),
     Case(
