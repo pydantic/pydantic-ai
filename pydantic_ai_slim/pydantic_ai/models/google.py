@@ -1005,7 +1005,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
         if (
             item.provider_details
             and (thought_signature := item.provider_details.get('thought_signature'))
-            and m.provider_name == provider_name
+            and (m.provider_name == provider_name or item.provider_name == provider_name)
         ):
             part['thought_signature'] = base64.b64decode(thought_signature)
         elif thinking_part_signature:

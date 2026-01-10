@@ -5236,6 +5236,43 @@ def test_google_thought_signature_on_thinking_part():
     )
     assert old_google_response == new_google_response
 
+    # Test that thought_signature is used when item.provider_name matches even if ModelResponse.provider_name doesn't
+    # This happens when responses from other providers contain parts that originated from Google
+    response_with_item_provider_name = _content_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='text',
+                    provider_name='google-gla',
+                    provider_details={'thought_signature': signature},
+                ),
+            ],
+            provider_name=None,  # ModelResponse doesn't have provider_name set
+        ),
+        'google-gla',
+    )
+    assert response_with_item_provider_name == snapshot(
+        {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
+    )
+
+    # Also test when ModelResponse has a different provider_name (e.g., from another provider)
+    response_with_different_provider = _content_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='text',
+                    provider_name='google-gla',
+                    provider_details={'thought_signature': signature},
+                ),
+            ],
+            provider_name='openai',  # Different provider on ModelResponse
+        ),
+        'google-gla',
+    )
+    assert response_with_different_provider == snapshot(
+        {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
+    )
+
 
 def test_google_missing_tool_call_thought_signature():
     google_response = _content_model_response(
