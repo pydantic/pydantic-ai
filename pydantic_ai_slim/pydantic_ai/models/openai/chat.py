@@ -15,7 +15,7 @@ from ... import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, 
 from ..._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from ..._run_context import RunContext
 from ..._thinking_part import split_content_into_text_and_thinking
-from ..._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
+from ..._utils import guard_tool_call_id, now_utc, number_to_datetime
 from ...builtin_tools import (
     AbstractBuiltinTool,
     WebSearchTool,
@@ -61,11 +61,10 @@ from .. import (
     get_user_agent,
 )
 from ._shared import (
-    OMIT,
     OpenAIChatModelSettings,
     OpenAIModelName,
-    _map_provider_details,  # pyright: ignore[reportPrivateUsage]
-    _map_usage,  # pyright: ignore[reportPrivateUsage]
+    map_provider_details as _map_provider_details,
+    map_usage as _map_usage,
 )
 
 _CHAT_FINISH_REASON_MAP: dict[
@@ -79,7 +78,7 @@ _CHAT_FINISH_REASON_MAP: dict[
 }
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, omit as OMIT
     from openai.types import chat
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -108,6 +107,8 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+__all__ = ['OpenAIChatModel', 'OpenAIModel', 'OpenAIStreamedResponse']
 
 
 @dataclass(init=False)
@@ -405,7 +406,7 @@ class OpenAIChatModel(Model):
                 f'Invalid response from {self.system} chat completions endpoint, expected JSON data'
             )
 
-        timestamp = _now_utc()
+        timestamp = now_utc()
         if not response.created:
             response.created = int(timestamp.timestamp())
 
@@ -439,7 +440,7 @@ class OpenAIChatModel(Model):
                     raise RuntimeError('Custom tool calls are not supported')
                 else:
                     assert_never(c)
-                part.tool_call_id = _guard_tool_call_id(part)
+                part.tool_call_id = guard_tool_call_id(part)
                 items.append(part)
 
         provider_details = self._process_provider_details(response)
@@ -684,7 +685,7 @@ class OpenAIChatModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ChatCompletionMessageFunctionToolCallParam:
         return ChatCompletionMessageFunctionToolCallParam(
-            id=_guard_tool_call_id(t=t),
+            id=guard_tool_call_id(t=t),
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
@@ -728,7 +729,7 @@ class OpenAIChatModel(Model):
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part),
+                    tool_call_id=guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
@@ -737,7 +738,7 @@ class OpenAIChatModel(Model):
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
+                        tool_call_id=guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
             else:
@@ -877,7 +878,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
-    _timestamp: datetime = field(default_factory=_now_utc)
+    _timestamp: datetime = field(default_factory=now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch

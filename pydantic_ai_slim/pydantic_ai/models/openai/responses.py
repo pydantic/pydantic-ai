@@ -66,17 +66,16 @@ from .. import (
 )
 from ._shared import (
     MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME,
-    OMIT,
     OpenAIModelName,
     OpenAIResponsesModelSettings,
-    _make_raw_content_updater,  # pyright: ignore[reportPrivateUsage]
-    _map_logprobs,  # pyright: ignore[reportPrivateUsage]
-    _map_usage,  # pyright: ignore[reportPrivateUsage]
+    make_raw_content_updater as _make_raw_content_updater,
+    map_logprobs as _map_logprobs,
+    map_usage as _map_usage,
     resolve_openai_image_generation_size as _resolve_openai_image_generation_size,
 )
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, omit as OMIT
     from openai._types import Omit
     from openai.types import responses
     from openai.types.responses.response_input_param import FunctionCallOutput, Message

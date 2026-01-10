@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from typing import Any, Literal
 
 from typing_extensions import deprecated
@@ -10,7 +11,6 @@ from ...exceptions import UserError
 from ...settings import ModelSettings
 
 try:
-    from openai import omit as OMIT  # pyright: ignore[reportUnusedImport] # noqa: F401
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -230,9 +230,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 # Helper functions used by both chat (completions) and responses modules
 
 
-def _make_raw_content_updater(  # pyright: ignore[reportUnusedFunction]
-    delta: str, index: int
-) -> Any:  # Returns Callable[[dict[str, Any] | None], dict[str, Any]]
+def make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
     """Create a callback that updates `provider_details['raw_content']`.
 
     This is used for streaming raw CoT from gpt-oss models. The callback pattern keeps
@@ -251,7 +249,7 @@ def _make_raw_content_updater(  # pyright: ignore[reportUnusedFunction]
     return update_provider_details
 
 
-def _map_logprobs(
+def map_logprobs(
     logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
     | list[responses.response_output_text.Logprob],
 ) -> list[dict[str, Any]]:
@@ -269,7 +267,7 @@ def _map_logprobs(
     ]
 
 
-def _map_usage(  # pyright: ignore[reportUnusedFunction]
+def map_usage(
     response: chat.ChatCompletion | ChatCompletionChunk | responses.Response,
     provider: str,
     provider_url: str,
@@ -310,7 +308,7 @@ def _map_usage(  # pyright: ignore[reportUnusedFunction]
     )
 
 
-def _map_provider_details(  # pyright: ignore[reportUnusedFunction]
+def map_provider_details(
     choice: chat_completion_chunk.Choice | chat_completion.Choice,
 ) -> dict[str, Any] | None:
     """Map provider details from a chat completion choice."""
@@ -318,7 +316,7 @@ def _map_provider_details(  # pyright: ignore[reportUnusedFunction]
 
     # Add logprobs to vendor_details if available
     if choice.logprobs is not None and choice.logprobs.content:
-        provider_details['logprobs'] = _map_logprobs(choice.logprobs.content)
+        provider_details['logprobs'] = map_logprobs(choice.logprobs.content)
     if raw_finish_reason := choice.finish_reason:
         provider_details['finish_reason'] = raw_finish_reason
 
