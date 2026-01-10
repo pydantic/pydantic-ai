@@ -1309,7 +1309,7 @@ class OpenAIResponsesModel(Model):
                                 content=summary.text,
                                 id=item.id,
                                 signature=signature,
-                                provider_name=self.system if (signature or provider_details) else None,
+                                provider_name=self.system,
                                 provider_details=provider_details or None,
                             )
                         )
@@ -1322,7 +1322,7 @@ class OpenAIResponsesModel(Model):
                             content='',
                             id=item.id,
                             signature=signature,
-                            provider_name=self.system if (signature or provider_details) else None,
+                            provider_name=self.system,
                             provider_details=provider_details or None,
                         )
                     )
@@ -2412,6 +2412,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=vendor_id,
                     content=chunk.part.text,
                     id=chunk.item_id,
+                    provider_name=self.provider_name,
                 ):
                     yield event
 
@@ -2428,6 +2429,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=vendor_id,
                     content=chunk.delta,
                     id=chunk.item_id,
+                    provider_name=self.provider_name,
                 ):
                     yield event
 

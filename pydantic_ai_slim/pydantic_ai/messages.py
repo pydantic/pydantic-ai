@@ -1085,7 +1085,8 @@ class ThinkingPart:
     provider_name: str | None = None
     """The name of the provider that generated the response. 
 
-    Signatures are only sent back to the same provider. Set this when provider_details exists.
+    Signatures are only sent back to the same provider. 
+    Set this when provider_details or id exists as they are provider-specific information for thinking parts.
     """
 
     provider_details: dict[str, Any] | None = None
@@ -1559,7 +1560,8 @@ class ThinkingPartDelta:
     provider_name: str | None = None
     """Optional provider name for the thinking part.
 
-    Signatures are only sent back to the same provider. Set this when provider_details exists.
+    Signatures are only sent back to the same provider. 
+    Set this when provider_details or id exists as they are provider-specific information for thinking parts.
     """
 
     provider_details: ProviderDetailsDelta = None

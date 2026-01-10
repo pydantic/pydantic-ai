@@ -2519,7 +2519,11 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a',
+                        provider_name='openai',
+                    ),
                     TextPart(content=IsStr(), id='msg_68c1fa1ec9448197b5c8f78a90999360093f57e27128848a'),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1915, details={'reasoning_tokens': 1600}),
@@ -2843,6 +2847,7 @@ def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
     result = agent.run_sync('Hello')
     response = cast(ModelResponse, result.all_messages()[-1])
     assert response.timestamp == IsNow(tz=timezone.utc)
+    assert response.provider_name == 'openai'
     assert response.provider_details == snapshot(
         {'finish_reason': 'stop', 'timestamp': datetime(2025, 6, 1, 3, 7, 48, tzinfo=timezone.utc)}
     )
