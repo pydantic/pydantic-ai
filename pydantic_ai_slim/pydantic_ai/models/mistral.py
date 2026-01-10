@@ -344,7 +344,7 @@ class MistralModel(Model):
             # Don't send tools at all.
             return None, None
         elif isinstance(resolved_tool_choice, tuple):
-            tool_names, tool_choice_mode = resolved_tool_choice
+            tool_choice_mode, tool_names = resolved_tool_choice
             tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             tool_choice = 'auto' if tool_choice_mode == 'auto' else 'required'
         else:

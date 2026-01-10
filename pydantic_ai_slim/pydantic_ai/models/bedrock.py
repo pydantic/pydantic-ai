@@ -548,7 +548,7 @@ class BedrockConverseModel(Model):
             # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html
             return None
         elif isinstance(resolved_tool_choice, tuple):
-            tool_names, tool_choice_mode = resolved_tool_choice
+            tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'auto':
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'auto': {}}

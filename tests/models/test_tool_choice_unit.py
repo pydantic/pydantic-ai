@@ -97,41 +97,41 @@ CASES = [
     Case(
         'none-output-text',
         'none',
-        ExpectWarning("tool_choice='none'", (['final_result'], 'auto')),
+        ExpectWarning("tool_choice='none'", ('auto', ['final_result'])),
         output_tools=['final_result'],
         allow_text_output=True,
     ),
     Case(
         'empty-output-text',
         [],
-        ExpectWarning("tool_choice='none'", (['final_result'], 'auto')),
+        ExpectWarning("tool_choice='none'", ('auto', ['final_result'])),
         output_tools=['final_result'],
         allow_text_output=True,
     ),
     Case(
         'none-output-image',
         'none',
-        ExpectWarning("tool_choice='none'", (['final_result'], 'auto')),
+        ExpectWarning("tool_choice='none'", ('auto', ['final_result'])),
         output_tools=['final_result'],
         allow_image_output=True,
     ),
     Case(
         'empty-output-image',
         [],
-        ExpectWarning("tool_choice='none'", (['final_result'], 'auto')),
+        ExpectWarning("tool_choice='none'", ('auto', ['final_result'])),
         output_tools=['final_result'],
         allow_image_output=True,
     ),
     Case(
         'none-output-no-direct-with-func',
         'none',
-        ExpectWarning("tool_choice='none'", (['final_result'], 'required')),
+        ExpectWarning("tool_choice='none'", ('required', ['final_result'])),
         output_tools=['final_result'],
     ),
     Case(
         'empty-output-no-direct-with-func',
         [],
-        ExpectWarning("tool_choice='none'", (['final_result'], 'required')),
+        ExpectWarning("tool_choice='none'", ('required', ['final_result'])),
         output_tools=['final_result'],
     ),
     Case(
@@ -169,13 +169,13 @@ CASES = [
     Case(
         'list-single',
         ['tool_a'],
-        (['tool_a'], 'required'),
+        ('required', ['tool_a']),
         function_tools=['tool_a', 'tool_b'],
     ),
     Case(
         'list-multiple',
         ['tool_a', 'tool_b'],
-        (['tool_a', 'tool_b'], 'required'),
+        ('required', ['tool_a', 'tool_b']),
         function_tools=['tool_a', 'tool_b', 'tool_c'],
     ),
     Case(
@@ -187,7 +187,7 @@ CASES = [
     Case(
         'list-dedup',
         ['tool_b', 'tool_a', 'tool_b'],
-        (['tool_b', 'tool_a'], 'required'),
+        ('required', ['tool_b', 'tool_a']),
         function_tools=['tool_a', 'tool_b', 'tool_c'],
     ),
     Case(
@@ -199,14 +199,14 @@ CASES = [
     Case(
         'list-output-tool',
         ['final_result'],
-        (['final_result'], 'required'),
+        ('required', ['final_result']),
         output_tools=['final_result'],
     ),
     # === ToolsPlusOutput behavior ===
     Case(
         'tpo-text-allowed',
         ToolOrOutput(function_tools=['tool_a']),
-        (['tool_a', 'final_result'], 'auto'),
+        ('auto', ['tool_a', 'final_result']),
         function_tools=['tool_a', 'tool_b'],
         output_tools=['final_result'],
         allow_text_output=True,
@@ -214,14 +214,14 @@ CASES = [
     Case(
         'tpo-no-text',
         ToolOrOutput(function_tools=['tool_a']),
-        (['tool_a', 'final_result'], 'required'),
+        ('required', ['tool_a', 'final_result']),
         function_tools=['tool_a', 'tool_b'],
         output_tools=['final_result'],
     ),
     Case(
         'tpo-multiple',
         ToolOrOutput(function_tools=['tool_a', 'tool_b']),
-        (['tool_a', 'tool_b', 'final_result'], 'auto'),
+        ('auto', ['tool_a', 'tool_b', 'final_result']),
         function_tools=['tool_a', 'tool_b', 'tool_c'],
         output_tools=['final_result'],
         allow_text_output=True,
@@ -254,7 +254,7 @@ CASES = [
     Case(
         'tpo-no-output',
         ToolOrOutput(function_tools=['tool_a']),
-        (['tool_a'], 'auto'),
+        ('auto', ['tool_a']),
         function_tools=['tool_a', 'tool_b'],
         allow_text_output=True,
     ),
@@ -267,7 +267,7 @@ CASES = [
     Case(
         'tpo-dedup',
         ToolOrOutput(function_tools=['tool_b', 'tool_a', 'tool_b']),
-        (['tool_b', 'tool_a', 'final_result'], 'auto'),
+        ('auto', ['tool_b', 'tool_a', 'final_result']),
         function_tools=['tool_a', 'tool_b', 'tool_c'],
         output_tools=['final_result'],
         allow_text_output=True,

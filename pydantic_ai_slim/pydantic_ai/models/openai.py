@@ -776,7 +776,7 @@ class OpenAIChatModel(Model):
             tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
             _warn_tool_choice_required_fallback(self.model_name, openai_profile, model_settings)
         elif isinstance(resolved_tool_choice, tuple):
-            tool_names, tool_choice_mode = resolved_tool_choice
+            tool_choice_mode, tool_names = resolved_tool_choice
             tool_choice = ChatCompletionAllowedToolChoiceParam(
                 type='allowed_tools',
                 allowed_tools=ChatCompletionAllowedToolsParam(
@@ -1546,7 +1546,7 @@ class OpenAIResponsesModel(Model):
             tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
             _warn_tool_choice_required_fallback(self.model_name, openai_profile, model_settings)
         elif isinstance(resolved_tool_choice, tuple):
-            tool_names, tool_choice_mode = resolved_tool_choice
+            tool_choice_mode, tool_names = resolved_tool_choice
             tool_choice = ToolChoiceAllowedParam(
                 type='allowed_tools',
                 mode=tool_choice_mode,

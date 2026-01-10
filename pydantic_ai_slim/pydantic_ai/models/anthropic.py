@@ -688,7 +688,7 @@ class AnthropicModel(Model):
         elif resolved_tool_choice == 'none':
             tool_choice = {'type': 'none'}
         elif isinstance(resolved_tool_choice, tuple):
-            tool_names, tool_choice_mode = resolved_tool_choice
+            tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'auto':
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'type': 'auto'}

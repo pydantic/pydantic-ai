@@ -464,7 +464,7 @@ class GoogleModel(Model):
 
         allowed_function_names: list[str] | None = None
         if isinstance(resolved_tool_choice, tuple):
-            tool_names, tool_choice_mode = resolved_tool_choice
+            tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'auto':
                 # Google doesn't support AUTO mode with allowed_function_names (even though the types allow it),
                 # so we filter tool_defs instead
