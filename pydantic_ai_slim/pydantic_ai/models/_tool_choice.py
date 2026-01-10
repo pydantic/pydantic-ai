@@ -62,7 +62,7 @@ def resolve_tool_choice(  # noqa: C901
         return 'auto' if allow_direct_output else 'required'
 
     # none / []: disable function tools, but output tools may still exist
-    if tool_choice in ('none', []):
+    elif tool_choice in ('none', []):
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
 
         if output_tool_names:
@@ -88,7 +88,7 @@ def resolve_tool_choice(  # noqa: C901
         assert False, 'Either output_tools or allow_text_output/allow_image_output must be set'
 
     # required (only function tools allowed)
-    if tool_choice == 'required':
+    elif tool_choice == 'required':
         if not model_request_parameters.function_tools:
             raise UserError(
                 '`tool_choice` was set to "required", but no function tools are defined. '
@@ -97,7 +97,7 @@ def resolve_tool_choice(  # noqa: C901
         return 'required'
 
     # list[str]: required, restricted to these tools
-    if isinstance(tool_choice, list):
+    elif isinstance(tool_choice, list):
         # dict.fromkeys keeps the order while removing duplicates
         # set() doesn't preserve order
         # and we need both the list (for the return value) and the set (for validation)
@@ -111,7 +111,7 @@ def resolve_tool_choice(  # noqa: C901
         return ('required', chosen)
 
     # ToolsPlusOutput: specific function tools + all output tools or direct text/image output
-    if isinstance(tool_choice, ToolOrOutput):
+    elif isinstance(tool_choice, ToolOrOutput):
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
 
         # stable order, unique
@@ -139,5 +139,5 @@ def resolve_tool_choice(  # noqa: C901
         # If direct output is allowed, use 'auto' mode to permit text/image responses
         mode: _AutoOrRequired = 'auto' if allow_direct_output else 'required'
         return (mode, allowed_tools)
-
-    assert_never(tool_choice)
+    else:
+        assert_never(tool_choice)
