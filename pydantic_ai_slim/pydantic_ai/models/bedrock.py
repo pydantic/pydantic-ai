@@ -535,20 +535,20 @@ class BedrockConverseModel(Model):
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
-        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
         tool_choice: ToolChoiceTypeDef
-        if validated_tool_choice == 'auto':
+        if resolved_tool_choice == 'auto':
             tool_choice = {'auto': {}}
-        elif validated_tool_choice == 'required':
+        elif resolved_tool_choice == 'required':
             tool_choice = {'any': {}}
-        elif validated_tool_choice == 'none':
+        elif resolved_tool_choice == 'none':
             # Bedrock doesn't support a native 'none' mode, so we don't send tools
             # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html
             return None
-        elif isinstance(validated_tool_choice, tuple):
-            tool_names, tool_choice_mode = validated_tool_choice
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_names, tool_choice_mode = resolved_tool_choice
             if tool_choice_mode == 'auto':
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'auto': {}}
@@ -558,7 +558,7 @@ class BedrockConverseModel(Model):
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'any': {}}
         else:
-            assert_never(validated_tool_choice)
+            assert_never(resolved_tool_choice)
 
         if not tool_defs:
             return None

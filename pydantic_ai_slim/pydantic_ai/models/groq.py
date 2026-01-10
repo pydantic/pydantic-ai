@@ -380,17 +380,17 @@ class GroqModel(Model):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
         tool_choice: ChatCompletionToolChoiceOptionParam
-        if validated_tool_choice in ('auto', 'required'):
-            tool_choice = validated_tool_choice
-        elif validated_tool_choice == 'none':
+        if resolved_tool_choice in ('auto', 'required'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'none':
             # Use native 'none' mode to keep tool definitions cached while disabling tool calls
             tool_choice = 'none'
-        elif isinstance(validated_tool_choice, tuple):
-            tool_names, tool_choice_mode = validated_tool_choice
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_names, tool_choice_mode = resolved_tool_choice
             if tool_choice_mode == 'auto':
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = 'auto'
@@ -403,7 +403,7 @@ class GroqModel(Model):
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = 'required'
         else:
-            assert_never(validated_tool_choice)
+            assert_never(resolved_tool_choice)
 
         tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs.values()]
 

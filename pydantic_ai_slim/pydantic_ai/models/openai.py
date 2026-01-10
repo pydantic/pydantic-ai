@@ -767,16 +767,16 @@ class OpenAIChatModel(Model):
         """
         openai_profile = OpenAIModelProfile.from_profile(self.profile)
 
-        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         tool_choice: ChatCompletionToolChoiceOptionParam
-        if validated_tool_choice in ('auto', 'none'):
-            tool_choice = validated_tool_choice
-        elif validated_tool_choice == 'required':
+        if resolved_tool_choice in ('auto', 'none'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'required':
             tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
             _warn_tool_choice_required_fallback(self.model_name, openai_profile, model_settings)
-        elif isinstance(validated_tool_choice, tuple):
-            tool_names, tool_choice_mode = validated_tool_choice
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_names, tool_choice_mode = resolved_tool_choice
             tool_choice = ChatCompletionAllowedToolChoiceParam(
                 type='allowed_tools',
                 allowed_tools=ChatCompletionAllowedToolsParam(
@@ -785,7 +785,7 @@ class OpenAIChatModel(Model):
                 ),
             )
         else:
-            assert_never(validated_tool_choice)
+            assert_never(resolved_tool_choice)
 
         tools: list[chat.ChatCompletionToolParam] = [
             self._map_tool_definition(t) for t in model_request_parameters.tool_defs.values()
@@ -1537,23 +1537,23 @@ class OpenAIResponsesModel(Model):
         """
         openai_profile = OpenAIModelProfile.from_profile(self.profile)
 
-        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         tool_choice: ResponsesToolChoice | None
-        if validated_tool_choice in ('auto', 'none'):
-            tool_choice = validated_tool_choice
-        elif validated_tool_choice == 'required':
+        if resolved_tool_choice in ('auto', 'none'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'required':
             tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
             _warn_tool_choice_required_fallback(self.model_name, openai_profile, model_settings)
-        elif isinstance(validated_tool_choice, tuple):
-            tool_names, tool_choice_mode = validated_tool_choice
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_names, tool_choice_mode = resolved_tool_choice
             tool_choice = ToolChoiceAllowedParam(
                 type='allowed_tools',
                 mode=tool_choice_mode,
                 tools=[{'type': 'function', 'name': n} for n in tool_names],
             )
         else:
-            assert_never(validated_tool_choice)
+            assert_never(resolved_tool_choice)
 
         tools: list[responses.FunctionToolParam] = [
             self._map_tool_definition(t) for t in model_request_parameters.tool_defs.values()

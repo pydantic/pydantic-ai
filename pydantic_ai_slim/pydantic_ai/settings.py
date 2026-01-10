@@ -16,7 +16,7 @@ class ToolOrOutput:
     Use this when you want to control which function tools the model can use
     in an agent run while still allowing the agent to complete with structured output.
 
-    See the [Tool Choice guide](tool-choice.md#toolsplusoutput---specific-tools-with-output)
+    See the [Tool Choice guide](TODO fill this out in https://github.com/dsfaccini/pydantic-ai/pull/2 i.e. prepare_model_settings hook PR)
     for examples.
     """
 

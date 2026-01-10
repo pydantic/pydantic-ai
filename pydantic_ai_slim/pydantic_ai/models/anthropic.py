@@ -676,19 +676,19 @@ class AnthropicModel(Model):
         thinking_enabled = model_settings.get('anthropic_thinking') is not None
         tool_defs = model_request_parameters.tool_defs
 
-        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         tool_choice: BetaToolChoiceParam
 
-        if validated_tool_choice == 'auto':
+        if resolved_tool_choice == 'auto':
             tool_choice = {'type': 'auto'}
-        elif validated_tool_choice == 'required':
+        elif resolved_tool_choice == 'required':
             _raise_incompatible_thinking_and_tool_forcing(thinking_enabled, "tool_choice='required'")
             tool_choice = {'type': 'any'}
-        elif validated_tool_choice == 'none':
+        elif resolved_tool_choice == 'none':
             tool_choice = {'type': 'none'}
-        elif isinstance(validated_tool_choice, tuple):
-            tool_names, tool_choice_mode = validated_tool_choice
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_names, tool_choice_mode = resolved_tool_choice
             if tool_choice_mode == 'auto':
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'type': 'auto'}
@@ -700,7 +700,7 @@ class AnthropicModel(Model):
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'type': 'any'}
         else:
-            assert_never(validated_tool_choice)
+            assert_never(resolved_tool_choice)
 
         if not tool_defs:
             return [], None

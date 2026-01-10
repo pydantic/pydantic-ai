@@ -333,22 +333,22 @@ class MistralModel(Model):
         - "none": Prevents tool use.
         - "required": Forces tool use.
         """
-        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
         tool_choice: MistralToolChoiceEnum
-        if validated_tool_choice in ('auto', 'required'):
-            tool_choice = validated_tool_choice
-        elif validated_tool_choice == 'none':
+        if resolved_tool_choice in ('auto', 'required'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'none':
             # Mistral returns garbled responses when tool_choice='none' with tools present.
             # Don't send tools at all.
             return None, None
-        elif isinstance(validated_tool_choice, tuple):
-            tool_names, tool_choice_mode = validated_tool_choice
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_names, tool_choice_mode = resolved_tool_choice
             tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             tool_choice = 'auto' if tool_choice_mode == 'auto' else 'required'
         else:
-            assert_never(validated_tool_choice)
+            assert_never(resolved_tool_choice)
 
         if not tool_defs:
             return None, None

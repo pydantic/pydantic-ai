@@ -454,7 +454,7 @@ class GoogleModel(Model):
 
         tool_defs = model_request_parameters.tool_defs
 
-        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         function_calling_config_modes: dict[ToolChoiceScalar, FunctionCallingConfigMode] = {
             'auto': FunctionCallingConfigMode.AUTO,
@@ -463,8 +463,8 @@ class GoogleModel(Model):
         }
 
         allowed_function_names: list[str] | None = None
-        if isinstance(validated_tool_choice, tuple):
-            tool_names, tool_choice_mode = validated_tool_choice
+        if isinstance(resolved_tool_choice, tuple):
+            tool_names, tool_choice_mode = resolved_tool_choice
             if tool_choice_mode == 'auto':
                 # Google doesn't support AUTO mode with allowed_function_names (even though the types allow it),
                 # so we filter tool_defs instead
@@ -473,7 +473,7 @@ class GoogleModel(Model):
                 # Use ANY mode with allowed_function_names to force one of the specified tools
                 allowed_function_names = tool_names
         else:
-            tool_choice_mode = validated_tool_choice
+            tool_choice_mode = resolved_tool_choice
 
         function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_config_modes[tool_choice_mode]}
         if allowed_function_names is not None:

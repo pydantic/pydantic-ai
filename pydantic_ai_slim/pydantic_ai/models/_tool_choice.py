@@ -7,7 +7,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
-ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[list[str], Literal['auto', 'required']]
+_AutoOrRequired = Literal['auto', 'required']
+ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[list[str], _AutoOrRequired]
 
 
 def resolve_tool_choice(  # noqa: C901
@@ -68,7 +69,7 @@ def resolve_tool_choice(  # noqa: C901
             # If direct output is allowed, output-tools-only behaves like "auto";
             # otherwise if function tools exist, enforce "required" to avoid silent dead-ends.
             if allow_direct_output:
-                mode: Literal['auto', 'required'] = 'auto'
+                mode: _AutoOrRequired = 'auto'
             elif model_request_parameters.function_tools:
                 mode = 'required'
             else:
@@ -136,7 +137,7 @@ def resolve_tool_choice(  # noqa: C901
             return 'required'
 
         # If direct output is allowed, use 'auto' mode to permit text/image responses
-        mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'
+        mode: _AutoOrRequired = 'auto' if allow_direct_output else 'required'
         return (allowed_tools, mode)
 
     assert_never(tool_choice)
