@@ -739,3 +739,72 @@ result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
 ```
+
+## Converting Messages to OpenAI Format
+
+Both [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] provide a `to_openai_messages()` method that converts PydanticAI message history to the native OpenAI format. This is useful for debugging, logging, or building custom integrations with the OpenAI API.
+
+### Chat Completions API
+
+For `OpenAIChatModel`, the method returns a list of `ChatCompletionMessageParam` objects. Instructions from [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions] are included as a system message:
+
+```python
+import asyncio
+
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.openai import OpenAIChatModel
+
+model = OpenAIChatModel('gpt-4o')
+
+# Example PydanticAI message history
+messages = [
+    ModelRequest(parts=[UserPromptPart(content='What is 2 + 2?')]),
+    ModelResponse(parts=[TextPart(content='4')]),
+]
+
+
+async def convert():
+    return await model.to_openai_messages(messages)
+
+
+openai_messages = asyncio.run(convert())
+print(openai_messages)
+"""
+[{'role': 'user', 'content': 'What is 2 + 2?'}, {'role': 'assistant', 'content': '4'}]
+"""
+```
+
+### Responses API
+
+For `OpenAIResponsesModel`, the method returns a tuple of `(instructions, messages)`. Instructions from [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions] are extracted and returned separately, since the Responses API accepts instructions as a dedicated parameter:
+
+```python
+import asyncio
+
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+model = OpenAIResponsesModel('gpt-4o')
+
+# Example PydanticAI message history with instructions
+messages = [
+    ModelRequest(
+        parts=[UserPromptPart(content='What is 2 + 2?')],
+        instructions='Be concise.',
+    ),
+    ModelResponse(parts=[TextPart(content='4')]),
+]
+
+
+async def convert():
+    return await model.to_openai_messages(messages)
+
+
+instructions, openai_messages = asyncio.run(convert())
+print(instructions)
+#> Be concise.
+print(openai_messages)
+"""
+[{'role': 'user', 'content': 'What is 2 + 2?'}, {'role': 'assistant', 'content': '4'}]
+"""
+```
