@@ -371,6 +371,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
 
+    # TODO (v2): enforce the arguments to be passed as keyword arguments only
     def __init__(
         self,
         tool_prefix: str | None = None,
@@ -1111,18 +1112,18 @@ class _MCPServerHTTP(MCPServer):
         self.http_client = http_client
 
         super().__init__(
-            tool_prefix,
-            log_level,
-            log_handler,
-            timeout,
-            read_timeout,
-            process_tool_call,
-            allow_sampling,
-            sampling_model,
-            max_retries,
-            elicitation_callback,
-            cache_tools,
-            cache_resources,
+            tool_prefix=tool_prefix,
+            log_level=log_level,
+            log_handler=log_handler,
+            timeout=timeout,
+            read_timeout=read_timeout,
+            process_tool_call=process_tool_call,
+            allow_sampling=allow_sampling,
+            sampling_model=sampling_model,
+            max_retries=max_retries,
+            elicitation_callback=elicitation_callback,
+            cache_tools=cache_tools,
+            cache_resources=cache_resources,
             id=id,
             client_info=client_info,
         )

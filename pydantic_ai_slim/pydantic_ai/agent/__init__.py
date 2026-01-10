@@ -637,7 +637,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = self._get_toolset(
             output_toolset=output_toolset, additional_toolsets=toolsets, prompt_config=prompt_config
         )
-        tool_manager = ToolManager[AgentDepsT](toolset)
+        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
