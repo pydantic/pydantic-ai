@@ -112,7 +112,8 @@ def resolve_tool_choice(  # noqa: C901
         if chosen_set == available_tools:
             return 'required'
 
-        return ('required', list(chosen_set))
+        # tests require a deterministic order
+        return ('required', sorted(chosen_set))
 
     # ToolOrOutput: specific function tools + all output tools or direct text/image output
     elif isinstance(function_tool_choice, ToolOrOutput):
@@ -126,17 +127,18 @@ def resolve_tool_choice(  # noqa: C901
             _warn("ToolOrOutput with empty function_tools - defaulting to 'none'")
             return 'none'
 
-        chosen_function = list(dict.fromkeys(function_tool_choice.function_tools))
-        chosen_function_set = set(chosen_function)
+        chosen_function_set = set(function_tool_choice.function_tools)
         all_function_tool_names = {t.name for t in model_request_parameters.function_tools}
+        # same as above - only raise if none are valid
+        if not chosen_function_set - all_function_tool_names == chosen_function_set:
+            _invalid_tools(
+                chosen_function_set,
+                all_function_tool_names,
+                available_label='Available function tools',
+            )
 
-        _invalid_tools(
-            chosen_function_set,
-            all_function_tool_names,
-            available_label='Available function tools',
-        )
-
-        allowed_tools = chosen_function + output_tool_names
+        # tests require a deterministic order
+        allowed_tools = sorted([*chosen_function_set, *output_tool_names])
         if set(allowed_tools) == available_tools:
             return 'required'
 

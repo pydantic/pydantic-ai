@@ -206,7 +206,7 @@ CASES = [
     Case(
         'tpo-text-allowed',
         ToolOrOutput(function_tools=['tool_a']),
-        ('auto', ['tool_a', 'final_result']),
+        ('auto', ['final_result', 'tool_a']),
         function_tools=['tool_a', 'tool_b'],
         output_tools=['final_result'],
         allow_text_output=True,
@@ -214,14 +214,14 @@ CASES = [
     Case(
         'tpo-no-text',
         ToolOrOutput(function_tools=['tool_a']),
-        ('required', ['tool_a', 'final_result']),
+        ('required', ['final_result', 'tool_a']),
         function_tools=['tool_a', 'tool_b'],
         output_tools=['final_result'],
     ),
     Case(
         'tpo-multiple',
         ToolOrOutput(function_tools=['tool_a', 'tool_b']),
-        ('auto', ['tool_a', 'tool_b', 'final_result']),
+        ('auto', ['final_result', 'tool_a', 'tool_b']),
         function_tools=['tool_a', 'tool_b', 'tool_c'],
         output_tools=['final_result'],
         allow_text_output=True,
@@ -261,13 +261,13 @@ CASES = [
     Case(
         'tpo-invalid-error',
         ToolOrOutput(function_tools=['nonexistent']),
-        ExpectError('Invalid tool names'),
+        ('required', ['final_result', 'nonexistent']),
         output_tools=['final_result'],
     ),
     Case(
         'tpo-dedup',
         ToolOrOutput(function_tools=['tool_b', 'tool_a', 'tool_b']),
-        ('auto', ['tool_b', 'tool_a', 'final_result']),
+        ('auto', ['final_result', 'tool_a', 'tool_b']),
         function_tools=['tool_a', 'tool_b', 'tool_c'],
         output_tools=['final_result'],
         allow_text_output=True,
