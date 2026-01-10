@@ -50,7 +50,7 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
-from ._tool_choice import validate_tool_choice
+from ._tool_choice import resolve_tool_choice
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
@@ -380,7 +380,7 @@ class GroqModel(Model):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
         tool_choice: ChatCompletionToolChoiceOptionParam

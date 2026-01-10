@@ -48,7 +48,7 @@ from pydantic_ai.models import (
     StreamedResponse,
     download_item,
 )
-from pydantic_ai.models._tool_choice import validate_tool_choice
+from pydantic_ai.models._tool_choice import resolve_tool_choice
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -535,7 +535,7 @@ class BedrockConverseModel(Model):
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
-        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
         tool_choice: ToolChoiceTypeDef

@@ -58,7 +58,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import validate_tool_choice
+from ._tool_choice import resolve_tool_choice
 
 try:
     from google.genai import Client, errors
@@ -454,7 +454,7 @@ class GoogleModel(Model):
 
         tool_defs = model_request_parameters.tool_defs
 
-        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         function_calling_config_modes: dict[ToolChoiceScalar, FunctionCallingConfigMode] = {
             'auto': FunctionCallingConfigMode.AUTO,

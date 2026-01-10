@@ -49,7 +49,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import validate_tool_choice
+from ._tool_choice import resolve_tool_choice
 
 try:
     from mistralai import (
@@ -333,7 +333,7 @@ class MistralModel(Model):
         - "none": Prevents tool use.
         - "required": Forces tool use.
         """
-        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
         tool_choice: MistralToolChoiceEnum

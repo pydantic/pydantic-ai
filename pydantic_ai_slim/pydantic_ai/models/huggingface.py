@@ -46,7 +46,7 @@ from . import (
     StreamedResponse,
     check_allow_model_requests,
 )
-from ._tool_choice import validate_tool_choice
+from ._tool_choice import resolve_tool_choice
 
 try:
     import aiohttp
@@ -326,7 +326,7 @@ class HuggingFaceModel(Model):
 
         Returns a tuple of (tools, tool_choice).
         """
-        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
         tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None

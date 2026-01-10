@@ -71,7 +71,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import validate_tool_choice
+from ._tool_choice import resolve_tool_choice
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
@@ -767,7 +767,7 @@ class OpenAIChatModel(Model):
         """
         openai_profile = OpenAIModelProfile.from_profile(self.profile)
 
-        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         tool_choice: ChatCompletionToolChoiceOptionParam
         if validated_tool_choice in ('auto', 'none'):
@@ -1537,7 +1537,7 @@ class OpenAIResponsesModel(Model):
         """
         openai_profile = OpenAIModelProfile.from_profile(self.profile)
 
-        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         tool_choice: ResponsesToolChoice | None
         if validated_tool_choice in ('auto', 'none'):

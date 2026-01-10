@@ -57,7 +57,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import validate_tool_choice
+from ._tool_choice import resolve_tool_choice
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'end_turn': 'stop',
@@ -676,7 +676,7 @@ class AnthropicModel(Model):
         thinking_enabled = model_settings.get('anthropic_thinking') is not None
         tool_defs = model_request_parameters.tool_defs
 
-        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        validated_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         tool_choice: BetaToolChoiceParam
 

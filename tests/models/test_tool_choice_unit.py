@@ -12,7 +12,7 @@ import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models._tool_choice import ValidatedToolChoice, validate_tool_choice
+from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.settings import ModelSettings, ToolChoice, ToolsPlusOutput
 from pydantic_ai.tools import ToolDefinition, ToolKind
 
@@ -60,7 +60,7 @@ class ExpectWarning:
     """Test should emit warning and return result."""
 
     match: str
-    result: ValidatedToolChoice
+    result: ResolvedToolChoice
 
 
 # =============================================================================
@@ -74,7 +74,7 @@ class Case:
 
     id: str
     tool_choice: ToolChoice
-    expected: ValidatedToolChoice | ExpectError | ExpectWarning
+    expected: ResolvedToolChoice | ExpectError | ExpectWarning
     function_tools: list[str] = field(default_factory=lambda: ['tool_a'])
     output_tools: list[str] = field(default_factory=list)
     allow_text_output: bool = False
@@ -300,11 +300,11 @@ def test_validate_tool_choice(case: Case):
 
     if isinstance(case.expected, ExpectError):
         with pytest.raises(UserError, match=case.expected.match):
-            validate_tool_choice(settings, params)
+            resolve_tool_choice(settings, params)
     elif isinstance(case.expected, ExpectWarning):
         with pytest.warns(UserWarning, match=case.expected.match):
-            result = validate_tool_choice(settings, params)
+            result = resolve_tool_choice(settings, params)
         assert result == case.expected.result
     else:
-        result = validate_tool_choice(settings, params)
+        result = resolve_tool_choice(settings, params)
         assert result == case.expected
