@@ -11,10 +11,11 @@ ToolChoiceScalar = Literal['none', 'required', 'auto']
 
 @dataclass
 class ToolOrOutput:
-    """Restricts function tools while keeping output tools available.
+    """Restricts function tools while keeping output tools and direct text/image output available.
 
     Use this when you want to control which function tools the model can use
-    in an agent run while still allowing the agent to complete with structured output.
+    in an agent run while still allowing the agent to complete with structured output,
+    text, or images.
 
     See the [Tool Choice guide](TODO fill this out in https://github.com/dsfaccini/pydantic-ai/pull/2 i.e. prepare_model_settings hook PR)
     for examples.
@@ -128,17 +129,17 @@ class ModelSettings(TypedDict, total=False):
     * `'none'`: Disables function tools; model responds with text only (output tools remain for structured output)
     * `'required'`: Forces tool use; no output tools sent (for direct model requests only)
     * `list[str]`: Only specified tools available; no output tools sent (for direct model requests only)
-    * [`ToolsPlusOutput`][pydantic_ai.settings.ToolsPlusOutput]: Specified function tools plus all output tools
+    * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
 
     Supported by:
 
-    * OpenAI (full support)
+    * OpenAI
     * Anthropic (`'required'` and specific tools not supported with thinking enabled)
-    * Google (full support)
-    * Groq (single tool forcing only)
-    * Mistral (limited specific tool support)
-    * HuggingFace (single tool forcing only)
-    * Bedrock (single tool forcing only; no native `'none'`)
+    * Google
+    * Groq
+    * Mistral
+    * HuggingFace
+    * Bedrock
     """
 
     seed: int

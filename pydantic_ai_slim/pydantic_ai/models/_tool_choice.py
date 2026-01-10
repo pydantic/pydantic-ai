@@ -40,7 +40,7 @@ def resolve_tool_choice(  # noqa: C901
           appropriate mode and warns. Otherwise returns `'none'`.
         - `'required'`: Requires function tool use. Raises if no function tools are defined.
         - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
-        - `ToolsPlusOutput`: Combines specified function tools with all output tools.
+        - `ToolOrOutput`: Combines specified function tools with all output tools.
           Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
     """
     function_tool_choice = (model_settings or {}).get('tool_choice')
@@ -110,16 +110,16 @@ def resolve_tool_choice(  # noqa: C901
 
         return ('required', chosen)
 
-    # ToolsPlusOutput: specific function tools + all output tools or direct text/image output
+    # ToolOrOutput: specific function tools + all output tools or direct text/image output
     elif isinstance(function_tool_choice, ToolOrOutput):
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
 
         # stable order, unique
         if not function_tool_choice.function_tools:
             if output_tool_names:
-                _warn('ToolsPlusOutput with empty function_tools - using output tools only')
+                _warn('ToolOrOutput with empty function_tools - using output tools only')
                 return 'auto' if allow_direct_output else 'required'
-            _warn("ToolsPlusOutput with empty function_tools - defaulting to 'none'")
+            _warn("ToolOrOutput with empty function_tools - defaulting to 'none'")
             return 'none'
 
         chosen_function = list(dict.fromkeys(function_tool_choice.function_tools))

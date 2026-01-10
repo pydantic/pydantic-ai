@@ -9,7 +9,7 @@ Key behaviors tested:
 - tool_choice='none': Function tools disabled, text/output tools available
 - tool_choice='required': Must use a tool (direct model requests)
 - tool_choice=[list]: Specific tools only (direct model requests)
-- ToolsPlusOutput: Specific function tools + output tools
+- ToolOrOutput: Specific function tools + output tools
 """
 
 from __future__ import annotations
@@ -336,7 +336,7 @@ CASES = [
     Case('openai_responses-none-with-output-text-allowed', 'openai_responses', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','TextPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly',
          expected_warning_match="tool_choice='none'"),
 
-    # === ToolsPlusOutput - specific function tools + output tools ===
+    # === ToolOrOutput - specific function tools + output tools ===
     Case('openai-tools-plus-output', 'openai', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
     Case('anthropic-tools-plus-output', 'anthropic', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),

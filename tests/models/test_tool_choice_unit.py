@@ -202,7 +202,7 @@ CASES = [
         ('required', ['final_result']),
         output_tools=['final_result'],
     ),
-    # === ToolsPlusOutput behavior ===
+    # === ToolOrOutput behavior ===
     Case(
         'tpo-text-allowed',
         ToolOrOutput(function_tools=['tool_a']),
