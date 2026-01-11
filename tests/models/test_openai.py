@@ -3586,6 +3586,22 @@ async def test_responses_count_tokens_no_messages(allow_model_requests: None) ->
         await model.count_tokens([], None, ModelRequestParameters())
 
 
+async def test_responses_count_tokens_instructions_only(allow_model_requests: None) -> None:
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(input_tokens_response={'object': 'response.input_tokens', 'input_tokens': 7}),
+    )
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    result = await model.count_tokens(
+        [ModelRequest(parts=[], instructions='Follow the system instructions.')],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == 7
+
+
 async def test_responses_count_tokens_with_tools(allow_model_requests: None) -> None:
     mock_client = cast(
         AsyncOpenAI,

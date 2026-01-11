@@ -1236,7 +1236,14 @@ class OpenAIResponsesModel(Model):
             instructions = OMIT
 
         if not openai_messages and not previous_response_id:
-            raise UserError('Cannot count tokens without any messages or a previous response ID.')
+            if instructions is OMIT:
+                raise UserError('Cannot count tokens without any messages or a previous response ID.')
+            openai_messages.append(
+                responses.EasyInputMessageParam(
+                    role='user',
+                    content='',
+                )
+            )
 
         body = {
             'model': self.model_name,
