@@ -283,20 +283,20 @@ class PromptTemplates:
             if part.tool_name is None:
                 # String without tool context (e.g., output validator raising ModelRetry)
                 description = self.retry_description_template(content)
-                retry_template = self.no_tool_retry_prompt or DEFAULT_MODEL_RETRY
+                retry_template = self.no_tool_retry_prompt
             else:
                 # String from a tool - use content directly
                 description = content
-                retry_template = self.tool_retry_prompt or DEFAULT_MODEL_RETRY
+                retry_template = self.tool_retry_prompt
         else:
             # List of ErrorDetails (validation errors)
             description = self.retry_description_template(content)
-            retry_template = self.validation_errors_retry_prompt or DEFAULT_MODEL_RETRY
+            retry_template = self.validation_errors_retry_prompt
 
         if callable(retry_template) and ctx is not None:
             retry_template = retry_template(part, ctx)
 
-        return f'{description}\n\n{retry_template}'
+        return f'{description}\n\n{retry_template or DEFAULT_MODEL_RETRY}'
 
     def _apply_tool_template(
         self,
@@ -398,6 +398,11 @@ class ToolConfig:
         }
         ```
     """
+
+    # TODO: PromptConfig
+    #
+    # Write a static method here which can create tool_config from given toolset / tools of an agent
+    # We will use it with prompt optimizers
 
 
 @dataclass

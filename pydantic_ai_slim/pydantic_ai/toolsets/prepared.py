@@ -40,14 +40,16 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
         }
 
     async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        # TODO: PromptConfig
         # We want all the tool definitions, but updated
         # I should apply prepare_func to each tool definition and return the updated list
         # I need to ensure no tool is removed with this step though
+        # We are not applying prepare_func right now, that needs to be handled rn before review
         return await super().get_all_tool_definitions(ctx)
 
     @staticmethod
     def create_tool_config_prepare_func(tool_config: dict[str, ToolConfig]) -> ToolsPrepareFunc[Any]:
-        # We do not use deps so we return ToolsPrepareFunc[Any] and cast at the usage
+        # We do not use deps so we return ToolsPrepareFunc[Any]
         async def prepare_func(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             # Given a ctx, which I am not sure is useful for our case, and tool_defs let us update these tool_defs using ToolConfig and return the updated list
             updated_tool_defs: list[ToolDefinition] = []

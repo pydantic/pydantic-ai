@@ -203,11 +203,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                             if part.state == 'output-available':
                                 builder.add(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=part.output,
-                                    )
+                                    ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
                                 )
                             elif part.state == 'output-error':
                                 builder.add(

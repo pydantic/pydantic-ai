@@ -1593,7 +1593,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 toolset,
                 PreparedToolset.create_tool_config_prepare_func(tool_config),
             )
-            # Create a name_map and use RenamedToolset on this as well?
+            # Crexate a name_map and use RenamedToolset on this as well?
             name_map: dict[str, str] = {}
             for tool_name, config in tool_config.items():
                 if config.name:
@@ -1772,6 +1772,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = self._get_toolset()
 
         all_tool_defs = await toolset.get_all_tool_definitions(run_ctx)
+
+        # TODO: PromptConfig
+
+        # This is to serve as a starting point for optimizers
+        # We will provide the base config as in everything the Agent has merged with whatever has been overwritten using PromptConfig to serve as the starting PromptConfig
+
+        # The user could have overwritten certain things with PromptConfig
+        # Now when we provide the starting point we need to show everything that is available to be changed including the ones that are not overwritten
+        #
+        # We need to create tool_config from the tools on the Agent, then we merge with the PromptConfig on the Agent
+        # We can have a helper method to create tool_config from the tools on the Agent
+        # I can override this tool_config with the existing PromptConfig.tool_config present on the Agent
+        # PromptTemplates can be default and then overridden with the PromptConfig.templates present on the Agent
+        # Then with this I can create a new PromptConfig providing both tool_config and templates
+        #
+        # This can be a static method on ToolConfig
 
         for tool_def in all_tool_defs:
             tool_name = tool_def.name

@@ -7224,7 +7224,10 @@ async def test_hitl_tool_approval():
 
     model = FunctionModel(model_function)
 
-    # Test with tool_call_denied template set (covers the True branch at line 139)
+    # TODO: PromptConfig
+    # I modified an existing test here, should not do that
+    # I should have added another one to show this behaviour, there is diff at line 1760 which I would rather not have?
+
     agent = Agent(
         model,
         output_type=[str, DeferredToolRequests],

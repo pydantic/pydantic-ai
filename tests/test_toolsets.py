@@ -597,7 +597,7 @@ async def test_comprehensive_toolset_composition():
     }
 
     prepared_partial_incorrect = PreparedToolset(
-        partial_args_toolset, tool_config_prepare_func(partial_tool_config_with_incorrect_paths)
+        partial_args_toolset, PreparedToolset.create_tool_config_prepare_func(partial_tool_config_with_incorrect_paths)
     )
 
     with pytest.raises(
@@ -628,7 +628,7 @@ async def test_comprehensive_toolset_composition():
         match=re.escape("Invalid path 'arg.b' for tool 'calc': undefined $ref '#/$defs/Missing'."),
     ):
         await ToolManager[None](
-            PreparedToolset(missing_ref_toolset, tool_config_prepare_func(missing_ref_config))
+            PreparedToolset(missing_ref_toolset, PreparedToolset.create_tool_config_prepare_func(missing_ref_config))
         ).for_run_step(partial_context)
 
     async def prepare_circular_ref(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -651,7 +651,7 @@ async def test_comprehensive_toolset_composition():
         match=re.escape("Circular reference detected in schema at 'arg.b': #/$defs/A"),
     ):
         await ToolManager[None](
-            PreparedToolset(circular_ref_toolset, tool_config_prepare_func(circular_ref_config))
+            PreparedToolset(circular_ref_toolset, PreparedToolset.create_tool_config_prepare_func(circular_ref_config))
         ).for_run_step(partial_context)
 
 
