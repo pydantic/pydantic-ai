@@ -71,6 +71,7 @@ def test_fallback_model_fully_qualified_name():
 
 
 def test_function_model_fully_qualified_name():
+    from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -87,6 +88,11 @@ def test_function_model_fully_qualified_name():
     fqn = model.fully_qualified_model_name
     assert fqn.startswith('function:')
     assert model.model_name in fqn
+    
+    # Execute the handler to get full coverage
+    agent = Agent(model)
+    result = agent.run_sync('test')
+    assert result.output == 'test'
 
 
 def test_google_model_fully_qualified_name():
