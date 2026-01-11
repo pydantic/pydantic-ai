@@ -41,21 +41,21 @@ def test_fully_qualified_name_matches_system_and_model_name():
 
 
 def test_anthropic_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.anthropic')
+    pytest.importorskip('pydantic_ai.models.anthropic', exc_type=ImportError)
     from pydantic_ai.models.anthropic import AnthropicModel
 
     assert isinstance(AnthropicModel.fully_qualified_model_name, property)
 
 
 def test_bedrock_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.bedrock')
+    pytest.importorskip('pydantic_ai.models.bedrock', exc_type=ImportError)
     from pydantic_ai.models.bedrock import BedrockConverseModel
 
     assert isinstance(BedrockConverseModel.fully_qualified_model_name, property)
 
 
 def test_cohere_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.cohere')
+    pytest.importorskip('pydantic_ai.models.cohere', exc_type=ImportError)
     from pydantic_ai.models.cohere import CohereModel
 
     assert isinstance(CohereModel.fully_qualified_model_name, property)
@@ -90,49 +90,49 @@ def test_function_model_fully_qualified_name():
 
 
 def test_google_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.google')
+    pytest.importorskip('pydantic_ai.models.google', exc_type=ImportError)
     from pydantic_ai.models.google import GoogleModel
 
     assert isinstance(GoogleModel.fully_qualified_model_name, property)
 
 
 def test_groq_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.groq')
+    pytest.importorskip('pydantic_ai.models.groq', exc_type=ImportError)
     from pydantic_ai.models.groq import GroqModel
 
     assert isinstance(GroqModel.fully_qualified_model_name, property)
 
 
 def test_huggingface_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.huggingface')
+    pytest.importorskip('pydantic_ai.models.huggingface', exc_type=ImportError)
     from pydantic_ai.models.huggingface import HuggingFaceModel
 
     assert isinstance(HuggingFaceModel.fully_qualified_model_name, property)
 
 
 def test_mcp_sampling_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.mcp_sampling')
+    pytest.importorskip('pydantic_ai.models.mcp_sampling', exc_type=ImportError)
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
     assert isinstance(MCPSamplingModel.fully_qualified_model_name, property)
 
 
 def test_mistral_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.mistral')
+    pytest.importorskip('pydantic_ai.models.mistral', exc_type=ImportError)
     from pydantic_ai.models.mistral import MistralModel
 
     assert isinstance(MistralModel.fully_qualified_model_name, property)
 
 
 def test_openai_chat_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.openai')
+    pytest.importorskip('pydantic_ai.models.openai', exc_type=ImportError)
     from pydantic_ai.models.openai import OpenAIChatModel
 
     assert isinstance(OpenAIChatModel.fully_qualified_model_name, property)
 
 
 def test_openai_responses_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.openai')
+    pytest.importorskip('pydantic_ai.models.openai', exc_type=ImportError)
     from pydantic_ai.models.openai import OpenAIResponsesModel
 
     assert isinstance(OpenAIResponsesModel.fully_qualified_model_name, property)
@@ -146,14 +146,14 @@ def test_outlines_model_fully_qualified_name():
 
 
 def test_openrouter_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.openrouter')
+    pytest.importorskip('pydantic_ai.models.openrouter', exc_type=ImportError)
     from pydantic_ai.models.openrouter import OpenRouterModel
 
     assert isinstance(OpenRouterModel.fully_qualified_model_name, property)
 
 
 def test_cerebras_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.cerebras')
+    pytest.importorskip('pydantic_ai.models.cerebras', exc_type=ImportError)
     from pydantic_ai.models.cerebras import CerebrasModel
 
     assert isinstance(CerebrasModel.fully_qualified_model_name, property)
