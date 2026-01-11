@@ -73,7 +73,17 @@ from . import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
+    from openai import (
+        NOT_GIVEN,
+        APIConnectionError,
+        APIStatusError,
+        AsyncOpenAI,
+        AsyncStream,
+        NotGiven,
+        Omit,
+        RequestOptions,
+        omit,
+    )
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -1262,11 +1272,10 @@ class OpenAIResponsesModel(Model):
         try:
             extra_headers = settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
-            options = {
-                'headers': extra_headers,
-                'timeout': settings.get('timeout', NOT_GIVEN),
-            }
-            options = {k: v for k, v in options.items() if v is not NOT_GIVEN}
+            options: RequestOptions = {'headers': extra_headers}
+            timeout = settings.get('timeout', NOT_GIVEN)
+            if not isinstance(timeout, NotGiven):
+                options['timeout'] = timeout
             response = await self.client.post(
                 '/responses/input_tokens',
                 cast_to=dict[str, Any],

@@ -82,8 +82,8 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
-        get_user_agent,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
+        get_user_agent,
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.cerebras import CerebrasProvider
