@@ -3638,28 +3638,27 @@ async def test_cache_point_filtering(allow_model_requests: None):
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
-    # Test the instance method directly to trigger line 864
     msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
 
     # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+    assert msg == snapshot(
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'text before'}, {'type': 'text', 'text': 'text after'}]}
+    )
 
 
 async def test_cache_point_filtering_responses_model():
     """Test that CachePoint is filtered out in OpenAI Responses API requests."""
-    # Test the static method directly to trigger line 1680
     msg = await OpenAIResponsesModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
         UserPromptPart(content=['text before', CachePoint(), 'text after'])
     )
 
     # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+    assert msg == snapshot(
+        {
+            'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'text before'}, {'type': 'input_text', 'text': 'text after'}],
+        }
+    )
 
 
 async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):
