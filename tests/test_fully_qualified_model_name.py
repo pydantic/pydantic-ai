@@ -88,7 +88,7 @@ def test_function_model_fully_qualified_name():
     fqn = model.fully_qualified_model_name
     assert fqn.startswith('function:')
     assert model.model_name in fqn
-    
+
     # Execute the handler to get full coverage
     agent = Agent(model)
     result = agent.run_sync('test')
