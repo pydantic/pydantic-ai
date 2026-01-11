@@ -761,7 +761,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
-            self.provider_details = {'timestamp': self._provider_timestamp}  # pragma: no cover
+            self.provider_details = {'timestamp': self._provider_timestamp}
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
