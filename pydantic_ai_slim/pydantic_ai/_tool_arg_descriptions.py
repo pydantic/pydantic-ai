@@ -46,7 +46,7 @@ class ToolArgDescriptions:
                 elif (ref := value.get(_REF)) and ref.startswith(_REF_PREFIX):
                     # Handle $ref (shared definitions / recursive models)
                     def_name = ref[len(_REF_PREFIX) :]
-                    # Avoid infinite recursion for recursive models (e.g. User -> best_friend: User)
+                    # Avoid cycle for recursive models (e.g. User -> best_friend: User)
                     if def_name not in visited:
                         visited.add(def_name)
                         if nested_props := defs.get(def_name, {}).get(_PROPERTIES):
