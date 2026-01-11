@@ -34,7 +34,6 @@ from pydantic_ai.prompt_config import (
 )
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.toolsets.prepared import tool_config_prepare_func
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -523,7 +522,9 @@ async def test_comprehensive_toolset_composition():
             }
         )
     }
-    prepared_partial = PreparedToolset(partial_args_toolset, tool_config_prepare_func(partial_tool_config))
+    prepared_partial = PreparedToolset(
+        partial_args_toolset, PreparedToolset.create_tool_config_prepare_func(partial_tool_config)
+    )
     partial_context = build_run_context(None)
     tool_config_prepared_toolset = await ToolManager[None](prepared_partial).for_run_step(partial_context)
 

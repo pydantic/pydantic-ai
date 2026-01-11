@@ -8,7 +8,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, ClassVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -66,7 +66,7 @@ from ..toolsets._dynamic import (
 )
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
-from ..toolsets.prepared import PreparedToolset, tool_config_prepare_func
+from ..toolsets.prepared import PreparedToolset
 from .abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT
 from .wrapper import WrapperAgent
 
@@ -1495,13 +1495,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Priority order (highest to lowest): override > call/runtime > agent default
         """
-        effective_prompt_config: _prompt_config.PromptConfig | None = None
+        effective_prompt_config: _prompt_config.PromptConfig | None = self.prompt_config  # Agent default as the base
 
-        # Start with lowest priority (agent default) as base
-        if self.prompt_config:
-            effective_prompt_config = self.prompt_config.merge_prompt_config(effective_prompt_config)
+        # In prompt_config.merge_prompt_config, prompt_config takes priority over the one passed to merge_prompt_config
 
-        # Call/runtime prompt_config overrides agent default
+        # runtime prompt_config overrides agent default
         if prompt_config:
             effective_prompt_config = prompt_config.merge_prompt_config(effective_prompt_config)
 
@@ -1589,7 +1587,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolset = CombinedToolset([output_toolset, toolset])
 
         if tool_config:
-            toolset = PreparedToolset(toolset, tool_config_prepare_func(tool_config))
+            # Instead of writing a new Toolset which basically prepares the tool with tool_config we use the combination of PreparedToolset and RenamedToolset
+            # We need renamed Toolset to handle the case where tools are renamed via tool_config
+            toolset = PreparedToolset(
+                toolset,
+                PreparedToolset.create_tool_config_prepare_func(tool_config),
+            )
             # Create a name_map and use RenamedToolset on this as well?
             name_map: dict[str, str] = {}
             for tool_name, config in tool_config.items():

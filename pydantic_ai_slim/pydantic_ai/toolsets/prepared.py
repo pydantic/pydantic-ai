@@ -46,7 +46,8 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
         return await super().get_all_tool_definitions(ctx)
 
     @staticmethod
-    def create_tool_config_prepare_func(tool_config: dict[str, ToolConfig]) -> ToolsPrepareFunc[AgentDepsT]:
+    def create_tool_config_prepare_func(tool_config: dict[str, ToolConfig]) -> ToolsPrepareFunc[Any]:
+        # We do not use deps so we return ToolsPrepareFunc[Any] and cast at the usage
         async def prepare_func(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             # Given a ctx, which I am not sure is useful for our case, and tool_defs let us update these tool_defs using ToolConfig and return the updated list
             updated_tool_defs: list[ToolDefinition] = []
@@ -86,47 +87,3 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
             return updated_tool_defs
 
         return prepare_func
-
-
-def tool_config_prepare_func(tool_config: dict[str, ToolConfig]):
-    """Create prepare_func using tool_config to be used with PreparedToolset."""
-
-    async def prepare_func(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        # Given a ctx, which I am not sure is useful for our case, and tool_defs let us update these tool_defs using ToolConfig and return the updated list
-        updated_tool_defs: list[ToolDefinition] = []
-
-        for tool_def in tool_defs:
-            # get_tool_config is it exists for this current_tool
-            tool_name = tool_def.name
-            if tool_name not in tool_config:
-                updated_tool_defs.append(tool_def)
-                continue  # Nothing to be done here, no configuration_present
-
-            config = tool_config[tool_name]
-            parameters_json_schema = tool_def.parameters_json_schema
-
-            if config.parameters_descriptions:
-                parameters_json_schema = ToolArgDescriptions.update_in_json_schema(
-                    parameters_json_schema, config.parameters_descriptions, tool_name
-                )
-
-            updated_tool_def = replace(
-                tool_def,
-                parameters_json_schema=parameters_json_schema,
-                **{
-                    k: v
-                    for k, v in {
-                        # 'name': config.name,
-                        # Not changing the name part here, will delegate this work to RenamedToolset
-                        'description': config.description,
-                        'strict': config.strict,
-                    }.items()
-                    if v is not None
-                },
-            )
-
-            updated_tool_defs.append(updated_tool_def)
-
-        return updated_tool_defs
-
-    return prepare_func
