@@ -65,8 +65,8 @@ def test_fallback_model_fully_qualified_name():
 
 
 def test_function_model_fully_qualified_name():
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
 
     def dummy_handler(
         messages: list[ModelMessage],
