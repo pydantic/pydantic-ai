@@ -1,5 +1,7 @@
 """Tests for fully_qualified_model_name property across all Model subclasses."""
 
+from typing import Any
+
 import pytest
 
 from pydantic_ai.models.test import TestModel
@@ -88,10 +90,15 @@ def test_fallback_model_fully_qualified_name():
 
 def test_function_model_fully_qualified_name():
     """Test FunctionModel.fully_qualified_model_name."""
+    from pydantic_ai import ModelResponse
     from pydantic_ai.models.function import FunctionModel
 
-    async def dummy_handler(messages, model_settings):
-        raise NotImplementedError
+    async def dummy_handler(messages: Any, model_settings: Any) -> ModelResponse:
+        return ModelResponse(
+            finish_reason='stop',
+            model_name='test-function',
+            parts=[],
+        )
 
     model = FunctionModel(dummy_handler, model_name='test-function')
     fqn = model.fully_qualified_model_name
@@ -102,14 +109,14 @@ def test_function_model_fully_qualified_name():
 
 
 def test_gemini_model_fully_qualified_name():
-    """Test GeminiModel.fully_qualified_model_name."""
+    """Test GoogleModel.fully_qualified_model_name (GeminiModel is deprecated)."""
     try:
-        from pydantic_ai.models.gemini import GeminiModel
+        from pydantic_ai.models.google import GoogleModel
     except ImportError:
-        pytest.skip('gemini SDK not installed')
+        pytest.skip('google SDK not installed')
 
-    assert hasattr(GeminiModel, 'fully_qualified_model_name')
-    assert isinstance(GeminiModel.fully_qualified_model_name, property)
+    assert hasattr(GoogleModel, 'fully_qualified_model_name')
+    assert isinstance(GoogleModel.fully_qualified_model_name, property)
 
 
 def test_google_model_fully_qualified_name():
