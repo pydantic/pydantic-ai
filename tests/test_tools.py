@@ -2317,7 +2317,7 @@ async def test_approval_required_toolset_marks_tool_kind():
     assert tools['bar'].tool_def.kind == 'function'
 
     with pytest.raises(ApprovalRequired):
-        _ = await toolset_all_approval.call_tool('foo', 2, run_context, tools['foo'])
+        _ = await toolset_all_approval.call_tool('foo', {"x": 2}, run_context, tools['foo'])
 
 
 def test_deferred_tool_results_serializable():
