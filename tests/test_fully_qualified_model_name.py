@@ -4,6 +4,8 @@ This module contains tests for the fully_qualified_model_name property
 across all model types in pydantic_ai.
 """
 
+# All tests use the correct pytest.importorskip() pattern without deprecated parameters
+
 import pytest
 
 from pydantic_ai.models.test import TestModel
