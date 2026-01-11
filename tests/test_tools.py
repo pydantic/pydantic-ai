@@ -2287,7 +2287,6 @@ async def test_approval_required_toolset():
 
 
 async def test_approval_required_toolset_marks_tool_kind():
-    """Test that ApprovalRequiredToolset correctly marks tool definitions as 'unapproved'."""
     toolset = FunctionToolset[None]()
 
     run_context = RunContext(
@@ -2307,13 +2306,11 @@ async def test_approval_required_toolset_marks_tool_kind():
     def bar(x: int) -> int:
         return x * 3
 
-    # Test with default approval_required_func (always requires approval)
     toolset_all_approval = toolset.approval_required()
     tools = await toolset_all_approval.get_tools(run_context)
     assert tools['foo'].tool_def.kind == 'unapproved'
     assert tools['bar'].tool_def.kind == 'unapproved'
 
-    # Test with custom approval_required_func (only 'foo' requires approval)
     toolset_foo_approval = toolset.approval_required(lambda ctx, tool_def, tool_args: tool_def.name == 'foo')
     tools = await toolset_foo_approval.get_tools(run_context)
     assert tools['foo'].tool_def.kind == 'unapproved'
