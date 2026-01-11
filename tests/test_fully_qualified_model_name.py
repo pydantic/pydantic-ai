@@ -1,6 +1,7 @@
 """Tests for fully_qualified_model_name property across all Model subclasses.
 
-This module tests the fully_qualified_model_name property for all model types.
+This module contains tests for the fully_qualified_model_name property
+across all model types in pydantic_ai.
 """
 
 import pytest
