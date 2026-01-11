@@ -94,7 +94,7 @@ class MCPSamplingModel(Model):
         return 'mcp-sampling'
 
     @property
-    def fully_qualified_model_name(self) -> str:  # pragma: no cover
+    def fully_qualified_model_name(self) -> str:
         """The model name with provider prefix."""
         return f'{self.system}:{self.model_name}'
 

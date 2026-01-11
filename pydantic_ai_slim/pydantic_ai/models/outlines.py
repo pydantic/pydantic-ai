@@ -237,7 +237,7 @@ class OutlinesModel(Model):
         return self._model_name
 
     @property
-    def fully_qualified_model_name(self) -> str:  # pragma: no cover
+    def fully_qualified_model_name(self) -> str:
         """The model name with provider prefix."""
         return f'outlines:{self.model_name}'
 

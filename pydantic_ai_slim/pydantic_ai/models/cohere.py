@@ -148,7 +148,7 @@ class CohereModel(Model):
         return self._model_name
 
     @property
-    def fully_qualified_model_name(self) -> str:  # pragma: no cover
+    def fully_qualified_model_name(self) -> str:
         """The model name with provider prefix."""
         return f'{self._provider.name}:{self.model_name}'
 

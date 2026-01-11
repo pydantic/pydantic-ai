@@ -131,7 +131,7 @@ async def test_llm_judge_serialization():
             return 'my-model'
 
         @property
-        def fully_qualified_model_name(self) -> str:  # pragma: no cover
+        def fully_qualified_model_name(self) -> str:
             return f'{self.system}:{self.model_name}'
 
         @property
