@@ -2300,11 +2300,11 @@ async def test_approval_required_toolset_marks_tool_kind():
 
     @toolset.tool
     def foo(x: int) -> int:
-        return x * 2
+        return x * 2  # pragma: no cover
 
     @toolset.tool
     def bar(x: int) -> int:
-        return x * 3
+        return x * 3  # pragma: no cover
 
     toolset_all_approval = toolset.approval_required()
     tools = await toolset_all_approval.get_tools(run_context)
@@ -2315,6 +2315,9 @@ async def test_approval_required_toolset_marks_tool_kind():
     tools = await toolset_foo_approval.get_tools(run_context)
     assert tools['foo'].tool_def.kind == 'unapproved'
     assert tools['bar'].tool_def.kind == 'function'
+
+    with pytest.raises(ApprovalRequired):
+        _ = await toolset_all_approval.call_tool('foo', 2, run_context, tools['foo'])
 
 
 def test_deferred_tool_results_serializable():
