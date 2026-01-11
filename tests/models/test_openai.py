@@ -54,6 +54,7 @@ from .mock_openai import (
     MockOpenAIResponses,
     completion_message,
     get_mock_chat_completion_kwargs,
+    get_mock_input_tokens_kwargs,
     get_mock_responses_kwargs,
     response_message,
 )
@@ -81,6 +82,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
+        get_user_agent,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
@@ -3576,6 +3578,7 @@ async def test_responses_count_tokens_with_mock(allow_model_requests: None) -> N
     )
 
     assert result.input_tokens == 11
+    assert get_mock_input_tokens_kwargs(mock_client)[0]['options'] == {'headers': {'User-Agent': get_user_agent()}}
 
 
 async def test_responses_count_tokens_no_messages(allow_model_requests: None) -> None:
@@ -3664,6 +3667,22 @@ async def test_responses_count_tokens_with_native_output(allow_model_requests: N
     )
 
     assert result.input_tokens == 30
+
+
+async def test_responses_count_tokens_includes_timeout(allow_model_requests: None) -> None:
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.count_tokens(
+        [ModelRequest.user_text_prompt('Hello')],
+        OpenAIResponsesModelSettings(timeout=123.0),
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_input_tokens_kwargs(mock_client)[0]['options'] == {
+        'headers': {'User-Agent': get_user_agent()},
+        'timeout': 123.0,
+    }
 
 
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):

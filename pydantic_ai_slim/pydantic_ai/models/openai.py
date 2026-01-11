@@ -1262,11 +1262,16 @@ class OpenAIResponsesModel(Model):
         try:
             extra_headers = settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
+            options = {
+                'headers': extra_headers,
+                'timeout': settings.get('timeout', NOT_GIVEN),
+            }
+            options = {k: v for k, v in options.items() if v is not NOT_GIVEN}
             response = await self.client.post(
                 '/responses/input_tokens',
                 cast_to=dict[str, Any],
                 body=body,
-                options={'headers': extra_headers},
+                options=options,
             )
         except APIStatusError as e:  # pragma: no cover
             if (status_code := e.status_code) >= 400:
