@@ -271,11 +271,7 @@ class InstrumentationSettings:
             output_message = output_messages[0]
 
             instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
-            system_instructions_attributes: dict[str, str] = {}
-            if instructions and self.include_content:
-                system_instructions_attributes['gen_ai.system_instructions'] = json.dumps(
-                    [_otel_messages.TextPart(type='text', content=instructions)]
-                )
+            system_instructions_attributes = self.system_instructions_attributes(instructions)
 
             attributes: dict[str, AttributeValue] = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),

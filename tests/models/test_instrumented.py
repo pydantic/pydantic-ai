@@ -794,7 +794,12 @@ Fix the errors and try again.\
                         'logfire.msg': 'chat gpt-4o',
                         'logfire.span_type': 'span',
                         'gen_ai.input.messages': [
-                            {'role': 'system', 'parts': [{'type': 'text', 'content': 'system_prompt'}]},
+                            {
+                                'role': 'system',
+                                'parts': [
+                                    {'type': 'text', 'content': 'system_prompt'},
+                                ],
+                            },
                             {
                                 'role': 'user',
                                 'parts': [
