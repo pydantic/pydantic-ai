@@ -308,10 +308,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> Iterator[None]:
         in_workflow = workflow.in_workflow()
 
-        if toolsets:
-            overridden_toolsets = [*self._toolsets, *toolsets]
-        else:
-            overridden_toolsets = list(self._toolsets)
+        overridden_toolsets = [*self._toolsets, *(toolsets or [])]
 
         # Outside workflow, only apply toolsets override (model is passed directly to run)
         if not in_workflow and not force:
