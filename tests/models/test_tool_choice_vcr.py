@@ -23,7 +23,20 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    BinaryImage,
+    FilePart,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
@@ -112,7 +125,7 @@ def make_tool_def(name: str, description: str, param_name: str) -> ToolDefinitio
 # =============================================================================
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Case:
     """A single test case for tool_choice behavior."""
 
@@ -226,28 +239,20 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
 
 
 class _MessageStructure(TypedDict):
-    type: str
-    parts: list[str]
+    type: type[ModelRequest | ModelResponse]
+    parts: list[type[ModelRequestPart | ModelResponsePart]]
 
 
 def get_message_structure(messages: list[ModelRequest | ModelResponse]) -> list[_MessageStructure]:
     """Extract simplified message structure for snapshot comparison."""
     result: list[_MessageStructure] = []
     for msg in messages:
-        if isinstance(msg, ModelRequest):
-            result.append(
-                {
-                    'type': 'request',
-                    'parts': [type(p).__name__ for p in msg.parts],
-                }
-            )
-        else:
-            result.append(
-                {
-                    'type': 'response',
-                    'parts': [type(p).__name__ for p in msg.parts],
-                }
-            )
+        result.append(
+            {
+                'type': type(msg),
+                'parts': [type(p) for p in msg.parts],
+            }
+        )
     return result
 
 
@@ -259,95 +264,492 @@ def get_message_structure(messages: list[ModelRequest | ModelResponse]) -> list[
 # fmt: off
 CASES = [
     # === tool_choice='auto' - Model uses tool ===
-    Case('openai-auto-uses-tool', 'openai', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='auto'),
-    Case('anthropic-auto-uses-tool', 'anthropic', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='auto'),
-    Case('groq-auto-uses-tool', 'groq', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='auto'),
-    Case('mistral-auto-uses-tool', 'mistral', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='auto'),
-    Case('google-auto-uses-tool', 'google', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='AUTO'),
-    Case('bedrock-auto-uses-tool', 'bedrock', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='auto'),
+    Case(
+        id='openai-auto-uses-tool',
+        provider='openai',
+        tool_choice='auto',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('auto'),
+    ),
+    Case(
+        id='anthropic-auto-uses-tool',
+        provider='anthropic',
+        tool_choice='auto',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('auto'),
+    ),
+    Case(
+        id='groq-auto-uses-tool',
+        provider='groq',
+        tool_choice='auto',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('auto'),
+    ),
+    Case(
+        id='mistral-auto-uses-tool',
+        provider='mistral',
+        tool_choice='auto',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('auto'),
+    ),
+    Case(
+        id='google-auto-uses-tool',
+        provider='google',
+        tool_choice='auto',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('AUTO'),
+    ),
+    Case(
+        id='bedrock-auto-uses-tool',
+        provider='bedrock',
+        tool_choice='auto',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('auto'),
+    ),
     # Together backend returns 500 Internal Server Error on the second request when continuing
     # a tool conversation (first request with tool_choice='auto' succeeds and returns tool call,
     # but the follow-up request with tool result fails). Other backends (novita, nscale) either
     # don't support tool calling or return 400 errors. See test_together_500_on_tool_continuation.
-    Case('huggingface-auto-uses-tool', 'huggingface', 'auto', snapshot([]), expected_tool_choice_in_request='auto', skip_reason='Together backend 500s on tool continuation'),
-    Case('openai_responses-auto-uses-tool', 'openai_responses', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='auto'),
+    Case(
+        id='huggingface-auto-uses-tool',
+        provider='huggingface',
+        tool_choice='auto',
+        expected_message_structure=snapshot([]),
+        expected_tool_choice_in_request=snapshot('auto'),
+        skip_reason='Together backend 500s on tool continuation',
+    ),
+    Case(
+        id='openai_responses-auto-uses-tool',
+        provider='openai_responses',
+        tool_choice='auto',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ThinkingPart,ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('auto'),
+    ),
 
     # === tool_choice='none' - Function tools disabled, text response ===
-    Case('openai-none-text-response', 'openai', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='none'),
-    Case('anthropic-none-text-response', 'anthropic', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='none', prompt='Say hello'),
-    Case('groq-none-text-response', 'groq', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='none'),
-    Case('mistral-none-text-response', 'mistral', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request=None),
-    Case('google-none-text-response', 'google', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request='NONE'),
-    Case('bedrock-none-text-response', 'bedrock', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request=None),
-    Case('huggingface-none-text-response', 'huggingface', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart']}]), expected_tool_choice_in_request=None),
-    Case('openai_responses-none-text-response', 'openai_responses', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','TextPart']}]), expected_tool_choice_in_request='none'),
+    Case(
+        id='openai-none-text-response',
+        provider='openai',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('none'),
+    ),
+    Case(
+        id='anthropic-none-text-response',
+        provider='anthropic',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('none'),
+        prompt='Say hello',
+    ),
+    Case(
+        id='groq-none-text-response',
+        provider='groq',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('none'),
+    ),
+    Case(
+        id='mistral-none-text-response',
+        provider='mistral',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot(None),
+    ),
+    Case(
+        id='google-none-text-response',
+        provider='google',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('NONE'),
+    ),
+    Case(
+        id='bedrock-none-text-response',
+        provider='bedrock',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot(None),
+    ),
+    Case(
+        id='huggingface-none-text-response',
+        provider='huggingface',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        expected_tool_choice_in_request=snapshot('none'),
+    ),
+    Case(
+        id='openai_responses-none-text-response',
+        provider='openai_responses',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ThinkingPart,TextPart]}]),
+        expected_tool_choice_in_request=snapshot('none'),
+    ),
 
     # === tool_choice='required' - Must use tool (direct model request) ===
-    Case('openai-required-forces-tool', 'openai', 'required', snapshot(['ToolCallPart']), expected_tool_choice_in_request='required', use_direct_request=True),
-    Case('anthropic-required-forces-tool', 'anthropic', 'required', snapshot(['ToolCallPart']), expected_tool_choice_in_request='any', use_direct_request=True),
-    Case('groq-required-forces-tool', 'groq', 'required', snapshot(['ToolCallPart']), expected_tool_choice_in_request='required', use_direct_request=True),
-    Case('mistral-required-forces-tool', 'mistral', 'required', snapshot(['ToolCallPart']), expected_tool_choice_in_request='required', use_direct_request=True),
-    Case('google-required-forces-tool', 'google', 'required', snapshot(['ToolCallPart']), expected_tool_choice_in_request='ANY', use_direct_request=True),
-    Case('bedrock-required-forces-tool', 'bedrock', 'required', snapshot(['ToolCallPart']), expected_tool_choice_in_request='any', use_direct_request=True),
-    Case('huggingface-required-forces-tool', 'huggingface', 'required', snapshot(['ToolCallPart']), expected_tool_choice_in_request='required', use_direct_request=True),
-    Case('openai_responses-required-forces-tool', 'openai_responses', 'required', snapshot(['ThinkingPart','ToolCallPart']), expected_tool_choice_in_request='required', use_direct_request=True),
+    Case(
+        id='openai-required-forces-tool',
+        provider='openai',
+        tool_choice='required',
+        expected_message_structure=snapshot(['ToolCallPart']),
+        expected_tool_choice_in_request=snapshot('required'),
+        use_direct_request=True,
+    ),
+    Case(
+        id='anthropic-required-forces-tool',
+        provider='anthropic',
+        tool_choice='required',
+        expected_message_structure=snapshot(['ToolCallPart']),
+        expected_tool_choice_in_request=snapshot('any'),
+        use_direct_request=True,
+    ),
+    Case(
+        id='groq-required-forces-tool',
+        provider='groq',
+        tool_choice='required',
+        expected_message_structure=snapshot(['ToolCallPart']),
+        expected_tool_choice_in_request=snapshot('required'),
+        use_direct_request=True,
+    ),
+    Case(
+        id='mistral-required-forces-tool',
+        provider='mistral',
+        tool_choice='required',
+        expected_message_structure=snapshot(['ToolCallPart']),
+        expected_tool_choice_in_request=snapshot('required'),
+        use_direct_request=True,
+    ),
+    Case(
+        id='google-required-forces-tool',
+        provider='google',
+        tool_choice='required',
+        expected_message_structure=snapshot(['ToolCallPart']),
+        expected_tool_choice_in_request=snapshot('ANY'),
+        use_direct_request=True,
+    ),
+    Case(
+        id='bedrock-required-forces-tool',
+        provider='bedrock',
+        tool_choice='required',
+        expected_message_structure=snapshot(['ToolCallPart']),
+        expected_tool_choice_in_request=snapshot('any'),
+        use_direct_request=True,
+    ),
+    Case(
+        id='huggingface-required-forces-tool',
+        provider='huggingface',
+        tool_choice='required',
+        expected_message_structure=snapshot(['ToolCallPart']),
+        expected_tool_choice_in_request=snapshot('required'),
+        use_direct_request=True,
+    ),
+    Case(
+        id='openai_responses-required-forces-tool',
+        provider='openai_responses',
+        tool_choice='required',
+        expected_message_structure=snapshot(['ThinkingPart','ToolCallPart']),
+        expected_tool_choice_in_request=snapshot('required'),
+        use_direct_request=True,
+    ),
 
     # === tool_choice=['specific_tool'] - Force specific tool (direct model request) ===
-    Case('openai-list-single-tool', 'openai', ['get_weather'], snapshot(['ToolCallPart']), tools=[get_weather, get_time], use_direct_request=True),
-    Case('anthropic-list-single-tool', 'anthropic', ['get_weather'], snapshot(['ToolCallPart']), tools=[get_weather, get_time], use_direct_request=True),
-    Case('groq-list-single-tool', 'groq', ['get_weather'], snapshot(['ToolCallPart']), tools=[get_weather, get_time], use_direct_request=True),
-    Case('mistral-list-single-tool', 'mistral', ['get_weather'], snapshot(['ToolCallPart']), tools=[get_weather, get_time], use_direct_request=True),
-    Case('google-list-single-tool', 'google', ['get_weather'], snapshot(['ToolCallPart']), tools=[get_weather, get_time], use_direct_request=True),
-    Case('bedrock-list-single-tool', 'bedrock', ['get_weather'], snapshot(['ToolCallPart']), tools=[get_weather, get_time], use_direct_request=True),
-    Case('huggingface-list-single-tool', 'huggingface', ['get_weather'], snapshot(['ToolCallPart']), tools=[get_weather, get_time], use_direct_request=True),
-    Case('openai_responses-list-single-tool', 'openai_responses', ['get_weather'], snapshot(['ThinkingPart','ToolCallPart']), tools=[get_weather, get_time], use_direct_request=True),
+    Case(
+        id='openai-list-single-tool',
+        provider='openai',
+        tool_choice=['get_weather'],
+        expected_message_structure=snapshot(['ToolCallPart']),
+        tools=[get_weather, get_time],
+        use_direct_request=True,
+    ),
+    Case(
+        id='anthropic-list-single-tool',
+        provider='anthropic',
+        tool_choice=['get_weather'],
+        expected_message_structure=snapshot(['ToolCallPart']),
+        tools=[get_weather, get_time],
+        use_direct_request=True,
+    ),
+    Case(
+        id='groq-list-single-tool',
+        provider='groq',
+        tool_choice=['get_weather'],
+        expected_message_structure=snapshot(['ToolCallPart']),
+        tools=[get_weather, get_time],
+        use_direct_request=True,
+    ),
+    Case(
+        id='mistral-list-single-tool',
+        provider='mistral',
+        tool_choice=['get_weather'],
+        expected_message_structure=snapshot(['ToolCallPart']),
+        tools=[get_weather, get_time],
+        use_direct_request=True,
+    ),
+    Case(
+        id='google-list-single-tool',
+        provider='google',
+        tool_choice=['get_weather'],
+        expected_message_structure=snapshot(['ToolCallPart']),
+        tools=[get_weather, get_time],
+        use_direct_request=True,
+    ),
+    Case(
+        id='bedrock-list-single-tool',
+        provider='bedrock',
+        tool_choice=['get_weather'],
+        expected_message_structure=snapshot(['ToolCallPart']),
+        tools=[get_weather, get_time],
+        use_direct_request=True,
+    ),
+    Case(
+        id='huggingface-list-single-tool',
+        provider='huggingface',
+        tool_choice=['get_weather'],
+        expected_message_structure=snapshot(['ToolCallPart']),
+        tools=[get_weather, get_time],
+        use_direct_request=True,
+    ),
+    Case(
+        id='openai_responses-list-single-tool',
+        provider='openai_responses',
+        tool_choice=['get_weather'],
+        expected_message_structure=snapshot(['ThinkingPart','ToolCallPart']),
+        tools=[get_weather, get_time],
+        use_direct_request=True,
+    ),
 
     # === tool_choice='none' with structured output - output tool still works ===
     # No warning expected: tool_choice='none' disables function tools but output tools remain available
-    Case('openai-none-with-output', 'openai', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris'),
-    Case('anthropic-none-with-output', 'anthropic', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris'),
-    Case('groq-none-with-output', 'groq', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris'),
-    Case('mistral-none-with-output', 'mistral', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris'),
-    Case('google-none-with-output', 'google', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris'),
-    Case('bedrock-none-with-output', 'bedrock', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris'),
-    Case('huggingface-none-with-output', 'huggingface', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris'),
-    Case('openai_responses-none-with-output', 'openai_responses', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), output_type=CityInfo, prompt='Tell me about Paris'),
+    Case(
+        id='openai-none-with-output',
+        provider='openai',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=CityInfo,
+        prompt='Tell me about Paris',
+    ),
+    Case(
+        id='anthropic-none-with-output',
+        provider='anthropic',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=CityInfo,
+        prompt='Tell me about Paris',
+    ),
+    Case(
+        id='groq-none-with-output',
+        provider='groq',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=CityInfo,
+        prompt='Tell me about Paris',
+    ),
+    Case(
+        id='mistral-none-with-output',
+        provider='mistral',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=CityInfo,
+        prompt='Tell me about Paris',
+    ),
+    Case(
+        id='google-none-with-output',
+        provider='google',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=CityInfo,
+        prompt='Tell me about Paris',
+    ),
+    Case(
+        id='bedrock-none-with-output',
+        provider='bedrock',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=CityInfo,
+        prompt='Tell me about Paris',
+    ),
+    Case(
+        id='huggingface-none-with-output',
+        provider='huggingface',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=CityInfo,
+        prompt='Tell me about Paris',
+    ),
+    Case(
+        id='openai_responses-none-with-output',
+        provider='openai_responses',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ThinkingPart,ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=CityInfo,
+        prompt='Tell me about Paris',
+    ),
 
     # === tool_choice='none' with text+structured output - triggers (tool_names, 'auto') branch ===
     # Using (str, CityInfo) tuple allows text output AND creates output tool, hitting the 'auto' mode path
     # No warning expected: tool_choice='none' disables function tools but output tools remain available
-    Case('openai-none-with-output-text-allowed', 'openai', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly'),
-    Case('anthropic-none-with-output-text-allowed', 'anthropic', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly'),
-    Case('groq-none-with-output-text-allowed', 'groq', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly'),
-    Case('mistral-none-with-output-text-allowed', 'mistral', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly'),
-    Case('google-none-with-output-text-allowed', 'google', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly'),
-    Case('bedrock-none-with-output-text-allowed', 'bedrock', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly'),
-    Case('huggingface-none-with-output-text-allowed', 'huggingface', 'none', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly'),
-    Case('openai_responses-none-with-output-text-allowed', 'openai_responses', 'none', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','TextPart']}]), output_type=(str, CityInfo), prompt='Tell me about Paris briefly'),
+    Case(
+        id='openai-none-with-output-text-allowed',
+        provider='openai',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[TextPart]}]),
+        output_type=(str, CityInfo),
+        prompt='Tell me about Paris briefly',
+    ),
+    Case(
+        id='anthropic-none-with-output-text-allowed',
+        provider='anthropic',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]}, {'type':ModelResponse,'parts':[ToolCallPart]}, {'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=(str, CityInfo),
+        prompt='Tell me about Paris briefly',
+    ),
+    Case(
+        id='groq-none-with-output-text-allowed',
+        provider='groq',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]}, {'type':ModelResponse,'parts':[ToolCallPart]}, {'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=(str, CityInfo),
+        prompt='Tell me about Paris briefly',
+    ),
+    Case(
+        id='mistral-none-with-output-text-allowed',
+        provider='mistral',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]}, {'type':ModelResponse,'parts':[ToolCallPart]}, {'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=(str, CityInfo),
+        prompt='Tell me about Paris briefly',
+    ),
+    Case(
+        id='google-none-with-output-text-allowed',
+        provider='google',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]}, {'type':ModelResponse,'parts':[ToolCallPart]}, {'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=(str, CityInfo),
+        prompt='Tell me about Paris briefly',
+    ),
+    Case(
+        id='bedrock-none-with-output-text-allowed',
+        provider='bedrock',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]}, {'type':ModelResponse,'parts':[ToolCallPart]}, {'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=(str, CityInfo),
+        prompt='Tell me about Paris briefly',
+    ),
+    Case(
+        id='huggingface-none-with-output-text-allowed',
+        provider='huggingface',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]}, {'type':ModelResponse,'parts':[ToolCallPart]}, {'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        output_type=(str, CityInfo),
+        prompt='Tell me about Paris briefly',
+    ),
+    Case(
+        id='openai_responses-none-with-output-text-allowed',
+        provider='openai_responses',
+        tool_choice='none',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ThinkingPart,TextPart]}]),
+        output_type=(str, CityInfo),
+        prompt='Tell me about Paris briefly',
+    ),
 
     # === ToolOrOutput - specific function tools + output tools ===
-    Case('openai-tools-plus-output', 'openai', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
-         tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('anthropic-tools-plus-output', 'anthropic', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
-         tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('groq-tools-plus-output', 'groq', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart','ToolReturnPart']}]),
-         tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('mistral-tools-plus-output', 'mistral', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
-         tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('google-tools-plus-output', 'google', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
-         tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('bedrock-tools-plus-output', 'bedrock', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
-         tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('huggingface-tools-plus-output', 'huggingface', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart','ToolReturnPart']}]),
-         tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('openai_responses-tools-plus-output', 'openai_responses', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ThinkingPart','ThinkingPart', 'ThinkingPart', 'ThinkingPart', 'ThinkingPart', 'ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
-         tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
+    Case(
+        id='openai-tools-plus-output',
+        provider='openai',
+        tool_choice=ToolOrOutput(function_tools=['get_weather']),
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        tools=[get_weather, get_time],
+        output_type=CityInfo,
+        prompt='Get weather for Paris and summarize',
+    ),
+    Case(
+        id='anthropic-tools-plus-output',
+        provider='anthropic',
+        tool_choice=ToolOrOutput(function_tools=['get_weather']),
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        tools=[get_weather, get_time],
+        output_type=CityInfo,
+        prompt='Get weather for Paris and summarize',
+    ),
+    Case(
+        id='groq-tools-plus-output',
+        provider='groq',
+        tool_choice=ToolOrOutput(function_tools=['get_weather']),
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart,ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart,ToolReturnPart]}]),
+        tools=[get_weather, get_time],
+        output_type=CityInfo,
+        prompt='Get weather for Paris and summarize',
+    ),
+    Case(
+        id='mistral-tools-plus-output',
+        provider='mistral',
+        tool_choice=ToolOrOutput(function_tools=['get_weather']),
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        tools=[get_weather, get_time],
+        output_type=CityInfo,
+        prompt='Get weather for Paris and summarize',
+    ),
+    Case(
+        id='google-tools-plus-output',
+        provider='google',
+        tool_choice=ToolOrOutput(function_tools=['get_weather']),
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        tools=[get_weather, get_time],
+        output_type=CityInfo,
+        prompt='Get weather for Paris and summarize',
+    ),
+    Case(
+        id='bedrock-tools-plus-output',
+        provider='bedrock',
+        tool_choice=ToolOrOutput(function_tools=['get_weather']),
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        tools=[get_weather, get_time],
+        output_type=CityInfo,
+        prompt='Get weather for Paris and summarize',
+    ),
+    Case(
+        id='huggingface-tools-plus-output',
+        provider='huggingface',
+        tool_choice=ToolOrOutput(function_tools=['get_weather']),
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart,ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart,ToolReturnPart]}]),
+        tools=[get_weather, get_time],
+        output_type=CityInfo,
+        prompt='Get weather for Paris and summarize',
+    ),
+    Case(
+        id='openai_responses-tools-plus-output',
+        provider='openai_responses',
+        tool_choice=ToolOrOutput(function_tools=['get_weather']),
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ThinkingPart,ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]},{'type':ModelResponse,'parts':[ThinkingPart,ThinkingPart, ThinkingPart, ThinkingPart, ThinkingPart, ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        tools=[get_weather, get_time],
+        output_type=CityInfo,
+        prompt='Get weather for Paris and summarize',
+    ),
 
     # === Google-specific: output-only with no direct output allowed ===
-    Case('google-auto-output-only-no-direct', 'google', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), tools=[], output_type=CityInfo, prompt='Tell me about Paris', expected_tool_choice_in_request='ANY'),
+    Case(
+        id='google-auto-output-only-no-direct',
+        provider='google',
+        tool_choice='auto',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[ToolCallPart]},{'type': ModelRequest,'parts':[ToolReturnPart]}]),
+        tools=[],
+        output_type=CityInfo,
+        prompt='Tell me about Paris',
+        expected_tool_choice_in_request=snapshot('ANY'),
+    ),
 
     # === Google-specific: image-only output drops text modality ===
-    Case('google-auto-image-only', 'google', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['FilePart']}]), tools=[], output_type=BinaryImage, prompt='Generate an image of a red kite in the sky', model_name='gemini-2.5-flash-image'),
+    Case(
+        id='google-auto-image-only',
+        provider='google',
+        tool_choice='auto',
+        expected_message_structure=snapshot([{'type': ModelRequest,'parts':[UserPromptPart]},{'type':ModelResponse,'parts':[FilePart]}]),
+        tools=[],
+        output_type=BinaryImage,
+        prompt='Generate an image of a red kite in the sky',
+        model_name='gemini-2.5-flash-image',
+        expected_tool_choice_in_request=snapshot(None),
+    ),
 ]
 # fmt: on
 
