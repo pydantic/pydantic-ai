@@ -245,6 +245,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Confident AI](https://documentation.confident-ai.com/docs/llm-tracing/integrations/pydanticai)
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
 - [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
+- [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
 
 ## Advanced usage
 
