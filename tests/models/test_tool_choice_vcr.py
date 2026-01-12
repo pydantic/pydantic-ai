@@ -21,16 +21,13 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryImage,
     FilePart,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
-    ModelResponsePart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -124,6 +121,28 @@ def make_tool_def(name: str, description: str, param_name: str) -> ToolDefinitio
 # Case dataclass
 # =============================================================================
 
+PartTypes = list[
+    type[UserPromptPart]
+    | type[ToolReturnPart]
+    | type[TextPart]
+    | type[ToolCallPart]
+    | type[ThinkingPart]
+    | type[FilePart]
+]
+
+
+@dataclass(kw_only=True)
+class _RequestTrimmed:
+    parts: PartTypes
+
+
+@dataclass(kw_only=True)
+class _ResponseTrimmed:
+    parts: PartTypes
+
+
+_MessageStructure = _RequestTrimmed | _ResponseTrimmed
+
 
 @dataclass(kw_only=True)
 class Case:
@@ -132,13 +151,13 @@ class Case:
     id: str
     provider: str
     tool_choice: ToolChoice
-    expected_message_structure: Any  # snapshot() stored here per case
+    expected_message_structure: list[_MessageStructure]  # snapshot() stored here per case
     tools: list[Callable[..., str]] = field(default_factory=lambda: [get_weather])
     output_type: OutputSpec[Any] | None = None
     prompt: str = "What's the weather in Paris?"
     model_name: str | None = None
     # Expected values - set to None to skip assertion
-    expected_tool_choice_in_request: Any = None
+    expected_tool_choice_in_request: Any = None  # snapshot() stored here per case
     skip_reason: str | None = None
     use_direct_request: bool = False  # Use model.request() instead of agent.run() for required/list
 
@@ -238,20 +257,15 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str) -> Any:
         return body.get('tool_choice')
 
 
-class _MessageStructure(TypedDict):
-    type: type[ModelRequest | ModelResponse]
-    parts: list[type[ModelRequestPart | ModelResponsePart]]
-
-
 def get_message_structure(messages: list[ModelRequest | ModelResponse]) -> list[_MessageStructure]:
     """Extract simplified message structure for snapshot comparison."""
     result: list[_MessageStructure] = []
     for msg in messages:
+        parts = [type(p) for p in msg.parts]
         result.append(
-            {
-                'type': type(msg),
-                'parts': [type(p) for p in msg.parts],
-            }
+            _RequestTrimmed(parts=parts)  # pyright: ignore[reportArgumentType]
+            if isinstance(msg, ModelRequest)
+            else _ResponseTrimmed(parts=parts)  # pyright: ignore[reportArgumentType]
         )
     return result
 
