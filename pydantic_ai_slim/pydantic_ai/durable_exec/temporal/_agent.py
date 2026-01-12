@@ -306,12 +306,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         force: bool = False,
     ) -> Iterator[None]:
-        in_workflow = workflow.in_workflow()
-
         overridden_toolsets = [*self._toolsets, *(toolsets or [])]
 
         # Outside workflow, only apply toolsets override (model is passed directly to run)
-        if not in_workflow and not force:
+        if not workflow.in_workflow() and not force:
             if toolsets:
                 with super().override(toolsets=overridden_toolsets, tools=[]):
                     yield
