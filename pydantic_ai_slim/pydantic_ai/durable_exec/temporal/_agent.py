@@ -18,7 +18,6 @@ from typing_extensions import Never
 from pydantic_ai import (
     AbstractToolset,
     AgentRunResultEvent,
-    FunctionToolset,
     _utils,
     messages as _messages,
     models,
@@ -43,7 +42,7 @@ from pydantic_ai.tools import (
 
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext
-from ._toolset import TemporalWrapperToolset, temporalize_toolset
+from ._toolset import TemporalWrapperToolset, get_toolset_types_requiring_temporal_wrapper, temporalize_toolset
 
 
 def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]]) -> None:
@@ -60,6 +59,7 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]])
         UserError: If an unwrapped leaf toolset is found that requires temporal wrapping.
             The error message includes the toolset label for identification.
     """
+    types_requiring_wrapper = get_toolset_types_requiring_temporal_wrapper()
 
     def validate_toolset(t: AbstractToolset[AgentDepsT]) -> None:
         # If we encounter a TemporalWrapperToolset, we don't need to check its children
@@ -67,32 +67,9 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]])
         if isinstance(t, TemporalWrapperToolset):
             return
 
-        if isinstance(t, FunctionToolset):
+        # Check if this is a toolset type that requires temporal wrapping
+        if isinstance(t, types_requiring_wrapper):
             raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
-
-        # Check if this is a DynamicToolset that needs wrapping
-        from pydantic_ai.toolsets._dynamic import DynamicToolset
-
-        if isinstance(t, DynamicToolset):
-            raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
-
-        # Check if this is an MCPServer that needs wrapping
-        try:
-            from pydantic_ai.mcp import MCPServer
-        except ImportError:
-            pass
-        else:
-            if isinstance(t, MCPServer):
-                raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
-
-        # Check if this is a FastMCPToolset that needs wrapping
-        try:
-            from pydantic_ai.toolsets.fastmcp import FastMCPToolset
-        except ImportError:
-            pass
-        else:
-            if isinstance(t, FastMCPToolset):
-                raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
 
         # For other toolsets (like CombinedToolset, WrapperToolset, etc.),
         # we return them unchanged - apply will handle recursion

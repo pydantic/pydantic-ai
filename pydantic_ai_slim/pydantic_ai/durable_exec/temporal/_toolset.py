@@ -18,6 +18,36 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from ._run_context import TemporalRunContext
 
 
+def get_toolset_types_requiring_temporal_wrapper() -> tuple[type, ...]:
+    """Get the tuple of toolset types that require temporal wrapping.
+
+    This function lazily imports and returns all toolset types that need to be
+    wrapped in a TemporalWrapperToolset when used inside a Temporal workflow.
+    The list is defined in one place to avoid duplication between validation
+    and temporalization logic.
+
+    Returns:
+        A tuple of types that require temporal wrapping.
+    """
+    types: list[type] = [FunctionToolset, DynamicToolset]
+
+    try:
+        from pydantic_ai.mcp import MCPServer
+
+        types.append(MCPServer)
+    except ImportError:
+        pass
+
+    try:
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        types.append(FastMCPToolset)
+    except ImportError:
+        pass
+
+    return tuple(types)
+
+
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class CallToolParams:
