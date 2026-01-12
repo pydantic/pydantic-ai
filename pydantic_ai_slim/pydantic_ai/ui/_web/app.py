@@ -25,7 +25,7 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
     ) from _import_error
 
-DEFAULT_UI_VERSION = '0.0.4'
+DEFAULT_UI_VERSION = '1.0.0'
 CDN_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
