@@ -25,6 +25,12 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
+if not imports_successful():
+    # Define placeholders so the module can be loaded for test collection
+    AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
+    GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    DeepSeekModelName = GrokModelName = MoonshotAIModelName = None
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
     pytest.mark.vcr,

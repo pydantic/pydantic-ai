@@ -63,7 +63,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = [
     pytest.mark.anyio,
@@ -561,6 +561,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -582,6 +583,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -595,6 +597,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -624,6 +627,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -644,6 +648,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -689,6 +694,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -711,6 +717,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -740,6 +747,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -785,7 +793,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot(['Hello ', 'Hello world'])
+        assert chunks == snapshot(['Hello ', 'Hello world', 'Hello world'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
     async with agent.run_stream('Hello') as result:
@@ -822,7 +830,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot(['abc', 'abc€def'])
+        assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
@@ -852,7 +860,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
-        assert chunks == snapshot([(1, 2)])
+        assert chunks == snapshot([(1, 2), (1, 2)])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
@@ -899,6 +907,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -922,6 +931,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                         tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -942,6 +952,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -988,6 +999,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1015,6 +1027,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -1032,7 +1045,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 },
                 {'text': 'xxx'},
             ],
@@ -1049,7 +1062,7 @@ async def test_empty_text_ignored():
             'parts': [
                 {
                     'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 }
             ],
         }
@@ -1201,12 +1214,13 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=74, details={'thoughts_tokens': 64, 'text_prompt_tokens': 33}
+                    input_tokens=33, output_tokens=155, details={'thoughts_tokens': 145, 'text_prompt_tokens': 33}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1219,53 +1233,32 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
+                        content='See file 241a70',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1c8566:',
+                            'This is file 241a70:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(content='6'),
                     TextPart(
-                        content="""\
- 1c8566
-The image shows a **kiwi** fruit that has been sliced in half.
-
-You can see:
-*   The **bright green flesh**.
-*   The ring of tiny **black seeds**.
-*   The **white core** in the center.
-*   The fuzzy **brown skin** around the outside.
-
-It's positioned against a plain white background.\
-"""
-                    ),
-                    TextPart(
-                        content="""\
-The fruit in the image is a **kiwi** (specifically, a sliced green kiwifruit).
-
-You can clearly identify it by its signature features:
-*   **Green flesh** with a radial pattern.
-*   A ring of small **black seeds**.
-*   A cream-colored **white core** in the center.
-*   Fuzzy **brown skin** visible on the exterior edge.\
-"""
+                        content='The fruit in the image is a **kiwi** (specifically, a cross-section showing its green flesh, black seeds, and white core).'
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1185,
-                    output_tokens=552,
-                    details={'thoughts_tokens': 381, 'image_prompt_tokens': 1107, 'text_prompt_tokens': 78},
+                    input_tokens=1166,
+                    output_tokens=215,
+                    details={'thoughts_tokens': 184, 'image_prompt_tokens': 1088, 'text_prompt_tokens': 78},
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1373,9 +1366,7 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
     assert result.output == snapshot('Your Chinese zodiac is Dragon.\n')
 
     result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
-    assert result.output == snapshot(
-        'I am sorry, I cannot provide you with your Chinese zodiac sign because you are not old enough. You must be at least 18 years old.'
-    )
+    assert result.output == snapshot('I am sorry, I cannot fulfill this request. The age needs to be greater than 18.')
 
 
 @pytest.mark.vcr()
@@ -1388,6 +1379,7 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1437,173 +1429,52 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         return 20.0
 
     result = await agent.run('What is the temperature in Tokyo?')
-    assert result.output == snapshot(
-        'I was not able to get the temperature in Tokyo. There seems to be an issue with the way the location is being processed by the tool.'
-    )
+    assert result.output == snapshot('I need the latitude and longitude for Tokyo. Can you please provide them?')
 
 
 @pytest.mark.vcr()
-async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
-    with try_import() as imports_successful:
-        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-        from pydantic_ai.providers.openai import OpenAIProvider
-
-    if not imports_successful():  # pragma: lax no cover
-        pytest.skip('OpenAI is not installed')
-
-    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    gemini_model = GeminiModel('gemini-2.5-flash-preview-04-17', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(openai_model)
-
-    # We call OpenAI to get the thinking parts, because Google disabled the thoughts in the API.
-    # See https://github.com/pydantic/pydantic-ai/issues/793 for more details.
-    result = await agent.run(
-        'How do I cross the street?',
-        model_settings=OpenAIResponsesModelSettings(
-            openai_reasoning_effort='high', openai_reasoning_summary='detailed'
-        ),
-    )
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    TextPart(
-                        content="""\
-Here are guidelines for safely crossing a street. Remember that these tips are general and may need to be adjusted depending on your local traffic laws and the specific situation. They are not a substitute for professional safety advice.
-
-1. Before you approach the street:
- • Use the sidewalk if available and get to the curb or edge of the road.
- • If you're a child or feel unsure, try to have an adult accompany you.
-
-2. When you're ready to cross:
- • Look carefully in all directions—start by looking left, then right, and left again. In countries where you drive on the left you'll want to adjust accordingly.
- • Listen for vehicles and be aware of turning cars, which might not be immediately in your line of sight.
- • Make eye contact with drivers if possible so that you know they see you.
-
-3. Use designated crossing areas whenever possible:
- • If there's a pedestrian crosswalk, use it. Crosswalks and traffic signals are there to help manage the flow of both vehicles and pedestrians.
- • If there's a "Walk" signal, wait until it's on before crossing. Even if the signal turns green for pedestrians, always take an extra moment to ensure that approaching drivers are stopping.
-
-4. While crossing:
- • Continue to remain alert and avoid distractions like cell phones or headphones that could prevent you from noticing approaching traffic.
- • Walk at a steady pace and stay in the crosswalk until you have completely reached the other side.
-
-5. After crossing:
- • Once you've safely reached the other side, continue to be aware of any vehicles that might be turning or reversing.
-
-Always be cautious—even if you have the right-of-way—and understand that it's better to wait a moment longer than risk being caught off guard. Stay safe!\
-""",
-                        id='msg_68039413525c8191aca9aa8f886eaf5d04f0817ea037a07b',
-                    ),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
+async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str):
+    model = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(model)
 
     result = await agent.run(
-        'Considering the way to cross the street, analogously, how do I cross the river?',
-        model=gemini_model,
-        message_history=result.all_messages(),
+        'What is 2+2?',
         model_settings=GeminiModelSettings(
             gemini_thinking_config={'thinking_budget': 1024, 'include_thoughts': True},
         ),
     )
+
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Considering the way to cross the street, analogously, how do I cross the river?',
-                        timestamp=IsDatetime(),
+                        content='What is 2+2?',
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
+                    ThinkingPart(
                         content="""\
-Okay, let's draw an analogy between crossing a street and crossing a river, applying the safety principles from the street crossing guide to the river environment.
+**Calculating the Simple**
 
-Think of the **river** as being like the **street** – a natural barrier you need to get across. The **hazards** on the river are different from vehicles, but they are still things that can harm you.
-
-Here's the analogous guide for crossing a river:
-
-1.  **Before you approach the river:**
-    *   Just as you use a sidewalk to get to the street's edge, use a trail or the riverbank to get to a spot where you can assess the river.
-    *   If you're inexperienced with rivers or unsure about the conditions, try to have someone experienced accompany you.
-
-2.  **When you're ready to cross:**
-    *   Just as you look and listen for vehicles, carefully **assess the river conditions**. Look in all directions (upstream, downstream, across):
-        *   How fast is the current moving? (Like checking vehicle speed).
-        *   How deep does the water look? (Like judging the width and how much time you have).
-        *   Are there obstacles in the water (rocks, logs)? (Like parked cars or road hazards).
-        *   Is the bottom visible and does it look stable? (Like checking the road surface).
-        *   Check upstream for potential hazards coming towards you (like debris).
-    *   Listen to the river – the sound can tell you if the current is very strong or if there are rapids.
-    *   Acknowledge the river's power – just as you make eye contact with drivers, respect that the river can be dangerous and doesn't care if you're trying to cross.
-
-3.  **Use designated crossing areas whenever possible:**
-    *   If there's a **bridge or a ferry**, use it. These are like the crosswalks and traffic signals – the safest, established ways to cross, often managing the "flow" (of water below, or people/boats on the river).
-    *   If you must wade or swim, look for the safest possible **crossing point** – maybe a wider, shallower section, a known ford, or a spot with a less turbulent current. This is like choosing a crosswalk instead of crossing anywhere.
-
-4.  **While crossing:**
-    *   Just as you stay alert and avoid distractions, **focus completely on the crossing**. Don't be looking at your phone or distracted by conversation if you are actively navigating the water.
-    *   Move with purpose, but carefully. If wading, maintain your balance against the current and watch your footing. If swimming, focus on your technique and direction. Stay aware of where you are relative to your intended path and the river's flow.
-
-5.  **After crossing:**
-    *   Once you've safely reached the other side, take a moment to ensure you are truly out of the main flow and on stable ground. Be aware of the riverbank conditions.
-
-**Analogous Takeaway:**
-
-Just as you wouldn't just run blindly into a busy street, you shouldn't just jump into a river without understanding its conditions and choosing the safest method and location to cross. Be cautious, assess the "traffic" (current, depth, obstacles), and use the available "infrastructure" (bridges, ferries, established crossing points) whenever possible.\
+Okay, here we go. Someone's asking a pretty straightforward arithmetic question. It's really just a simple calculation. Nothing fancy, just plug in the numbers and get the result.  No need to overthink it. It's a quick win, a chance to flex some basic math muscles before getting into anything more complex. Just a matter of applying the right operation and moving on.
 """
                     ),
+                    TextPart(content='2 + 2 = 4'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=801, output_tokens=2313, details={'thoughts_tokens': 794, 'text_prompt_tokens': 801}
+                    input_tokens=8, output_tokens=24, details={'thoughts_tokens': 16, 'text_prompt_tokens': 8}
                 ),
-                model_name='gemini-2.5-flash-preview-04-17',
-                timestamp=IsDatetime(),
+                model_name='gemini-2.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id='lghYaaSmK7eomtkP_KDT6A0',
                 run_id=IsStr(),
             ),
         ]
@@ -1627,6 +1498,7 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
                 parts=[
                     UserPromptPart(content=['What is the main content of this URL?', url], timestamp=IsDatetime()),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1712,6 +1584,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1735,6 +1608,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1764,6 +1638,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -1796,6 +1671,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1819,6 +1695,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1848,6 +1725,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -1879,6 +1757,7 @@ IT'S THE CAPITAL OF MEXICO AND ONE OF THE LARGEST METROPOLITAN AREAS IN THE WORL
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1952,6 +1831,7 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2005,6 +1885,7 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2059,6 +1940,7 @@ async def test_gemini_prompted_output(allow_model_requests: None, gemini_api_key
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2109,6 +1991,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2132,6 +2015,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2176,6 +2060,7 @@ async def test_gemini_prompted_output_multiple(allow_model_requests: None, gemin
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(

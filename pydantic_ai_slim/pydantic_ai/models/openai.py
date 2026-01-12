@@ -11,7 +11,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, cast, overload
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
@@ -61,7 +61,16 @@ from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+from . import (
+    Model,
+    ModelRequestParameters,
+    OpenAIChatCompatibleProvider,
+    OpenAIResponsesCompatibleProvider,
+    StreamedResponse,
+    check_allow_model_requests,
+    download_item,
+    get_user_agent,
+)
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
@@ -164,6 +173,36 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
 
 
+class _AzureContentFilterResultDetail(BaseModel):
+    filtered: bool
+    severity: str | None = None
+    detected: bool | None = None
+
+
+class _AzureContentFilterResult(BaseModel):
+    hate: _AzureContentFilterResultDetail | None = None
+    self_harm: _AzureContentFilterResultDetail | None = None
+    sexual: _AzureContentFilterResultDetail | None = None
+    violence: _AzureContentFilterResultDetail | None = None
+    jailbreak: _AzureContentFilterResultDetail | None = None
+    profanity: _AzureContentFilterResultDetail | None = None
+
+
+class _AzureInnerError(BaseModel):
+    code: str
+    content_filter_result: _AzureContentFilterResult
+
+
+class _AzureError(BaseModel):
+    code: str
+    message: str
+    innererror: _AzureInnerError | None = None
+
+
+class _AzureErrorResponse(BaseModel):
+    error: _AzureError
+
+
 def _resolve_openai_image_generation_size(
     tool: ImageGenerationTool,
 ) -> _OPENAI_IMAGE_SIZE:
@@ -192,6 +231,36 @@ def _resolve_openai_image_generation_size(
         )
 
     return mapped_size
+
+
+def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str) -> ModelResponse | None:
+    """Check if the error is an Azure content filter error."""
+    # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
+    body_any: Any = e.body
+
+    if system == 'azure' and e.status_code == 400 and isinstance(body_any, dict):
+        try:
+            error_data = _AzureErrorResponse.model_validate(body_any)
+
+            if error_data.error.code == 'content_filter':
+                provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
+
+                if error_data.error.innererror:
+                    provider_details['content_filter_result'] = (
+                        error_data.error.innererror.content_filter_result.model_dump(exclude_none=True)
+                    )
+
+                return ModelResponse(
+                    parts=[],  # Empty parts to trigger content filter error in agent graph
+                    model_name=model_name,
+                    timestamp=_utils.now_utc(),
+                    provider_name=system,
+                    finish_reason='content_filter',
+                    provider_details=provider_details,
+                )
+        except ValidationError:
+            pass
+    return None
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -355,24 +424,10 @@ class OpenAIChatModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal[
-            'azure',
-            'deepseek',
-            'cerebras',
-            'fireworks',
-            'github',
-            'grok',
-            'heroku',
-            'moonshotai',
-            'ollama',
+        provider: OpenAIChatCompatibleProvider
+        | Literal[
             'openai',
             'openai-chat',
-            'openrouter',
-            'together',
-            'vercel',
-            'litellm',
-            'nebius',
-            'ovhcloud',
             'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
@@ -386,24 +441,10 @@ class OpenAIChatModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal[
-            'azure',
-            'deepseek',
-            'cerebras',
-            'fireworks',
-            'github',
-            'grok',
-            'heroku',
-            'moonshotai',
-            'ollama',
+        provider: OpenAIChatCompatibleProvider
+        | Literal[
             'openai',
             'openai-chat',
-            'openrouter',
-            'together',
-            'vercel',
-            'litellm',
-            'nebius',
-            'ovhcloud',
             'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
@@ -416,24 +457,10 @@ class OpenAIChatModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal[
-            'azure',
-            'deepseek',
-            'cerebras',
-            'fireworks',
-            'github',
-            'grok',
-            'heroku',
-            'moonshotai',
-            'ollama',
+        provider: OpenAIChatCompatibleProvider
+        | Literal[
             'openai',
             'openai-chat',
-            'openrouter',
-            'together',
-            'vercel',
-            'litellm',
-            'nebius',
-            'ovhcloud',
             'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
@@ -532,6 +559,11 @@ class OpenAIChatModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
+
+        # Handle ModelResponse returned directly (for content filters)
+        if isinstance(response, ModelResponse):
+            return response
+
         model_response = self._process_response(response)
         return model_response
 
@@ -570,7 +602,7 @@ class OpenAIChatModel(Model):
         stream: Literal[False],
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion: ...
+    ) -> chat.ChatCompletion | ModelResponse: ...
 
     async def _completions_create(
         self,
@@ -578,7 +610,7 @@ class OpenAIChatModel(Model):
         stream: bool,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
@@ -642,6 +674,8 @@ class OpenAIChatModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -655,7 +689,7 @@ class OpenAIChatModel(Model):
         """
         return chat.ChatCompletion.model_validate(response.model_dump())
 
-    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
+    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Hook that response content to provider details.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
@@ -673,10 +707,8 @@ class OpenAIChatModel(Model):
                 f'Invalid response from {self.system} chat completions endpoint, expected JSON data'
             )
 
-        if response.created:
-            timestamp = number_to_datetime(response.created)
-        else:
-            timestamp = _now_utc()
+        timestamp = _now_utc()
+        if not response.created:
             response.created = int(timestamp.timestamp())
 
         # Workaround for local Ollama which sometimes returns a `None` finish reason.
@@ -689,6 +721,7 @@ class OpenAIChatModel(Model):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
+
         items: list[ModelResponsePart] = []
 
         if thinking_parts := self._process_thinking(choice.message):
@@ -712,12 +745,18 @@ class OpenAIChatModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
 
+        provider_details = self._process_provider_details(response)
+        if response.created:  # pragma: no branch
+            if provider_details is None:
+                provider_details = {}
+            provider_details['timestamp'] = number_to_datetime(response.created)
+
         return ModelResponse(
             parts=items,
             usage=self._map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            provider_details=self._process_provider_details(response),
+            provider_details=provider_details or None,
             provider_response_id=response.id,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
@@ -772,9 +811,9 @@ class OpenAIChatModel(Model):
             _model_name=model_name,
             _model_profile=self.profile,
             _response=peekable_response,
-            _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
         )
 
     @property
@@ -1151,16 +1190,9 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal[
+        provider: OpenAIResponsesCompatibleProvider
+        | Literal[
             'openai',
-            'deepseek',
-            'azure',
-            'openrouter',
-            'grok',
-            'fireworks',
-            'together',
-            'nebius',
-            'ovhcloud',
             'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
@@ -1217,6 +1249,11 @@ class OpenAIResponsesModel(Model):
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
+
+        # Handle ModelResponse
+        if isinstance(response, ModelResponse):
+            return response
+
         return self._process_response(response, model_request_parameters)
 
     @asynccontextmanager
@@ -1242,14 +1279,15 @@ class OpenAIResponsesModel(Model):
         self, response: responses.Response, model_request_parameters: ModelRequestParameters
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
                 # Handle raw CoT content from gpt-oss models
+                provider_details: dict[str, Any] = {}
                 raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
-                provider_details: dict[str, Any] | None = {'raw_content': raw_content} if raw_content else None
+                if raw_content:
+                    provider_details['raw_content'] = raw_content
 
                 if item.summary:
                     for summary in item.summary:
@@ -1260,7 +1298,7 @@ class OpenAIResponsesModel(Model):
                                 id=item.id,
                                 signature=signature,
                                 provider_name=self.system if (signature or provider_details) else None,
-                                provider_details=provider_details,
+                                provider_details=provider_details or None,
                             )
                         )
                         # We only need to store the signature and raw_content once.
@@ -1273,7 +1311,7 @@ class OpenAIResponsesModel(Model):
                             id=item.id,
                             signature=signature,
                             provider_name=self.system if (signature or provider_details) else None,
-                            provider_details=provider_details,
+                            provider_details=provider_details or None,
                         )
                     )
             elif isinstance(item, responses.ResponseOutputMessage):
@@ -1334,22 +1372,24 @@ class OpenAIResponsesModel(Model):
                 pass
 
         finish_reason: FinishReason | None = None
-        provider_details: dict[str, Any] | None = None
+        provider_details: dict[str, Any] = {}
         raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
         if raw_finish_reason:
-            provider_details = {'finish_reason': raw_finish_reason}
+            provider_details['finish_reason'] = raw_finish_reason
             finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+        if response.created_at:  # pragma: no branch
+            provider_details['timestamp'] = number_to_datetime(response.created_at)
 
         return ModelResponse(
             parts=items,
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
-            timestamp=timestamp,
+            timestamp=_now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
-            provider_details=provider_details,
+            provider_details=provider_details or None,
         )
 
     async def _process_streamed_response(
@@ -1368,9 +1408,11 @@ class OpenAIResponsesModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.response.model,
             _response=peekable_response,
-            _timestamp=number_to_datetime(first_chunk.response.created_at),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=number_to_datetime(first_chunk.response.created_at)
+            if first_chunk.response.created_at
+            else None,
         )
 
     @overload
@@ -1397,7 +1439,7 @@ class OpenAIResponsesModel(Model):
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         tools = (
             self._get_builtin_tools(model_request_parameters)
             + list(model_settings.get('openai_builtin_tools', []))
@@ -1499,6 +1541,9 @@ class OpenAIResponsesModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
+
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -1826,30 +1871,15 @@ class OpenAIResponsesModel(Model):
 
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system and send_item_ids:  # pragma: no branch
-                            if (
-                                item.tool_name == CodeExecutionTool.kind
-                                and code_interpreter_item is not None
-                                and isinstance(item.content, dict)
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
-                                and (status := content.get('status'))
-                            ):
-                                code_interpreter_item['status'] = status
-                            elif (
-                                item.tool_name == WebSearchTool.kind
-                                and web_search_item is not None
-                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
-                                and (status := content.get('status'))
-                            ):
-                                web_search_item['status'] = status
-                            elif (  # pragma: no cover
-                                item.tool_name == FileSearchTool.kind
-                                and file_search_item is not None
-                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
-                                and (status := content.get('status'))
-                            ):
-                                file_search_item['status'] = status
+                            content_is_dict = isinstance(item.content, dict)
+                            status = item.content.get('status') if content_is_dict else None
+                            kind_to_item = {
+                                CodeExecutionTool.kind: code_interpreter_item,
+                                WebSearchTool.kind: web_search_item,
+                                FileSearchTool.kind: file_search_item,
+                            }
+                            if status and (builtin_item := kind_to_item.get(item.tool_name)) is not None:
+                                builtin_item['status'] = status
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
@@ -2017,11 +2047,14 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_name: OpenAIModelName
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionChunk]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._provider_timestamp is not None:  # pragma: no branch
+            self.provider_details = {'timestamp': self._provider_timestamp}
         async for chunk in self._validate_response():
             self._usage += self._map_usage(chunk)
 
@@ -2043,8 +2076,8 @@ class OpenAIStreamedResponse(StreamedResponse):
             if raw_finish_reason := choice.finish_reason:
                 self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
-            if provider_details := self._map_provider_details(chunk):
-                self.provider_details = provider_details
+            if provider_details := self._map_provider_details(chunk):  # pragma: no branch
+                self.provider_details = {**(self.provider_details or {}), **provider_details}
 
             for event in self._map_part_delta(choice):
                 yield event
@@ -2177,11 +2210,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _response: AsyncIterable[responses.ResponseStreamEvent]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        if self._provider_timestamp is not None:  # pragma: no branch
+            self.provider_details = {'timestamp': self._provider_timestamp}
+
         async for chunk in self._response:
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
@@ -2190,8 +2227,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                 )
+
                 if raw_finish_reason:  # pragma: no branch
-                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
@@ -2612,7 +2650,7 @@ def _map_usage(
 
 def _map_provider_details(
     choice: chat_completion_chunk.Choice | chat_completion.Choice,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     provider_details: dict[str, Any] = {}
 
     # Add logprobs to vendor_details if available
@@ -2621,7 +2659,7 @@ def _map_provider_details(
     if raw_finish_reason := choice.finish_reason:
         provider_details['finish_reason'] = raw_finish_reason
 
-    return provider_details
+    return provider_details or None
 
 
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:

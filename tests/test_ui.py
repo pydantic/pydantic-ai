@@ -624,6 +624,32 @@ async def test_run_stream_on_complete():
     )
 
 
+async def test_run_stream_metadata_forwarded():
+    agent = Agent(model=TestModel(custom_output_text='meta'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    captured_metadata: list[dict[str, Any] | None] = []
+
+    def on_complete(run_result: AgentRunResult[Any]) -> None:
+        captured_metadata.append(run_result.metadata)
+
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream(metadata={'ui': 'adapter'}, on_complete=on_complete)]
+
+    assert captured_metadata == [{'ui': 'adapter'}]
+    assert events[-2:] == ['<run-result>meta</run-result>', '</stream>']
+
+
+async def test_run_stream_native_metadata_forwarded():
+    agent = Agent(model=TestModel(custom_output_text='native meta'))
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    events = [event async for event in adapter.run_stream_native(metadata={'ui': 'native'})]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    assert run_result_event.result.metadata == {'ui': 'native'}
+
+
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_adapter_dispatch_request():
     agent = Agent(model=TestModel())
@@ -643,7 +669,14 @@ async def test_adapter_dispatch_request():
         receive=receive,
     )
 
-    response = await DummyUIAdapter.dispatch_request(starlette_request, agent=agent)
+    captured_metadata: list[dict[str, Any] | None] = []
+
+    def on_complete(run_result: AgentRunResult[Any]) -> None:
+        captured_metadata.append(run_result.metadata)
+
+    response = await DummyUIAdapter.dispatch_request(
+        starlette_request, agent=agent, metadata={'ui': 'dispatch'}, on_complete=on_complete
+    )
 
     assert isinstance(response, StreamingResponse)
 
@@ -680,6 +713,7 @@ async def test_adapter_dispatch_request():
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )
+    assert captured_metadata == [{'ui': 'dispatch'}]
 
 
 def test_dummy_adapter_dump_messages():

@@ -20,6 +20,12 @@ from ._run_context import TemporalRunContext
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
+class GetToolsParams:
+    serialized_run_context: Any
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
 class CallToolParams:
     name: str
     tool_args: dict[str, Any]
@@ -76,12 +82,12 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         return self
 
     async def __aenter__(self) -> Self:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await self.wrapped.__aexit__(*args)
         return None
 
