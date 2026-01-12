@@ -374,8 +374,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 # Already a temporal wrapper: use as-is
                 resolved_toolsets.append(t)
             else:
-                # Original toolset instance: find its temporal wrapper using object id
-                # This works for CombinedToolset and other composite toolsets
+                # Toolset instance that's not a direct TemporalWrapperToolset.
+                # This includes:
+                # - Original toolsets that need to be looked up in our mapping
+                # - CombinedToolset with temporal children (validated later via _validate_temporal_toolsets)
+                # - User-constructed composite toolsets
                 temporalized = self._original_to_temporal.get(id(t))
                 if temporalized is not None:
                     resolved_toolsets.append(temporalized)

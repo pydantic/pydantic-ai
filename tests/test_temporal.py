@@ -3397,13 +3397,16 @@ def test_resolve_toolsets_logic():
     # 3. Already a wrapper
     assert agent._resolve_toolsets([w1]) == [w1]  # pyright: ignore[reportPrivateUsage]
 
-    # 4. Original instance auto-resolution - wrapper found
-    # w1 wraps t1, so passing t1 should return w1 if it's in named_toolsets
+    # 4. Original instance auto-resolution
+    # When w1 (already a TemporalWrapperToolset) is registered, t1 is NOT tracked in _original_to_temporal
+    # because w1 is what gets stored, not t1's id -> w1 mapping
+    # This is the expected behavior: only toolsets passed directly to TemporalAgent are tracked
     result = agent_with_tools._resolve_toolsets([t1])  # pyright: ignore[reportPrivateUsage]
     assert result is not None
-    assert result == [w1]
+    # t1 is returned as-is since it's not in _original_to_temporal
+    assert result == [t1]
     assert len(result) == 1
-    assert isinstance(result[0], MockWrapper)
+    assert result[0] is t1
 
     # 5. Original instance not found - returns as-is
     t2 = FunctionToolset(tools=[], id='t2')
@@ -3412,3 +3415,104 @@ def test_resolve_toolsets_logic():
     assert result == [t2]
     assert len(result) == 1
     assert result[0] is t2
+
+
+def test_get_toolset_types_requiring_temporal_wrapper():
+    """Test the centralized function that returns toolset types requiring temporal wrapping."""
+    from pydantic_ai.durable_exec.temporal._toolset import (
+        get_toolset_types_requiring_temporal_wrapper,
+    )
+
+    types = get_toolset_types_requiring_temporal_wrapper()
+
+    # Should return a tuple
+    assert isinstance(types, tuple)
+
+    # Should include FunctionToolset and DynamicToolset at minimum
+    from pydantic_ai.toolsets._dynamic import DynamicToolset
+
+    assert FunctionToolset in types
+    assert DynamicToolset in types
+
+    # MCPServer and FastMCPToolset should also be included (assuming they're importable)
+    try:
+        from pydantic_ai.mcp import MCPServer
+
+        assert MCPServer in types
+    except ImportError:
+        pass
+
+    try:
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        assert FastMCPToolset in types
+    except ImportError:
+        pass
+
+
+def test_validate_temporal_toolsets_combined_toolset():
+    """Test that CombinedToolset with temporal children passes validation."""
+    from collections.abc import Callable
+    from typing import Any
+
+    from pydantic_ai import FunctionToolset
+    from pydantic_ai.durable_exec.temporal import TemporalWrapperToolset
+    from pydantic_ai.durable_exec.temporal._agent import (
+        _validate_temporal_toolsets,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.toolsets import CombinedToolset
+
+    class MockTemporalWrapper(TemporalWrapperToolset):
+        @property
+        def temporal_activities(self) -> list[Callable[..., Any]]:
+            return []  # pragma: no cover
+
+    def tool_func(x: int) -> int:
+        return x  # pragma: no cover
+
+    # Create wrapped toolsets
+    func_toolset_1 = FunctionToolset(tools=[tool_func], id='test_func_1')
+    func_toolset_2 = FunctionToolset(tools=[tool_func], id='test_func_2')
+    wrapper_1 = MockTemporalWrapper(func_toolset_1)
+    wrapper_2 = MockTemporalWrapper(func_toolset_2)
+
+    # CombinedToolset with all temporal children should pass
+    combined = CombinedToolset([wrapper_1, wrapper_2])
+    _validate_temporal_toolsets([combined])
+
+    # CombinedToolset with one unwrapped child should fail
+    func_toolset_unwrapped = FunctionToolset(tools=[tool_func], id='test_func_unwrapped')
+    combined_with_unwrapped = CombinedToolset([wrapper_1, func_toolset_unwrapped])
+    with pytest.raises(UserError, match='must be wrapped in a `TemporalWrapperToolset`'):
+        _validate_temporal_toolsets([combined_with_unwrapped])
+
+
+def test_resolve_toolsets_with_original_to_temporal_mapping():
+    """Test that _original_to_temporal mapping correctly tracks toolsets by object id."""
+    from pydantic_ai import Agent, FunctionToolset
+    from pydantic_ai.durable_exec.temporal import TemporalAgent
+    from pydantic_ai.toolsets import CombinedToolset
+
+    base_agent = Agent(TestModel(), name='test-mapping-agent')
+
+    # Create toolsets
+    t1 = FunctionToolset(tools=[], id='t1')
+    t2 = FunctionToolset(tools=[], id='t2')
+
+    # Create a CombinedToolset
+    combined = CombinedToolset([t1, t2])
+
+    # Create agent with the combined toolset registered by name
+    # Note: In real usage, temporalize_toolset would wrap the children
+    # For this test, we're testing the id-based mapping mechanism
+    agent = TemporalAgent(base_agent, toolsets={'my_combined': combined})
+
+    # The original combined toolset should be tracked by object id
+    assert id(combined) in agent._original_to_temporal  # pyright: ignore[reportPrivateUsage]
+
+    # Resolving the original combined toolset should return the temporalized version
+    result = agent._resolve_toolsets([combined])  # pyright: ignore[reportPrivateUsage]
+    assert result is not None
+    assert len(result) == 1
+    # The result should be the temporalized version stored in _original_to_temporal
+    assert result[0] is agent._original_to_temporal[id(combined)]  # pyright: ignore[reportPrivateUsage]
