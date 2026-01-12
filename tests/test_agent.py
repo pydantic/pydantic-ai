@@ -7224,14 +7224,9 @@ async def test_hitl_tool_approval():
 
     model = FunctionModel(model_function)
 
-    # TODO: PromptConfig
-    # I modified an existing test here, should not do that
-    # I should have added another one to show this behaviour, there is diff at line 1760 which I would rather not have?
-
     agent = Agent(
         model,
         output_type=[str, DeferredToolRequests],
-        prompt_config=PromptConfig(templates=PromptTemplates(tool_denied='Tool call denied custom message.')),
     )
 
     @agent.tool_plain(requires_approval=True)
@@ -7300,6 +7295,58 @@ async def test_hitl_tool_approval():
     )
 
     result = await agent.run(
+        'Create new_file.py and delete ok_to_delete.py and never_delete.py',
+        prompt_config=PromptConfig(templates=PromptTemplates(tool_denied='Tool call denied custom message.')),
+    )
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Create new_file.py and delete ok_to_delete.py and never_delete.py',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='create_file',
+                        args={'path': 'new_file.py', 'content': 'print("Hello, world!")'},
+                        tool_call_id='create_file',
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=60, output_tokens=23),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='create_file',
+                        content='File \'new_file.py\' created with content: print("Hello, world!")',
+                        tool_call_id='create_file',
+                        timestamp=IsDatetime(),
+                        return_kind='tool-executed',
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
             approvals={'ok_to_delete': True, 'never_delete': ToolDenied('File cannot be deleted')},
@@ -7360,7 +7407,7 @@ async def test_hitl_tool_approval():
                     ),
                     ToolReturnPart(
                         tool_name='delete_file',
-                        content='Tool call denied custom message.',
+                        content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
                         return_kind='tool-denied',
@@ -7371,7 +7418,7 @@ async def test_hitl_tool_approval():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=80, output_tokens=24),
+                usage=RequestUsage(input_tokens=78, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -7393,7 +7440,7 @@ async def test_hitl_tool_approval():
                     ),
                     ToolReturnPart(
                         tool_name='delete_file',
-                        content='Tool call denied custom message.',
+                        content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
                         return_kind='tool-denied',
@@ -7404,7 +7451,7 @@ async def test_hitl_tool_approval():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=80, output_tokens=24),
+                usage=RequestUsage(input_tokens=78, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
