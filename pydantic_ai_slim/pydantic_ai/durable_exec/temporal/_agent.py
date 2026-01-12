@@ -343,8 +343,18 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 self._temporal_overrides_active.reset(temporal_active_token)
 
     def _resolve_toolsets(
-        self, toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None
+        self,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None,
+        *,
+        validate_in_workflow: bool = False,
     ) -> Sequence[AbstractToolset[AgentDepsT]] | None:
+        """Resolve toolset references (strings or instances) to actual toolset objects.
+
+        Args:
+            toolsets: The toolsets to resolve - can be string names or toolset instances.
+            validate_in_workflow: If True, validate that resolved toolsets are properly
+                wrapped in TemporalWrapperToolset (for use inside workflows).
+        """
         if toolsets is None:
             return None
 
@@ -370,8 +380,18 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 if temporalized is not None:
                     resolved_toolsets.append(temporalized)
                 else:
-                    # Not found in mapping, use as-is (will be validated later)
+                    # Not found in mapping, use as-is (will be validated below if needed)
                     resolved_toolsets.append(t)
+
+        # Validate after resolving if requested
+        if validate_in_workflow and resolved_toolsets:
+            try:
+                _validate_temporal_toolsets(resolved_toolsets)
+            except UserError as e:
+                raise UserError(
+                    f'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. {e}'
+                ) from e
+
         return resolved_toolsets
 
     @overload
@@ -472,20 +492,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        # Validate and resolve toolsets at callsite
-        resolved_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
-        if toolsets:
-            if workflow.in_workflow():
-                # Validate toolsets in workflow context
-                try:
-                    _validate_temporal_toolsets([t for t in toolsets if not isinstance(t, str)])
-                except UserError as e:
-                    raise UserError(
-                        f'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. {e}'
-                    ) from e
-            resolved_toolsets = self._resolve_toolsets(toolsets)
+        # Resolve and validate toolsets (validation happens inside _resolve_toolsets when in workflow)
+        in_wf = workflow.in_workflow()
+        resolved_toolsets = self._resolve_toolsets(toolsets, validate_in_workflow=in_wf)
 
-        if workflow.in_workflow():
+        if in_wf:
             if event_stream_handler is not None:
                 raise UserError(
                     'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
