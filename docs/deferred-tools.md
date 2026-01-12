@@ -151,6 +151,7 @@ print(result.all_messages())
                 content="File 'README.md' updated: 'Hello, world!'",
                 tool_call_id='update_file_readme',
                 timestamp=datetime.datetime(...),
+                return_kind='tool-executed',
             )
         ],
         timestamp=datetime.datetime(...),
@@ -163,12 +164,14 @@ print(result.all_messages())
                 content="File '.env' updated: ''",
                 tool_call_id='update_file_dotenv',
                 timestamp=datetime.datetime(...),
+                return_kind='tool-executed',
             ),
             ToolReturnPart(
                 tool_name='delete_file',
                 content='Deleting files is not allowed',
                 tool_call_id='delete_file',
                 timestamp=datetime.datetime(...),
+                return_kind='tool-denied',
             ),
             UserPromptPart(
                 content='Now create a backup of README.md',
@@ -198,6 +201,7 @@ print(result.all_messages())
                 content="File 'README.md.bak' updated: 'Hello, world!'",
                 tool_call_id='update_file_backup',
                 timestamp=datetime.datetime(...),
+                return_kind='tool-executed',
             )
         ],
         timestamp=datetime.datetime(...),
@@ -353,6 +357,7 @@ async def main():
                     content=42,
                     tool_call_id='pyd_ai_tool_call_id',
                     timestamp=datetime.datetime(...),
+                    return_kind='tool-executed',
                 )
             ],
             timestamp=datetime.datetime(...),

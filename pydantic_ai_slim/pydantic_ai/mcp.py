@@ -588,6 +588,21 @@ class MCPServer(AbstractToolset[Any], ABC):
             if (name := f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name)
         }
 
+    async def get_all_tool_definitions(self, ctx: RunContext[Any]) -> list[ToolDefinition]:
+        return [
+            ToolDefinition(
+                name=f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name,
+                description=mcp_tool.description,
+                parameters_json_schema=mcp_tool.inputSchema,
+                metadata={
+                    'meta': mcp_tool.meta,
+                    'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
+                    'output_schema': mcp_tool.outputSchema or None,
+                },
+            )
+            for mcp_tool in await self.list_tools()
+        ]
+
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[Any]:
         return ToolsetTool(
             toolset=self,

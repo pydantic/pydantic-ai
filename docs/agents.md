@@ -15,6 +15,7 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 | [Dependency type constraint](dependencies.md)             | Dynamic instructions functions, tools, and output functions may all use dependencies when they're run.          |
 | [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
 | [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
+| [Prompt Configuration](#prompt-configuration)             | Optional configuration for customizing system-generated messages, tool descriptions, and retry prompts.   |
 
 In typing terms, agents are generic in their dependency and output types, e.g., an agent which required dependencies of type `#!python Foobar` and produced outputs of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with Pydantic AI.
 
@@ -797,6 +798,203 @@ except UnexpectedModelBehavior as e:
 ```
 
 1. This error is raised because the safety thresholds were exceeded.
+
+### Prompt Configuration
+
+Pydantic AI provides [`PromptConfig`][pydantic_ai.PromptConfig] to customize the system-generated messages
+that are sent to models during agent runs. This includes retry prompts, tool return confirmations,
+validation error messages, and tool descriptions.
+
+#### Customizing System Messages with PromptTemplates
+
+[`PromptTemplates`][pydantic_ai.PromptTemplates] allows you to override the default messages that Pydantic AI
+sends to the model for retries, tool results, and other system-generated content.
+
+```python {title="prompt_templates_example.py"}
+from pydantic_ai import Agent, PromptConfig, PromptTemplates
+
+# Using static strings
+agent = Agent(
+    'openai:gpt-5',
+    prompt_config=PromptConfig(
+        templates=PromptTemplates(
+            validation_errors_retry_prompt='Please correct the validation errors and try again.',
+            final_result_processed='Result received successfully.',
+        ),
+    ),
+)
+```
+
+You can also use callable functions for dynamic messages that have access to the message part
+and the [`RunContext`][pydantic_ai.RunContext]:
+
+```python {title="prompt_templates_dynamic.py"}
+from pydantic_ai import Agent, PromptConfig, PromptTemplates, RunContext
+from pydantic_ai.messages import RetryPromptPart
+
+
+def custom_retry_message(part: RetryPromptPart, ctx: RunContext) -> str:
+    return f'Attempt #{ctx.retry + 1}: Please fix the errors and try again.'
+
+agent = Agent(
+    'openai:gpt-5',
+    prompt_config=PromptConfig(
+        templates=PromptTemplates(
+            validation_errors_retry_prompt=custom_retry_message,
+        ),
+    ),
+)
+```
+
+The available template fields in [`PromptTemplates`][pydantic_ai.PromptTemplates] include:
+
+| Template Field | Description |
+|----------------|-------------|
+| `final_result_processed` | Confirmation message when a final result is successfully processed |
+| `output_tool_not_executed` | Message when an output tool call is skipped because a result was already found |
+| `output_validation_failed` | Message when an output tool call is skipped because the output failed validation |
+| `function_tool_not_executed` | Message when a function tool call is skipped because a result was already found |
+| `tool_denied` | Message when a tool call is denied by an approval handler |
+| `validation_errors_retry_prompt` | Message appended to validation errors when asking the model to retry |
+| `tool_retry_prompt` | Message appended when a `ModelRetry` exception is raised from a tool |
+| `no_tool_retry_prompt` | Message appended when a `ModelRetry` exception is raised outside of a tool context |
+| `prompted_output_template` | Template for prompted output schema instructions (uses `{schema}` placeholder) |
+| `retry_description_template` | Callable to format the error content explaining why a retry is requested |
+
+The [`PromptTemplates.retry_description_template`][pydantic_ai.PromptTemplates] callable lets you customize the first part of
+the retry message (the "description"), for cases where Pydantic AI is generating validation feedback:
+
+- Validation errors (`list[pydantic_core.ErrorDetails]`) when asking the model to retry after a tool argument or output
+  validation failure.
+- A plain string when a `ModelRetry` is raised outside of a tool context (e.g. from an output validator).
+
+This does not change the retry description when a tool raises `ModelRetry`: in that case the tool's exception message is
+used directly as the description, and `tool_retry_prompt` controls the appended "retry" string.
+
+```python {title="prompt_templates_retry_description_template.py"}
+from pydantic_core import ErrorDetails
+
+from pydantic_ai import Agent, PromptConfig, PromptTemplates
+
+
+def my_retry_description_template(content: str | list[ErrorDetails]) -> str:
+    if isinstance(content, str):
+        return f'Please address this issue:\n{content}'
+    else:
+        return f'{len(content)} validation error(s); please fix them.'
+
+
+agent = Agent(
+    'openai:gpt-5',
+    prompt_config=PromptConfig(templates=PromptTemplates(retry_description_template=my_retry_description_template)),
+)
+```
+
+#### Customizing Tool Descriptions with ToolConfig
+
+[`ToolConfig`][pydantic_ai.ToolConfig] allows you to override tool descriptions and argument descriptions
+at runtime without modifying the original tool definitions. This is useful when you want to provide
+different descriptions for the same tool in different contexts or agent runs.
+
+```python {title="tool_config_example.py"}
+from pydantic_ai import Agent, PromptConfig, ToolConfig
+
+agent = Agent(
+    'openai:gpt-5',
+    prompt_config=PromptConfig(
+        tool_config={
+            'search_database': ToolConfig(
+                description='Search the customer database for user records by name or email.',
+                parameters_descriptions={
+                    'query': 'Search term to match against user names or email addresses.',
+                },
+            ),
+            'send_notification': ToolConfig(
+                description='Send an urgent notification to the user via their preferred channel.',
+                parameters_descriptions={
+                    'user_id': 'The unique identifier of the user to notify.',
+                    'message': 'The notification message content (max 500 characters).',
+                },
+            ),
+        },
+    ),
+)
+
+
+@agent.tool_plain
+def search_database(query: str) -> list[str]:
+    """Original description that will be overridden."""
+    return ['result1', 'result2']
+
+
+@agent.tool_plain
+def send_notification(user_id: str, message: str) -> bool:
+    """Original description that will be overridden."""
+    return True
+```
+
+For nested tool arguments, `parameters_descriptions` uses dot-separated paths based on the tool's parameters and
+their nested fields. This works even if the tool argument schema uses `$defs`/`$ref` internally.
+
+```python {title="tool_config_nested_example.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, PromptConfig, ToolConfig
+
+
+class SearchFilters(BaseModel):
+    language: str = Field(description='Language code, e.g. "en".')
+
+
+class SearchConfig(BaseModel):
+    filters: SearchFilters = Field(description='Filtering options for the search.')
+
+
+agent = Agent(
+    'openai:gpt-5',
+    prompt_config=PromptConfig(
+        tool_config={
+            'search': ToolConfig(
+                parameters_descriptions={
+                    'query': 'Search query text.',
+                    'config.filters.language': 'ISO 639-1 language code to filter results by.',
+                }
+            )
+        }
+    ),
+)
+
+
+@agent.tool_plain
+def search(query: str, config: SearchConfig) -> list[str]:
+    """Search for documents."""
+    return []
+```
+
+You can also override `prompt_config` at runtime using the `prompt_config` parameter in the run methods,
+or temporarily using [`agent.override()`][pydantic_ai.Agent.override]:
+
+```python {title="prompt_config_override.py"}
+from pydantic_ai import Agent, PromptConfig, PromptTemplates
+
+agent = Agent('openai:gpt-5')
+
+# Override at runtime
+result = agent.run_sync(
+    'Hello',
+    prompt_config=PromptConfig(
+        templates=PromptTemplates(validation_errors_retry_prompt='Custom retry message for this run.')
+    ),
+)
+
+# Or use agent.override() context manager
+with agent.override(
+    prompt_config=PromptConfig(
+        templates=PromptTemplates(validation_errors_retry_prompt='Another custom message.')
+    )
+):
+    result = agent.run_sync('Hello')
+```
 
 ## Runs vs. Conversations
 

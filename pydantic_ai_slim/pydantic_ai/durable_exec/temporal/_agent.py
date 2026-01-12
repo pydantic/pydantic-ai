@@ -21,6 +21,7 @@ from pydantic_ai import (
     _utils,
     messages as _messages,
     models,
+    prompt_config as _prompt_config,
     usage as _usage,
 )
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
@@ -295,6 +296,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -316,6 +318,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -336,6 +339,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -373,6 +377,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -404,6 +409,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 instructions=instructions,
                 deps=deps,
                 model_settings=model_settings,
+                prompt_config=prompt_config,
                 usage_limits=usage_limits,
                 usage=usage,
                 metadata=metadata,
@@ -426,6 +432,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -447,6 +454,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -467,6 +475,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -502,6 +511,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -528,6 +538,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_config=prompt_config,
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
@@ -550,6 +561,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -571,6 +583,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -592,6 +605,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -625,6 +639,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -652,6 +667,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_config=prompt_config,
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
@@ -675,6 +691,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -695,6 +712,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -714,6 +732,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -765,6 +784,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -792,6 +812,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_config=prompt_config,
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
@@ -812,6 +833,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -833,6 +855,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -854,6 +877,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -933,6 +957,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -971,6 +996,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_config=prompt_config,
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
@@ -991,6 +1017,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        prompt_config: _prompt_config.PromptConfig | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -1004,6 +1031,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            prompt_config: The prompt configuration to use instead of the prompt config registered with the agent.
         """
         if workflow.in_workflow():
             if _utils.is_set(model):
@@ -1026,5 +1054,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             tools=tools,
             instructions=instructions,
+            prompt_config=prompt_config,
         ):
             yield

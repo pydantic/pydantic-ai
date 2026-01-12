@@ -8,11 +8,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel, Field
 from typing_extensions import Self
 
 from pydantic_ai import (
     AbstractToolset,
+    Agent,
     CombinedToolset,
+    ExternalToolset,
     FilteredToolset,
     FunctionToolset,
     PrefixedToolset,
@@ -25,6 +28,10 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.prompt_config import (
+    DEFAULT_FINAL_RESULT_PROCESSED,
+    ToolConfig,
+)
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
@@ -32,6 +39,21 @@ from pydantic_ai.usage import RunUsage
 pytestmark = pytest.mark.anyio
 
 T = TypeVar('T')
+
+
+class DoubleNestedArg(BaseModel):
+    """Deeply nested configuration."""
+
+    c: str = Field(description='The C parameter for deep config.')
+    d: str = Field(description='The D parameter for deep config.')
+
+
+class NestedArg(BaseModel):
+    """Nested configuration for a tool."""
+
+    a: str = Field(description='The A parameter.')
+    b: str = Field(description='The B parameter.')
+    nested: DoubleNestedArg = Field(description='Nested deep configuration.')
 
 
 def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
@@ -483,6 +505,155 @@ async def test_comprehensive_toolset_composition():
         ]
     )
 
+    partial_args_toolset = FunctionToolset[None]()
+
+    @partial_args_toolset.tool
+    def calc(x: int, y: int, z: int, arg: NestedArg) -> int:  # pragma: no cover
+        """Calculate sum"""
+        return x + y + z
+
+    partial_tool_config = {
+        'calc': ToolConfig(
+            parameters_descriptions={
+                'x': 'First number',
+                'z': 'Third number',
+                # 'y' intentionally missing
+                'arg.b': 'Nested b argument',
+            }
+        )
+    }
+    prepared_partial = PreparedToolset(
+        partial_args_toolset, PreparedToolset.create_tool_config_prepare_func(partial_tool_config)
+    )
+    partial_context = build_run_context(None)
+    tool_config_prepared_toolset = await ToolManager[None](prepared_partial).for_run_step(partial_context)
+
+    assert tool_config_prepared_toolset.tool_defs == snapshot(
+        [
+            ToolDefinition(
+                name='calc',
+                parameters_json_schema={
+                    '$defs': {
+                        'DoubleNestedArg': {
+                            'description': 'Deeply nested configuration.',
+                            'properties': {
+                                'c': {'description': 'The C parameter for deep config.', 'type': 'string'},
+                                'd': {'description': 'The D parameter for deep config.', 'type': 'string'},
+                            },
+                            'required': ['c', 'd'],
+                            'title': 'DoubleNestedArg',
+                            'type': 'object',
+                        },
+                        'NestedArg': {
+                            'description': 'Nested configuration for a tool.',
+                            'properties': {
+                                'a': {'description': 'The A parameter.', 'type': 'string'},
+                                'b': {'type': 'string', 'description': 'The B parameter.'},
+                                'nested': {
+                                    '$ref': '#/$defs/DoubleNestedArg',
+                                    'description': 'Nested deep configuration.',
+                                },
+                            },
+                            'required': ['a', 'b', 'nested'],
+                            'title': 'NestedArg',
+                            'type': 'object',
+                        },
+                    },
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {'type': 'integer', 'description': 'First number'},
+                        'y': {'type': 'integer'},
+                        'z': {'type': 'integer', 'description': 'Third number'},
+                        'arg': {
+                            'description': 'Nested configuration for a tool.',
+                            'properties': {
+                                'a': {'description': 'The A parameter.', 'type': 'string'},
+                                'b': {'description': 'Nested b argument', 'type': 'string'},
+                                'nested': {
+                                    '$ref': '#/$defs/DoubleNestedArg',
+                                    'description': 'Nested deep configuration.',
+                                },
+                            },
+                            'required': ['a', 'b', 'nested'],
+                            'title': 'NestedArg',
+                            'type': 'object',
+                        },
+                    },
+                    'required': ['x', 'y', 'z', 'arg'],
+                    'type': 'object',
+                },
+                description='Calculate sum',
+            )
+        ]
+    )
+
+    partial_tool_config_with_incorrect_paths = {
+        'calc': ToolConfig(
+            parameters_descriptions={
+                'x': 'First number',
+                'nonexistent': 'This path does not exist',
+            }
+        )
+    }
+
+    prepared_partial_incorrect = PreparedToolset(
+        partial_args_toolset, PreparedToolset.create_tool_config_prepare_func(partial_tool_config_with_incorrect_paths)
+    )
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Invalid path 'nonexistent' for tool 'calc': 'nonexistent' not found. Available properties: 'x', 'y', 'z', 'arg'"
+        ),
+    ):
+        await ToolManager[None](prepared_partial_incorrect).for_run_step(partial_context)
+
+    async def prepare_missing_ref(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        [tool_def] = tool_defs
+        return [
+            replace(
+                tool_def,
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'arg': {'$ref': '#/$defs/Missing'}},
+                    '$defs': {},
+                },
+            )
+        ]
+
+    missing_ref_toolset = PreparedToolset(partial_args_toolset, prepare_missing_ref)
+    missing_ref_config = {'calc': ToolConfig(parameters_descriptions={'arg.b': 'never applied'})}
+    with pytest.raises(
+        UserError,
+        match=re.escape("Invalid path 'arg.b' for tool 'calc': undefined $ref '#/$defs/Missing'."),
+    ):
+        await ToolManager[None](
+            PreparedToolset(missing_ref_toolset, PreparedToolset.create_tool_config_prepare_func(missing_ref_config))
+        ).for_run_step(partial_context)
+
+    async def prepare_circular_ref(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        [tool_def] = tool_defs
+        return [
+            replace(
+                tool_def,
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'arg': {'$ref': '#/$defs/A'}},
+                    '$defs': {'A': {'$ref': '#/$defs/A'}},
+                },
+            )
+        ]
+
+    circular_ref_toolset = PreparedToolset(partial_args_toolset, prepare_circular_ref)
+    circular_ref_config = {'calc': ToolConfig(parameters_descriptions={'arg.b': 'never applied'})}
+    with pytest.raises(
+        UserError,
+        match=re.escape("Circular reference detected in schema at 'arg.b': #/$defs/A"),
+    ):
+        await ToolManager[None](
+            PreparedToolset(circular_ref_toolset, PreparedToolset.create_tool_config_prepare_func(circular_ref_config))
+        ).for_run_step(partial_context)
+
 
 async def test_context_manager():
     try:
@@ -771,6 +942,9 @@ async def test_dynamic_toolset():
         ) -> Any:
             return None  # pragma: no cover
 
+        async def get_all_tool_definitions(self, ctx: RunContext[None]) -> list[ToolDefinition]:
+            return []
+
     def toolset_factory(ctx: RunContext[None]) -> AbstractToolset[None]:
         return EnterableToolset()
 
@@ -829,6 +1003,130 @@ async def test_dynamic_toolset_empty():
         assert tools == {}
 
         assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_generate_prompt_config_from_agent():
+    """Test generating a PromptConfig from an Agent - demonstrates optimizer workflow.
+
+    This test shows how an optimizer would:
+    1. Create an agent with tools (including nested BaseModel arguments)
+    2. Generate a complete PromptConfig with all defaults filled in
+    3. Use the generated config as a starting point for prompt optimization
+    """
+
+    class OutputModel(BaseModel):
+        result: str
+
+    # Create an agent with tools that have nested BaseModel arguments
+    schema_tool_def = ToolDefinition(
+        name='schema_tool',
+        description='Tool with custom schema for description extraction.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'inline': {
+                    'description': 'Inline root.',
+                    'properties': {'a': {'description': 'Inline child.'}},
+                },
+                'node': {
+                    'description': 'Node root.',
+                    '$ref': '#/$defs/Node',
+                },
+                'no_props': {
+                    '$ref': '#/$defs/NoProps',
+                },
+            },
+            '$defs': {
+                'Node': {
+                    'properties': {
+                        'child': {
+                            'description': 'Recursive child.',
+                            '$ref': '#/$defs/Node',
+                        }
+                    }
+                },
+                'NoProps': {'type': 'object'},
+            },
+        },
+    )
+    empty_schema_tool_def = ToolDefinition(
+        name='empty_schema_tool',
+        description='Tool with an empty schema.',
+        parameters_json_schema={'type': 'object'},
+    )
+
+    agent = Agent(
+        'test',
+        output_type=OutputModel,
+        toolsets=[ExternalToolset(tool_defs=[schema_tool_def, empty_schema_tool_def])],
+    )
+
+    @agent.tool_plain
+    def calculate(
+        x: int,
+        y: int,
+        config: NestedArg,
+    ) -> str:
+        """Perform a calculation with configuration.
+
+        Args:
+            x: The first operand.
+            y: The second operand.
+            config: Configuration for the calculation.
+        """
+        return f'{x} + {y} with config {config}'  # pragma: no cover
+
+    @agent.tool_plain
+    def simple_tool(name: str) -> str:
+        """A simple tool with no nested args.
+
+        Args:
+            name: The name to greet.
+        """
+        return f'Hello {name}'  # pragma: no cover
+
+    model = TestModel()
+    generated_config = await agent.generate_prompt_config_from_agent(deps=None, model=model)
+
+    assert generated_config.templates is not None
+    templates = generated_config.templates
+
+    assert templates.final_result_processed == DEFAULT_FINAL_RESULT_PROCESSED
+
+    assert generated_config.tool_config is not None
+    tool_config = generated_config.tool_config
+    assert 'final_result' in tool_config
+
+    schema_tool_config = tool_config['schema_tool']
+    assert schema_tool_config.parameters_descriptions == snapshot(
+        {
+            'inline': 'Inline root.',
+            'inline.a': 'Inline child.',
+            'node': 'Node root.',
+            'node.child': 'Recursive child.',
+        }
+    )
+    assert tool_config['empty_schema_tool'].parameters_descriptions == {}
+
+    calc_config = tool_config['calculate']
+
+    assert calc_config.parameters_descriptions == snapshot(
+        {
+            'x': 'The first operand.',
+            'y': 'The second operand.',
+            'config': 'Configuration for the calculation.',
+            'config.a': 'The A parameter.',
+            'config.b': 'The B parameter.',
+            'config.nested': 'Nested deep configuration.',
+            'config.nested.c': 'The C parameter for deep config.',
+            'config.nested.d': 'The D parameter for deep config.',
+        }
+    )
+
+    # Cover the branch where the agent has no output toolset
+    agent_no_output: Agent[None, str] = Agent('test')
+    generated_config_no_output = await agent_no_output.generate_prompt_config_from_agent(deps=None, model=model)
+    assert generated_config_no_output.tool_config == {}
 
 
 def test_dynamic_toolset_id():

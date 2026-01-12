@@ -30,6 +30,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
     UserPromptPart,
+    prompt_config,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -140,6 +141,50 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
                 'properties': {
                     'foo': {'description': 'The foo thing.', 'type': 'integer'},
                     'bar': {'description': 'The bar thing.', 'type': 'string'},
+                },
+                'required': ['foo', 'bar'],
+                'type': 'object',
+                'additionalProperties': False,
+            },
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
+        }
+    )
+
+
+@pytest.mark.parametrize('docstring_format', ['google', 'auto'])
+def test_docstring_google_prompt_config(docstring_format: Literal['google', 'auto']):
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(docstring_format=docstring_format)(google_style_docstring)
+    p_config = prompt_config.PromptConfig(
+        tool_config={
+            'google_style_docstring': prompt_config.ToolConfig(
+                name=None,
+                description=None,
+                strict=None,
+                parameters_descriptions={
+                    'foo': 'The foo thing from tool config.',
+                    'bar': 'The bar thing from tool config.',
+                },
+            )
+        }
+    )
+
+    result = agent.run_sync('Hello', prompt_config=p_config)
+    json_schema = json.loads(result.output)
+
+    assert json_schema == snapshot(
+        {
+            'name': 'google_style_docstring',
+            'description': 'Do foobar stuff, a lot.',
+            'parameters_json_schema': {
+                'properties': {
+                    'foo': {'description': 'The foo thing from tool config.', 'type': 'integer'},
+                    'bar': {'description': 'The bar thing from tool config.', 'type': 'string'},
                 },
                 'required': ['foo', 'bar'],
                 'type': 'object',
@@ -1398,6 +1443,7 @@ def test_tool_raises_approval_required():
                         content=84,
                         tool_call_id='my_tool',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1800,6 +1846,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_apple',
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: banana',
@@ -1813,6 +1860,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_pear',
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: grape',
@@ -1895,6 +1943,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_apple',
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: banana',
@@ -1908,6 +1957,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_pear',
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: grape',
@@ -1941,6 +1991,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='The purchase of pears was denied.',
@@ -1982,6 +2033,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='The purchase of pears was denied.',
@@ -2042,6 +2094,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_apple',
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: banana',
@@ -2055,6 +2108,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_pear',
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: grape',
@@ -2074,6 +2128,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='The purchase of pears was denied.',
@@ -2196,6 +2251,7 @@ async def test_approval_required_toolset():
                         content=9,
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2251,6 +2307,7 @@ async def test_approval_required_toolset():
                         content=9,
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2263,12 +2320,14 @@ async def test_approval_required_toolset():
                         content=2,
                         tool_call_id='foo1',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
                         tool_name='foo',
                         content='The tool call was denied.',
                         tool_call_id='foo2',
                         timestamp=IsDatetime(),
+                        return_kind='tool-denied',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -2327,6 +2386,7 @@ def test_deferred_tool_results_serializable():
                     'tool_call_id': 'foo',
                     'timestamp': IsDatetime(),
                     'part_kind': 'retry-prompt',
+                    'retry_message': None,
                 },
                 'any': {'foo': 'bar'},
             },
@@ -2475,6 +2535,7 @@ def test_retry_tool_until_last_attempt():
                         content='I guess you never learn',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsDatetime(),

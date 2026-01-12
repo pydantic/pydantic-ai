@@ -115,6 +115,11 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         raise NotImplementedError()
 
     @abstractmethod
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        """The list of tool definitions available(including deferred ones)."""
+        raise NotImplementedError()
+
+    @abstractmethod
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:

@@ -13,6 +13,7 @@ from ..tools import (
     DocstringFormat,
     GenerateToolJsonSchema,
     Tool,
+    ToolDefinition,
     ToolFuncEither,
     ToolParams,
     ToolPrepareFunc,
@@ -365,6 +366,23 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 timeout=tool_def.timeout,
             )
         return tools
+
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        """The list of tool definitions available(including deferred ones)."""
+        tool_definitions: list[ToolDefinition] = []
+        for original_name, tool in self.tools.items():
+            max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+            run_context = replace(
+                ctx,
+                tool_name=original_name,
+                retry=ctx.retries.get(original_name, 0),
+                max_retries=max_retries,
+            )
+            tool_def = await tool.prepare_tool_def(run_context) or tool.tool_def
+            # Let us apply prepare_tool_def but not allow it to remove the tool_def falling back to the original tool_def
+            tool_definitions.append(tool_def)
+
+        return tool_definitions
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

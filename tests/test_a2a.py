@@ -641,6 +641,7 @@ async def test_a2a_multiple_tasks_same_context():
                                 content='Final result processed.',
                                 tool_call_id=IsStr(),
                                 timestamp=IsDatetime(),
+                                return_kind='final-result-processed',
                             ),
                             UserPromptPart(content='Second message', timestamp=IsDatetime()),
                         ],

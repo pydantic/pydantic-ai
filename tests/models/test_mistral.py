@@ -497,6 +497,7 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -571,6 +572,7 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -642,6 +644,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1249,6 +1252,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1421,6 +1425,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1454,6 +1459,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         content='Final result processed.',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1565,6 +1571,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1592,6 +1599,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         content='Final result processed.',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1690,6 +1698,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1849,6 +1858,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -2058,6 +2068,7 @@ async def test_image_as_binary_content_tool_response(
                         content='See file 241a70',
                         tool_call_id='FI5qQGzDE',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                 ],

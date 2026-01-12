@@ -25,7 +25,16 @@ from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import (
+    _output,
+    _system_prompt,
+    exceptions,
+    messages as _messages,
+    models,
+    prompt_config as _prompt_config,
+    result,
+    usage as _usage,
+)
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
@@ -135,6 +144,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
+    prompt_config: _prompt_config.PromptConfig | None = None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -391,9 +401,18 @@ async def _prepare_request_parameters(
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
 
-    prompted_output_template = (
-        output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
-    )
+    # Get the prompted output template with precedence:
+    # PromptConfig template > PromptedOutput.template > model profile default (handled downstream)
+    prompted_output_template: str | None = None
+    if isinstance(output_schema, _output.StructuredTextOutputSchema):
+        if (
+            (prompt_config := ctx.deps.prompt_config)
+            and (prompt_templates := prompt_config.templates)
+            and (template := prompt_templates.prompted_output_template)
+        ):
+            prompted_output_template = template
+        else:
+            prompted_output_template = output_schema.template
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
@@ -519,6 +538,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
+
+        prompt_config = ctx.deps.prompt_config
+
+        if prompt_config and (templates := prompt_config.templates):
+            message_history = templates.apply_template_message_history(message_history, run_context)
+
+        ctx.state.message_history[:] = message_history
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
@@ -800,7 +826,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id, timestamp=now_utc()))
+            # Only apply templates if explicitly configured
+            message = _messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id, timestamp=now_utc())
+
+            if (prompt_config := ctx.deps.prompt_config) and (prompt_templates := prompt_config.templates):
+                run_ctx = build_run_context(ctx)
+                message = prompt_templates.apply_template_message_history([message], run_ctx)[0]
+
+            messages.append(message)
 
         return End(final_result)
 
@@ -887,8 +920,9 @@ async def process_tool_calls(  # noqa: C901
         if final_result and final_result.tool_call_id == call.tool_call_id:
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content='Final result processed.',
+                content=_prompt_config.DEFAULT_FINAL_RESULT_PROCESSED,
                 tool_call_id=call.tool_call_id,
+                return_kind='final-result-processed',
             )
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
@@ -896,8 +930,9 @@ async def process_tool_calls(  # noqa: C901
             yield _messages.FunctionToolCallEvent(call)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content='Output tool not used - a final result was already processed.',
+                content=_prompt_config.DEFAULT_OUTPUT_TOOL_NOT_EXECUTED,
                 tool_call_id=call.tool_call_id,
+                return_kind='output-tool-not-executed',
             )
             yield _messages.FunctionToolResultEvent(part)
             output_parts.append(part)
@@ -914,8 +949,9 @@ async def process_tool_calls(  # noqa: C901
                     yield _messages.FunctionToolCallEvent(call)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
-                        content='Output tool not used - output failed validation.',
+                        content=_prompt_config.DEFAULT_OUTPUT_VALIDATION_FAILED,
                         tool_call_id=call.tool_call_id,
+                        return_kind='output-validation-failed',
                     )
                     output_parts.append(part)
                     yield _messages.FunctionToolResultEvent(part)
@@ -938,8 +974,9 @@ async def process_tool_calls(  # noqa: C901
             else:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Final result processed.',
+                    content=_prompt_config.DEFAULT_FINAL_RESULT_PROCESSED,
                     tool_call_id=call.tool_call_id,
+                    return_kind='final-result-processed',
                 )
                 output_parts.append(part)
 
@@ -954,8 +991,9 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Tool not executed - a final result was already processed.',
+                    content=_prompt_config.DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
                     tool_call_id=call.tool_call_id,
+                    return_kind='function-tool-not-executed',
                 )
             )
     else:
@@ -1013,8 +1051,9 @@ async def process_tool_calls(  # noqa: C901
                     output_parts.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content='Tool not executed - a final result was already processed.',
+                            content=_prompt_config.DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
                             tool_call_id=call.tool_call_id,
+                            return_kind='function-tool-not-executed',
                         )
                     )
         elif calls:
@@ -1175,6 +1214,7 @@ async def _call_tool(
                 tool_name=tool_call.tool_name,
                 content=tool_call_result.message,
                 tool_call_id=tool_call.tool_call_id,
+                return_kind='tool-denied',
             ), None
         elif isinstance(tool_call_result, exceptions.ModelRetry):
             m = _messages.RetryPromptPart(
@@ -1237,6 +1277,7 @@ async def _call_tool(
         tool_call_id=tool_call.tool_call_id,
         content=tool_return.return_value,  # type: ignore
         metadata=tool_return.metadata,
+        return_kind='tool-executed',
     )
 
     return return_part, tool_return.content or None

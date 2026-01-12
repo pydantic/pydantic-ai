@@ -15,6 +15,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
+from pydantic_ai._tool_arg_descriptions import ToolArgDescriptions
 
 from .. import (
     _agent_graph,
@@ -24,6 +25,7 @@ from .. import (
     exceptions,
     messages as _messages,
     models,
+    prompt_config as _prompt_config,
     usage as _usage,
 )
 from .._agent_graph import (
@@ -57,7 +59,7 @@ from ..tools import (
     ToolPrepareFunc,
     ToolsPrepareFunc,
 )
-from ..toolsets import AbstractToolset
+from ..toolsets import AbstractToolset, RenamedToolset
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
@@ -136,6 +138,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
+    prompt_config: _prompt_config.PromptConfig | None
+    """Optional prompt configuration used to customize the system-injected messages for this agent."""
+
     _output_type: OutputSpec[OutputDataT]
 
     instrument: InstrumentationSettings | bool | None
@@ -180,6 +185,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -236,6 +242,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -271,6 +278,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
+            prompt_config: Optional prompt configuration to customize how system-injected messages
+                (like retry prompts or tool return wrappers) are rendered for this agent.
             retries: The default number of retries to allow for tool calls and output validation, before raising an error.
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
@@ -327,6 +336,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._name = name
         self.end_strategy = end_strategy
         self.model_settings = model_settings
+        self.prompt_config = prompt_config
 
         self._output_type = output_type
         self.instrument = instrument
@@ -394,6 +404,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
+        self._override_prompt_config: ContextVar[_utils.Option[_prompt_config.PromptConfig]] = ContextVar(
+            '_override_prompt_config', default=None
+        )
         self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
             '_override_metadata', default=None
         )
@@ -464,6 +477,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -484,6 +498,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -504,6 +519,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -582,6 +598,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_config: Optional prompt configuration to override how system-generated parts are
+                phrased for this specific run, falling back to the agent's defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -608,6 +626,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # may change the result type from the restricted type to something else. Therefore, we consider the following
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = self._output_validators
+        prompt_config = self._get_prompt_config(prompt_config)
 
         output_toolset = self._output_toolset
         if output_schema != self._output_schema or output_validators:
@@ -615,7 +634,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if output_toolset:
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
-        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
+        toolset = self._get_toolset(
+            output_toolset=output_toolset, additional_toolsets=toolsets, prompt_config=prompt_config
+        )
         tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
 
         # Build the graph
@@ -661,6 +682,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             new_message_index=len(message_history) if message_history else 0,
             model=model_used,
             model_settings=model_settings,
+            prompt_config=prompt_config,
             usage_limits=usage_limits,
             max_result_retries=self._max_result_retries,
             end_strategy=self.end_strategy,
@@ -854,6 +876,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        prompt_config: _prompt_config.PromptConfig | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
@@ -868,6 +891,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            prompt_config: The prompt config to use instead of the prompt config passed to the agent constructor and agent run.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
         """
@@ -902,6 +926,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instructions_token = None
 
+        if _utils.is_set(prompt_config):
+            prompt_config_token = self._override_prompt_config.set(_utils.Some(prompt_config))
+        else:
+            prompt_config_token = None
+
         if _utils.is_set(metadata):
             metadata_token = self._override_metadata.set(_utils.Some(metadata))
         else:
@@ -922,6 +951,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_tools.reset(tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
+            if prompt_config_token is not None:
+                self._override_prompt_config.reset(prompt_config_token)
             if metadata_token is not None:
                 self._override_metadata.reset(metadata_token)
 
@@ -1452,6 +1483,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             return deps
 
+    def _get_prompt_config(
+        self, prompt_config: _prompt_config.PromptConfig | None
+    ) -> _prompt_config.PromptConfig | None:
+        """Get prompt_config for a run.
+
+        If we've overridden prompt_config via `_override_prompt_config`, we should merge its values with the prompt_config passed to the call, and merging with the agent default.
+        The values that are not present in the override falls back to the call and then falls back to the agent default.
+
+        Returns None if no prompt_config is configured at any level.
+
+        Priority order (highest to lowest): override > call/runtime > agent default
+        """
+        effective_prompt_config: _prompt_config.PromptConfig | None = self.prompt_config  # Agent default as the base
+
+        # In prompt_config.merge_prompt_config, prompt_config takes priority over the one passed to merge_prompt_config
+
+        # runtime prompt_config overrides agent default
+        if prompt_config:
+            effective_prompt_config = prompt_config.merge_prompt_config(effective_prompt_config)
+
+        # Override has highest priority
+        if some_prompt_config := self._override_prompt_config.get():
+            effective_prompt_config = some_prompt_config.value.merge_prompt_config(effective_prompt_config)
+
+        return effective_prompt_config
+
     def _normalize_instructions(
         self,
         instructions: Instructions[AgentDepsT],
@@ -1490,12 +1547,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
     ) -> AbstractToolset[AgentDepsT]:
         """Get the complete toolset.
 
         Args:
             output_toolset: The output toolset to use instead of the one built at agent construction time.
             additional_toolsets: Additional toolsets to add, unless toolsets have been overridden.
+            prompt_config: The prompt config to use for tool descriptions. If None, uses agent-level or default.
         """
         toolsets = self.toolsets
         # Don't add additional toolsets if the toolsets have been overridden
@@ -1512,6 +1571,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
 
+        tool_config = (
+            effective_prompt_config.tool_config
+            if (effective_prompt_config := self._get_prompt_config(prompt_config))
+            else None
+        )
+
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
@@ -1520,6 +1585,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if self._prepare_output_tools:
                 output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
             toolset = CombinedToolset([output_toolset, toolset])
+
+        if tool_config:
+            # Instead of writing a new Toolset which basically prepares the tool with tool_config we use the combination of PreparedToolset and RenamedToolset
+            # We need renamed Toolset to handle the case where tools are renamed via tool_config
+            toolset = PreparedToolset(
+                toolset,
+                PreparedToolset.create_tool_config_prepare_func(tool_config),
+            )
+            # Crexate a name_map and use RenamedToolset on this as well?
+            name_map: dict[str, str] = {}
+            for tool_name, config in tool_config.items():
+                if config.name:
+                    name_map[tool_name] = config.name
+
+            toolset = RenamedToolset(toolset, name_map=name_map)
 
         return toolset
 
@@ -1673,6 +1753,71 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
+        )
+
+    async def generate_prompt_config_from_agent(
+        self, *, deps: AgentDepsT, model: models.Model | models.KnownModelName | str | None = None
+    ) -> _prompt_config.PromptConfig:
+        model_used = self._get_model(model)
+        del model
+
+        deps = self._get_deps(deps)
+
+        tool_config: dict[str, _prompt_config.ToolConfig] = {}
+
+        prompt_templates: _prompt_config.PromptTemplates = _prompt_config.DEFAULT_PROMPT_TEMPLATES
+
+        run_ctx = RunContext(deps=deps, model=model_used, usage=_usage.RunUsage())
+
+        toolset = self._get_toolset()
+
+        all_tool_defs = await toolset.get_all_tool_definitions(run_ctx)
+
+        # TODO: PromptConfig
+
+        # This is to serve as a starting point for optimizers
+        # We will provide the base config as in everything the Agent has merged with whatever has been overwritten using PromptConfig to serve as the starting PromptConfig
+
+        # The user could have overwritten certain things with PromptConfig
+        # Now when we provide the starting point we need to show everything that is available to be changed including the ones that are not overwritten
+        #
+        # We need to create tool_config from the tools on the Agent, then we merge with the PromptConfig on the Agent
+        # We can have a helper method to create tool_config from the tools on the Agent
+        # I can override this tool_config with the existing PromptConfig.tool_config present on the Agent
+        # PromptTemplates can be default and then overridden with the PromptConfig.templates present on the Agent
+        # Then with this I can create a new PromptConfig providing both tool_config and templates
+        #
+        # This can be a static method on ToolConfig
+
+        for tool_def in all_tool_defs:
+            tool_name = tool_def.name
+            tool_config[tool_name] = _prompt_config.ToolConfig(
+                name=tool_name,
+                description=tool_def.description,
+                strict=tool_def.strict,
+                parameters_descriptions=ToolArgDescriptions.from_json_schema(tool_def.parameters_json_schema),
+            )
+
+        if self.prompt_config:
+            if self.prompt_config.templates:
+                current_templates = dataclasses.asdict(self.prompt_config.templates)
+                updated_templates = {k: v for k, v in current_templates.items() if v is not None}
+                prompt_templates = dataclasses.replace(prompt_templates, **updated_templates)
+
+            if self.prompt_config.tool_config:
+                for tool_name, config in self.prompt_config.tool_config.items():
+                    if tool_name in tool_config:
+                        current_config = dataclasses.asdict(config)
+                        updates = {
+                            k: v for k, v in current_config.items() if v is not None and k != 'parameters_descriptions'
+                        }
+                        tool_config[tool_name] = dataclasses.replace(tool_config[tool_name], **updates)
+                    else:
+                        tool_config[tool_name] = config
+
+        return _prompt_config.PromptConfig(
+            tool_config=tool_config,
+            templates=prompt_templates,
         )
 
     @asynccontextmanager

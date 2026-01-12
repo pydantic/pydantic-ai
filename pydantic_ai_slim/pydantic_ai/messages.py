@@ -866,6 +866,25 @@ class BaseToolReturnPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+ToolReturnKind: TypeAlias = Literal[
+    'final-result-processed',
+    'output-tool-not-executed',
+    'function-tool-not-executed',
+    'tool-executed',
+    'tool-denied',
+    'output-validation-failed',
+]
+"""How the tool call was resolved, used for disambiguating return parts.
+
+* `final-result-processed`: an output tool produced the run's final result
+* `output-tool-not-executed`: an output tool was skipped because a final result already existed
+* `function-tool-not-executed`: a function tool was skipped due to early termination after a final result
+* `tool-executed`: the tool ran successfully and produced a return value (not templated)
+* `tool-denied`: the tool call was rejected by an approval handler
+* `output-validation-failed`: the tool call was rejected by an output validator
+"""
+
+
 @dataclass(repr=False)
 class ToolReturnPart(BaseToolReturnPart):
     """A tool return message, this encodes the result of running a tool."""
@@ -874,6 +893,9 @@ class ToolReturnPart(BaseToolReturnPart):
 
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    return_kind: ToolReturnKind | None = None
+    """How the tool call was resolved, used for disambiguating return parts."""
 
 
 @dataclass(repr=False)
@@ -937,20 +959,19 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    retry_message: str | None = None
+    """Pre-rendered retry message. When set by PromptTemplates, model_response() returns this directly."""
+
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
-        if isinstance(self.content, str):
-            if self.tool_name is None:
-                description = f'Validation feedback:\n{self.content}'
-            else:
-                description = self.content
-        else:
-            json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
-            plural = isinstance(self.content, list) and len(self.content) != 1
-            description = (
-                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
-            )
-        return f'{description}\n\nFix the errors and try again.'
+        # If templates were applied, return the pre-rendered message
+        if self.retry_message is not None:
+            return self.retry_message
+
+        # Default fallback when no template was applied - use default templates
+        from .prompt_config import DEFAULT_PROMPT_TEMPLATES
+
+        return DEFAULT_PROMPT_TEMPLATES.format_retry_message(self)
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:
