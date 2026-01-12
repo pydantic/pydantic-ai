@@ -39,13 +39,17 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
             for name, tool_def in prepared_tool_defs_by_name.items()
         }
 
+    async def _get_prepared_tool_defs(
+        self, ctx: RunContext[AgentDepsT], original_tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        prepared_tool_defs_by_name = {
+            tool_def.name: tool_def for tool_def in (await self.prepare_func(ctx, original_tool_defs) or [])
+        }
+
+        return [prepared_tool_defs_by_name.get(tool_def.name, tool_def) for tool_def in original_tool_defs]
+
     async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
-        # TODO: PromptConfig
-        # We want all the tool definitions, but updated
-        # I should apply prepare_func to each tool definition and return the updated list
-        # I need to ensure no tool is removed with this step though
-        # We are not applying prepare_func right now, that needs to be handled rn before review
-        return await super().get_all_tool_definitions(ctx)
+        return await self._get_prepared_tool_defs(ctx, await super().get_all_tool_definitions(ctx))
 
     @staticmethod
     def create_tool_config_prepare_func(tool_config: dict[str, ToolConfig]) -> ToolsPrepareFunc[Any]:
