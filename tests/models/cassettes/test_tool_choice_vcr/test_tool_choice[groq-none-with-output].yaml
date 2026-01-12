@@ -63,7 +63,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '886'
+      - '789'
       content-type:
       - application/json
       strict-transport-security:
@@ -81,29 +81,28 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"city":"Paris","summary":"The capital of France, Paris is known for its art, fashion, and culture.
-                It is often called the ''City of Light'' due to its historical and cultural significance."}'
+              arguments: '{"city":"Paris","summary":"The capital of France, known for its art, fashion, and culture."}'
               name: final_result
-            id: 06v33f5nm
+            id: 8rpj0a821
             type: function
-      created: 1767640159
-      id: chatcmpl-dd8b23d7-df81-4b4a-af11-1608956c0f9b
+      created: 1768241923
+      id: chatcmpl-9e516959-861d-42d1-a88d-f462508449a7
       model: meta-llama/llama-4-scout-17b-16e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_5436ed2ebe
       usage:
-        completion_time: 0.226264849
-        completion_tokens: 92
-        prompt_time: 0.031009276
+        completion_time: 0.225654358
+        completion_tokens: 88
+        prompt_time: 0.028572488
         prompt_tokens: 776
-        queue_time: 0.173403247
-        total_time: 0.257274125
-        total_tokens: 868
+        queue_time: 0.069890966
+        total_time: 0.254226846
+        total_tokens: 864
       usage_breakdown: null
       x_groq:
-        id: req_01ke7s0n51f6y85ja9hxytn3xf
-        seed: 1018040955
+        id: req_01kespx0zqfb7vmvjj8rdxqypj
+        seed: 1122420570
     status:
       code: 200
       message: OK

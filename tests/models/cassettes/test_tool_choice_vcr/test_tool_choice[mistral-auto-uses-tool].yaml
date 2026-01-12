@@ -49,7 +49,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b8f7d-48bd-7fb2-9b21-5ea0022af8c5
+      - 019bb36e-3fc5-7349-b70d-9762f3e8f78b
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -65,10 +65,10 @@ interactions:
           - function:
               arguments: '{"city": "Paris"}'
               name: get_weather
-            id: fxLmEB89y
+            id: NoIFgcjDX
             index: 0
-      created: 1767638911
-      id: 1c43d27d95c5401993288a7d01ef7e27
+      created: 1768241905
+      id: 864d113c0b2546318a19474831f05926
       model: mistral-large-latest
       object: chat.completion
       usage:
@@ -91,8 +91,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=GnwN4.V7iNLMv8M9bNjTpTRV6.vi4uPlKh0IwNFa7d0-1767638911-1.0.1.1-D2Eypb3uKbkluWhTuBiWBr3WfYVo5wiQ7p5DPme065j.BlLGXAUKQS4NT_tif72ODVvp1Ges04nAv0JJp6dyNOT0WOd0FcVrl4DAKaDXfEY;
-        _cfuvid=zL_FiprBaRYeUSn_5UsKOq6AWxHgOeBdkezVMRYnCAw-1767638911647-0.0.1.1-604800000
+      - __cf_bm=bfi6OMpMl.K0PLbMxg2u01zS6r8CD16vOOYS3nCRo4s-1768241906-1.0.1.1-yFlU_AS2HhCiJW3VTPxedhYAwXPM2509zNIe_ejxfOGMnuKplwMu22vnZ_JNTAsTI9t8SX7Gs3TfvFDjoBjbiYdGoI0XAYdqwopwaBXXjmA;
+        _cfuvid=Acn3wqjiJyx_xMb0W7hak13PYXx2nBP70ET.dBBV4dc-1768241906220-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
@@ -107,12 +107,12 @@ interactions:
         - function:
             arguments: '{"city": "Paris"}'
             name: get_weather
-          id: fxLmEB89y
+          id: NoIFgcjDX
           index: 0
           type: function
       - content: Sunny, 22C in Paris
         role: tool
-        tool_call_id: fxLmEB89y
+        tool_call_id: NoIFgcjDX
       model: mistral-large-latest
       n: 1
       stream: false
@@ -144,7 +144,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b8f7d-4d30-71be-afca-4a1658578704
+      - 019bb36e-42e5-76d8-ab90-026e11e2784e
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -157,8 +157,8 @@ interactions:
           content: "The current weather in **Paris** is **sunny** with a temperature of **22°C**. Enjoy your day! \U0001F60A"
           role: assistant
           tool_calls: null
-      created: 1767638912
-      id: add4b038eeac470fababbae9de72e454
+      created: 1768241906
+      id: a1b6751726d54101814955bbe0584637
       model: mistral-large-latest
       object: chat.completion
       usage:

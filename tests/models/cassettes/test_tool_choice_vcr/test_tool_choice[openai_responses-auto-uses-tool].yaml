@@ -44,13 +44,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3309'
+      - '3278'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '3333'
+      - '2085'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -63,10 +63,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1767638923
-      created_at: 1767638920
+      completed_at: 1768241909
+      created_at: 1768241907
       error: null
-      id: resp_0c955a4d9018e62200695c07888c68819488c447575b5eee65
+      frequency_penalty: 0.0
+      id: resp_0f72cb2425bf50af0069653af38c2881a18291b44a02344aae
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -75,17 +76,18 @@ interactions:
       model: gpt-5-mini-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABpXAeLCJVVnpaM5BMDbl5NJ31h27jtV0EfkFn2WonEAypDc3FhYT6M0d8HxZHvcAm6-prf2PpCgZUStBDbAhA2MZduoeWCNbd_wCrsN9oo9WhSk31lqjaufEDIqoCWiesjvSuvJ5cRQfN8eMLcrjQogIkOyAySCKDDq9GvCgauXFDlAxcx8Sotl9Bt69SV3jyeJ1WNSKXBxN031ojWnb-WvTv4vSQAIclINvmDbZeACuii-UajSP-c8m4KdqHCe4MusQ_l9F8MFCFUP7seV9KnblbYrpMh2TuHns8h_WU-fiFx1h3HLqjfMF11ZC3xE-l9XVwVDCkphFUk_-yGlYSm1WN0JJLgRHPDgN-ySVWi3KVI68XJ-a_rqI1J42u0cHRZV1GNkZ1TNwxtHEywj9FwsbhBZPRHWDkE8A50RhGQuR_PuxqMVy-SiT9d4oC5m3mfT0q7NMrpMfjSkFUAP4dNbnVS8qUyuq5Zbwv0Xb0lNG3veNTf4AbBzviwuBSAKIiAavmMNR2yEzViPszF80PB6wUQ4lHxTK413q8NFTkR7WVcGx9-FXLrf3VlFQhq85gS4E9UV00jLqFpAgvnn_JvJM-WAmT-psIOAgZoTeNVohY7P1aIQ9gnQOr8POLcO9J9r64ytbfE0aRovWFof7hrYdu4FumdO9S6IuOTLf41O3LGpOf41mI57_aRQcyE5Vok7XcNpFHGO6KL-7AkRzcSgGa2Fnzz2p-hRrUNCtADAzOWGPUmcHo4ERpGNyPN4KU8qQ6kU0IvbT39oZeHFS0bMUGVU-WwtCi2Ma-PDMJf5VJi4xb6XRtXC0vySFcvT_nBDu4J0QI5qyWhwKzE_yqsi5_CG2eih-bcSwEGdgOW2skZV0Od7aMVDQDgjBXSva3wh9Kdl_Vcx5bwHr2NWHBRAMBV_6K5l88iavhbHxrowR9A1FvgUXDIMEgg5ma1lyBnFUdAuNJ5FfQLKHZLQes0rpMJZG0h4zfV9DuW9Ha8WYH7-alkYP39EFtJzu2PHbYPiGa2fmtfbxomB3l5tTrgzUjTiInAGr-EgYw1JXpWjCc1A3zMRUHpmwKRW1x-PR7lA4c0qmIo_-g3WbsfzgucPuyF-_TNzoju81Z8Qcd-r5qgzx-cXTURbx68j4h8N0-VvGuy_m0UiDP1UEEm-s3jnvhuo9J985DH9tRDprybGn1g1df9ENiML6NPPXZNzhHW3tyl7SQlV-DcUwT7envzhGuLAoAqkF_laGE0xWmWzKjV2rdVLWbrdVKkfpRoEUcN7R0oquz_QJqm2wET6KkLCn0jd00AJjCGr32T4950n1TUDxw=
-        id: rs_0c955a4d9018e62200695c078920588194abaa3fa09c345347
+      - encrypted_content: gAAAAABpZTr1tjMpYjsOOwJrCyl-btxfWxGWd1kd3mO0c8oFwZltYckDqYqJV0wWVTXh7hCbCQTI96QEBd9Z6kYigBwmPgzN5l1ZRIzUc4sLYHPZy2kGVWkWeelepOzs_hPckIjSpSSX2_BYkTFyQ1xtFL0LELyJooIKT2R_rv7MZYCQqauxk_44FT5XU8peQtRApa5viR9MNpskujf3Ls7wzK_cm6jSergimYeRj9h48ceI3350coEYU3a-u5WlYSKxtCkHJ3pixZL1CCqvay5_DUKWS8assMUjIG-wYhdn2VW9BG8SmxwAgCz8YB6zvybqW0OwmHSScbELpeLjkYgMT6_3dCyy83iPzdniOAkthBdHoCn_2HUwwYmin4vPdwFE8j-qGP1bUU8gRor1visEyUt0l-oc_n8nFmws48zWCPv36KrQ_J68sLu_JvUVEnNwMVrcb84k3SHVKp6Kcy2ojkbLsXr283ACwqDK4hYkBtgWq9Yl-qStWb55-3PIcmpM1h59hg5X2fxlfv8hLGycSR6FTraXgwmezoGlExh6kxYlK4UrRBpO5eItGMs_jeATJ9f_2nQ340Qm5fB_ZBpwWTFFg6W2WLbBBpS8FiSp3Z4BjCorjeCIfvMsy9ugbl9Pp9gBafGcpjIbS_uILYRDAPK0pvJ5-2Un5H1kBKbxCQ7wRR-UOUeI_k-fwUauM_bpzC4pT5r4tGJebJ_wIWEVqNJ7gLv_DakPNp2wo42aJHBBOP1ZxUimjARzQmTegHIBYDbwlObgc7Nn-i0gX6kCyd5zwhe7BmrscsuEMnO8NnwYevBeukhbIUAUMpgXLF0e4zY5lMqqiZmvhTdMh__WCLKq6BtUSgp4uRl01IZ47F_TBpjMicLmty_cjbS9pPKkLkBi-xKU40HGulqEkvCNm1_FK94nEkmYwY5KVRBNLwWIlwBj5Z_WyFCg-L7yiKPNTxExSFxyMDU8O2YkiwH0VvXrEH6mRcQZQtNBQimiiPnKhZi8zIO-u5AqCC16-kxGS6TRFcYeiFOJwRF4n2B_z0LUeVH2kg5eLBh3l63QvEsWgna_7HfjzBrNSyErCcY2YRgv78udfVGDAk8JhlGKj8-foMHbvegyH_cWKviRDufPnxt85sY4npVudSY9mgAGJ0bNrpNTDhQpPIjt1u47fywQWxG2OiWUqofcn8eCkxFpHiYpOifBDf36GiZ4I-DB6dckeMVt_baS-1wSOyDGzdZMe77e7Q==
+        id: rs_0f72cb2425bf50af0069653af3dbe881a1be9c636fa3d1405f
         summary: []
         type: reasoning
       - arguments: '{"city":"Paris"}'
-        call_id: call_26naoNop29epLEvglJOlKj7R
-        id: fc_0c955a4d9018e62200695c078b21008194a3932ba766dddfa1
+        call_id: call_z986kXM67p7TPIgQd8keuJpz
+        id: fc_0f72cb2425bf50af0069653af53f8081a1a526c8807d2032a6
         name: get_weather
         status: completed
         type: function_call
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
       prompt_cache_retention: null
@@ -122,10 +124,10 @@ interactions:
         input_tokens: 50
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 84
+        output_tokens: 20
         output_tokens_details:
-          reasoning_tokens: 64
-        total_tokens: 134
+          reasoning_tokens: 0
+        total_tokens: 70
       user: null
     status:
       code: 200
@@ -139,12 +141,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2147'
+      - '2063'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=z7AhSD5eCiVKSD0ovPVMSooNrTptQORO2G9j1RBgSVQ-1767638923-1.0.1.1-DNNRiZPX0LikaYBS2rlPXGHqpE.ElYjHqwpxiseMSu54JbODp9XExO0BpemKqEyC3C_ocG2iMEzRW8TJQ7f.CQKfGGJWSROaK5VeYqidDYo;
-        _cfuvid=joM_2XWIEpb3OiEHRAA0HdL9ar7EGMcu8sKXMYz4F8c-1767638923907-0.0.1.1-604800000
+      - __cf_bm=h561Ez1cg5O7xhhZ5GUCimfMOP23e6MKDOoYy4SSOVI-1768241909-1.0.1.1-SFz2B4RUedD26pbfqmPHo.tNiDpaCzuNrSknroEMrU7xmj_LXrSBf887QoGVDEz7jhoT2cSvc5qxWkHXUjIiKRdzt_JMYFqW4e1c4mFGOFw;
+        _cfuvid=eulkcC9gOa0wyRXPtdhD8I6J_e5npMM9Lhsow5243ms-1768241909698-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -154,16 +156,16 @@ interactions:
       input:
       - content: What's the weather in Paris?
         role: user
-      - encrypted_content: gAAAAABpXAeLCJVVnpaM5BMDbl5NJ31h27jtV0EfkFn2WonEAypDc3FhYT6M0d8HxZHvcAm6-prf2PpCgZUStBDbAhA2MZduoeWCNbd_wCrsN9oo9WhSk31lqjaufEDIqoCWiesjvSuvJ5cRQfN8eMLcrjQogIkOyAySCKDDq9GvCgauXFDlAxcx8Sotl9Bt69SV3jyeJ1WNSKXBxN031ojWnb-WvTv4vSQAIclINvmDbZeACuii-UajSP-c8m4KdqHCe4MusQ_l9F8MFCFUP7seV9KnblbYrpMh2TuHns8h_WU-fiFx1h3HLqjfMF11ZC3xE-l9XVwVDCkphFUk_-yGlYSm1WN0JJLgRHPDgN-ySVWi3KVI68XJ-a_rqI1J42u0cHRZV1GNkZ1TNwxtHEywj9FwsbhBZPRHWDkE8A50RhGQuR_PuxqMVy-SiT9d4oC5m3mfT0q7NMrpMfjSkFUAP4dNbnVS8qUyuq5Zbwv0Xb0lNG3veNTf4AbBzviwuBSAKIiAavmMNR2yEzViPszF80PB6wUQ4lHxTK413q8NFTkR7WVcGx9-FXLrf3VlFQhq85gS4E9UV00jLqFpAgvnn_JvJM-WAmT-psIOAgZoTeNVohY7P1aIQ9gnQOr8POLcO9J9r64ytbfE0aRovWFof7hrYdu4FumdO9S6IuOTLf41O3LGpOf41mI57_aRQcyE5Vok7XcNpFHGO6KL-7AkRzcSgGa2Fnzz2p-hRrUNCtADAzOWGPUmcHo4ERpGNyPN4KU8qQ6kU0IvbT39oZeHFS0bMUGVU-WwtCi2Ma-PDMJf5VJi4xb6XRtXC0vySFcvT_nBDu4J0QI5qyWhwKzE_yqsi5_CG2eih-bcSwEGdgOW2skZV0Od7aMVDQDgjBXSva3wh9Kdl_Vcx5bwHr2NWHBRAMBV_6K5l88iavhbHxrowR9A1FvgUXDIMEgg5ma1lyBnFUdAuNJ5FfQLKHZLQes0rpMJZG0h4zfV9DuW9Ha8WYH7-alkYP39EFtJzu2PHbYPiGa2fmtfbxomB3l5tTrgzUjTiInAGr-EgYw1JXpWjCc1A3zMRUHpmwKRW1x-PR7lA4c0qmIo_-g3WbsfzgucPuyF-_TNzoju81Z8Qcd-r5qgzx-cXTURbx68j4h8N0-VvGuy_m0UiDP1UEEm-s3jnvhuo9J985DH9tRDprybGn1g1df9ENiML6NPPXZNzhHW3tyl7SQlV-DcUwT7envzhGuLAoAqkF_laGE0xWmWzKjV2rdVLWbrdVKkfpRoEUcN7R0oquz_QJqm2wET6KkLCn0jd00AJjCGr32T4950n1TUDxw=
-        id: rs_0c955a4d9018e62200695c078920588194abaa3fa09c345347
+      - encrypted_content: gAAAAABpZTr1tjMpYjsOOwJrCyl-btxfWxGWd1kd3mO0c8oFwZltYckDqYqJV0wWVTXh7hCbCQTI96QEBd9Z6kYigBwmPgzN5l1ZRIzUc4sLYHPZy2kGVWkWeelepOzs_hPckIjSpSSX2_BYkTFyQ1xtFL0LELyJooIKT2R_rv7MZYCQqauxk_44FT5XU8peQtRApa5viR9MNpskujf3Ls7wzK_cm6jSergimYeRj9h48ceI3350coEYU3a-u5WlYSKxtCkHJ3pixZL1CCqvay5_DUKWS8assMUjIG-wYhdn2VW9BG8SmxwAgCz8YB6zvybqW0OwmHSScbELpeLjkYgMT6_3dCyy83iPzdniOAkthBdHoCn_2HUwwYmin4vPdwFE8j-qGP1bUU8gRor1visEyUt0l-oc_n8nFmws48zWCPv36KrQ_J68sLu_JvUVEnNwMVrcb84k3SHVKp6Kcy2ojkbLsXr283ACwqDK4hYkBtgWq9Yl-qStWb55-3PIcmpM1h59hg5X2fxlfv8hLGycSR6FTraXgwmezoGlExh6kxYlK4UrRBpO5eItGMs_jeATJ9f_2nQ340Qm5fB_ZBpwWTFFg6W2WLbBBpS8FiSp3Z4BjCorjeCIfvMsy9ugbl9Pp9gBafGcpjIbS_uILYRDAPK0pvJ5-2Un5H1kBKbxCQ7wRR-UOUeI_k-fwUauM_bpzC4pT5r4tGJebJ_wIWEVqNJ7gLv_DakPNp2wo42aJHBBOP1ZxUimjARzQmTegHIBYDbwlObgc7Nn-i0gX6kCyd5zwhe7BmrscsuEMnO8NnwYevBeukhbIUAUMpgXLF0e4zY5lMqqiZmvhTdMh__WCLKq6BtUSgp4uRl01IZ47F_TBpjMicLmty_cjbS9pPKkLkBi-xKU40HGulqEkvCNm1_FK94nEkmYwY5KVRBNLwWIlwBj5Z_WyFCg-L7yiKPNTxExSFxyMDU8O2YkiwH0VvXrEH6mRcQZQtNBQimiiPnKhZi8zIO-u5AqCC16-kxGS6TRFcYeiFOJwRF4n2B_z0LUeVH2kg5eLBh3l63QvEsWgna_7HfjzBrNSyErCcY2YRgv78udfVGDAk8JhlGKj8-foMHbvegyH_cWKviRDufPnxt85sY4npVudSY9mgAGJ0bNrpNTDhQpPIjt1u47fywQWxG2OiWUqofcn8eCkxFpHiYpOifBDf36GiZ4I-DB6dckeMVt_baS-1wSOyDGzdZMe77e7Q==
+        id: rs_0f72cb2425bf50af0069653af3dbe881a1be9c636fa3d1405f
         summary: []
         type: reasoning
       - arguments: '{"city":"Paris"}'
-        call_id: call_26naoNop29epLEvglJOlKj7R
-        id: fc_0c955a4d9018e62200695c078b21008194a3932ba766dddfa1
+        call_id: call_z986kXM67p7TPIgQd8keuJpz
+        id: fc_0f72cb2425bf50af0069653af53f8081a1a526c8807d2032a6
         name: get_weather
         type: function_call
-      - call_id: call_26naoNop29epLEvglJOlKj7R
+      - call_id: call_z986kXM67p7TPIgQd8keuJpz
         output: Sunny, 22C in Paris
         type: function_call_output
       model: gpt-5-mini
@@ -190,13 +192,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1907'
+      - '1962'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '6755'
+      - '871'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -209,10 +211,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1767638931
-      created_at: 1767638925
+      completed_at: 1768241910
+      created_at: 1768241909
       error: null
-      id: resp_0c955a4d9018e62200695c078d0b6c8194a14725dcfecb3b7a
+      frequency_penalty: 0.0
+      id: resp_0f72cb2425bf50af0069653af5f1cc81a1a6b6819dd223fbf4
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -226,11 +229,12 @@ interactions:
           logprobs: []
           text: It's sunny in Paris, about 22°C.
           type: output_text
-        id: msg_0c955a4d9018e62200695c07932a888194af21f06904ac67e7
+        id: msg_0f72cb2425bf50af0069653af642c081a180217b32bab517d8
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
       prompt_cache_retention: null
@@ -264,13 +268,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 162
+        input_tokens: 151
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 14
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 176
+        total_tokens: 165
       user: null
     status:
       code: 200

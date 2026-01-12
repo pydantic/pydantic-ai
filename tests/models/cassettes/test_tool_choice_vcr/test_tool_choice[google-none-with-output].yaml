@@ -57,11 +57,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1545'
+      - '2756'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1217
+      - gfet4t7; dur=2335
       transfer-encoding:
       - chunked
       vary:
@@ -75,24 +75,25 @@ interactions:
           - functionCall:
               args:
                 city: Paris
-                summary: Paris is the capital and most populous city of France. It is renowned for its art, fashion, gastronomy,
-                  and culture. Iconic landmarks include the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral.
+                summary: Paris, the capital city of France, is a major European city and a global center for art, fashion,
+                  gastronomy, and culture. It is renowned for its iconic landmarks such as the Eiffel Tower, the Louvre Museum,
+                  Notre-Dame Cathedral, and its charming boulevards.
               name: final_result
-            thoughtSignature: CpIDAXLI2nx/J+SHI+eS5xMqPalY2vk/Jxw/6K1GGORBCfBYS42FBZm6/ceYQJfGz4p9TlvqFqn6nFdvJxhwtF+JDYxrFhM9O0a8wXBJMFGAkktkq45k27BLcI28NZjmKS1VozLIdqWe67EL10G76FtCosHe7qPo7LLt3KcqgoKPaBk6AbymA3WJeM5MqEjf/aSd5v8Kzh9ATYG257UWpDL0i8cWnZtoRFlOUeEdr73wK1UDN8jPReyhiadLxQoVTeR5irzuE+tCstnlvv455K+5fYaQXL6PigfRcP2JzrsILrBwiufJboOoebbdzAfkJqBzw0zw/7u9h1rHc+nnlGT/t9OHFXUoUlhq5cBYDZS6oRft7FSBMovoBCFAott+YeMiXLorzzW5rzSn4WeWbADk1XQ91/hGauRPQYKuKCy+bO8HbAWjmCxyJFdIA/4Qvxo0VqiAEkRK41RtxOY9IqVD/pDziA9eb+I74a/w4RdwydWl7tVPF6KpAmWbhbgpzmmFjl/BlvVi+iYjD9a2LsluIGA1
+            thoughtSignature: CvUJAXLI2nyeA1B1W44fuLH+xM/b/lqG5hU6auu4yqSw/x7nW36i2pmVFT73QZaIBQv71ljVZ01BuGE9xE8mV9ThcTF6mDXbSvyQMQz+52J8ecsiE5KsCZ9ffOSkedhQHXYdfmNxgQoxFUmPAUUSXzTDg4B87VSIWvK6wIj4G5huZcRGsUH2yggofygVFTEApN+Hb9mlMYcVquLf3/0DBBCtyFc9ki3NRTehuS/fv0kuz3D/RgDD5nZruyjhb83eUvUtWeaRGjYY+ZYgRdQJfKWtowtv49HJPd+COIHV3ArjcyEW6oG5YMSLsr2xT6qkEmryvW6opDFw9bRfyn5gqNxRm/ybbi/8+tu1t9+5oFQ71qLft7jbhFmHMyG8PHDVXuLwUa7gfbFo264yS5VBPYsTzoDB7DKqay0W6/10z72W5gKH15sD/6n9JcepSEtk/19fQnj1MPNJg7WMdo7iR1gtUVuwKw7paZpS2CvepwhXsC33AJWEnRm6jfFV2sOUT1vr4kHkiaLUioKveMkjDqwGc7MghqNWrwm3tSfGthVUZ5bflSvRnwxwqsszxrrB+CoP7MSDvfy5vXFQvwWROPWU7+tPPJHJVFO+5L4jRNEefXkgOFqo+gLrnuve5jybJ/sKD30Gpw1cnz5xgavBtOH6I+TyA3tXeR0KW7p10R1WXoNLz1vU85eRgGnGEAfEz209Ix4zKzcvavo55hMTrwwBcegSQo+MDBS0eWzC0NL2wD3WIO5F8Ew5BtuOqX385xLGBjd0XqrsR8PKgABjBBCB2M5jYgFSOx6TPatNYLHvIL2eEX1CShW6UFWURo6rSllG4kH0jitjm31mKXfNrnsetOB9DzbKQEIkLmMu6LMIsvuwUYBaHhfsGxXaX72IJ2mdVwkhoGyMoaX6SpzHYsiQVz33ChyCC+f1ZcBdFTX6tojFDjn8Nu+w2CJ6GB3WW70GosX32XrpKS7dIx2R5mo8vMaqknJc8uulvCA4MCynvL0KbsUJ92ZYDia3WWBql7qYaCMgG9sZXv5iUf8soVnCwlyt33r6Zew5IagG0/4sRItMtlfOheZCTT1+krVaD2uSNUbUhW3dUNDkFRvVqjeJq6GlPhhy9D8ssHWlC3gfO2sCZkr6xth49A7J+n3S0wJvNFYU1hlFaobVLTMxDEDPqniSOIyW7tydo8D/KHbYinR6nNsu3uW4ro/hgAOwGVc7sO70M7GsT/DNTrn6UazU8q5qSQULaHMOvXf8RVEqMR8N2a50fFgADWWQGtF5NsDr/VdAebp3NnWa4Z1MAe8Np7gonKTMj4y9mA+DtuBxbqNyyFywVQZ3o7wDFWCfnCRPARsu8iHoZqUvjPfPhXcSHMMcs0ZncoSMjJLZJeOYGHrCC3oUXbBqg7iFdl+THeOFLjZV13FRtj3KKVLRWhyyTLy9aKxP/9OORbvsckGS4p2k1AoelrCSvctwnjvyYqbcAKpoJMWiOA2cNarBbqgLdClTS+WdcfY9L1sat5+GJR5NU/upGKe97pzRRzmkE0A9jO0Yd/eG5RXCyDLOCjYOG9A8+FuW5OFzmREoDD+v9hK0tbzkX4rToNMDDpB7+zQa4+HOiuqsK6eKeE1d11AiZZLyYduOQ94HL/GbUcPG6R6jiHYnlNuV+fjNoUM3MvmbgUzajoQU7/EQrykrblHfnQo4+Xme
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: cAxcadq-A6HUz7IPsZiYqQg
+      responseId: BztlaeD1FcOpqtsPqqGSwQo
       usageMetadata:
-        candidatesTokenCount: 60
+        candidatesTokenCount: 74
         promptTokenCount: 95
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 95
-        thoughtsTokenCount: 75
-        totalTokenCount: 230
+        thoughtsTokenCount: 293
+        totalTokenCount: 462
     status:
       code: 200
       message: OK

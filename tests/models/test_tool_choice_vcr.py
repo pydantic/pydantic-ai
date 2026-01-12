@@ -23,7 +23,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRequest, ModelResponse
+from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
@@ -123,6 +123,7 @@ class Case:
     tools: list[Callable[..., str]] = field(default_factory=lambda: [get_weather])
     output_type: OutputSpec[Any] | None = None
     prompt: str = "What's the weather in Paris?"
+    model_name: str | None = None
     # Expected values - set to None to skip assertion
     expected_tool_choice_in_request: Any = None
     skip_reason: str | None = None
@@ -145,9 +146,12 @@ PROVIDER_MODELS: dict[str, tuple[str, Callable[[], bool]]] = {
 }
 
 
-def get_model(provider: str, api_keys: dict[str, str], bedrock_provider: Any = None) -> Model:
+def get_model(
+    provider: str, api_keys: dict[str, str], bedrock_provider: Any = None, model_name: str | None = None
+) -> Model:
     """Create a model instance for the given provider."""
-    model_name, _ = PROVIDER_MODELS[provider]
+    default_model_name, _ = PROVIDER_MODELS[provider]
+    model_name = model_name or default_model_name
 
     if provider == 'openai':
         return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
@@ -336,8 +340,14 @@ CASES = [
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
     Case('huggingface-tools-plus-output', 'huggingface', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart','ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
-    Case('openai_responses-tools-plus-output', 'openai_responses', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ThinkingPart','ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
+    Case('openai_responses-tools-plus-output', 'openai_responses', ToolOrOutput(function_tools=['get_weather']), snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ThinkingPart','ThinkingPart', 'ThinkingPart', 'ThinkingPart', 'ThinkingPart', 'ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]),
          tools=[get_weather, get_time], output_type=CityInfo, prompt='Get weather for Paris and summarize'),
+
+    # === Google-specific: output-only with no direct output allowed ===
+    Case('google-auto-output-only-no-direct', 'google', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}]), tools=[], output_type=CityInfo, prompt='Tell me about Paris', expected_tool_choice_in_request='ANY'),
+
+    # === Google-specific: image-only output drops text modality ===
+    Case('google-auto-image-only', 'google', 'auto', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['FilePart']}]), tools=[], output_type=BinaryImage, prompt='Generate an image of a red kite in the sky', model_name='gemini-2.5-flash-image'),
 ]
 # fmt: on
 
@@ -404,7 +414,7 @@ async def test_tool_choice(
     if skip_reason:
         pytest.skip(skip_reason)
 
-    model = get_model(case.provider, api_keys, bedrock_provider)
+    model = get_model(case.provider, api_keys, bedrock_provider, model_name=case.model_name)
     settings: ModelSettings = {'tool_choice': case.tool_choice}
 
     if case.use_direct_request:

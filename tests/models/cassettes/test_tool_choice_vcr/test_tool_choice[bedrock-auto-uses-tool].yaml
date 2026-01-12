@@ -7,7 +7,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        OWM1NDE0ZjktMmFhMi00NzBlLWI0NWEtZWRlMjIwMmMwZWU5
+        MGNmYjA1NTAtZDNiNy00NDZjLWFiMWUtMjJjYWU0NTQ4YjUz
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -17,7 +17,7 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
   response:
     headers:
       connection:
@@ -28,7 +28,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1859
+        latencyMs: 1826
       output:
         message:
           content:
@@ -36,7 +36,7 @@ interactions:
               input:
                 city: Paris
               name: get_weather
-              toolUseId: tooluse_N5JIdpjYR1anqTJEBH4T7g
+              toolUseId: tooluse_TMlm_IPSRC6ZCE0WciBBvw
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -54,8 +54,8 @@ interactions:
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Paris?"}]}, {"role": "assistant", "content":
-      [{"toolUse": {"toolUseId": "tooluse_N5JIdpjYR1anqTJEBH4T7g", "name": "get_weather", "input": {"city": "Paris"}}}]},
-      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_N5JIdpjYR1anqTJEBH4T7g", "content": [{"text": "Sunny,
+      [{"toolUse": {"toolUseId": "tooluse_TMlm_IPSRC6ZCE0WciBBvw", "name": "get_weather", "input": {"city": "Paris"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_TMlm_IPSRC6ZCE0WciBBvw", "content": [{"text": "Sunny,
       22C in Paris"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec":
       {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}},
       "required": ["city"], "type": "object"}}, "description": "Get the current weather for a city."}}], "toolChoice": {"auto":
@@ -63,7 +63,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZWU3NTFhYzItZmRkYS00OWUwLTk4ZTAtMjRmODk5NjEyNDQ4
+        NGRkNTMzYTAtYWViNy00MzVmLTk4MTMtYjQ0YTY3Y2E0MDBi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -73,23 +73,22 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '427'
+      - '419'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2098
+        latencyMs: 1813
       output:
         message:
           content:
-          - text: The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F). It's a beautiful
-              day!
+          - text: The weather in Paris is currently sunny with a temperature of 22°C (about 72°F). It's a beautiful day!
           role: assistant
       stopReason: end_turn
       usage:

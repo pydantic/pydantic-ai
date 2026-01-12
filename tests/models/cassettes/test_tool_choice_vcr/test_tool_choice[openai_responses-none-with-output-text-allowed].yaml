@@ -64,13 +64,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4738'
+      - '5523'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '3435'
+      - '6370'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -83,10 +83,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1767727922
-      created_at: 1767727918
+      completed_at: 1768241947
+      created_at: 1768241941
       error: null
-      id: resp_05cd25752c4257e700695d632ee63481a19878c474ac984533
+      frequency_penalty: 0.0
+      id: resp_0695aa40b64772f20069653b1507f4819c807ea4aca923414e
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -95,26 +96,27 @@ interactions:
       model: gpt-5-mini-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABpXWMyrNIXHDBRTtiKPk-AwPv-QEIQl4JAse-oyAsr-XOikVPdhyu6X6tO63Vobt_7OjoLg6dIEw-DllSSFs9xa7ookBE7rhDgvZqklZSmuY7VJadCxSH-C8gCypWo2lS87h6GNA9VQNaf58uUAujkyw_MGWifM0vvQMkRA5M6sMU-S0HRYKNJUhYWzPDRVJC1HKV6xSve7oGgp-nPGWVwfGYXTmxV6Rz9FkRALfV1yQbOh9K04XaZ6kyrp0Rhggfyvx7hWVRckSOIE1k7IpTR3ZgxtNnHxPjSo0a4AHV8iRRzcaOTTzIdZJvuiul6AJhGHg73Soz-p_P1KWZcPhqqOw4ZKqiV-lmg_-ZRZll87Ytjhj7Yrb7PyipuoTfwwcMNjuPo-7mo9HxSetRbDk-1nk1TZMZuWTQS6RlyNEAJ9JGk2b0HuLr-_IqSX9IpfYpWCxBBtLksOQnMqUdkS_SCOfa9wty4bXj2MxYxx4MMgX8-KnNvkyWVWDy1o-YQIAhriTd03DmaigILWE92_hRdXUs8e6qWrHFyia7Xpsw775vq2rJhVKwEfCkETz7LcWInlNA2eK5X_wIhIU9xcE2MokDd1UcN-trVsWkooFMTzuBlpsThamsr7zQCTnFO-A4tQeTTmpyRCMUgoolS2lTBR2-Lq9A50OiKvugf685wqqPGl6BLHGBZW0_-_G_B5dLn044mJ2RStbvA75FL0we6KuJSYW4aSqD_QSsfPPmDHX14InB8n52y9A6JwHYuhaiOccICWahDJdqLeqXGV2tfGz3AfcrkzaNOnzI9gnKlbiL3dq4xsSJTDP2NVUbsUydJ0WmFvdsYECT-wmfAUTbUTXxqmylXb1TmE0_oSKn4pCYBoj63C2MZbcKk7EXo9WlCXknH_tHEXt7Ap67ACIgJtdij-hV8xYdgWQ_SINI_GMXysODcJI2o1kMA2wzwVJPAAslT953AJeU3jJqyyqpm-9-DqhAtAGA0maPRCitKknHkrtbnVkTMAoz5H7AgWs5q9FNBxonnRSFjU-foIteegAsLWUe4n6eg5jIQkbcKF-N4XTWL89BuKBpiOU3ixRxEgm-v0Re1oS3ziUNOUlSESmGJkjJZP8ZxHqsdvyx_logM4a6iwUUDKD8t_jtIBcfLTlZH_RROFZuvieAd4ElThxEnBXHzM9X1qUs7F0o5e4b5_nGntGKQ_comKrYW35C5fbWU_BNEFY__TjuiCrp0WH361UtmhQvt0IegqKpboHNmiz6h5HsOKl5pLSrhabT0fEU96xdOK0l8H7cMnhPGNRqyfDhM14Vmvtj_6S_Acp8JCRAC1FTb7E-e27bhJbL3fEkF
-        id: rs_05cd25752c4257e700695d632f727481a1a1ad16aebe5053d0
+      - encrypted_content: gAAAAABpZTsbDl5H05xJw5NCIfRVioS-YD6TJ9a2Ocygc0eCyf81RizFEzRh-gi1FA3Rk8RWgaFY8r4lEv4JTm-jgUgaUCq2t4gd6Rm4L-Qlei6ayqymwxPraojmGg8TW-DPw4RYiBx7O_5FvE399eMgNkekeQbxq_sdyFZozZufjKOZpWcz_J3gu9mn8uB7ehYmL8zXupf03hUFAIuCaFl-23oUYEWZp4YHQCLEzsk_ebZ4qEfjN2xDfk-MC4s0y1M5Hq3PFZnLYitOf0IupXd_SeVL0tgNNQRP0c2ahFECa-2e5BzvVR8duttjwmn5Mlz7HwzRirg_MirDeKHq_cKvNgoTdbdZ4e_BDA3m7ybhukIYGSiReos8nl1_hBpMzGBTUEA-waupfPGxaymyPg08RfKegCHEvypoB43pTyu-uHOB77OOJuUxV-1SUFPSTdJSoqNaoK1NYfGkxY_gvr1CavuQX3b5unaEf_G2J_cm27uxZf6TKkFKpzzba-cIAcoy1eJVlW3gPyiz8BTB5GKJeo5IFcXCEMBGqoLEJJTXosTDYKThj3ejYMysamq2dc4_4nHnMLpH8N0kXlkE0cJQb_wNunlpUCEJvtlCP4c2FG-sQMlMfxekpaSKR2eRHYiVmNWL3GKBQmFmTPuh--DECMV6plD2f3W3gogaPdOdCK4OP6nURAbgWit0DvMNG4lyuVW9y5E6Z33xmvVM98g-y4nezwTX2dGKfL7QK5x0TN1Ve0C4JC0zwq823LdPKuTpmwIOksihvf9Ymkw0lyD33BsSLki0OXUiJCaqiSMqNUqBOZjiDremxIY7ozIYjpsnA1_kcro45xCrU-zIps6USrrJeN5YugMVODSmm7jVo4gywhoOWUx7_QQzuNTPkMOZeMgiziNzCeq7FWSpF2uTtp827QncJgn9Xg32aHqu1Yo59qLBSYx97LqZ-McY1ECG-dWibNdiWK2gvoraVgxRNLnqDZu6Gd4Mo7d0ZanSHON9TUWFFXLby95uoJZK2PwwfLentOcObICwMbg97Fe6pAHMs8HsKuPTt5KZUuYcV5SULklwUqTNoNM28DLbf7CV3zmSILBzjYmlqNWHfD4NbacrOiVFXGZ4nCIZFgJGPQsY6_FQdc_tU9q2gDzl2O4GF6MYnHFIcNuQuYLTr0lmCBTGWfeexEGLY5W9Hz_qlCYps_InAmFhAYZofefdfNMCT2_qQ2ZiKpUymaOhrbkx887bbNZmxfpLUu36lwtOsiSPSv6Ljd9rBplJqYervOBGgIEI7DX6PSSbE2EZiAaOvjG12ghq3Tb7RNoLlJzhrrf0e0XEMxrkNtKNyBhVBHu8OZGzrYvGicC1kkhoyHCwEEBO5Fg07DS9-NK_jkaQwpmFHYX517d8x3GNVSQPM2HNu51xz7nB1LZr3QwE2xucgE1g9JHc1N0XArRUcj5BNawQITCxeoy0ONZIMM-eo0Dr9rq2Q7G40m4bjMNmlTxGT4urpsrDv0VLzRGGT4lP-GepOiZ0rO9tKLHjIbmU0QdP8eKz31T6IBBIF0rsKxEb2W2aVTWQap_GfvOeNKYuPqJNR41xWviHgNHyWKzB1mKUTaJnLR0bJl0dMkXQ1YqgbxBbPObbXtnFAE0-PKpjH8Aj3JCaoHQL2v8vOnTIOHJeqoTg3fhMtu5VwBz1CJCsISgxc2XqCN6GtjXXe1kXKzI6mDQEL0aXajO21k_vnsatBLB66RzQIP2QyNPnfWtR4ImlbH3AJbfOdr6330Con9La4_KhBbvGES-2ViRxbdfA9ouai_srLoG6LXeWy9Sc0DQ_SDPR6fZ3ZYkaOQUiQPODRL_e9H04IaShcEEdle9XEloRgb3KuJfKAFLI8CVz_la4J3WeD8Hg3ilVaXH5etXv_lHcR-OWNGA_Svk3rEvGf5POvojxe6suevebEOlHGuS7wjnQ8GJbFigh8lYIA03b2ZSE1i4=
+        id: rs_0695aa40b64772f20069653b156210819c94ecc5ddc9cec25c
         summary: []
         type: reasoning
       - content:
         - annotations: []
           logprobs: []
-          text: Paris is the capital city of France, located in northern central France along the River Seine. It is a global
-            center for art, fashion, gastronomy and culture, home to world-famous landmarks such as the Eiffel Tower, the
-            Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées. Paris has a rich history dating back to Roman times
-            and played key roles in European politics, art and intellectual life. The city is also an important economic hub
-            with strong finance, tech and tourism sectors, excellent public transport (metro, RER, buses) and many neighborhoods
-            (arrondissements) each with distinct character. Popular visiting seasons are spring and early fall, when weather
-            and crowds are generally pleasant.
+          text: |-
+            Paris, the capital of France, is a major European city on the River Seine known for its history, culture and iconic landmarks--most famously the Eiffel Tower, the Louvre Museum, Notre‐Dame, and the Champs‐Élysées. It's a global center for art, fashion, cuisine and finance, with a compact historic core divided into 20 arrondissements. The city has an extensive public transit network (Metro, RER, buses) and two main international airports (Charles de Gaulle and Orly). Best times to visit are spring and early autumn for mild weather and fewer crowds.
+
+            Quick facts:
+            - Language: French; Currency: Euro (EUR)
+            - Population: ~2.1 million in the city proper, around 10-12 million in the metro area
+            - Known for: museums, cafés, haute cuisine, shopping, and riverside walks along the Seine.
           type: output_text
-        id: msg_05cd25752c4257e700695d63306ac481a1934f11e4932440b0
+        id: msg_0695aa40b64772f20069653b180040819caf76f8be0ddba966
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
       prompt_cache_retention: null
@@ -171,10 +173,10 @@ interactions:
         input_tokens: 74
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 211
+        output_tokens: 378
         output_tokens_details:
-          reasoning_tokens: 64
-        total_tokens: 285
+          reasoning_tokens: 192
+        total_tokens: 452
       user: null
     status:
       code: 200

@@ -9,7 +9,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        OTE0NTlmNjctZmM4ZS00NGFkLTk5ZDktOWI3NmUwOGM0YzMy
+        ZjY4MzQwMGYtZjdlZS00MGY2LTk2MGUtZjhlMDE2ZTM0Nzcw
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -19,33 +19,33 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '1166'
+      - '1176'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 5038
+        latencyMs: 4085
       output:
         message:
           content:
           - toolUse:
               input:
                 city: Paris
-                summary: Paris is the capital and most populous city of France, located in the north-central part of the country
-                  along the Seine River. Known as the "City of Light" (La Ville Lumière), Paris is renowned for its art, fashion,
-                  gastronomy, and culture. The city is home to iconic landmarks including the Eiffel Tower, the Louvre Museum
-                  (the world's largest art museum), Notre-Dame Cathedral, the Arc de Triomphe, and the Champs-Élysées. Paris
-                  has been a major center of commerce, education, entertainment, and arts for centuries, and continues to
-                  be one of the world's most visited cities. It's famous for its café culture, haute couture fashion houses,
-                  and its influence on philosophy, literature, and the arts throughout history.
+                summary: Paris is the capital and most populous city of France, known for its rich history, art, culture,
+                  and iconic landmarks. Often called "The City of Light" (La Ville Lumière), Paris is renowned for attractions
+                  such as the Eiffel Tower, the Louvre Museum (home to the Mona Lisa), Notre-Dame Cathedral, the Arc de Triomphe,
+                  and the Champs-Élysées. The city is a global center for art, fashion, gastronomy, and culture, situated
+                  on the Seine River. Paris is divided into 20 districts called arrondissements and is famous for its beautiful
+                  architecture, charming cafés, world-class museums, and romantic atmosphere. It has been a major European
+                  city for centuries and continues to be one of the world's most visited tourist destinations.
               name: final_result
-              toolUseId: tooluse_el5o7JcSQ5ib70W_uP9aUA
+              toolUseId: tooluse_-0-4EOazTH2QF-7JkQKCTw
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -55,9 +55,9 @@ interactions:
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
         inputTokens: 742
-        outputTokens: 217
+        outputTokens: 223
         serverToolUsage: {}
-        totalTokens: 959
+        totalTokens: 965
     status:
       code: 200
       message: OK

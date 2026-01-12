@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '405'
+      - '363'
       content-type:
       - application/json
       host:
@@ -24,10 +24,9 @@ interactions:
       tool_choice: required
       tools:
       - function:
-          description: Get the current weather for a city.
+          description: Get weather for a city
           name: get_weather
           parameters:
-            additionalProperties: false
             properties:
               city:
                 type: string
@@ -45,7 +44,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '707'
+      - '708'
       content-type:
       - application/json
       strict-transport-security:
@@ -65,101 +64,27 @@ interactions:
           - function:
               arguments: '{"city":"Paris"}'
               name: get_weather
-            id: them4kxzj
+            id: 5ejaxbkfh
             type: function
-      created: 1767639214
-      id: chatcmpl-8ed9e763-7488-428f-bf90-bacacdef9d2b
+      created: 1768241919
+      id: chatcmpl-c62f516e-397f-43b1-89a5-301eb91962d2
       model: meta-llama/llama-4-scout-17b-16e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_5436ed2ebe
       usage:
-        completion_time: 0.067668991
+        completion_time: 0.074709383
         completion_tokens: 29
-        prompt_time: 0.031123284
-        prompt_tokens: 730
-        queue_time: 0.243982295
-        total_time: 0.098792275
-        total_tokens: 759
+        prompt_time: 0.024793635
+        prompt_tokens: 723
+        queue_time: 0.258943343
+        total_time: 0.099503018
+        total_tokens: 752
       usage_breakdown: null
       x_groq:
-        id: req_01ke7r3sq2f0wr75zncdvgvjks
-        seed: 334324836
+        id: req_01kespwx39e8ksth5t7d9vqfbd
+        seed: 1654156109
     status:
       code: 200
       message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '622'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=4hTmuvVn4lKVYWvVRQloqdVFEaOfvyhOjKjst1tagpM-1767639214-1.0.1.1-m53Derymj3KZilNt3YF6KXpj.0ykFCA9r3xXbz9LnJZv4PqKdMb.j6x0rzCGPQBQhlgHXmHd9Vv9YPJv_EZJ9rKAaRYcIvq2FOTNrnbEeOA
-      host:
-      - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: What's the weather in Paris?
-        role: user
-      - role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"city":"Paris"}'
-            name: get_weather
-          id: them4kxzj
-          type: function
-      - content: Sunny, 22C in Paris
-        role: tool
-        tool_call_id: them4kxzj
-      model: meta-llama/llama-4-scout-17b-16e-instruct
-      n: 1
-      stream: false
-      tool_choice: required
-      tools:
-      - function:
-          description: Get the current weather for a city.
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-        type: function
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - private, max-age=0, no-store, no-cache, must-revalidate
-      connection:
-      - keep-alive
-      content-length:
-      - '242'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=15552000
-      vary:
-      - Origin
-    parsed_body:
-      error:
-        code: tool_use_failed
-        failed_generation: The current weather in Paris is Sunny, 22C.
-        message: Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.
-        type: invalid_request_error
-    status:
-      code: 400
-      message: Bad Request
 version: 1

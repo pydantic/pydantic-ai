@@ -25,10 +25,10 @@ interactions:
           mode: required
           tools:
           - function:
-              name: get_weather
+              name: final_result
             type: function
           - function:
-              name: final_result
+              name: get_weather
             type: function
         type: allowed_tools
       tools:
@@ -90,7 +90,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2314'
+      - '6032'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -112,26 +112,26 @@ interactions:
           - function:
               arguments: '{"city":"Paris"}'
               name: get_weather
-            id: call_9t2tZvHJqpanGQIjWzvB56ZO
+            id: call_KmnAjeBnlhuSxpBm86u3G2T6
             type: function
-      created: 1767638184
-      id: chatcmpl-CujjEjfTsHFtal6CXEXuOINxuah1C
+      created: 1768241947
+      id: chatcmpl-CxGnLAjBxiBfPybxx0gGjQjHN0I8h
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 151
+        completion_tokens: 343
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 128
+          reasoning_tokens: 320
           rejected_prediction_tokens: 0
         prompt_tokens: 179
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 330
+        total_tokens: 522
     status:
       code: 200
       message: OK
@@ -148,8 +148,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=CGdHtDNK5uN_OFyKKif.vArrdtcE4utd0rX4UC3XiVs-1767638186-1.0.1.1-NCRgWblcPaxMU6GdLUZe5VJuWzCV0XXrmh_Qhl32w7iveNh0fYArcJD.nMiKsFeycgfEUwB7nB2K049Nr9RiI1zf4NLAVDz6K.9eIYVIgHI;
-        _cfuvid=B6dnVcfT3MzoWlgVvO83SVMEYFHh9Xz3c3vaO5Px3.s-1767638186551-0.0.1.1-604800000
+      - __cf_bm=s9kMRMTEMRsdijqfTXpl6_6i1ICW8KRY1aR7VrjNxpg-1768241953-1.0.1.1-CZptR1aAkVc8WcuTsUr6UoYzwFTopkpo5kClbTq219gcF5BSQ7Mko4qvDoAYS4eM2hQyzPqGGkjYMtFXOh2nk2Su3nBC_5MPyjeWTFtGaCQ;
+        _cfuvid=rC1oWeX.bj415Vvi67CqqKVuK1XquTNwq6OD6c22L2g-1768241953780-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -163,11 +163,11 @@ interactions:
         - function:
             arguments: '{"city":"Paris"}'
             name: get_weather
-          id: call_9t2tZvHJqpanGQIjWzvB56ZO
+          id: call_KmnAjeBnlhuSxpBm86u3G2T6
           type: function
       - content: Sunny, 22C in Paris
         role: tool
-        tool_call_id: call_9t2tZvHJqpanGQIjWzvB56ZO
+        tool_call_id: call_KmnAjeBnlhuSxpBm86u3G2T6
       model: gpt-5-mini
       stream: false
       tool_choice:
@@ -175,10 +175,10 @@ interactions:
           mode: required
           tools:
           - function:
-              name: get_weather
+              name: final_result
             type: function
           - function:
-              name: final_result
+              name: get_weather
             type: function
         type: allowed_tools
       tools:
@@ -234,13 +234,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1277'
+      - '1110'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '6622'
+      - '10185'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -260,30 +260,28 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"city":"Paris","summary":"Currently sunny in Paris with a temperature of 22°C (≈72°F). Pleasant
-                weather -- good for outdoor activities; you likely won''t need heavy outerwear, but a light layer or sweater
-                might be comfortable."}'
+              arguments: '{"city":"Paris","summary":"Current weather in Paris: Sunny, 22°C."}'
               name: final_result
-            id: call_3uBZOC6ZGesiRzOkAjeN5Qt4
+            id: call_go7ZfhppZBAqQ1282QhmT9JV
             type: function
-      created: 1767638187
-      id: chatcmpl-CujjHJqGAFkDLIkPgCAjPdxt5bPpN
+      created: 1768241954
+      id: chatcmpl-CxGnSVWAmWUbkQh4pXxlfLJ4ZCi9p
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 389
+        completion_tokens: 421
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 320
+          reasoning_tokens: 384
           rejected_prediction_tokens: 0
         prompt_tokens: 214
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 603
+        total_tokens: 635
     status:
       code: 200
       message: OK

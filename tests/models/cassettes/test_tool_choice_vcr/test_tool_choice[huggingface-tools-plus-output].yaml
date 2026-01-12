@@ -29,7 +29,7 @@ interactions:
       etag:
       - W/"388-myb6zbS3leJ0g7Gjjeu5p4iBNkw"
       ratelimit:
-      - '"api";r=999;t=196'
+      - '"api";r=994;t=221'
       ratelimit-policy:
       - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
@@ -127,7 +127,7 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"4d7-tIKZz86OzqnFnpeUG/eFkHfzpgY"
+      - W/"47b-pMQQs+k5zc91NL+yY6ygHpq6w0Q"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
@@ -151,28 +151,27 @@ interactions:
           - function:
               arguments: '{"city": "Paris"}'
               name: get_weather
-            id: call_58d50a6f37904012b164ad85
+            id: call_97f1bdf2237f4f339238aa57
             index: 0
             type: function
           - function:
-              arguments: '{"city": "Paris", "summary": "The weather in Paris is currently
-                sunny with a high of 22 degrees Celsius and a low of 12 degrees Celsius."}'
+              arguments: '{"city": "Paris", "summary": "weather summary"}'
               name: final_result
-            id: call_dc3aec9eb2a04be4acc6a50d
+            id: call_b9eb6dc0729d4692b8eb6098
             index: 1
             type: function
         seed: null
-      created: 1767661782
-      id: oS9DfwN-3pDw3Z-9b9754cf2c5a3126
+      created: 1768241955
+      id: oT2VDEA-z1gNr-9bcea9329c393b2f
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct
       object: chat.completion
       prompt: []
       usage:
-        completion_tokens: 85
+        completion_tokens: 77
         prompt_tokens: 719
-        total_tokens: 804
+        total_tokens: 796
     status:
       code: 200
       message: OK

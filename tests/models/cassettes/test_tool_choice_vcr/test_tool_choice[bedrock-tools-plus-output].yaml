@@ -9,7 +9,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NjkxNDkyZmQtODcwNy00ZWIxLTk5MGEtZmRhNjBkZjc5MTRh
+        NDk0M2EwZWQtN2YyZS00OTM5LTlhMzUtZDMyNzU2YWI1MmNh
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -19,7 +19,7 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
   response:
     headers:
       connection:
@@ -30,7 +30,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1685
+        latencyMs: 1808
       output:
         message:
           content:
@@ -38,7 +38,7 @@ interactions:
               input:
                 city: Paris
               name: get_weather
-              toolUseId: tooluse_j6_Z9cL-Rg2Ue3uOujYaBg
+              toolUseId: tooluse_XgVTrRZjTd6-K1Ce_3L8fQ
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -56,8 +56,8 @@ interactions:
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Paris and summarize"}]}, {"role": "assistant",
-      "content": [{"toolUse": {"toolUseId": "tooluse_j6_Z9cL-Rg2Ue3uOujYaBg", "name": "get_weather", "input": {"city": "Paris"}}}]},
-      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_j6_Z9cL-Rg2Ue3uOujYaBg", "content": [{"text": "Sunny,
+      "content": [{"toolUse": {"toolUseId": "tooluse_XgVTrRZjTd6-K1Ce_3L8fQ", "name": "get_weather", "input": {"city": "Paris"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_XgVTrRZjTd6-K1Ce_3L8fQ", "content": [{"text": "Sunny,
       22C in Paris"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec":
       {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}},
       "required": ["city"], "type": "object"}}, "description": "Get the current weather for a city."}}, {"toolSpec": {"name":
@@ -67,7 +67,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NjA1OGE1MGUtYzNkNi00ZWQ2LTgxMDktYTBhNWVhZDM3ZDMy
+        NWE5Mjk4NzMtODg1MS00ZWY5LTg0MTQtNGFlOTE2NjM5NjRi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -77,28 +77,27 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '585'
+      - '539'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2242
+        latencyMs: 2084
       output:
         message:
           content:
           - toolUse:
               input:
                 city: Paris
-                summary: The weather in Paris is sunny with a pleasant temperature of 22°C (approximately 72°F), making it
-                  ideal for outdoor activities and sightseeing.
+                summary: The weather in Paris is currently sunny with a pleasant temperature of 22°C (approximately 72°F).
               name: final_result
-              toolUseId: tooluse_03JWvO0lSzimivOAuh2BJg
+              toolUseId: tooluse_v-wD08pfRvGl7YIWCTv09w
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -108,9 +107,9 @@ interactions:
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
         inputTokens: 813
-        outputTokens: 87
+        outputTokens: 77
         serverToolUsage: {}
-        totalTokens: 900
+        totalTokens: 890
     status:
       code: 200
       message: OK

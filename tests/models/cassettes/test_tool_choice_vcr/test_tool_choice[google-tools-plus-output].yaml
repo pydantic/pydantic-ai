@@ -25,8 +25,8 @@ interactions:
       toolConfig:
         functionCallingConfig:
           allowedFunctionNames:
-          - get_weather
           - final_result
+          - get_weather
           mode: ANY
       tools:
       - functionDeclarations:
@@ -68,11 +68,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1227'
+      - '1440'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=934
+      - gfet4t7; dur=1365
       transfer-encoding:
       - chunked
       vary:
@@ -87,21 +87,21 @@ interactions:
               args:
                 city: Paris
               name: get_weather
-            thoughtSignature: CtICAXLI2nyYCR2ZsIOoH5wVM6v1pT6sLVgvHwMBVtn3ZEs8N/UzkG+RmFZu1UEHCGySK/LB563VIJEHCF6o6oL5ZW66qHAd40YDL9bVmC/MkBGAYDCEJ4iaL74/kSNeh91oWF9k9wSE6B/SDYVq91oYV/GI42ucjYsnuZwpmWXDzwzxP+JE0sMyK1edKkerw9o5YT4IjMzwL9WQi0rz0JxR1EoKGM0isNwmtkyn7Rx7muVI9jGxyMYZsCh+/t9CETWBoSZjaLCmSOCHqxu/G1hf4yFCGHVfnHpryA+vvEFd4iBvn9zAkbiKoWRLUCuooYafQaypmVMqZ8gojLUNRrm2Ckpw0ZyBt39flCA6y4Z01QzlTPKyqsEiUWn/OuMGof9l/pWcWS3OAYzEBN/mjMEGg1ZejL/xvtnK8dDlbMRojrFGf+y6KrWcBhghp8yOkEFkzfc=
+            thoughtSignature: CvEDAXLI2nwh6onxvN2MrMWFAAm78fmNsyoirUD1FSs/TMMPrZNVypYN0ppP3ib2GcYhGoN2/EraAqhiuRHYHlLwr6End5Gh0yYzbWCa1JFh9FkOv0+f+OiGfbPGoW0y2vWBfpQxPqRaCQjJO6bWXoVryuZd8ac4U/fghD7t8p2JHr3CsFq5CrvObXcOj2Z6rYSgEJ/1ZulTeWIWteB2XA0cXmqlOYsXfJ5PTCVKLCv/rjc0kcZzbzYwvQtG9M3KDDsvNXF2xz1LwMFRV7ijsRc6AReMyYUtJEvs8wT6shuChoZje8Lqqb65puMsnbY4TzjeQ3EGielS10Qf2t6J9hBGiBGbKV6VRebTSw8ChmPEVy0O/WPpKN0JvvVpbkHK/JDlL9shdgwkcgIqquXTThD8B4TQfhOq5iiz8nNW6NYd/zgEwHU3ylI0rFXIXLrdiWRTI1V0Nc62n0cmmE+ga2U/NSiuxUB0Q7/lKIMx9I3EU5FU8UqgLkfds7T3Ni9TLhFnH1lUGFwu5cB9fcq8utl6P8Mnwa/i0OzibDj2IsJkMVAyCE3cZl9Z26ate+fNRKjI0D6ynL86VbVdpYXyy9P3p9yaQp7mQdosI8MAEJDMyVd8iQ/miluZp3418qCS97nqp9MMD3s34pyc6xFlzcGZuNs=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: hAxcaaXlL7-fz7IPvqPoqAg
+      responseId: LTtlacTuKP6tqtsPvZ6roQo
       usageMetadata:
         candidatesTokenCount: 15
         promptTokenCount: 137
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 137
-        thoughtsTokenCount: 81
-        totalTokenCount: 233
+        thoughtsTokenCount: 115
+        totalTokenCount: 267
     status:
       code: 200
       message: OK
@@ -114,7 +114,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1800'
+      - '2012'
       content-type:
       - application/json
       host:
@@ -129,13 +129,13 @@ interactions:
         - functionCall:
             args:
               city: Paris
-            id: pyd_ai_ebefdb0fadb84cd7a150140169415a18
+            id: pyd_ai_c0e8dbdbcab640dbb5ff7a98d15405c9
             name: get_weather
-          thoughtSignature: CtICAXLI2nyYCR2ZsIOoH5wVM6v1pT6sLVgvHwMBVtn3ZEs8N_UzkG-RmFZu1UEHCGySK_LB563VIJEHCF6o6oL5ZW66qHAd40YDL9bVmC_MkBGAYDCEJ4iaL74_kSNeh91oWF9k9wSE6B_SDYVq91oYV_GI42ucjYsnuZwpmWXDzwzxP-JE0sMyK1edKkerw9o5YT4IjMzwL9WQi0rz0JxR1EoKGM0isNwmtkyn7Rx7muVI9jGxyMYZsCh-_t9CETWBoSZjaLCmSOCHqxu_G1hf4yFCGHVfnHpryA-vvEFd4iBvn9zAkbiKoWRLUCuooYafQaypmVMqZ8gojLUNRrm2Ckpw0ZyBt39flCA6y4Z01QzlTPKyqsEiUWn_OuMGof9l_pWcWS3OAYzEBN_mjMEGg1ZejL_xvtnK8dDlbMRojrFGf-y6KrWcBhghp8yOkEFkzfc=
+          thoughtSignature: CvEDAXLI2nwh6onxvN2MrMWFAAm78fmNsyoirUD1FSs_TMMPrZNVypYN0ppP3ib2GcYhGoN2_EraAqhiuRHYHlLwr6End5Gh0yYzbWCa1JFh9FkOv0-f-OiGfbPGoW0y2vWBfpQxPqRaCQjJO6bWXoVryuZd8ac4U_fghD7t8p2JHr3CsFq5CrvObXcOj2Z6rYSgEJ_1ZulTeWIWteB2XA0cXmqlOYsXfJ5PTCVKLCv_rjc0kcZzbzYwvQtG9M3KDDsvNXF2xz1LwMFRV7ijsRc6AReMyYUtJEvs8wT6shuChoZje8Lqqb65puMsnbY4TzjeQ3EGielS10Qf2t6J9hBGiBGbKV6VRebTSw8ChmPEVy0O_WPpKN0JvvVpbkHK_JDlL9shdgwkcgIqquXTThD8B4TQfhOq5iiz8nNW6NYd_zgEwHU3ylI0rFXIXLrdiWRTI1V0Nc62n0cmmE-ga2U_NSiuxUB0Q7_lKIMx9I3EU5FU8UqgLkfds7T3Ni9TLhFnH1lUGFwu5cB9fcq8utl6P8Mnwa_i0OzibDj2IsJkMVAyCE3cZl9Z26ate-fNRKjI0D6ynL86VbVdpYXyy9P3p9yaQp7mQdosI8MAEJDMyVd8iQ_miluZp3418qCS97nqp9MMD3s34pyc6xFlzcGZuNs=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_ebefdb0fadb84cd7a150140169415a18
+            id: pyd_ai_c0e8dbdbcab640dbb5ff7a98d15405c9
             name: get_weather
             response:
               return_value: Sunny, 22C in Paris
@@ -146,8 +146,8 @@ interactions:
       toolConfig:
         functionCallingConfig:
           allowedFunctionNames:
-          - get_weather
           - final_result
+          - get_weather
           mode: ANY
       tools:
       - functionDeclarations:
@@ -189,11 +189,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1201'
+      - '1293'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1080
+      - gfet4t7; dur=1354
       transfer-encoding:
       - chunked
       vary:
@@ -207,23 +207,23 @@ interactions:
           - functionCall:
               args:
                 city: Paris
-                summary: Sunny, 22C
+                summary: The weather in Paris is Sunny and 22C.
               name: final_result
-            thoughtSignature: CqACAXLI2nyKS/MJFHKdCLW5O5compKbo/yqUiKwpLl3jJpaDTqjiOj2puGDCptlwMiA8L6sc5wvapBlYMOe6Ite40l+MuMVTP4GENQderjm3LckAsfgM8Vt0ysYMOHQp6yfgSqDCZXxUnTSWZsFJGEWD2b4UaCwa6rcTh9j0N47czuE/feWgW6mA3VNm5d9fhAl2IaPbf1wTNVIufP3rzMi5bju8jlOl5NqONtCXeexAhTO0LQrB5Yi8OjFJY42rLnNu/cTw8vEwxnpEF1bgHjkoRVXWfad3P6ABET4TljLSkzOW1ZzYTShi1fEgbYk7BN7tx7i5fmTrManrlu8IofyQlAIEf1iAWRQ477WNXpcyKrEKRc6FECGV44K2jfSvr6l
+            thoughtSignature: CtACAXLI2nzfnLCd457JIhjxRLhYiRbc/k9vU0cIV3sUhHWdRx5a+ZG9ObBrg/iPunvuIfBSZi/LjeZfB7ZRxt8xsvVkyjGpIK9UVWNbAD3sPzqaIg9CcJqj9PHr1lIZbVp/N1/KOSuiuJdkWxgxuYVEP6L/mPK97oKw6QsGpgXsuIkhkBlNeIwMv42DAJLmSSyvbpDObqpkovkPTJkp2axBrdDZvcv3Bsqy2PCODb4liBIWpgy9OZYqp3wZbw5cRFTnv+p3LJsJH8PMzAtrgJTjbrPvZ+qnCjWGt03C2tP93B/UOFE8b6sdxHbD2yVIOXVkAXpDl00MR7n5itMVzHD042p0qruQEJez38H08tQYkjxys0i69IvXfnOERa+gtgLAbWa2JNOIAlHILFCsqUl6VCmiZjYdHjWxkBS5H63nsVEZ0GPaDYWyAfIN16dAVPWG
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: hgxcaZPMHJ6VmtkPvo3v4Ao
+      responseId: LztladOgD8m-qtsPraSmoAo
       usageMetadata:
-        candidatesTokenCount: 25
+        candidatesTokenCount: 30
         promptTokenCount: 176
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 176
-        thoughtsTokenCount: 67
-        totalTokenCount: 268
+        thoughtsTokenCount: 75
+        totalTokenCount: 281
     status:
       code: 200
       message: OK

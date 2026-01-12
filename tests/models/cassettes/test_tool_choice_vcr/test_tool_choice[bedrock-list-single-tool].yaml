@@ -8,7 +8,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NDA5NzQyMTktYWNiZC00NjA5LTkxMDMtNTgwNTA2NDRiZWJj
+        ZTFkMTIyYTYtMjViMy00Nzc4LTk3NjctMTk5YzA4MGU4Y2I0
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -18,7 +18,7 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
   response:
     headers:
       connection:
@@ -29,7 +29,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1859
+        latencyMs: 1497
       output:
         message:
           content:
@@ -37,7 +37,7 @@ interactions:
               input:
                 city: Paris
               name: get_weather
-              toolUseId: tooluse_rLFZ0trYSIuXhrvpez_IMw
+              toolUseId: tooluse_L02KAcemQ0ekjbZa04Lx5A
               type: tool_use
           role: assistant
       stopReason: tool_use

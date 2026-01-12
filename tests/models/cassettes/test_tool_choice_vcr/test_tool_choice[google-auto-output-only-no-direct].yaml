@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '638'
+      - '471'
       content-type:
       - application/json
       host:
@@ -17,35 +17,27 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What's the weather in Paris?
+        - text: Tell me about Paris
         role: user
       generationConfig:
         responseModalities:
         - TEXT
       toolConfig:
         functionCallingConfig:
-          allowedFunctionNames:
-          - get_weather
           mode: ANY
       tools:
       - functionDeclarations:
-        - description: Get weather for a city
-          name: get_weather
+        - description: Structured output model for city information.
+          name: final_result
           parameters_json_schema:
             properties:
               city:
                 type: string
-            required:
-            - city
-            type: object
-        - description: Get time in a timezone
-          name: get_time
-          parameters_json_schema:
-            properties:
-              timezone:
+              summary:
                 type: string
             required:
-            - timezone
+            - city
+            - summary
             type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
@@ -53,11 +45,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1077'
+      - '1584'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1258
+      - gfet4t7; dur=1770
       transfer-encoding:
       - chunked
       vary:
@@ -71,22 +63,24 @@ interactions:
           - functionCall:
               args:
                 city: Paris
-              name: get_weather
-            thoughtSignature: CuMBAXLI2ny9600NupAMY5mOPRZLkM7mWsZQweVu7XgAgW8vLkYFU56Xc4EJ20wegG/Fo3XGMjWb/vU2BCTMha06YBZJ5jOPy0cP2fstQKKD/eOkKXtpS/sCEEVORTrcJb+SAo50cb9kqrj0IoToLjm7UlUuBDEHEIBnHnGlFMrJ5PRAz81tpaq0XTQ5Gw/o+oD5ISMyTP4ygfmrvM1OQWOWAHy0OX/Sn/Wo02MLb7Eq1pTjsd8NhUgdJwTRpz9TnTDwEmhOiXzJvVNt4hMYDhdq9krXCGgySuaaAsUyjaTSl+yxt0E=
+                summary: Paris is the capital city of France. It is known for its art, fashion, gastronomy, and culture. Iconic
+                  landmarks include the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral.
+              name: final_result
+            thoughtSignature: Cr4DAXLI2nw/+3VO+0NVS+0lQ8YwfljiiJwN71gDXav4QPcay5PEkx+HCs4cDeUnLCDSxd9Ucaqmx2gk5aetuGf4QkE/5oX/jlzDrjcTOagU/A2zz+7JQXM/RCq2TE+HaZuvy4NSiG0Hmh9yl9jjhwNlNumdIkoPJ+cGlxL4stWxEcr8RM9c4u+f//cimccpHR0Nx3YnEFepOjXejP+/Xh9aG+DDvfJMu5EZ9ISZ9a7balp5fThucGJ95AX7u6opP6bcJQRdm67K/A6VOhj6I6eReoW39d/S19dZ3JHh+v9SGx+fvGjIut+rWyJSRv12//l1gyH6E08/AaYmEo66pbDU7TVhrTzu65FEt3dVBBuvJ92zP7yfXbawC9ZH9ndDioNvCXRAQkRN/YCMQ2jhncsUcWaO03KQsnIMZXYn2pu17DxYrWtG0sqtBloqTL8hbFWZoWdBGtVKgXFNYccxZVUMN2mDHMYBx2qhcl+629RjurwAMx0Wskr9NB/6TpTk7xQdMsbW7mdKJbaoqjeBVRhhqTGhna/gANVqlBGJWH/z/RsUrNNeG2uz/Od8FEA45ccnMgLKDo7Zog8o3pvQMiU=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: ADtlaZifK8-zmtkPreShiAk
+      responseId: MTtlaYXdJeCtqtsPw7nNgQk
       usageMetadata:
-        candidatesTokenCount: 15
-        promptTokenCount: 83
+        candidatesTokenCount: 57
+        promptTokenCount: 55
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 83
-        thoughtsTokenCount: 47
-        totalTokenCount: 145
+          tokenCount: 55
+        thoughtsTokenCount: 95
+        totalTokenCount: 207
     status:
       code: 200
       message: OK

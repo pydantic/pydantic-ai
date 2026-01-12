@@ -52,7 +52,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b94cb-4531-7426-8f14-c317a987a6bf
+      - 019bb36e-b8bd-7e16-b5f4-fd508e050530
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -72,10 +72,10 @@ interactions:
                 Cathedral, the Louvre Museum, and the Champs-Élysées. The city is also celebrated for its cuisine, fashion,
                 and romantic ambiance."}'
               name: final_result
-            id: cEG87YUEu
+            id: JXmdv8ps5
             index: 0
-      created: 1767727908
-      id: 3d4661d36feb496dbb1926e4a21e6729
+      created: 1768241936
+      id: 172537d3c2234bf5a92945c0a9036345
       model: mistral-large-latest
       object: chat.completion
       usage:

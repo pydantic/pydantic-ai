@@ -7,7 +7,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ODEwMzJlNjYtMmQzZC00MmM0LTk0YjYtNjQ1YjliMGFkNDBk
+        NDdhNmY2MGYtZDFlMC00NWM4LThjZDEtMjdiYjRlZGJkZDBl
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -17,18 +17,18 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '968'
+      - '1017'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 3450
+        latencyMs: 3385
       output:
         message:
           content:
@@ -36,12 +36,13 @@ interactions:
               input:
                 city: Paris
                 summary: Paris is the capital and largest city of France, known as the "City of Light." It's a global center
-                  for art, fashion, culture, and gastronomy. Famous landmarks include the Eiffel Tower, Louvre Museum, Notre-Dame
-                  Cathedral, and Arc de Triomphe. The city sits along the Seine River and is renowned for its beautiful architecture,
-                  romantic atmosphere, world-class museums, haute couture, and café culture. With a rich history spanning
-                  over 2,000 years, Paris remains one of the most visited and influential cities in the world.
+                  for art, fashion, gastronomy, and culture, home to iconic landmarks like the Eiffel Tower, Louvre Museum,
+                  Notre-Dame Cathedral, and Arc de Triomphe. With a population of over 2 million in the city proper and 12
+                  million in the metropolitan area, Paris sits along the Seine River and is divided into 20 districts called
+                  arrondissements. The city has been a major influence on Western civilization for centuries and remains one
+                  of the world's most visited tourist destinations.
               name: final_result
-              toolUseId: tooluse_rWbjDbp8QG204VfBI-YCDA
+              toolUseId: tooluse_B9jlMDAwQoSrTak3-__aZg
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -51,9 +52,9 @@ interactions:
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
         inputTokens: 584
-        outputTokens: 189
+        outputTokens: 200
         serverToolUsage: {}
-        totalTokens: 773
+        totalTokens: 784
     status:
       code: 200
       message: OK

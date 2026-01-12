@@ -1,5 +1,79 @@
 interactions:
 - request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/meta-llama/Llama-4-Scout-17B-16E-Instruct?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-length:
+      - '904'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"388-myb6zbS3leJ0g7Gjjeu5p4iBNkw"
+      ratelimit:
+      - '"api";r=998;t=253'
+      ratelimit-policy:
+      - '"fixed window";"api";q=1000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 67ed3cd9290a7f9d3301f9c1
+      id: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      inferenceProviderMapping:
+        fireworks-ai:
+          isModelAuthor: false
+          providerId: accounts/fireworks/models/llama4-scout-instruct-basic
+          status: error
+          task: conversational
+        groq:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        novita:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        nscale:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: live
+          task: conversational
+        sambanova:
+          isModelAuthor: false
+          providerId: Llama-4-Scout-17B-16E-Instruct
+          status: error
+          task: conversational
+        together:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
     body:
       messages:
       - content: What's the weather in Paris?
@@ -50,7 +124,7 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"354-cFMwn3DvGFB2chtRp1AqjsIUidQ"
+      - W/"354-HF+8Zh6ztuKrL9C2iWv7slhUn6s"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
@@ -74,12 +148,12 @@ interactions:
           - function:
               arguments: '{"city": "Paris"}'
               name: get_weather
-            id: call_61cb65bbfc1e408487a5bfa9
+            id: call_b89bef49d3fa484f9d5746aa
             index: 0
             type: function
         seed: null
-      created: 1767661779
-      id: oS9DfQ1-z1gNr-9b9754c44830e603
+      created: 1768241922
+      id: oT2V3mj-z1gNr-9bcea86beb2ad6fd
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct
@@ -89,80 +163,6 @@ interactions:
         completion_tokens: 30
         prompt_tokens: 608
         total_tokens: 638
-    status:
-      code: 200
-      message: OK
-- request:
-    body: null
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-    method: GET
-    uri: https://huggingface.co/api/models/meta-llama/Llama-4-Scout-17B-16E-Instruct?expand=inferenceProviderMapping
-  response:
-    headers:
-      access-control-allow-origin:
-      - https://huggingface.co
-      access-control-expose-headers:
-      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      access-control-max-age:
-      - '86400'
-      connection:
-      - keep-alive
-      content-length:
-      - '904'
-      content-type:
-      - application/json; charset=utf-8
-      cross-origin-opener-policy:
-      - same-origin
-      etag:
-      - W/"388-myb6zbS3leJ0g7Gjjeu5p4iBNkw"
-      ratelimit:
-      - '"api";r=999;t=28'
-      ratelimit-policy:
-      - '"fixed window";"api";q=1000;w=300'
-      referrer-policy:
-      - strict-origin-when-cross-origin
-      vary:
-      - Origin
-    parsed_body:
-      _id: 67ed3cd9290a7f9d3301f9c1
-      id: meta-llama/Llama-4-Scout-17B-16E-Instruct
-      inferenceProviderMapping:
-        fireworks-ai:
-          isModelAuthor: false
-          providerId: accounts/fireworks/models/llama4-scout-instruct-basic
-          status: error
-          task: conversational
-        groq:
-          isModelAuthor: false
-          providerId: meta-llama/llama-4-scout-17b-16e-instruct
-          status: live
-          task: conversational
-        novita:
-          isModelAuthor: false
-          providerId: meta-llama/llama-4-scout-17b-16e-instruct
-          status: live
-          task: conversational
-        nscale:
-          isModelAuthor: false
-          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
-          status: live
-          task: conversational
-        sambanova:
-          isModelAuthor: false
-          providerId: Llama-4-Scout-17B-16E-Instruct
-          status: error
-          task: conversational
-        together:
-          isModelAuthor: false
-          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
-          status: live
-          task: conversational
     status:
       code: 200
       message: OK

@@ -29,7 +29,7 @@ interactions:
       etag:
       - W/"388-myb6zbS3leJ0g7Gjjeu5p4iBNkw"
       ratelimit:
-      - '"api";r=999;t=196'
+      - '"api";r=999;t=256'
       ratelimit-policy:
       - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
@@ -111,7 +111,7 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"355-2G3zsqxYhnxjkWASEvVQODEnD6g"
+      - W/"355-FYpXxV/0ZZmQdn2HzsBtMsiVkRE"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
@@ -135,12 +135,12 @@ interactions:
           - function:
               arguments: '{"city": "Paris"}'
               name: get_weather
-            id: call_25bf25bad0ea435c8708d5de
+            id: call_e0a7a93b3e4046288c23ec80
             index: 0
             type: function
         seed: null
-      created: 1767707082
-      id: oSDDqWy-3pDw3Z-9b9ba6b92b60316d
+      created: 1768241918
+      id: oT2V2kb-3pDw3Z-9bcea8561a238286
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct

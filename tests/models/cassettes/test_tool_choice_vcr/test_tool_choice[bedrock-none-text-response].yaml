@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MmQxNDMyM2UtMDQ2Ni00MDdmLWJkMmEtNDk4NmNiZWIxNTI1
+        ZWMwMjlkNDYtODI2My00NzE2LWI5YWItMTk2Mzc1YTFiM2Qy
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -15,31 +15,32 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '729'
+      - '976'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 3028
+        latencyMs: 3694
       output:
         message:
           content:
           - text: |-
-              I don't have access to real-time weather information. I can't browse the internet or access current data.
+              I don't have access to real-time weather data or the ability to browse the internet, so I can't tell you the current weather in Paris.
 
-              To find the current weather in Paris, you could:
-              - Check weather websites like weather.com or accuweather.com
-              - Search "Paris weather" on Google
-              - Use a weather app on your phone
-              - Ask a voice assistant with internet access like Siri or Google Assistant
+              To get current weather information for Paris, you could:
 
-              Is there anything else I can help you with?
+              1. **Search online** - Google "Paris weather" for instant results
+              2. **Use weather websites** - Check sites like Weather.com, AccuWeather, or Weather Underground
+              3. **Use weather apps** - Try apps like Weather Channel, AccuWeather, or your phone's built-in weather app
+              4. **Ask a voice assistant** - Siri, Google Assistant, or Alexa can provide current conditions
+
+              Is there anything else about Paris I can help you with that doesn't require real-time data?
           role: assistant
       stopReason: end_turn
       usage:
@@ -48,9 +49,9 @@ interactions:
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
         inputTokens: 14
-        outputTokens: 99
+        outputTokens: 161
         serverToolUsage: {}
-        totalTokens: 113
+        totalTokens: 175
     status:
       code: 200
       message: OK

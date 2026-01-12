@@ -63,12 +63,12 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01Gxt46ousevp1bGQSRd3X3d
+      - id: toolu_01EEt2SCSQBWU19Rq6c6YXVX
         input:
           city: Paris
         name: get_weather
         type: tool_use
-      id: msg_01FEcxoPNgr5BU9282uTqDdP
+      id: msg_013bFxSiEqonKEBZfNsdMBML
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -109,7 +109,7 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01Gxt46ousevp1bGQSRd3X3d
+        - id: toolu_01EEt2SCSQBWU19Rq6c6YXVX
           input:
             city: Paris
           name: get_weather
@@ -118,7 +118,7 @@ interactions:
       - content:
         - content: Sunny, 22C in Paris
           is_error: false
-          tool_use_id: toolu_01Gxt46ousevp1bGQSRd3X3d
+          tool_use_id: toolu_01EEt2SCSQBWU19Rq6c6YXVX
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -154,7 +154,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '627'
+      - '642'
       content-type:
       - application/json
       strict-transport-security:
@@ -163,14 +163,14 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01Bvq1eqCjhYaKbSwxHcqKjU
+      - id: toolu_01DMucUhUigUTdPSKwQyR6wN
         input:
           city: Paris
-          summary: The weather in Paris is sunny with a pleasant temperature of 22°C (approximately 72°F). It's a beautiful
-            day with clear skies.
+          summary: The weather in Paris is currently sunny with a pleasant temperature of 22°C (approximately 72°F). It's
+            a beautiful day in the French capital!
         name: final_result
         type: tool_use
-      id: msg_011MfMPzNe9gQtSqp55sxEu7
+      id: msg_018ggpHmzYCkCxKcAoxKDrPy
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -183,7 +183,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 805
-        output_tokens: 85
+        output_tokens: 86
         service_tier: standard
     status:
       code: 200

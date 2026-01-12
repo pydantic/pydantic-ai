@@ -555,9 +555,11 @@ class GoogleModel(Model):
             response_mime_type = 'application/json'
         system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
-        modalities = [Modality.TEXT.value]
+        modalities: list[str] = [Modality.TEXT.value]
         if self.profile.supports_image_output:
             modalities.append(Modality.IMAGE.value)
+            if not model_request_parameters.allow_text_output:
+                modalities.remove(Modality.TEXT.value)
 
         http_options: HttpOptionsDict = {
             'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}

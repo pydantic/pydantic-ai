@@ -68,13 +68,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2163'
+      - '1924'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '6735'
+      - '12298'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -94,38 +94,36 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"city":"Paris","summary":"Paris is the capital city of France, located in northern-central France
-                along the River Seine. It is one of the world''s leading cultural, artistic, fashion, and culinary centers,
-                known for iconic landmarks such as the Eiffel Tower, Louvre Museum (home to the Mona Lisa), Notre-Dame Cathedral,
-                Sacré-Cœur, and the Champs-Élysées. The city has a rich history dating back to Roman times and was a major
-                center during the Enlightenment and French Revolution. Paris is organized into 20 arrondissements (districts)
-                and offers world-class museums, historic architecture, vibrant neighborhoods (Le Marais, Montmartre, Latin
-                Quarter), extensive parks (Luxembourg Gardens, Tuileries), and a renowned café culture. It is also an economic
-                hub with strengths in finance, fashion, tourism, technology, and education, hosting numerous international
-                organizations. Practical tips: best times to visit are spring and early autumn for milder weather and smaller
-                crowds; public transport is excellent (metro, buses, RER); basic French phrases are appreciated; be mindful
-                of pickpockets in tourist areas."}'
+              arguments: '{"city":"Paris","summary":"Paris is the capital and largest city of France, located on the Seine
+                in north-central France. It is one of the world''s major cultural, financial, and political centers, famous
+                for landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, the Champs-Élysées, and Montmartre.
+                The city has roughly 2.1 million residents in the city proper and about 12 million in the wider metropolitan
+                area, and is organized into 20 arrondissements. Paris is renowned for its art, fashion, gastronomy, historic
+                architecture, and vibrant café culture. Major transport hubs include Charles de Gaulle and Orly airports,
+                an extensive Métro and RER network, and high-speed TGV rail links. Practical tips: speak basic French phrases,
+                watch for pickpockets in tourist areas, and consider visiting in spring or autumn for milder weather and fewer
+                crowds."}'
               name: final_result
-            id: call_pRkF16DOhuwyUuF3jlQWI6Yc
+            id: call_AbBHhi4WDHBaEDxoQiJOmLlw
             type: function
-      created: 1767638176
-      id: chatcmpl-Cujj6Dc9JEMK9YgR3ssrbkxYrVbsC
+      created: 1768241920
+      id: chatcmpl-CxGmu4VfxC8P7nnLFCsPs2Zyy9I8O
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 441
+        completion_tokens: 654
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 192
+          reasoning_tokens: 448
           rejected_prediction_tokens: 0
         prompt_tokens: 155
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 596
+        total_tokens: 809
     status:
       code: 200
       message: OK

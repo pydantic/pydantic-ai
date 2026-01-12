@@ -68,13 +68,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1693'
+      - '1423'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '3671'
+      - '4813'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -89,155 +89,32 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: Paris is the capital city of France, located in northern central France along the River Seine. It's home
-            to about 2 million residents in the city proper and some 12 million in the metropolitan area. Paris is a global
-            center for art, fashion, gastronomy, and culture -- famous landmarks include the Eiffel Tower, Notre-Dame Cathedral,
-            the Louvre Museum, and the Champs-Élysées. The city has a long history dating back to Roman times and played major
-            roles in European politics, art, and intellectual movements. Well connected by metro, buses, regional trains,
-            and two major airports (Charles de Gaulle and Orly), Paris is easy to navigate for visitors. Typical highlights
-            are museum visits, café culture, river cruises on the Seine, and strolling historic neighborhoods such as the
-            Marais, Saint‐Germain, and Montmartre. The best times to visit are late spring and early autumn for mild weather
-            and fewer crowds.
+          content: "- Paris is the capital city of France, located in northern-central France along the River Seine.  \n-
+            Population (city proper) is about 2.1 million; the wider metropolitan area is around 12 million.  \n- World-famous
+            landmarks include the Eiffel Tower, Louvre Museum, Notre-Dame Cathedral, Sacré-Cœur, and the Champs-Élysées.  \n-
+            A global center for art, fashion, gastronomy and culture, with many museums, theaters and cafés.  \n- Major economic
+            sectors: finance, commerce, tourism, and creative industries.  \n- Main language: French; currency: euro (EUR).
+            Best time to visit: late spring and early autumn for mild weather and fewer crowds."
           refusal: null
           role: assistant
-      created: 1767727877
-      id: chatcmpl-Cv73thAfOktUecMv7rdcBPXS4DpgN
+      created: 1768241945
+      id: chatcmpl-CxGnJgltMm3mx83ekT7mAiD4v95aV
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 197
+        completion_tokens: 216
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 0
+          reasoning_tokens: 64
           rejected_prediction_tokens: 0
         prompt_tokens: 156
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 353
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '781'
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: Tell me about Paris briefly
-        role: user
-      model: gpt-5-mini
-      stream: false
-      tool_choice:
-        allowed_tools:
-          mode: auto
-          tools:
-          - function:
-              name: final_result
-            type: function
-        type: allowed_tools
-      tools:
-      - function:
-          description: Get the current weather for a city.
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: Structured output model for city information.
-          name: final_result
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-              summary:
-                type: string
-            required:
-            - city
-            - summary
-            type: object
-          strict: true
-        type: function
-    uri: https://api.openai.com/v1/chat/completions
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '1526'
-      content-type:
-      - application/json
-      openai-organization:
-      - user-grnwlxd1653lxdzp921aoihz
-      openai-processing-ms:
-      - '5784'
-      openai-project:
-      - proj_FYsIItHHgnSPdHBVMzhNBWGa
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          annotations: []
-          content: 'Paris is the capital and largest city of France, located in northern central France on the River Seine.
-            The city proper has roughly 2.1 million residents, with about 12 million in the greater Paris region, and is divided
-            into 20 arrondissements (districts). Paris is world-famous for landmarks such as the Eiffel Tower, the Louvre
-            Museum, Notre‐Dame Cathedral, Sacré‐Cœur, and the Champs‐Élysées. It''s a global center for art, fashion, gastronomy,
-            culture, finance and education. The climate is temperate oceanic (mild winters, warm summers). Practical notes:
-            the Metro and RER trains make getting around easy, English is commonly understood in tourist areas but French
-            is the primary language, and tourism is a major part of the economy.'
-          refusal: null
-          role: assistant
-      created: 1767727896
-      id: chatcmpl-Cv74C5VGaa07ggniJV4ik7a38mLqR
-      model: gpt-5-mini-2025-08-07
-      object: chat.completion
-      service_tier: default
-      system_fingerprint: null
-      usage:
-        completion_tokens: 301
-        completion_tokens_details:
-          accepted_prediction_tokens: 0
-          audio_tokens: 0
-          reasoning_tokens: 128
-          rejected_prediction_tokens: 0
-        prompt_tokens: 156
-        prompt_tokens_details:
-          audio_tokens: 0
-          cached_tokens: 0
-        total_tokens: 457
+        total_tokens: 372
     status:
       code: 200
       message: OK

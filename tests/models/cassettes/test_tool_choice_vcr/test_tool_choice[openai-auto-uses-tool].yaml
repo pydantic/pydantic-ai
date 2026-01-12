@@ -45,13 +45,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1061'
+      - '1050'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2782'
+      - '1616'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -71,28 +71,28 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"city":"Paris, France"}'
+              arguments: '{"city":"Paris"}'
               name: get_weather
-            id: call_0e7VvOWsveOXCzT9zUkMvP73
+            id: call_azwPWTHdrJ3VuaMvED8ikHpd
             type: function
-      created: 1767638085
-      id: chatcmpl-CujhdEr1QaDOA87RxfH5M9BYFgVm2
+      created: 1768241905
+      id: chatcmpl-CxGmfabN30YGXBTwTMqODXB822Pa4
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 217
+        completion_tokens: 23
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 192
+          reasoning_tokens: 0
           rejected_prediction_tokens: 0
         prompt_tokens: 132
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 349
+        total_tokens: 155
     status:
       code: 200
       message: OK
@@ -105,12 +105,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '666'
+      - '650'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=iPh.0c1fHPDSgYBps3cLplcoVkyhm_n4WSML.n0Jm6w-1767638087-1.0.1.1-bIBScqhJWSjl26UDq_azR.eKKW8zoUwzShDSYwOiwKy66XNS_83WAOYKyolsT._ikspkhca1JG8GQ9rm77ifvaxZZLpakK_5VnhtIebeJJk;
-        _cfuvid=gJ1_ClodRRj_E1fonAK7lf.His_pCU4xe1IgzbI6g_A-1767638087964-0.0.1.1-604800000
+      - __cf_bm=IIATtVTChC_aKD2KaKB9_oel1vy_6TILBfgbuG_SuVs-1768241907-1.0.1.1-kxkzcKScZgErPSnCzLrss9.d4gYLOwJeyt3O705G7zrdSeOLRF6rDmvNkqkHTpwiKdmR.5TMpG0vRDySycPeu7n3jfvn9wxo9bamcoH8MDU;
+        _cfuvid=TKmZFXdyN5hKNJyZUOhC3oIYnDvVl6f2WUix3Lm6kK4-1768241907300-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -122,13 +122,13 @@ interactions:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"city":"Paris, France"}'
+            arguments: '{"city":"Paris"}'
             name: get_weather
-          id: call_0e7VvOWsveOXCzT9zUkMvP73
+          id: call_azwPWTHdrJ3VuaMvED8ikHpd
           type: function
-      - content: Sunny, 22C in Paris, France
+      - content: Sunny, 22C in Paris
         role: tool
-        tool_call_id: call_0e7VvOWsveOXCzT9zUkMvP73
+        tool_call_id: call_azwPWTHdrJ3VuaMvED8ikHpd
       model: gpt-5-mini
       stream: false
       tool_choice: auto
@@ -156,13 +156,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '917'
+      - '821'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '4467'
+      - '720'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -177,28 +177,27 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: 'Currently in Paris: Sunny, 22°C (about 72°F). Would you like an hourly forecast, a multi-day forecast,
-            or weather for a different location?'
+          content: It's sunny in Paris with a temperature of 22°C.
           refusal: null
           role: assistant
-      created: 1767638089
-      id: chatcmpl-Cujhh6lU5CE1HREiFfCzyK8kS2fLC
+      created: 1768241907
+      id: chatcmpl-CxGmhRytOhnBWc8E2kHqxcD2eyHxz
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 171
+        completion_tokens: 15
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 128
+          reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 171
+        prompt_tokens: 167
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 342
+        total_tokens: 182
     status:
       code: 200
       message: OK

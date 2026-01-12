@@ -48,7 +48,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '789'
+      - '788'
       content-type:
       - application/json
       strict-transport-security:
@@ -68,26 +68,26 @@ interactions:
           - function:
               arguments: '{"city":"Paris","summary":"The capital of France, known for its art, fashion, and culture."}'
               name: final_result
-            id: wgx33t11x
+            id: ay3nb1wj9
             type: function
-      created: 1767727907
-      id: chatcmpl-01ddc2fc-da9c-44fc-ad44-f0ca7cc5852e
+      created: 1768241959
+      id: chatcmpl-b8d98c03-a378-4a57-a613-8b4819c7904b
       model: meta-llama/llama-4-scout-17b-16e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_130a0cd72d
       usage:
-        completion_time: 0.125676016
+        completion_time: 0.113951463
         completion_tokens: 49
-        prompt_time: 0.024138635
+        prompt_time: 0.025222372
         prompt_tokens: 723
-        queue_time: 0.342061218
-        total_time: 0.149814651
+        queue_time: 0.143225139
+        total_time: 0.139173835
         total_tokens: 772
       usage_breakdown: null
       x_groq:
-        id: req_01keacpg9meph9mbehvpkmw7j5
-        seed: 1716507496
+        id: req_01kespy46cfn9bpk75ygz4babd
+        seed: 744270274
     status:
       code: 200
       message: OK

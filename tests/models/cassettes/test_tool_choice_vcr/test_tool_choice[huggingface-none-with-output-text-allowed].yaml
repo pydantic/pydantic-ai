@@ -29,7 +29,7 @@ interactions:
       etag:
       - W/"388-myb6zbS3leJ0g7Gjjeu5p4iBNkw"
       ratelimit:
-      - '"api";r=999;t=57'
+      - '"api";r=995;t=232'
       ratelimit-policy:
       - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
@@ -115,7 +115,7 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"3a7-YuzSuwLyqKw//B3kwhS0Er+gv18"
+      - W/"3b7-00TR4xHBOOxLovv2ih7LbB7loAk"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
@@ -137,23 +137,24 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"city": "Paris", "summary": "The capital of France, known for its art, fashion, and culture."}'
+              arguments: '{"city": "Paris", "summary": "The capital of France, Paris is a global center for art, fashion,
+                and culture."}'
               name: final_result
-            id: call_9a7e2d462fb343f8a689f6cd
+            id: call_8a1b3ea21074429fa720e76b
             index: 0
             type: function
         seed: null
-      created: 1767727918
-      id: oSF4e95-z1gNr-9b9da37bb92bd701
+      created: 1768241943
+      id: oT2VA1A-3pDw3Z-9bcea8ee39f1ac43
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct
       object: chat.completion
       prompt: []
       usage:
-        completion_tokens: 26
+        completion_tokens: 29
         prompt_tokens: 634
-        total_tokens: 660
+        total_tokens: 663
     status:
       code: 200
       message: OK

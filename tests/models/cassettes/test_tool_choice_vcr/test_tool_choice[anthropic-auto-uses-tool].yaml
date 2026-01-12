@@ -51,12 +51,12 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01PootfDJcEuXUmqKbTQaNm9
+      - id: toolu_01WoRa4iJx8Zjfw8UAJUxqCw
         input:
           city: Paris
         name: get_weather
         type: tool_use
-      id: msg_01CgogXGrCF1ttG82HUc8G8W
+      id: msg_01Cvd1oHkAEW8E9yK7jQUtef
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -97,7 +97,7 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01PootfDJcEuXUmqKbTQaNm9
+        - id: toolu_01WoRa4iJx8Zjfw8UAJUxqCw
           input:
             city: Paris
           name: get_weather
@@ -106,7 +106,7 @@ interactions:
       - content:
         - content: Sunny, 22C in Paris
           is_error: false
-          tool_use_id: toolu_01PootfDJcEuXUmqKbTQaNm9
+          tool_use_id: toolu_01WoRa4iJx8Zjfw8UAJUxqCw
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -130,7 +130,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '519'
+      - '497'
       content-type:
       - application/json
       strict-transport-security:
@@ -139,9 +139,9 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!
+      - text: The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F).
         type: text
-      id: msg_01YU8s8BgrFx4MroKpPAZWxC
+      id: msg_013f475JpGvZnNJqJsjze4DA
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -154,7 +154,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 646
-        output_tokens: 31
+        output_tokens: 25
         service_tier: standard
     status:
       code: 200

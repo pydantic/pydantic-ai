@@ -43,11 +43,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '754'
+      - '1049'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3270
+      - gfet4t7; dur=2839
       transfer-encoding:
       - chunked
       vary:
@@ -59,26 +59,26 @@ interactions:
       - content:
           parts:
           - text: |-
-              The weather in Paris, France is currently:
+              I cannot provide real-time, current weather updates as an AI. My knowledge cutoff means I don't have access to live data.
 
-              *   **Temperature:** Around **17°C (63°F)**
-              *   **Conditions:** Mostly **sunny** with a few clouds.
-              *   **Wind:** Light breeze.
+              To get the most accurate and up-to-date weather in Paris, I recommend checking a reliable weather source like:
 
-              It's a pleasant day in Paris!
+              *   **Google Weather:** Just search "weather in Paris"
+              *   **A weather app:** Such as AccuWeather, The Weather Channel, or your phone's built-in weather app
+              *   **A weather website:** Like Météo-France (for local details) or other international weather sites.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: owdcaYeYAo6lqtsPtpnG-Qo
+      responseId: BDtlacDIHcq7qtsPjJXRuQk
       usageMetadata:
-        candidatesTokenCount: 61
+        candidatesTokenCount: 120
         promptTokenCount: 49
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 49
-        thoughtsTokenCount: 294
-        totalTokenCount: 404
+        thoughtsTokenCount: 317
+        totalTokenCount: 486
     status:
       code: 200
       message: OK
