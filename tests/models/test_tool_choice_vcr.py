@@ -151,7 +151,12 @@ class Case:
     id: str
     provider: str
     tool_choice: ToolChoice
-    expected_message_structure: list[_MessageStructure]  # snapshot() stored here per case
+    expected_message_structure: list[_MessageStructure]
+    """This field is snapshotted per case. It uses a skeleton of message types.
+
+    For non-direct requests the type is `list[_MessageStructure]`.
+    For direct requests the type is `list[str]` with part type names.
+    """
     tools: list[Callable[..., str]] = field(default_factory=lambda: [get_weather])
     output_type: OutputSpec[Any] | None = None
     prompt: str = "What's the weather in Paris?"
