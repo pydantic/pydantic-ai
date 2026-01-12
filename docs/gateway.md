@@ -7,8 +7,8 @@ status: new
 
 **[Pydantic AI Gateway](https://pydantic.dev/ai-gateway)** is a unified interface for accessing multiple AI providers with a single key. Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
 
-!!! note "Free while in Beta"
-    The Pydantic AI Gateway is currently in Beta. You can bring your own key (BYOK) or buy inference through the Gateway (we will eat the card fee for now).
+!!! note "Free while we collect feedback"
+    You can bring your own key (BYOK) or buy inference through the Gateway (we will eat the card fee for now).
 
 Sign up at [gateway.pydantic.dev](https://gateway.pydantic.dev/).
 
