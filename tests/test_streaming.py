@@ -762,7 +762,7 @@ async def test_call_tool_wrong_name():
     agent = Agent(
         FunctionModel(stream_function=stream_structured_function),
         output_type=tuple[str, int],
-        retries=0,
+        output_retries=0,
     )
 
     @agent.tool_plain

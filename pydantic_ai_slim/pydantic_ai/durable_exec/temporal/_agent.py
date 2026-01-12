@@ -13,7 +13,6 @@ from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Never
 
 from pydantic_ai import (
     AbstractToolset,
@@ -302,6 +301,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -323,6 +324,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -343,7 +346,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        **_deprecated_kwargs: Never,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -381,6 +385,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
@@ -411,7 +417,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
-                **_deprecated_kwargs,
+                output_retries=output_retries,
+                tool_retries=tool_retries,
             )
 
     @overload
@@ -433,6 +440,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -454,6 +463,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     def run_sync(
@@ -474,7 +485,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        **_deprecated_kwargs: Never,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
 
@@ -510,6 +522,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
@@ -535,7 +549,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
-            **_deprecated_kwargs,
+            output_retries=output_retries,
+            tool_retries=tool_retries,
         )
 
     @overload
@@ -557,6 +572,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -578,6 +595,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -599,7 +618,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        **_deprecated_kwargs: Never,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
@@ -633,6 +653,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
@@ -657,9 +679,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             metadata=metadata,
             infer_name=infer_name,
             toolsets=toolsets,
-            event_stream_handler=event_stream_handler,
             builtin_tools=builtin_tools,
-            **_deprecated_kwargs,
+            event_stream_handler=event_stream_handler,
+            output_retries=output_retries,
+            tool_retries=tool_retries,
         ) as result:
             yield result
 
@@ -681,6 +704,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
 
     @overload
@@ -701,6 +726,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
 
     def run_stream_events(
@@ -720,6 +747,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
@@ -772,6 +801,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
@@ -818,7 +849,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        **_deprecated_kwargs: Never,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -839,7 +871,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        **_deprecated_kwargs: Never,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -860,7 +893,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        **_deprecated_kwargs: Never,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -940,6 +974,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
@@ -977,7 +1013,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
-            **_deprecated_kwargs,
+            output_retries=output_retries,
+            tool_retries=tool_retries,
         ) as run:
             yield run
 

@@ -180,9 +180,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
+        validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy = 'early',
+        instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
+    ) -> None: ...
+
+    @overload
+    @deprecated('`retries` is deprecated, use `output_retries` and `tool_retries` instead.')
+    def __init__(
+        self,
+        model: models.Model | models.KnownModelName | str | None = None,
+        *,
+        output_type: OutputSpec[OutputDataT] = str,
+        instructions: Instructions[AgentDepsT] = None,
+        system_prompt: str | Sequence[str] = (),
+        deps_type: type[AgentDepsT] = NoneType,
+        name: str | None = None,
+        model_settings: ModelSettings | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
+        tool_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
@@ -212,6 +242,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
+        tool_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
@@ -239,6 +270,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
+        tool_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
@@ -271,10 +303,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
-            retries: The default number of retries to allow for tool calls and output validation, before raising an error.
-                For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
+            retries: Deprecated. The default number of retries to allow for tool calls and output validation, before raising an error.
+                Use `output_retries` and `tool_retries` instead. For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
-            output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
+            output_retries: The maximum number of retries to allow for output validation, defaults to `retries` if provided, otherwise 1.
+            tool_retries: The maximum number of retries to allow for tool calls, defaults to `retries` if provided, otherwise 1.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
             builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
@@ -350,8 +383,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
+        # Handle deprecated retries parameter
+        # Only warn if retries is explicitly set to something other than the default (1)
+        # We can't distinguish between "not passed" and "passed as 1", so we only warn for non-default values
+        if retries != 1:
+            warnings.warn(
+                '`retries` is deprecated, use `output_retries` and `tool_retries` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        # Determine retry values: explicit parameters > deprecated retries > default (1)
         self._max_result_retries = output_retries if output_retries is not None else retries
-        self._max_tool_retries = retries
+        self._max_tool_retries = tool_retries if tool_retries is not None else retries
+
         self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
@@ -470,6 +515,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -490,6 +537,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -510,6 +559,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -589,12 +640,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
+
+        # Determine retry values: runtime > agent defaults
+        max_result_retries = output_retries if output_retries is not None else self._max_result_retries
+        max_tool_retries = tool_retries if tool_retries is not None else None  # Pass None if no runtime override
 
         model_used = self._get_model(model)
         del model
@@ -613,10 +670,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if output_schema != self._output_schema or output_validators:
             output_toolset = output_schema.toolset
             if output_toolset:
-                output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
+        # Always update max_retries for runtime override if we have an output_toolset
+        # max_result_retries already incorporates the runtime override (output_retries) or agent default
+        if output_toolset:
+            output_toolset.max_retries = max_result_retries
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
+        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=max_tool_retries)
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
@@ -662,7 +722,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model=model_used,
             model_settings=model_settings,
             usage_limits=usage_limits,
-            max_result_retries=self._max_result_retries,
+            max_result_retries=max_result_retries,
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,

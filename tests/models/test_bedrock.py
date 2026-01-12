@@ -274,7 +274,7 @@ def test_remove_inference_geo_prefix(model_name: str, expected: str):
 
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', output_retries=5)
 
     class Response(TypedDict):
         temperature: str
@@ -426,7 +426,7 @@ async def test_bedrock_model_anthropic_model_without_tools(
 async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(
-        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
+        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, tool_retries=2
     )
 
     @agent.tool_plain

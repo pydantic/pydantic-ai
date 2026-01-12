@@ -90,6 +90,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -110,6 +112,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -130,6 +134,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -208,6 +214,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
@@ -227,6 +235,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            output_retries=output_retries,
+            tool_retries=tool_retries,
         ) as run:
             yield run
 

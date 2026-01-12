@@ -169,6 +169,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -190,6 +192,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -210,6 +214,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -246,6 +252,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
@@ -269,6 +277,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             metadata=metadata,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            output_retries=output_retries,
+            tool_retries=tool_retries,
         ) as agent_run:
             async for node in agent_run:
                 if event_stream_handler is not None and (
@@ -299,6 +309,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -320,6 +332,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     def run_sync(
@@ -340,6 +354,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
 
@@ -375,6 +391,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
@@ -399,6 +417,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler,
+                output_retries=output_retries,
+                tool_retries=tool_retries,
             )
         )
 
@@ -421,6 +441,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -442,6 +464,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -463,6 +487,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
 
@@ -508,6 +534,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
@@ -535,6 +563,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name=False,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            output_retries=output_retries,
+            tool_retries=tool_retries,
         ) as agent_run:
             first_node = agent_run.next_node  # start with the first node
             assert isinstance(first_node, _agent_graph.UserPromptNode)  # the first node should be a user prompt node
@@ -664,6 +694,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, OutputDataT]: ...
 
     @overload
@@ -684,6 +716,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, RunOutputDataT]: ...
 
     def run_stream_sync(
@@ -703,6 +737,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
 
@@ -750,6 +786,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.
@@ -773,6 +811,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler,
+                output_retries=output_retries,
+                tool_retries=tool_retries,
             ) as stream_result:
                 yield stream_result
 
@@ -797,6 +837,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
 
     @overload
@@ -817,6 +859,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
 
     def run_stream_events(
@@ -836,6 +880,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
@@ -888,6 +934,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
@@ -913,6 +961,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             metadata=metadata,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            output_retries=output_retries,
+            tool_retries=tool_retries,
         )
 
     async def _run_stream_events(
@@ -931,6 +981,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         send_stream, receive_stream = anyio.create_memory_object_stream[
             _messages.AgentStreamEvent | AgentRunResultEvent[Any]
@@ -960,6 +1012,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
                     event_stream_handler=event_stream_handler,
+                    output_retries=output_retries,
+                    tool_retries=tool_retries,
                 )
 
         task = asyncio.create_task(run_agent())
@@ -989,6 +1043,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -1009,6 +1065,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -1030,6 +1088,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        output_retries: int | None = None,
+        tool_retries: int | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -1109,6 +1169,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            output_retries: Optional override for output validation retries for this run.
+            tool_retries: Optional override for tool call retries for this run.
 
         Returns:
             The result of the run.

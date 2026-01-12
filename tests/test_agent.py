@@ -2994,7 +2994,7 @@ def test_unknown_tool_multiple_retries():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), retries=num_retries)
+    agent = Agent(FunctionModel(empty), output_retries=num_retries)
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):

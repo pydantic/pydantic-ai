@@ -35,8 +35,8 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
-    default_max_retries: int = 1
-    """Default number of times to retry a tool"""
+    default_max_retries: int | None = None
+    """Runtime override for max retries (if provided in run()), or None to use tool-specific/agent default"""
 
     @classmethod
     @contextmanager
@@ -177,7 +177,22 @@ class ToolManager(Generic[AgentDepsT]):
 
             return await self.toolset.call_tool(name, args_dict, ctx, tool)
         except (ValidationError, ModelRetry) as e:
-            max_retries = tool.max_retries if tool is not None else self.default_max_retries
+            # Precedence: runtime override > tool-specific (@agent.tool(retries=X)) > agent default (tool_retries) > deprecated retries
+            if tool is not None:
+                if self.default_max_retries is not None:
+                    # Runtime override always wins
+                    max_retries = self.default_max_retries
+                else:
+                    # No runtime override: use tool.max_retries which already contains the correct value.
+                    # When tools are retrieved via get_tools(), tool.max_retries is set to either:
+                    # - The tool's explicit retries (if @agent.tool(retries=X) was used), OR
+                    # - The toolset's max_retries (which is the agent's tool_retries from __init__)
+                    # So tool.max_retries already respects the precedence: tool-specific > agent default
+                    max_retries = tool.max_retries
+            else:
+                max_retries = (
+                    self.default_max_retries if self.default_max_retries is not None else 1
+                )  # hard-coded fallback for unknown tools
             current_retry = self.ctx.retries.get(name, 0)
 
             if current_retry == max_retries:

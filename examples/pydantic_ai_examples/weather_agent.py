@@ -37,7 +37,8 @@ weather_agent = Agent(
     # the below tools appropriately, but others like anthropic and gemini require a bit more direction.
     instructions='Be concise, reply with one sentence.',
     deps_type=Deps,
-    retries=2,
+    output_retries=2,
+    tool_retries=2,
 )
 
 

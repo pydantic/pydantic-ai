@@ -70,7 +70,7 @@ async def generate_dataset(
             ' You must not include any characters in your response before the opening { of the JSON object, or after the closing }.'
         ),
         output_type=str,
-        retries=1,
+        output_retries=1,
     )
 
     result = await agent.run(extra_instructions or 'Please generate the object.')

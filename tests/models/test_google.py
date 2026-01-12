@@ -170,7 +170,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
 async def test_google_model_structured_output(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', output_retries=5)
 
     class Response(TypedDict):
         temperature: str
@@ -564,7 +564,7 @@ print(result)\
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(
-        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
+        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, tool_retries=2
     )
 
     @agent.tool_plain
@@ -4213,7 +4213,7 @@ async def test_google_nested_models_without_native_output(allow_model_requests: 
         m,
         output_type=TopModel,
         system_prompt='You are a helpful assistant that creates structured data.',
-        retries=5,
+        output_retries=5,
     )
 
     result = await agent.run('Create a simple example with 2 pages, each with 2 items')
