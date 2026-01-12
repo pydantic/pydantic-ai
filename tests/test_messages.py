@@ -492,6 +492,14 @@ def test_file_part_has_content():
     assert filepart.has_content()
 
 
+def test_tool_call_part_has_content_with_falsy_args():
+    tool_call = ToolCallPart(tool_name='toggle_feature', args={'enabled': False})
+    assert tool_call.has_content()
+
+    tool_call.args = {'count': 0}
+    assert tool_call.has_content()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
