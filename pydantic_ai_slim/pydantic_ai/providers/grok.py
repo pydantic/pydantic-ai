@@ -48,12 +48,7 @@ GrokModelName = Literal[
     'See <https://ai.pydantic.dev/models/xai/> for more details.'
 )
 class GrokProvider(Provider[AsyncOpenAI]):
-    """Provider for Grok API (OpenAI-compatible interface).
-
-    .. deprecated::
-        Use [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] with [`XaiModel`][pydantic_ai.models.xai.XaiModel]
-        instead for the native xAI SDK.
-    """
+    """Provider for Grok API (OpenAI-compatible interface)."""
 
     @property
     def name(self) -> str:

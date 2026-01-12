@@ -1,4 +1,4 @@
-"""xAI model implementation using xAI SDK."""
+"""xAI model implementation using [xAI SDK](https://github.com/xai-org/xai-sdk-python)."""
 
 import json
 from collections import defaultdict

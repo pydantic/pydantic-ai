@@ -50,6 +50,13 @@ class XaiProvider(Provider[AsyncClient]):
         api_key: str | None = None,
         xai_client: AsyncClient | None = None,
     ) -> None:
+        """Create a new xAI provider.
+
+        Args:
+            api_key: The API key to use for authentication, if not provided, the `XAI_API_KEY` environment variable
+                will be used if available.
+            xai_client: An existing `xai_sdk.AsyncClient` to use.  This takes precedence over `api_key`.
+        """
         if xai_client is not None:
             self._client = xai_client
         else:
