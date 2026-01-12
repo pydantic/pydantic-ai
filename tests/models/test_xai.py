@@ -1,11 +1,10 @@
 """Tests for xAI model integration.
 
-Note on builtin tools testing:
-------------------------------
-xAI's builtin tools (code_execution, web_search, mcp_server) are executed server-side via gRPC.
-Since VCR doesn't support gRPC, we cannot record/replay these interactions like we do with HTTP APIs.
+The xAI SDK uses gRPC for all calls (including executing built-in tools like `code_execution`,
+`web_search`, and `mcp_server` server-side). Since VCR doesn't support gRPC, we cannot
+record/replay these interactions like we do with HTTP APIs.
 
-For builtin tool tests, we use simplified mocks that verify:
+For all xAI tests, we use simplified mocks that verify:
 1. Tools are properly registered with the xAI SDK
 2. The agent can process responses when builtin tools are enabled
 3. Builtin tools can coexist with custom (client-side) tools
@@ -266,7 +265,7 @@ async def test_xai_image_input(allow_model_requests: None):
     agent = Agent(model)
 
     image_url = ImageUrl('https://example.com/image.png')
-    binary_image = BinaryContent(b'\x89PNG', media_type='image/png')
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'high'})
 
     result = await agent.run(['Describe these inputs.', image_url, binary_image])
     assert result.output == 'done'
@@ -280,7 +279,7 @@ async def test_xai_image_input(allow_model_requests: None):
                         'content': [
                             {'text': 'Describe these inputs.'},
                             {'image_url': {'image_url': 'https://example.com/image.png', 'detail': 'DETAIL_AUTO'}},
-                            {'image_url': {'image_url': 'data:image/png;base64,iVBORw==', 'detail': 'DETAIL_AUTO'}},
+                            {'image_url': {'image_url': 'data:image/png;base64,iVBORw==', 'detail': 'DETAIL_HIGH'}},
                         ],
                         'role': 'ROLE_USER',
                     }
@@ -290,6 +289,84 @@ async def test_xai_image_input(allow_model_requests: None):
                 'response_format': None,
                 'use_encrypted_content': False,
                 'include': [],
+            }
+        ]
+    )
+
+
+async def test_xai_image_url_force_download(allow_model_requests: None) -> None:
+    """Test that force_download=True calls download_item for ImageUrl in XaiModel."""
+    from unittest.mock import AsyncMock, patch
+
+    response = create_response(content='done')
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(model)
+
+    with patch('pydantic_ai.models.xai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': 'data:image/png;base64,iVBORw==', 'data_type': 'png'}
+        await agent.run(
+            [
+                'Test image',
+                ImageUrl(
+                    url='https://example.com/image.png',
+                    media_type='image/png',
+                    force_download=True,
+                    vendor_metadata={'detail': 'high'},
+                ),
+            ]
+        )
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/image.png'
+        assert mock_download.call_args[1]['data_format'] == 'base64_uri'
+        assert mock_download.call_args[1]['type_format'] == 'extension'
+
+    # Ensure the data URI is what gets sent to xAI, not the original URL
+    assert get_mock_chat_create_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'content': [
+                    {'text': 'Test image'},
+                    {'image_url': {'image_url': 'data:image/png;base64,iVBORw==', 'detail': 'DETAIL_HIGH'}},
+                ],
+                'role': 'ROLE_USER',
+            }
+        ]
+    )
+
+
+async def test_xai_image_url_no_force_download(allow_model_requests: None) -> None:
+    """Test that force_download=False does not call download_item for ImageUrl in XaiModel."""
+    from unittest.mock import AsyncMock, patch
+
+    response = create_response(content='done')
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(model)
+
+    with patch('pydantic_ai.models.xai.download_item', new_callable=AsyncMock) as mock_download:
+        await agent.run(
+            [
+                'Test image',
+                ImageUrl(
+                    url='https://example.com/image.png',
+                    media_type='image/png',
+                    force_download=False,
+                    vendor_metadata={'detail': 'high'},
+                ),
+            ]
+        )
+        mock_download.assert_not_called()
+
+    assert get_mock_chat_create_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'content': [
+                    {'text': 'Test image'},
+                    {'image_url': {'image_url': 'https://example.com/image.png', 'detail': 'DETAIL_HIGH'}},
+                ],
+                'role': 'ROLE_USER',
             }
         ]
     )
@@ -457,6 +534,63 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 'use_encrypted_content': False,
                 'include': [],
             },
+        ]
+    )
+
+
+async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_requests: None):
+    """Test that multiple client-side ToolCallParts in history are grouped into one assistant message."""
+    response1 = create_response(
+        tool_calls=[
+            create_tool_call('call_a', 'tool_a', {}),
+            create_tool_call('call_b', 'tool_b', {}),
+        ],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        return 'b'
+
+    result = await agent.run('Run tools')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+    assistant_tool_call_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT' and m.get('tool_calls')]
+    assert assistant_tool_call_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call_a',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_a', 'arguments': '{}'},
+                    },
+                    {
+                        'id': 'call_b',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_b', 'arguments': '{}'},
+                    },
+                ],
+            }
         ]
     )
 
@@ -1042,7 +1176,12 @@ async def test_xai_stream_native_output(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+            [
+                {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
         )
         assert result.is_complete
 
@@ -1061,7 +1200,12 @@ async def test_xai_stream_tool_call_with_empty_text(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+            [
+                {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
         )
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
@@ -3488,7 +3632,14 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
 
     # Run twice to test message history containing ThinkingPart
     result1 = await agent.run('First question')
-    result2 = await agent.run('Second question', message_history=result1.new_messages())
+    # Add a foreign, empty thinking part to the message history, it should be ignored when mapping messages
+    # (covers the empty-thinking branch in xAI thinking mapping).
+    message_history: list[ModelMessage] = [
+        *result1.new_messages(),
+        ModelResponse(parts=[ThinkingPart(content='')], provider_name='other', model_name='other-model'),
+    ]
+    # Include user-supplied `<think>` tags to confirm they are treated as plain user text.
+    result2 = await agent.run('Second question <think>user think</think>', message_history=message_history)
 
     # Verify kwargs - second call should have ThinkingPart mapped with reasoning_content
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
@@ -3506,8 +3657,20 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
                 'model': XAI_REASONING_MODEL,
                 'messages': [
                     {'content': [{'text': 'First question'}], 'role': 'ROLE_USER'},
+                    {
+                        'content': [
+                            {
+                                'text': """\
+<think>
+First reasoning
+</think>\
+"""
+                            }
+                        ],
+                        'role': 'ROLE_ASSISTANT',
+                    },
                     {'content': [{'text': 'first response'}], 'role': 'ROLE_ASSISTANT'},
-                    {'content': [{'text': 'Second question'}], 'role': 'ROLE_USER'},
+                    {'content': [{'text': 'Second question <think>user think</think>'}], 'role': 'ROLE_USER'},
                 ],
                 'tools': None,
                 'tool_choice': None,
@@ -3535,8 +3698,22 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
+            ModelResponse(
+                parts=[ThinkingPart(content='')],
+                usage=RequestUsage(),
+                model_name='other-model',
+                timestamp=IsDatetime(),
+                provider_name='other',
+                provider_response_id=None,
+                finish_reason=None,
+                run_id=None,
+            ),
             ModelRequest(
-                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[
+                    UserPromptPart(
+                        content='Second question <think>user think</think>', timestamp=IsNow(tz=timezone.utc)
+                    )
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),

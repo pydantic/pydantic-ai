@@ -205,6 +205,8 @@ class XaiModel(Model):
                 if user_msg := await self._map_user_prompt(part):
                     xai_messages.append(user_msg)
             elif isinstance(part, ToolReturnPart):
+                # The model expect tool results to be added in the order they were requested by the model
+                # There is no tool_call_id associated with tool results in current models
                 xai_messages.append(tool_result(part.model_response_str()))
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
@@ -229,23 +231,15 @@ class XaiModel(Model):
             if isinstance(item, TextPart):
                 messages.append(assistant(item.content))
             elif isinstance(item, ThinkingPart):
-                if item.provider_name == self.system and (item.content or item.signature):
-                    msg = assistant('')
-                    if item.content:
-                        msg.reasoning_content = item.content
-                    if item.signature:
-                        msg.encrypted_content = item.signature
-                    messages.append(msg)
+                if (thinking_msg := self._map_thinking_part(item)) is not None:
+                    messages.append(thinking_msg)
             elif isinstance(item, ToolCallPart):
-                msg = assistant('')
-                msg.tool_calls.append(self._map_tool_call(item))
-                messages.append(msg)
+                client_side_tool_call = self._map_tool_call(item)
+                self._append_tool_call(messages, client_side_tool_call)
             elif isinstance(item, BuiltinToolCallPart):
                 builtin_call = self._map_builtin_tool_call_part(item)
                 if item.provider_name == self.system and builtin_call:
-                    msg = assistant('')
-                    msg.tool_calls.append(builtin_call)
-                    messages.append(msg)
+                    self._append_tool_call(messages, builtin_call)
                     # Track specific tool calls for status updates
                     # Note: tool_call_id is always truthy here since _map_builtin_tool_call_part
                     # returns None when tool_call_id is empty
@@ -269,6 +263,38 @@ class XaiModel(Model):
                 assert_never(item)
 
         return messages
+
+    @staticmethod
+    def _append_tool_call(messages: list[chat_types.chat_pb2.Message], tool_call: chat_types.chat_pb2.ToolCall) -> None:
+        """Append a tool call to the most recent tool-call assistant message, or create a new one.
+
+        We keep tool calls grouped to avoid generating one assistant message per tool call.
+        """
+        if messages and messages[-1].tool_calls:
+            messages[-1].tool_calls.append(tool_call)
+        else:
+            msg = assistant('')
+            msg.tool_calls.append(tool_call)
+            messages.append(msg)
+
+    def _map_thinking_part(self, item: ThinkingPart) -> chat_types.chat_pb2.Message | None:
+        """Map a `ThinkingPart` into a single xAI assistant message.
+
+        - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
+        - Non-xAI (or non-native) thinking is preserved by wrapping in the model profile's thinking tags
+        """
+        if item.provider_name == self.system and (item.content or item.signature):
+            msg = assistant('')
+            if item.content:
+                msg.reasoning_content = item.content
+            if item.signature:
+                msg.encrypted_content = item.signature
+            return msg
+        elif item.content:
+            start_tag, end_tag = self.profile.thinking_tags
+            return assistant('\n'.join([start_tag, item.content, end_tag]))
+        else:
+            return None
 
     def _map_tool_call(self, tool_call_part: ToolCallPart) -> chat_types.chat_pb2.ToolCall:
         """Map a ToolCallPart to an xAI SDK ToolCall."""
@@ -348,11 +374,18 @@ class XaiModel(Model):
                 detail: chat_types.ImageDetail = 'auto'
                 if item.vendor_metadata and 'detail' in item.vendor_metadata:
                     detail = item.vendor_metadata['detail']
-                content_items.append(image(item.url, detail=detail))
+                image_url = item.url
+                if item.force_download:
+                    downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
+                    image_url = downloaded['data']
+                content_items.append(image(image_url, detail=detail))
             elif isinstance(item, BinaryContent):
                 if item.is_image:
                     # Convert binary content to data URI and use image()
-                    content_items.append(image(item.data_uri, detail='auto'))
+                    image_detail: chat_types.ImageDetail = 'auto'
+                    if item.vendor_metadata and 'detail' in item.vendor_metadata:
+                        image_detail = item.vendor_metadata['detail']
+                    content_items.append(image(item.data_uri, detail=image_detail))
                 elif item.is_audio:
                     raise NotImplementedError('AudioUrl/BinaryContent with audio is not supported by xAI SDK')
                 elif item.is_document:
