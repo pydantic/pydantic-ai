@@ -1,5 +1,4 @@
 ---
-title: "Pydantic AI: pydantic_ai.toolsets Reference"
 description: "API documentation for the toolsets module. Classes and methods for grouping, managing, and injecting collections of tools into AI agents."
 ---
 # `pydantic_ai.toolsets`

@@ -1,5 +1,4 @@
 ---
-title: "pydantic_ai.durable_exec | Temporal Durable Execution"
 description: "Technical API reference for the durable_exec module. Build stateful, fault-tolerant AI agents that can persist across restarts and crashes."
 ---
 # `pydantic_ai.durable_exec`

@@ -1,5 +1,4 @@
 ---
-title: "pydantic_ai.agent | Pydantic AI Agent API Reference"
 description: "The core API reference for the Agent class. Details on agent initialization, running queries, handling streaming results, and dependency management."
 ---
 # `pydantic_ai.agent`

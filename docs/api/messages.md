@@ -1,5 +1,4 @@
 ---
-title: "pydantic_ai.messages: Documentation"
 description: "Explore the messages module in Pydantic AI. Detailed guide on message types, prompt construction, and internal data structures for LLM communication."
 ---
 # `pydantic_ai.messages`
