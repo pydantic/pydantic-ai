@@ -56,10 +56,9 @@ dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 outlines-transformers = ["pydantic-ai-slim[outlines-transformers]=={{ version }}"]
 outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
-outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
+outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}"]
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
-sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -76,7 +75,6 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
-pydantic-docs = { git = "https://github.com/pydantic/pydantic-docs" }
 
 [tool.uv.workspace]
 members = [
@@ -99,13 +97,13 @@ dev = [
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
     "inline-snapshot>=0.19.3",
-    "pytest>=9.0.0",
+    "pytest>=8.3.3",
     "pytest-examples>=0.0.18",
     "pytest-mock>=3.14.0",
     "pytest-pretty>=1.3.0",
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
-    "boto3-stubs[bedrock-runtime]>=1.42.13",
+    "boto3-stubs[bedrock-runtime]",
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
@@ -120,22 +118,18 @@ docs = [
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
     "mkdocs-llmstxt>=0.2.0",
-    "mkdocs-redirects>=1.2.2",
-    "mkdocs-material[imaging]>=9.7.0",
-    "mkdocstrings-python>=2.0.0",
+    'mkdocs-redirects>=1.2.2',
+    "mkdocs-material[imaging]>=9.5.45",
+    "mkdocstrings-python>=1.12.2",
     "griffe-warnings-deprecated>=1.1.0",
-    "pydantic-docs",
 ]
 docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
 
 [tool.hatch.build.targets.wheel]
-bypass-selection = true
+only-include = ["/README.md"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/README.md", "/Makefile"]
-# We are excluding the tests because we have 100MB of test data in this repository.
-# Obviously that's a problem, but for now, we'll just exclude them.
-exclude = ["/tests"]
+include = ["/README.md", "/Makefile", "/tests"]
 
 [tool.ruff]
 line-length = 120
@@ -151,7 +145,6 @@ include = [
 ]
 
 [tool.ruff.lint]
-preview = true  # For `PLW1514`
 extend-select = [
     "Q",
     "RUF100",
@@ -161,7 +154,6 @@ extend-select = [
     "I",
     "D",
     "TID251",
-    "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
@@ -184,7 +176,6 @@ convention = "google"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
-"typing.assert_never".msg = "Use typing_extensions.assert_never instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
@@ -197,7 +188,7 @@ quote-style = "single"
 "docs/**/*.py" = ["D"]
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
@@ -215,10 +206,7 @@ venvPath = '.'
 venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
-# Relax strict unknown-type rules for specific test files due to pytest.raises(ExceptionGroup) typing limitations
 executionEnvironments = [
-    { root = "tests/evals", reportUnusedFunction = false, reportPrivateImportUsage = false, reportUnknownVariableType = false, reportUnknownMemberType = false },
-    { root = "tests/models/test_fallback.py", reportUnusedFunction = false, reportPrivateImportUsage = false, reportUnknownVariableType = false, reportUnknownMemberType = false, reportUnknownArgumentType = false },
     { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
@@ -249,6 +237,7 @@ filterwarnings = [
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
 ]
+# addopts = ["--inline-snapshot=create,fix"]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
@@ -264,11 +253,9 @@ include = [
     "tests/**/*.py",
 ]
 omit = [
+    "tests/test_live.py",
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
-    # TODO(Marcelo): Enable prefect coverage again.
-    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
-    "tests/test_prefect.py",
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
@@ -312,8 +299,6 @@ exclude_lines = [
     'except ImportError as _import_error:',
     '$\s*pass$',
     'assert False',
-    '@pytest\.mark\.skip',
-    '@pytest\.mark\.xfail',
 ]
 
 [tool.logfire]
