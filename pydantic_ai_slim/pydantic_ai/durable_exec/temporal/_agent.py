@@ -241,9 +241,18 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         # Process additional toolsets (if provided)
         # Temporalize named toolsets and store the mapping
-        self._named_toolsets: Mapping[str, AbstractToolset[AgentDepsT]] = {
-            name: toolset.visit_and_replace(temporalize_toolset) for name, toolset in (toolsets or {}).items()
-        }
+        # Also track original toolset id -> temporalized toolset for CombinedToolset support
+        self._original_to_temporal: dict[int, AbstractToolset[AgentDepsT]] = {}
+        self._named_toolsets: Mapping[str, AbstractToolset[AgentDepsT]] = {}
+
+        if toolsets:
+            named_toolsets: dict[str, AbstractToolset[AgentDepsT]] = {}
+            for name, toolset in toolsets.items():
+                temporalized = toolset.visit_and_replace(temporalize_toolset)
+                named_toolsets[name] = temporalized
+                # Track mapping from original toolset id to temporalized version
+                self._original_to_temporal[id(toolset)] = temporalized
+            self._named_toolsets = named_toolsets
 
         self._temporal_activities = activities
 
@@ -355,20 +364,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 # Already a temporal wrapper: use as-is
                 resolved_toolsets.append(t)
             else:
-                # Original toolset instance: find its temporal wrapper
-                # Check if this toolset instance is wrapped in any of our named toolsets
-                wrapper = next(
-                    (
-                        wrapper
-                        for wrapper in self._named_toolsets.values()
-                        if isinstance(wrapper, TemporalWrapperToolset) and wrapper.wrapped is t
-                    ),
-                    None,
-                )
-                if wrapper is not None:
-                    resolved_toolsets.append(wrapper)
+                # Original toolset instance: find its temporal wrapper using object id
+                # This works for CombinedToolset and other composite toolsets
+                temporalized = self._original_to_temporal.get(id(t))
+                if temporalized is not None:
+                    resolved_toolsets.append(temporalized)
                 else:
-                    # Not found in named toolsets, use as-is (will be validated later)
+                    # Not found in mapping, use as-is (will be validated later)
                     resolved_toolsets.append(t)
         return resolved_toolsets
 
