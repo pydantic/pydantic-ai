@@ -64,6 +64,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -2980,6 +2981,73 @@ def test_unknown_tool_fix():
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=65, output_tokens=3),
+                model_name='function:empty:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_unknown_tool_multiple_retries():
+    num_retries = 2
+
+    def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
+
+    agent = Agent(FunctionModel(empty), retries=num_retries)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+            agent.run_sync('Hello')
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:empty:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='foobar',
+                        content="Unknown tool name: 'foobar'. No tools available.",
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=65, output_tokens=4),
+                model_name='function:empty:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='foobar',
+                        content="Unknown tool name: 'foobar'. No tools available.",
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=79, output_tokens=6),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -7524,3 +7592,43 @@ async def test_dynamic_tool_in_run_call():
     assert isinstance(tool, WebSearchTool)
     assert tool.user_location is not None
     assert tool.user_location.get('city') == 'Berlin'
+
+
+async def test_central_content_filter_handling():
+    """
+    Test that the agent graph correctly raises ContentFilterError
+    when a model returns finish_reason='content_filter' AND empty content.
+    """
+
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[],
+            model_name='test-model',
+            finish_reason='content_filter',
+            provider_details={'finish_reason': 'content_filter'},
+        )
+
+    model = FunctionModel(function=filtered_response, model_name='test-model')
+    agent = Agent(model)
+
+    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
+        await agent.run('Trigger filter')
+
+
+async def test_central_content_filter_with_partial_content():
+    """
+    Test that the agent graph returns partial content (does not raise exception)
+    even if finish_reason='content_filter', provided parts are not empty.
+    """
+
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('Partially generated content...')], model_name='test-model', finish_reason='content_filter'
+        )
+
+    model = FunctionModel(function=filtered_response, model_name='test-model')
+    agent = Agent(model)
+
+    # Should NOT raise ContentFilterError
+    result = await agent.run('Trigger filter')
+    assert result.output == 'Partially generated content...'

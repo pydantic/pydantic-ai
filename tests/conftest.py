@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
@@ -38,6 +39,7 @@ __all__ = (
     'TestEnv',
     'ClientWithHandler',
     'try_import',
+    'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -110,6 +112,23 @@ else:
                 return super().equals(other)
             else:
                 return other == self._first_other
+
+
+SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
+
+
+@customize_repr
+def _(value: bytes):  # pragma: no cover
+    """Use IsBytes() for large byte sequences in snapshots."""
+    if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
+        return 'IsBytes()'
+    return bytes.__repr__(value)
+
+
+@customize_repr
+def _(value: datetime):  # pragma: no cover
+    """Use IsDatetime() for datetime values in snapshots."""
+    return 'IsDatetime()'
 
 
 class TestEnv:
@@ -438,15 +457,24 @@ def bedrock_provider():
 
         from pydantic_ai.providers.bedrock import BedrockProvider
 
-        bedrock_client = boto3.client(
-            'bedrock-runtime',
-            region_name=os.getenv('AWS_REGION', 'us-east-1'),
-            aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
-            aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
-            aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
-        )
-        yield BedrockProvider(bedrock_client=bedrock_client)
-        bedrock_client.close()
+        bearer_token = os.getenv('AWS_BEARER_TOKEN_BEDROCK')
+        if bearer_token:  # pragma: no cover
+            provider = BedrockProvider(
+                api_key=bearer_token,
+                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+            )
+            yield provider
+            provider.client.close()
+        else:
+            bedrock_client = boto3.client(
+                'bedrock-runtime',
+                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
+                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+                aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+            )
+            yield BedrockProvider(bedrock_client=bedrock_client)
+            bedrock_client.close()
     except ImportError:  # pragma: lax no cover
         pytest.skip('boto3 is not installed')
 

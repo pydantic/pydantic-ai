@@ -779,14 +779,16 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
     elif isinstance(content, list):
         for chunk in content:
             if isinstance(chunk, MistralTextChunk):
-                text = text or '' + chunk.text
+                text = (text or '') + chunk.text
             elif isinstance(chunk, MistralThinkChunk):
                 for thought in chunk.thinking:
                     if thought.type == 'text':  # pragma: no branch
                         thinking.append(thought.text)
+            elif isinstance(chunk, MistralReferenceChunk):
+                pass  # Reference chunks are not yet supported, skip silently
             else:
                 assert False, (  # pragma: no cover
-                    f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
+                    f'Other data types like (Image) are not yet supported, got {type(chunk)}'
                 )
     elif isinstance(content, str):
         text = content
