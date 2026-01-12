@@ -121,15 +121,19 @@ class ModelSettings(TypedDict, total=False):
     See the [Tool Choice guide](tool-choice.md) for detailed documentation
     and examples.
 
-    Warning: when using `'required'` or passing a list of tool names, the model will be unable to
-    respond with text directly. Use these settings only with [direct model requests](https://ai.pydantic.dev/direct/).
-
     * `None` (default): Defaults to `'auto'` behavior
     * `'auto'`: All tools available, model decides whether to use them
     * `'none'`: Disables function tools; model responds with text only (output tools remain for structured output)
-    * `'required'`: Forces tool use; no output tools sent (for direct model requests only)
-    * `list[str]`: Only specified tools available; no output tools sent (for direct model requests only)
+    * `'required'`: Forces tool use; excludes output tools so agent cannot complete (use with `model.request()` only)
+    * `list[str]`: Only specified tools; excludes output tools so agent cannot complete (use with `model.request()` only)
     * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
+
+    Note: `'required'` and `list[str]` raise an error in `agent.run()` because they prevent the agent from
+    producing a final response. Use [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] to combine specific
+    function tools with output capability, or use [direct model requests](direct.md) for single API calls.
+
+    TODO(prepare_model_settings): Update this to note that the hook CAN return 'required' or list[str]
+    for per-step control since the hook applies to individual model requests, not the entire run.
 
     Supported by:
 
