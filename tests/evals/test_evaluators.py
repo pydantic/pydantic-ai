@@ -138,6 +138,9 @@ async def test_llm_judge_serialization():
         def system(self) -> str:
             return 'my-system'
 
+    model = MyModel()
+    assert model.fully_qualified_model_name == 'my-system:my-model'
+
     adapter = TypeAdapter(Evaluator)
 
     assert adapter.dump_python(LLMJudge(rubric='my rubric', model=MyModel())) == {
