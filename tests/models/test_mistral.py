@@ -2392,7 +2392,11 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
                         provider_name='openai',
                     ),
-                    TextPart(content=IsStr(), id='msg_68bb64663d1c8196b9c7e78e7018cc4103498c8aa840cf12'),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68bb64663d1c8196b9c7e78e7018cc4103498c8aa840cf12',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
                 model_name='o3-mini-2025-01-31',

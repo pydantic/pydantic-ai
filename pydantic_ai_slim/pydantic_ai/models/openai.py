@@ -1336,17 +1336,14 @@ class OpenAIResponsesModel(Model):
                             TextPart(
                                 content.text,
                                 id=item.id,
-                                provider_name=self.system if part_provider_details else None,
+                                provider_name=self.system,
                                 provider_details=part_provider_details,
                             )
                         )
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(
-                        item.name,
-                        item.arguments,
-                        tool_call_id=item.call_id,
-                        id=item.id,
+                        item.name, item.arguments, tool_call_id=item.call_id, id=item.id, provider_name=self.system
                     )
                 )
             elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
@@ -2289,6 +2286,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args=chunk.item.arguments,
                         tool_call_id=chunk.item.call_id,
                         id=chunk.item.id,
+                        provider_name=self.provider_name,
+                        provider_details=self.provider_details,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
                     pass
@@ -2452,7 +2451,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(
-                    vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
+                    vendor_part_id=chunk.item_id,
+                    content=chunk.delta,
+                    id=chunk.item_id,
+                    provider_name=self.provider_name,
+                    provider_details=self.provider_details,
                 ):
                     yield event
 
