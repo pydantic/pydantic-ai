@@ -381,6 +381,7 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ToolOrOutput
 
 agent = Agent(TestModel())
 
@@ -397,8 +398,11 @@ def get_time(city: str) -> str:
 
 # Pass tool_choice via model_settings
 result = agent.run_sync('Hello', model_settings={'tool_choice': 'none'})
-result = agent.run_sync('Hello', model_settings={'tool_choice': 'required'})
-result = agent.run_sync('Hello', model_settings={'tool_choice': ['get_weather']})
+
+# Use ToolOrOutput to restrict to specific function tools while allowing output
+result = agent.run_sync(
+    'Hello', model_settings={'tool_choice': ToolOrOutput(function_tools=['get_weather'])}
+)
 ```
 
 ### Provider Support
