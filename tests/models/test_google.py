@@ -5489,3 +5489,52 @@ async def test_message_conversion_splits_tool_return_from_user_prompt(google_pro
             {'role': 'user', 'parts': [{'text': "What's 2 + 2?"}]},
         ]
     )
+
+
+async def test_message_conversion_splits_tool_return_from_retry_prompt(google_provider: GoogleProvider):
+    """Tool return followed by generic retry prompt should be split into separate content objects.
+
+    Covers the `RetryPromptPart(tool_name=None)` path in `GoogleModel._map_messages`.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
+                RetryPromptPart(content='Please try again.', tool_name=None),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': """
+Validation feedback:
+Please try again.
+
+Fix the errors and try again.\
+"""
+                    }
+                ],
+            },
+        ]
+    )
