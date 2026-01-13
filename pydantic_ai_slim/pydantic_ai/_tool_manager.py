@@ -395,13 +395,17 @@ class ToolManager(Generic[AgentDepsT]):
             # For partial acceptance to work:
             # 1. Policy must allow it (defaults to True; if no policy is set, we use the default True)
             # 2. The tool's ToolPolicy must have partial_acceptance != False (None means inherit default True)
+            #    If the tool has no usage_policy, it inherits the policy-level setting (defaulting to True)
             policy_allows_partial = policy is None or policy.partial_acceptance is not False
-            if not (
-                policy_allows_partial
-                and (tool := self.tools.get(tool_name)) is not None
-                and (usage_policy := tool.usage_policy) is not None
-                and usage_policy.partial_acceptance is not False  # None means inherit default True
-            ):
+            tool = self.tools.get(tool_name)
+            # Tool allows partial if: no tool, no usage_policy (inherits default True),
+            # or usage_policy.partial_acceptance is not explicitly False
+            tool_allows_partial = (
+                tool is None  # Unknown tool - allow through, will fail later with proper error
+                or tool.usage_policy is None  # No policy on tool - inherits default True behavior
+                or tool.usage_policy.partial_acceptance is not False  # None means inherit default True
+            )
+            if not (policy_allows_partial and tool_allows_partial):
                 return f'Tool use limit reached for tool "{tool_name}".'
 
         # Check incremental call for tool

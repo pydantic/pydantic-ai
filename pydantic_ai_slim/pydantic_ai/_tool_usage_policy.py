@@ -34,16 +34,17 @@ class ToolPolicy:
     """
 
     max_uses: int | None = None
-    """Maximum number of successful calls allowed for this tool across the entire agent run.
+    """Maximum number of successful uses allowed for this tool across the entire agent run.
 
-    Once reached, the tool will be excluded from the available tools list and any
-    further calls will return an error message to the model.
+    Once reached, the tool will be excluded from the available tools list in subsequent
+    steps. In the current step, further calls are rejected with an error message to
+    the model.
 
     Set to `None` for unlimited (default).
     """
 
     max_uses_per_step: int | None = None
-    """Maximum number of successful calls allowed for this tool within a single run step.
+    """Maximum number of successful uses allowed for this tool within a single run step.
 
     A "step" is one iteration of: model request → tool calls → response. This counter
     resets at the start of each new step.
@@ -63,10 +64,13 @@ class ToolPolicy:
       succeed together for correct behavior.
     - `None` (default): Inherit the default behavior (equivalent to `True`).
 
-    Note:
-        The policy-level [`ToolsPolicy.partial_acceptance`][pydantic_ai.ToolsPolicy.partial_acceptance]
-        acts as a master switch—if the policy has `partial_acceptance=False`, this per-tool
-        setting has no effect and all calls will be rejected when limits are exceeded.
+    Inheritance behavior:
+        - If a tool has no `usage_policy` set, it inherits the policy-level
+          `partial_acceptance` setting from [`ToolsPolicy`][pydantic_ai.ToolsPolicy].
+        - If no policy is set either, the default `True` behavior is used.
+        - The policy-level [`ToolsPolicy.partial_acceptance`][pydantic_ai.ToolsPolicy.partial_acceptance]
+          acts as a master switch—if the policy has `partial_acceptance=False`, this per-tool
+          setting has no effect and all calls will be rejected when limits are exceeded.
 
     Example:
         ```python
@@ -91,7 +95,7 @@ class ToolsPolicy(ToolPolicy):
     This class extends [`ToolPolicy`][pydantic_ai.ToolPolicy] with:
 
     1. **Aggregate limits** (`max_uses`, `max_uses_per_step`):
-       These apply to the **total** number of tool calls across all tools combined.
+       These apply to the **total** number of successful tool uses across all tools combined.
 
     2. **Per-tool overrides** (`per_tool`): A dict mapping tool names to
        [`ToolPolicy`][pydantic_ai.ToolPolicy], allowing you to set specific
@@ -108,7 +112,7 @@ class ToolsPolicy(ToolPolicy):
         ```python
         from pydantic_ai import Agent, ToolsPolicy, ToolPolicy
 
-        # Agent can make at most 5 tool calls per step, 20 total (across ALL tools)
+        # Agent can make at most 5 successful tool uses per step, 20 total (across ALL tools)
         agent = Agent(
             'openai:gpt-4o',
             tools_policy=ToolsPolicy(max_uses=20, max_uses_per_step=5)
@@ -116,10 +120,10 @@ class ToolsPolicy(ToolPolicy):
 
         # Set per-tool limits for specific tools
         policy = ToolsPolicy(
-            max_uses=50,  # Aggregate: max 50 tool calls total across all tools
+            max_uses=50,  # Aggregate: max 50 successful tool uses total across all tools
             per_tool={
-                'expensive_api_call': ToolPolicy(max_uses=3),  # Per-tool: max 3 calls
-                'cheap_lookup': ToolPolicy(max_uses=100),  # Per-tool: max 100 calls
+                'expensive_api_call': ToolPolicy(max_uses=3),  # Per-tool: max 3 uses
+                'cheap_lookup': ToolPolicy(max_uses=100),  # Per-tool: max 100 uses
             }
         )
         ```
@@ -138,7 +142,7 @@ class ToolsPolicy(ToolPolicy):
     `@agent.tool(usage_policy=...)`. See [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset]
     for the merging behavior.
 
-    Note: These are **per-tool** limits (e.g., "tool X can be called at most 3 times"),
+    Note: These are **per-tool** limits (e.g., "tool X can be used at most 3 times"),
     not to be confused with the **aggregate** limits inherited from `ToolPolicy` (`max_uses`, etc.)
-    which apply to the total number of calls across all tools.
+    which apply to the total number of successful uses across all tools.
     """

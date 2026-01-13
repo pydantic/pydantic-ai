@@ -679,7 +679,7 @@ except UsageLimitExceeded as e:
 
 ##### Soft Tool Use Limits
 
-If you want to limit successful tool uses but let the model decide how to proceed instead of raising an error, use the [`ToolsPolicy`][pydantic_ai.ToolsPolicy]. When exceeded, instead of executing the tool, the agent returns a message to the model (`'Tool call limit reached for tool "{tool_name}".'`), allowing it to adapt gracefully rather than raising a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception.
+If you want to limit successful tool uses but let the model decide how to proceed instead of raising an error, use the [`ToolsPolicy`][pydantic_ai.ToolsPolicy]. When exceeded, instead of executing the tool, the agent returns a message to the model (`'Tool use limit reached for tool "{tool_name}".'`), allowing it to adapt gracefully rather than raising a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception.
 
 ```py
 from pydantic_ai import Agent, ToolsPolicy

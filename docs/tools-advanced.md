@@ -439,25 +439,23 @@ def fetch_record(record_id: int) -> str:
     return f'Record {record_id}: data...'
 
 
-# The tool will be available for the first 3 calls, then removed
+# The tool will be available for the first 3 successful uses, then removed
 result = agent.run_sync('Fetch records 1, 2, 3, and 4')
-print(result.output)
-#> {"fetch_record":"Record 0: data..."}
 ```
 
 `ToolPolicy` provides the following options:
 
 | Option | Description |
 | ------ | ----------- |
-| `max_uses` | Maximum calls allowed across the entire run. Once reached, the tool is removed from available tools. |
-| `max_uses_per_step` | Maximum calls allowed within a single step (model request → tool calls → response). Resets each step. |
-| `partial_acceptance` | When `False`, reject all calls to this tool if the batch would exceed limits (default: `True`). |
+| `max_uses` | Maximum successful uses allowed across the entire run. Once reached, the tool is removed from available tools in subsequent steps. In the current step, further calls are rejected with a message. |
+| `max_uses_per_step` | Maximum successful uses allowed within a single step (model request → tool calls → response). Resets each step. |
+| `partial_acceptance` | When `False`, reject all calls to this tool if the batch would exceed limits (default: `None`, inherits `True` behavior). |
 
 This is useful when you want to limit specific expensive or rate-limited tools while leaving others unrestricted.
 
 #### Agent-Wide Limits with `ToolsPolicy`
 
-Use [`ToolsPolicy`][pydantic_ai.ToolsPolicy] to limit the total number of tool calls across all tools within a run. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
+Use [`ToolsPolicy`][pydantic_ai.ToolsPolicy] to limit the total number of successful tool uses across all tools within a run. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
 
 ```python
 from pydantic_ai import Agent, ToolsPolicy
@@ -496,10 +494,10 @@ result = agent.run_sync('Quick search only', tools_policy=ToolsPolicy(max_uses=2
 
 | Option | Description |
 | ------ | ----------- |
-| `max_uses` | Maximum total calls allowed across all tools for the entire run. |
-| `max_uses_per_step` | Maximum total calls allowed across all tools within a single step. |
+| `max_uses` | Maximum total successful uses allowed across all tools for the entire run. |
+| `max_uses_per_step` | Maximum total successful uses allowed across all tools within a single step. |
 | `per_tool` | A dict mapping tool names to `ToolPolicy` for per-tool overrides. |
-| `partial_acceptance` | Master switch for partial acceptance behavior (default: `True`). |
+| `partial_acceptance` | Master switch for partial acceptance behavior (default: `None`, inherits `True` behavior). |
 
 #### Partial Acceptance vs All-or-Nothing
 
