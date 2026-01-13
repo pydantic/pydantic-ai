@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -4067,5 +4068,10 @@ async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_
     agent = Agent(model, tools=[get_weather])
 
     settings: ModelSettings = {'tool_choice': 'required'}
-    with pytest.raises(UserError, match="tool_choice='required' is not supported by model 'custom-model'"):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "tool_choice='required' is not supported in agent.run() because it prevents the agent from producing a final response. Use ToolOrOutput to combine specific tools with output capability, or use model.request() for direct model calls."
+        ),
+    ):
         await agent.run('What is the weather?', model_settings=settings)
