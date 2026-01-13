@@ -1,3 +1,7 @@
+---
+title: Pydantic AI Advanced Tool Features
+description: "Master advanced tool patterns in Pydantic AI. Learn about tool dependency injection, dynamic tool selection, and advanced result handling."
+---
 # Advanced Tool Features
 
 This page covers advanced features for function tools in Pydantic AI. For basic tool usage, see the [Function Tools](tools.md) documentation.

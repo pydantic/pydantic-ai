@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI: LLM Provider Built-in Tools Documentation"
+description: "Leverage native capabilities provided by LLM vendors. Documentation on using built-in tools like web search or code execution within Pydantic AI."
+---
 # Built-in Tools
 
 Built-in tools are native tools provided by LLM providers that can be used to enhance your agent's capabilities. Unlike [common tools](common-tools.md), which are custom implementations that Pydantic AI executes, built-in tools are executed directly by the model provider.

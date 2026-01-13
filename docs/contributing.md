@@ -1,3 +1,7 @@
+---
+title: "Contributing to Pydantic AI on GitHub: Guide"
+description: "Join the Pydantic AI development community. Guide on setting up the environment, submitting pull requests, and contributing."
+---
 We'd love you to contribute to Pydantic AI!
 
 ## Installation and Setup

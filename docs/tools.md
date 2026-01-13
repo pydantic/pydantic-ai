@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI: Function Tools and Toolsets"
+description: "Enhance AI agents with function tools and toolsets. Define Python functions that LLMs can call with full validation, type safety, and context awareness."
+---
 # Function Tools
 
 Function tools provide a mechanism for models to perform actions and retrieve extra information to help them generate a response.

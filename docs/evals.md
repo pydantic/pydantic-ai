@@ -1,7 +1,7 @@
 ---
-title: Pydantic Evals
+title: "Pydantic Evals Docs: Code-First AI Evaluation Framework"
+description: "Test and validate LLM outputs with Pydantic Evals. A code-first framework for evaluating GenAI performance using Python-based validation and monitoring."
 ---
-
 # Pydantic Evals
 
 **Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications.
