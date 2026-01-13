@@ -11,7 +11,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, cast, overload
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
@@ -173,6 +173,36 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
 
 
+class _AzureContentFilterResultDetail(BaseModel):
+    filtered: bool
+    severity: str | None = None
+    detected: bool | None = None
+
+
+class _AzureContentFilterResult(BaseModel):
+    hate: _AzureContentFilterResultDetail | None = None
+    self_harm: _AzureContentFilterResultDetail | None = None
+    sexual: _AzureContentFilterResultDetail | None = None
+    violence: _AzureContentFilterResultDetail | None = None
+    jailbreak: _AzureContentFilterResultDetail | None = None
+    profanity: _AzureContentFilterResultDetail | None = None
+
+
+class _AzureInnerError(BaseModel):
+    code: str
+    content_filter_result: _AzureContentFilterResult
+
+
+class _AzureError(BaseModel):
+    code: str
+    message: str
+    innererror: _AzureInnerError | None = None
+
+
+class _AzureErrorResponse(BaseModel):
+    error: _AzureError
+
+
 def _resolve_openai_image_generation_size(
     tool: ImageGenerationTool,
 ) -> _OPENAI_IMAGE_SIZE:
@@ -201,6 +231,36 @@ def _resolve_openai_image_generation_size(
         )
 
     return mapped_size
+
+
+def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str) -> ModelResponse | None:
+    """Check if the error is an Azure content filter error."""
+    # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
+    body_any: Any = e.body
+
+    if system == 'azure' and e.status_code == 400 and isinstance(body_any, dict):
+        try:
+            error_data = _AzureErrorResponse.model_validate(body_any)
+
+            if error_data.error.code == 'content_filter':
+                provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
+
+                if error_data.error.innererror:
+                    provider_details['content_filter_result'] = (
+                        error_data.error.innererror.content_filter_result.model_dump(exclude_none=True)
+                    )
+
+                return ModelResponse(
+                    parts=[],  # Empty parts to trigger content filter error in agent graph
+                    model_name=model_name,
+                    timestamp=_utils.now_utc(),
+                    provider_name=system,
+                    finish_reason='content_filter',
+                    provider_details=provider_details,
+                )
+        except ValidationError:
+            pass
+    return None
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -499,6 +559,11 @@ class OpenAIChatModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
+
+        # Handle ModelResponse returned directly (for content filters)
+        if isinstance(response, ModelResponse):
+            return response
+
         model_response = self._process_response(response)
         return model_response
 
@@ -537,7 +602,7 @@ class OpenAIChatModel(Model):
         stream: Literal[False],
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion: ...
+    ) -> chat.ChatCompletion | ModelResponse: ...
 
     async def _completions_create(
         self,
@@ -545,7 +610,7 @@ class OpenAIChatModel(Model):
         stream: bool,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
@@ -609,6 +674,8 @@ class OpenAIChatModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -654,6 +721,7 @@ class OpenAIChatModel(Model):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
+
         items: list[ModelResponsePart] = []
 
         if thinking_parts := self._process_thinking(choice.message):
@@ -1181,6 +1249,11 @@ class OpenAIResponsesModel(Model):
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
+
+        # Handle ModelResponse
+        if isinstance(response, ModelResponse):
+            return response
+
         return self._process_response(response, model_request_parameters)
 
     @asynccontextmanager
@@ -1366,7 +1439,7 @@ class OpenAIResponsesModel(Model):
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         tools = (
             self._get_builtin_tools(model_request_parameters)
             + list(model_settings.get('openai_builtin_tools', []))
@@ -1468,6 +1541,9 @@ class OpenAIResponsesModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
+
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -2151,6 +2227,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                 )
+
                 if raw_finish_reason:  # pragma: no branch
                     self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
