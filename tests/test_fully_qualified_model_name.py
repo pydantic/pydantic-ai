@@ -10,6 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 
+openai = pytest.importorskip("openai")
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
