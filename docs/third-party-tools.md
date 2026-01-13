@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI Third-Party Tool Integration: LangChain & More"
+description: Integrate tools from other ecosystems into Pydantic AI. Use LangChain tools or other Python libraries with full validation and agent compatibility.
+---
 # Third-Party Tools
 
 Pydantic AI supports integration with various third-party tool libraries, allowing you to leverage existing tool ecosystems in your agents.

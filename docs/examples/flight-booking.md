@@ -1,3 +1,7 @@
+---
+title: "Multi-Agent Flight Booking: Pydantic AI Example"
+description: "A complex example demonstrating multi-agent orchestration for flight search and booking. See how Pydantic AI handles state and hand-offs."
+---
 Example of a multi-agent flow where one agent delegates work to another, then hands off control to a third agent.
 
 Demonstrates:

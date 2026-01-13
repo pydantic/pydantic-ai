@@ -1,3 +1,7 @@
+---
+title: "Pydantic Evals: Intro & Quick Start Guide"
+description: "Get up and running with Pydantic Evals in minutes. Step-by-step guide to installing the framework and running your first AI evaluation test."
+---
 # Pydantic Evals
 
 **Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications.

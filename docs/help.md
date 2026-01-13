@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI Support: Slack Channels & GitHub"
+description: "Get support for Pydantic AI. Links to our community Slack, GitHub discussions, issue tracker, and resources for troubleshooting and learning."
+---
 # Getting Help
 
 If you need help getting started with Pydantic AI or with advanced usage, the following sources may be useful.
