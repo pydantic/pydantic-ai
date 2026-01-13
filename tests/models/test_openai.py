@@ -759,7 +759,6 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
-                {},
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
