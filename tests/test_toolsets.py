@@ -18,7 +18,9 @@ from pydantic_ai import (
     PrefixedToolset,
     PreparedToolset,
     ToolCallPart,
+    ToolPolicy,
     ToolsetTool,
+    ToolsPolicy,
     WrapperToolset,
 )
 from pydantic_ai._run_context import RunContext
@@ -880,3 +882,43 @@ def test_agent_toolset_decorator_id():
     # Third toolset should have explicit id
     assert isinstance(toolsets[2], DynamicToolset)
     assert toolsets[2].id == 'custom_id'
+
+
+async def test_combined_toolset_policy_per_tool_merge():
+    """Test that CombinedToolset merges per_tool policy limits with tool's own policy."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool
+    def tool_no_policy(ctx: RunContext[None]) -> str:
+        return 'no_policy'  # pragma: no cover
+
+    @toolset.tool(usage_policy=ToolPolicy(max_uses=5, max_uses_per_step=2))
+    def tool_with_policy(ctx: RunContext[None]) -> str:
+        return 'with_policy'  # pragma: no cover
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=1,
+        tools_policy=ToolsPolicy(
+            per_tool={
+                'tool_no_policy': ToolPolicy(max_uses=10),
+                'tool_with_policy': ToolPolicy(max_uses=20),
+            }
+        ),
+    )
+
+    combined = CombinedToolset([toolset])
+    tool_manager = await ToolManager[None](combined).for_run_step(ctx)
+    assert tool_manager.tools is not None
+
+    tool_no_policy_entry = tool_manager.tools.get('tool_no_policy')
+    assert tool_no_policy_entry is not None
+    assert tool_no_policy_entry.usage_policy == snapshot(ToolPolicy(max_uses=10))
+
+    tool_with_policy_entry = tool_manager.tools.get('tool_with_policy')
+    assert tool_with_policy_entry is not None
+    assert tool_with_policy_entry.usage_policy == snapshot(ToolPolicy(max_uses=20, max_uses_per_step=2))
