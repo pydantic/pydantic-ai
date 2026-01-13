@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    DocumentUrl,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -648,3 +649,23 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
     result = model._process_response(response)  # type: ignore[reportPrivateUsage]
     text_part = cast(TextPart, result.parts[0])
     assert text_part.content == 'According to the source, this is the answer.'
+
+
+async def test_openrouter_document_url_no_force_download(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Test that OpenRouter passes DocumentUrl directly without downloading when force_download=False.
+
+    OpenRouter supports file URLs directly in the Chat API, unlike native OpenAI which only
+    supports base64-encoded data. This test verifies that when using OpenRouter, the URL
+    is passed directly without being downloaded first.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    agent = Agent(model)
+
+    document_url = DocumentUrl(
+        url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+        force_download=False,
+    )
+
+    result = await agent.run(['What is the main content of this document?', document_url])
+    assert 'dummy' in result.output.lower() or 'pdf' in result.output.lower()
