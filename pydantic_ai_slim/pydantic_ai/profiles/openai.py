@@ -122,7 +122,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
-    openai_system_prompt_role = 'user' if model_name.startswith('o1-mini') else None
+    openai_system_prompt_role = 'user' if model_name.startswith('o1-mini') else 'developer'
 
     return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
