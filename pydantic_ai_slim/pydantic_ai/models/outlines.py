@@ -301,6 +301,8 @@ class OutlinesModel(Model):
         from ..tools import FreeformText, LarkGrammar, RegexGrammar
 
         # the builtin_tool check now happens in `Model.prepare_request()`
+        # NOTE: Grammar constraints for tools require native tool support from Outlines,
+        # which isn't available yet. Grammar output types work via the output_type mechanism.
         if model_request_parameters.function_tools or model_request_parameters.output_tools:
             raise UserError('Outlines does not support function tools yet.')
 

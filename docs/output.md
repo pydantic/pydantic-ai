@@ -672,10 +672,14 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 
 When working with string outputs, you can constrain the format using grammar annotations. This ensures the model's output matches a specific pattern, which is useful for generating structured text like codes, identifiers, or domain-specific languages.
 
-Grammar constraints work in two ways:
+**Grammar constraints work with all models** through Pydantic validation. When the model's output doesn't match the grammar, the agent automatically retries with feedback about the validation error. For GPT-5 family models, native enforcement happens during generation, guaranteeing valid output without retries.
 
-1. **Native enforcement** (GPT-5 family models): The model natively constrains its output during generation
-2. **Validation-based enforcement** (all other models): Pydantic validates the output and triggers a retry if it doesn't match
+You can use:
+
+- [`RegexGrammar`][pydantic_ai.tools.RegexGrammar] - regex pattern constraints
+- [`LarkGrammar`][pydantic_ai.tools.LarkGrammar] - context-free grammar constraints
+- [`FreeformText`][pydantic_ai.tools.FreeformText] - unconstrained raw text (no JSON wrapping)
+- `Annotated[str, Field(pattern=...)]` - Pydantic's native pattern constraint (converted to regex)
 
 ### Basic Usage with `output_type`
 

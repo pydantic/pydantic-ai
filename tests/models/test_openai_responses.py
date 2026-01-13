@@ -2385,8 +2385,8 @@ async def test_openai_responses_model_custom_tool_call_unknown_tool_parsed(allow
     assert tool_call.tool_call_id == 'call_unknown_456'
 
 
-async def test_openai_responses_model_custom_tool_call_invalid_signature_error(allow_model_requests: None):
-    """Test that OpenAI Responses model raises error for custom tool calls to tools with invalid signatures."""
+async def test_openai_responses_model_custom_tool_call_invalid_signature_fallback(allow_model_requests: None):
+    """Test that OpenAI Responses model falls back to 'input' for custom tool calls to tools without a single string argument."""
     from pydantic_ai.models import ModelRequestParameters
 
     content_data = [
@@ -2417,8 +2417,14 @@ async def test_openai_responses_model_custom_tool_call_invalid_signature_error(a
 
     params = ModelRequestParameters(function_tools=[invalid_tool])
 
-    with pytest.raises(UnexpectedModelBehavior, match='has unexpected arguments'):
-        model._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
+    # Instead of raising an error, fall back to 'input' as the argument name
+    response = model._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
+    assert len(response.parts) == 1
+    tool_call = response.parts[0]
+    assert isinstance(tool_call, ToolCallPart)
+    assert tool_call.tool_name == 'invalid_analyzer'
+    # The fallback uses 'input' as the argument name
+    assert tool_call.args == {'input': 'Some content'}
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):

@@ -212,7 +212,14 @@ print(result2.output)
 
 The GPT-5 family of models (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) support freeform function calling, which allows tools to receive raw text instead of JSON-wrapped data. This is useful for code execution, SQL queries, shell commands, and other text-based inputs.
 
-Grammar constraints can be applied using [`FreeformText`][pydantic_ai.tools.FreeformText], [`RegexGrammar`][pydantic_ai.tools.RegexGrammar], or [`LarkGrammar`][pydantic_ai.tools.LarkGrammar]. See [Grammar-Constrained Tool Parameters](../tools.md#grammar-constrained-tools) for usage details.
+Grammar constraints can be applied to both **tool parameters** and **output types** using:
+
+- [`FreeformText`][pydantic_ai.tools.FreeformText] - unconstrained raw text
+- [`RegexGrammar`][pydantic_ai.tools.RegexGrammar] - regex pattern constraints
+- [`LarkGrammar`][pydantic_ai.tools.LarkGrammar] - context-free grammar constraints
+- `Annotated[str, Field(pattern=...)]` - Pydantic's native pattern constraint (converted to regex)
+
+See [Grammar-Constrained Tool Parameters](../tools.md#grammar-constrained-tools) and [Grammar-Constrained String Output](../output.md#grammar-constrained-output) for detailed usage.
 
 !!! note "OpenAI-specific considerations"
 

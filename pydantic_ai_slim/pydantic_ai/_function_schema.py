@@ -330,13 +330,19 @@ def _is_call_ctx(annotation: Any) -> bool:
 def extract_text_format(annotation: Any) -> TextFormat | None:
     """Extract a TextFormat annotation from an Annotated type hint.
 
+    Supports both explicit TextFormat annotations (e.g., `Annotated[str, RegexGrammar(...)]`)
+    and Pydantic Field pattern constraints (e.g., `Annotated[str, Field(pattern=...)]`).
+
     Args:
         annotation: The type annotation to check.
 
     Returns:
         The TextFormat instance if found, None otherwise.
     """
-    from .tools import TextFormat
+    # Inline import to avoid circular dependency with tools.py
+    from pydantic.fields import FieldInfo
+
+    from .tools import RegexGrammar, TextFormat
 
     if get_origin(annotation) is not Annotated:
         return None
@@ -353,9 +359,15 @@ def extract_text_format(annotation: Any) -> TextFormat | None:
     if base_type is not str:
         return None
 
-    # Look for TextFormat in metadata
+    # Look for TextFormat or Field(pattern=...) in metadata
     for item in metadata:
         if isinstance(item, TextFormat):
             return item
+        # Support Pydantic Field(pattern=...) by converting to RegexGrammar
+        # The pattern is stored in FieldInfo.metadata as _PydanticGeneralMetadata
+        if isinstance(item, FieldInfo):
+            for meta in item.metadata:
+                if pattern := getattr(meta, 'pattern', None):
+                    return RegexGrammar(pattern)
 
     return None

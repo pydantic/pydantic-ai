@@ -369,13 +369,16 @@ For tools that accept string parameters, you can constrain the input to match a 
 - Configuration generators that need specific formats
 - Any tool where the string parameter must conform to a grammar
 
+**Grammar constraints work with all models** through Pydantic validation. When the model's input doesn't match the grammar, the agent automatically retries with feedback about the validation error. For GPT-5 family models, native enforcement happens during generation.
+
 ### Available Grammar Types
 
-Pydantic AI provides three grammar constraint types:
+Pydantic AI provides these grammar constraint types:
 
 - [`FreeformText`][pydantic_ai.tools.FreeformText]: Raw text without JSON wrapping (useful for code/SQL)
 - [`RegexGrammar`][pydantic_ai.tools.RegexGrammar]: Text constrained by a regular expression
 - [`LarkGrammar`][pydantic_ai.tools.LarkGrammar]: Text constrained by a [Lark](https://lark-parser.readthedocs.io/) grammar
+- `Annotated[str, Field(pattern=...)]`: Pydantic's native pattern constraint (converted to regex)
 
 ### Basic Usage
 

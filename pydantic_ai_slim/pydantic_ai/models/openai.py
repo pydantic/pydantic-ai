@@ -1284,17 +1284,15 @@ class OpenAIResponsesModel(Model):
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
             elif isinstance(item, responses.ResponseCustomToolCall):
-                # Handle custom tool calls (freeform function calling)
+                # Handle custom tool calls (freeform function calling).
+                # If the model calls a tool we don't recognize (e.g., server-side tool
+                # definitions), use 'input' as fallback argument name.
                 if item.name not in model_request_parameters.tool_defs:
                     argument_name = 'input'
                 else:
                     tool = model_request_parameters.tool_defs[item.name]
-                    tool_argument_name = tool.single_string_argument_name
-                    if tool_argument_name is None:
-                        raise UnexpectedModelBehavior(
-                            f'Custom tool call made to function {item.name} which has unexpected arguments'
-                        )
-                    argument_name = tool_argument_name
+                    # Fall back to 'input' if the tool doesn't have a single string argument
+                    argument_name = tool.single_string_argument_name or 'input'
                 items.append(
                     ToolCallPart(
                         item.name,
@@ -1702,7 +1700,6 @@ class OpenAIResponsesModel(Model):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
-                        call_id, _ = _split_combined_tool_call_id(call_id)
                         if call_id in custom_tool_call_ids:
                             openai_messages.append(
                                 ResponseCustomToolCallOutputParam(
@@ -1726,7 +1723,6 @@ class OpenAIResponsesModel(Model):
                             )
                         else:
                             call_id = _guard_tool_call_id(t=part)
-                            call_id, _ = _split_combined_tool_call_id(call_id)
                             if call_id in custom_tool_call_ids:
                                 openai_messages.append(
                                     ResponseCustomToolCallOutputParam(
@@ -1778,8 +1774,7 @@ class OpenAIResponsesModel(Model):
                             )
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
-                        call_id, id = _split_combined_tool_call_id(call_id)
-                        id = id or item.id
+                        id = item.id
 
                         # Custom tool calls have item ID starting with 'ctc_'
                         if id and id.startswith('ctc_'):
@@ -2724,16 +2719,6 @@ def _map_provider_details(
         provider_details['finish_reason'] = raw_finish_reason
 
     return provider_details or None
-
-
-def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
-    # When reasoning, the Responses API requires the `ResponseFunctionToolCall` to be returned with both the `call_id` and `id` fields.
-    # Before our `ToolCallPart` gained the `id` field alongside `tool_call_id` field, we combined the two fields into a single string stored on `tool_call_id`.
-    if '|' in combined_id:
-        call_id, id = combined_id.split('|', 1)
-        return call_id, id
-    else:
-        return combined_id, None
 
 
 def _map_code_interpreter_tool_call(
