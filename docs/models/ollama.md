@@ -1,10 +1,8 @@
 # Ollama
 
-Ollama allows you to run open-source LLMs locally or via Ollama Cloud.
-
 ## Install
 
-To use Ollama, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use Ollama, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

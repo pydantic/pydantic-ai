@@ -1,10 +1,8 @@
 # Nebius AI Studio
 
-Nebius AI Studio provides access to various AI models through an OpenAI-compatible API.
-
 ## Install
 
-To use Nebius AI Studio, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use Nebius AI Studio, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

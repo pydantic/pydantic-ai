@@ -1,10 +1,8 @@
 # Azure AI Foundry
 
-Azure AI Foundry provides access to OpenAI models and other AI models through Microsoft Azure's cloud platform.
-
 ## Install
 
-To use Azure AI Foundry, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use Azure AI Foundry, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

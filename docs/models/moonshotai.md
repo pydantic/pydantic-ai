@@ -1,10 +1,8 @@
 # MoonshotAI
 
-MoonshotAI provides access to Kimi models with an OpenAI-compatible API.
-
 ## Install
 
-To use MoonshotAI, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use MoonshotAI, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

@@ -1,10 +1,8 @@
 # OVHcloud AI Endpoints
 
-OVHcloud AI Endpoints provides access to AI models through OVHcloud's infrastructure.
-
 ## Install
 
-To use OVHcloud AI Endpoints, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use OVHcloud AI Endpoints, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

@@ -1,10 +1,8 @@
 # Vercel AI Gateway
 
-Vercel AI Gateway provides a unified interface to multiple AI providers through Vercel's infrastructure.
-
 ## Install
 
-To use Vercel AI Gateway, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use Vercel AI Gateway, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

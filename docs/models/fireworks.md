@@ -1,10 +1,8 @@
 # Fireworks AI
 
-Fireworks AI provides fast inference for open-source and custom models.
-
 ## Install
 
-To use Fireworks AI, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use Fireworks AI, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

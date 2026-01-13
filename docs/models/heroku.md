@@ -1,10 +1,8 @@
 # Heroku AI
 
-Heroku AI provides access to AI models through Heroku's cloud platform.
-
 ## Install
 
-To use Heroku AI, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use Heroku AI, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

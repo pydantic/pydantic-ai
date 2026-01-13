@@ -1,10 +1,8 @@
 # xAI (Grok)
 
-xAI provides access to Grok models, developed by xAI.
-
 ## Install
 
-To use xAI models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use xAI models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

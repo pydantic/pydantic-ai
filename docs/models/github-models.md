@@ -1,10 +1,8 @@
 # GitHub Models
 
-GitHub Models provides access to AI models through GitHub's infrastructure.
-
 ## Install
 
-To use GitHub Models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use GitHub Models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

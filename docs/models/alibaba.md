@@ -1,10 +1,8 @@
 # Alibaba Cloud Model Studio (DashScope)
 
-Alibaba Cloud Model Studio (DashScope) provides access to Qwen models via an OpenAI-compatible API.
-
 ## Install
 
-To use Alibaba models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use Alibaba models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

@@ -1,10 +1,8 @@
 # Together AI
 
-Together AI provides fast inference for open-source models.
-
 ## Install
 
-To use Together AI, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use Together AI, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group (as it uses an OpenAI-compatible API):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'
