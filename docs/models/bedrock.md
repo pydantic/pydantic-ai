@@ -284,11 +284,11 @@ agent = Agent(model)
 ...
 ```
 
-## Using AWS ApplicationInference Profiles
+## Using AWS Application Inference Profiles
 
-AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. When using these profiles, you may want to specify the model name explicitly to maintain Pydantic AI's model and provider inference features.
+AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. When using these profiles, you should specify a [model profile](https://ai.pydantic.dev/models/overview/#models-and-providers) to ensure Pydantic AI can correctly identify model capabilities (streaming, tool use, caching, etc.) while still using the custom inference profile for cost tracking.
 
-Without explicit configuration, an inference profile ARN like `arn:aws:bedrock:us-east-2:*****:application-inference-profile/****` doesn't contain enough information for Pydantic AI to determine the underlying model or provider. You can work around this by:
+Without explicit configuration, an inference profile ARN like `arn:aws:bedrock:us-east-2:*****:application-inference-profile/****` doesn't contain enough information for Pydantic AI to determine the underlying model. You can work around this by:
 
 1. Passing the inference profile ARN as the model name to [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
 2. Using the `profile` parameter to specify the logical model name for feature detection
@@ -313,11 +313,6 @@ model = BedrockConverseModel(
 
 agent = Agent(model)
 ```
-
-This approach ensures that:
-
-- Pydantic AI correctly identifies the model capabilities (streaming, tool use, caching, etc.)
-- Your requests use the custom inference profile for cost tracking
 
 ## Configuring Retries
 
