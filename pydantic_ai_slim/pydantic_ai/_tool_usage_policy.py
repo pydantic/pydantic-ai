@@ -53,24 +53,15 @@ class ToolPolicy:
     """
 
     partial_acceptance: bool | None = None
-    """Whether this tool allows partial acceptance when its usage limits would be exceeded.
+    """Whether to allow partial acceptance when usage limits would be exceeded.
 
     When a model requests multiple calls to this tool in a single step, and those calls
-    would exceed the tool's `max_uses` or `max_uses_per_step` limit:
+    would exceed the `max_uses` or `max_uses_per_step` limit:
 
     - `True`: Accept as many calls as allowed, reject the rest individually.
-    - `False`: Reject ALL calls to this tool if not all of them can be accepted.
-      Use this for tools that have transactional semantics or require all calls to
-      succeed together for correct behavior.
-    - `None` (default): Inherit the default behavior (equivalent to `True`).
-
-    Inheritance behavior:
-        - If a tool has no `usage_policy` set, it inherits the policy-level
-          `partial_acceptance` setting from [`ToolsPolicy`][pydantic_ai.ToolsPolicy].
-        - If no policy is set either, the default `True` behavior is used.
-        - The policy-level [`ToolsPolicy.partial_acceptance`][pydantic_ai.ToolsPolicy.partial_acceptance]
-          acts as a master switch—if the policy has `partial_acceptance=False`, this per-tool
-          setting has no effect and all calls will be rejected when limits are exceeded.
+    - `False`: Reject ALL calls to this tool if the batch would exceed limits.
+      Use this for tools with transactional semantics where all calls must succeed together.
+    - `None` (default): Defaults to `True` (partial acceptance allowed).
 
     Example:
         ```python
@@ -92,21 +83,22 @@ class ToolPolicy:
 class ToolsPolicy(ToolPolicy):
     """Policy for all tools in an agent run.
 
-    This class extends [`ToolPolicy`][pydantic_ai.ToolPolicy] with:
+    This class extends [`ToolPolicy`][pydantic_ai.ToolPolicy] to provide agent-wide controls:
 
     1. **Aggregate limits** (`max_uses`, `max_uses_per_step`):
-       These apply to the **total** number of successful tool uses across all tools combined.
+       Apply to the **total** number of successful tool uses across all tools combined.
 
-    2. **Per-tool overrides** (`per_tool`): A dict mapping tool names to
-       [`ToolPolicy`][pydantic_ai.ToolPolicy], allowing you to set specific
-       limits for individual tools without modifying the tool definitions.
+    2. **Master switch** (`partial_acceptance`):
+       When set to `False`, acts as a master switch that disables partial acceptance
+       for ALL tools, regardless of their individual settings.
 
-    Set on the [`Agent`][pydantic_ai.Agent] via the `tools_policy` parameter
-    or passed to `agent.run()` / `agent.run_sync()` / `agent.run_stream()`.
+    3. **Run-time per-tool overrides** (`per_tool`):
+       Override tool-level settings at run-time without modifying tool code.
+       Values in `per_tool` take precedence over settings defined on tools via
+       `@agent.tool(usage_policy=...)`.
 
-    The per-tool limits in `per_tool` are merged with limits defined directly
-    on tools via `@agent.tool(usage_policy=...)`. See [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset]
-    for details on how limits are merged.
+    Set on the [`Agent`][pydantic_ai.Agent] via the `tools_policy` parameter,
+    or pass to `agent.run()` / `agent.run_sync()` / `agent.run_stream()` to override per-run.
 
     Example:
         ```python
@@ -118,13 +110,14 @@ class ToolsPolicy(ToolPolicy):
             tools_policy=ToolsPolicy(max_uses=20, max_uses_per_step=5)
         )
 
-        # Set per-tool limits for specific tools
-        policy = ToolsPolicy(
-            max_uses=50,  # Aggregate: max 50 successful tool uses total across all tools
-            per_tool={
-                'expensive_api_call': ToolPolicy(max_uses=3),  # Per-tool: max 3 uses
-                'cheap_lookup': ToolPolicy(max_uses=100),  # Per-tool: max 100 uses
-            }
+        # Override per-tool limits at run-time
+        result = agent.run_sync(
+            'Do something',
+            tools_policy=ToolsPolicy(
+                per_tool={
+                    'expensive_api': ToolPolicy(max_uses=3),  # Override: max 3 uses
+                }
+            )
         )
         ```
 
@@ -135,14 +128,13 @@ class ToolsPolicy(ToolPolicy):
     """
 
     per_tool: dict[str, ToolPolicy] = field(default_factory=dict)
-    """Per-tool usage policies, merged with any policies defined on the tools themselves.
+    """Run-time per-tool overrides that take precedence over tool-level settings.
 
     A mapping from tool name to [`ToolPolicy`][pydantic_ai.ToolPolicy].
-    These policies are merged with any `usage_policy` defined directly on tools via
-    `@agent.tool(usage_policy=...)`. See [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset]
-    for the merging behavior.
+    Values here override any `usage_policy` defined on tools via `@agent.tool(usage_policy=...)`,
+    allowing you to adjust limits at run-time without modifying tool code.
 
     Note: These are **per-tool** limits (e.g., "tool X can be used at most 3 times"),
-    not to be confused with the **aggregate** limits inherited from `ToolPolicy` (`max_uses`, etc.)
+    not to be confused with the **aggregate** limits (`max_uses`, `max_uses_per_step`)
     which apply to the total number of successful uses across all tools.
     """
