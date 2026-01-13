@@ -2385,7 +2385,6 @@ async def test_image_agent(allow_model_requests: None, client: Client):
 
 def document_url_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Return a DocumentUrl with a custom media_type that cannot be inferred from the URL."""
-    # Return the DocumentUrl directly via the output tool
     assert info.output_tools is not None
     document_url_json = '{"url": "https://example.com/doc/12345", "media_type": "application/pdf"}'
     return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, document_url_json)])
@@ -2411,11 +2410,11 @@ class DocumentUrlAgentWorkflow:
 
 
 async def test_document_url_serialization_preserves_media_type(allow_model_requests: None, client: Client):
-    """Test that DocumentUrl with custom media_type is preserved through Temporal serialization.
+    """Test that `DocumentUrl` with custom `media_type` is preserved through Temporal serialization.
 
     This is a regression test for https://github.com/pydantic/pydantic-ai/issues/3949
-    where DocumentUrl.media_type (a computed field) was lost during Temporal activity
-    serialization because the backing field _media_type was excluded from serialization.
+    where `DocumentUrl.media_type` (a computed field) was lost during Temporal activity
+    serialization because the backing field `_media_type` was excluded from serialization.
     """
     async with Worker(
         client,
@@ -3085,11 +3084,9 @@ class MockPayloadCodec(PayloadCodec):
 
 
 def test_pydantic_ai_json_payload_converter_preserves_document_url_media_type() -> None:
-    """Test that PydanticAIJSONPayloadConverter preserves DocumentUrl.media_type during round-trip.
+    """Test that `PydanticAIJSONPayloadConverter` preserves `DocumentUrl.media_type` during round-trip.
 
     This is a regression test for https://github.com/pydantic/pydantic-ai/issues/3949
-    where DocumentUrl.media_type (a computed field) was lost during serialization
-    because the backing field _media_type was excluded from serialization.
     """
 
     converter = PydanticAIPayloadConverter()
@@ -3101,8 +3098,9 @@ def test_pydantic_ai_json_payload_converter_preserves_document_url_media_type() 
     assert payload is not None
 
     restored = json_converter.from_payload(payload, DocumentUrl)  # pyright: ignore[reportUnknownMemberType]
-    assert restored.url == 'https://example.com/doc/12345'
-    assert restored.media_type == 'application/pdf'
+    assert restored == snapshot(
+        DocumentUrl(url='https://example.com/doc/12345', _media_type='application/pdf', _identifier='eb8998')
+    )
 
 
 def test_pydantic_ai_plugin_no_converter_returns_pydantic_ai_data_converter() -> None:
