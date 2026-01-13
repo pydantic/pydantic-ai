@@ -5444,3 +5444,48 @@ async def test_google_stream_safety_filter(
     response_msg = body_json[0]
     assert response_msg['provider_details']['finish_reason'] == 'SAFETY'
     assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'
+
+
+async def test_message_conversion_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
+    """Test that ToolReturnPart and UserPromptPart are split into separate content objects.
+
+    This test verifies the fix for https://github.com/pydantic/pydantic-ai/issues/3763.
+
+    When a ModelRequest contains both a ToolReturnPart and a UserPromptPart,
+    they must be in separate content objects to work around a Gemini bug
+    where content objects containing functionResponse parts are treated
+    as role=model even when role=user is explicitly specified.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    # Create a ModelRequest with tool return followed by user prompt
+    # This simulates continuing a conversation after structured output
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
+                UserPromptPart(content="What's 2 + 2?"),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # Verify split into two content objects
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id',
+                        }
+                    }
+                ],
+            },
+            {'role': 'user', 'parts': [{'text': "What's 2 + 2?"}]},
+        ]
+    )

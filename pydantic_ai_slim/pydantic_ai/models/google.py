@@ -615,7 +615,7 @@ class GoogleModel(Model):
             _provider_timestamp=first_chunk.create_time,
         )
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
@@ -624,13 +624,25 @@ class GoogleModel(Model):
         for m in messages:
             if isinstance(m, ModelRequest):
                 message_parts: list[PartDict] = []
+                has_tool_return = False
 
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
+                        # If we have accumulated tool returns and now have a user prompt,
+                        # flush the tool returns into a separate content object first.
+                        # This works around a Gemini bug where content objects containing
+                        # functionResponse parts are treated as role=model even when role=user
+                        # is explicitly specified, causing user prompts to be interpreted as
+                        # model responses.
+                        if has_tool_return and message_parts:
+                            contents.append({'role': 'user', 'parts': message_parts})
+                            message_parts = []
+                            has_tool_return = False
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
+                        has_tool_return = True
                         message_parts.append(
                             {
                                 'function_response': {
@@ -641,9 +653,15 @@ class GoogleModel(Model):
                             }
                         )
                     elif isinstance(part, RetryPromptPart):
+                        # Similar to UserPromptPart, flush tool returns if present
                         if part.tool_name is None:
+                            if has_tool_return and message_parts:
+                                contents.append({'role': 'user', 'parts': message_parts})
+                                message_parts = []
+                                has_tool_return = False
                             message_parts.append({'text': part.model_response()})
                         else:
+                            has_tool_return = True
                             message_parts.append(
                                 {
                                     'function_response': {
