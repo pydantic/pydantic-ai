@@ -682,21 +682,21 @@ class AnthropicModel(Model):
         if resolved_tool_choice == 'auto':
             tool_choice = {'type': 'auto'}
         elif resolved_tool_choice == 'required':
-            compatible = _is_compatible_with_tool_forcing(
+            is_compatible = _is_compatible_with_tool_forcing(
                 model_settings, resolved_tool_choice, "tool_choice='required'"
             )
-            tool_choice = {'type': 'any'} if compatible else {'type': 'auto'}
+            tool_choice = {'type': 'any'} if is_compatible else {'type': 'auto'}
         elif resolved_tool_choice == 'none':
             tool_choice = {'type': 'none'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            compatible = _is_compatible_with_tool_forcing(model_settings, resolved_tool_choice)
+            is_compatible = _is_compatible_with_tool_forcing(model_settings, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'type': 'tool', 'name': tool_names[0]} if compatible else {'type': 'auto'}
+                tool_choice = {'type': 'tool', 'name': tool_names[0]} if is_compatible else {'type': 'auto'}
             else:
                 # Breaks caching, but Anthropic doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not compatible else {'type': 'any'}
+                tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not is_compatible else {'type': 'any'}
         else:
             assert_never(resolved_tool_choice)
 

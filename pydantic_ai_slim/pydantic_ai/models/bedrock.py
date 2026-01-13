@@ -549,11 +549,11 @@ class BedrockConverseModel(Model):
             return None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
+            # Always filter to ensure only specified tools are sent even if toolChoice not supported
+            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 tool_choice = {'tool': {'name': tool_names[0]}}
             else:
-                # Breaks caching, but Bedrock doesn't support limiting tools via API arg
-                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'auto': {}} if tool_choice_mode == 'auto' else {'any': {}}
         else:
             assert_never(resolved_tool_choice)
@@ -574,6 +574,13 @@ class BedrockConverseModel(Model):
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
         if profile.bedrock_supports_tool_choice:
             tool_config['toolChoice'] = tool_choice
+        else:
+            explicit_choice = (model_settings or {}).get('tool_choice')
+            if explicit_choice == 'required':
+                raise UserError(
+                    f"tool_choice='required' is not supported by model {self.model_name!r}. "
+                    f'This model does not support forcing tool use.'
+                )
 
         return tool_config
 

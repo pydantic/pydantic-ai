@@ -773,8 +773,8 @@ class OpenAIChatModel(Model):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
-            _raise_if_tool_choice_forcing_unsupported(self.model_name, openai_profile, model_settings)
+            is_compatible = _is_compatible_with_tool_forcing(self.model_name, openai_profile, model_settings)
+            tool_choice = 'required' if is_compatible else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             tool_choice = ChatCompletionAllowedToolChoiceParam(
@@ -1543,8 +1543,8 @@ class OpenAIResponsesModel(Model):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            tool_choice = 'required' if openai_profile.openai_supports_tool_choice_required else 'auto'
-            _raise_if_tool_choice_forcing_unsupported(self.model_name, openai_profile, model_settings)
+            is_compatible = _is_compatible_with_tool_forcing(self.model_name, openai_profile, model_settings)
+            tool_choice = 'required' if is_compatible else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             tool_choice = ToolChoiceAllowedParam(
@@ -2594,11 +2594,11 @@ def _map_logprobs(
     ]
 
 
-def _raise_if_tool_choice_forcing_unsupported(
+def _is_compatible_with_tool_forcing(
     model_name: str,
     openai_profile: OpenAIModelProfile,
     model_settings: ModelSettings | None,
-) -> None:
+) -> bool:
     """Raise UserError if user explicitly set tool_choice to force tool use but model doesn't support it."""
     if not openai_profile.openai_supports_tool_choice_required:
         explicit_choice = (model_settings or {}).get('tool_choice')
@@ -2607,6 +2607,10 @@ def _raise_if_tool_choice_forcing_unsupported(
                 f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
                 f'This model does not support forcing tool use.'
             )
+        else:
+            return False
+    else:
+        return True
 
 
 def _map_usage(
