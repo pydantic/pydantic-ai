@@ -76,7 +76,10 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     """The maximum number of retries to attempt if a tool call fails."""
 
     usage_policy: ToolPolicy | None
-    """Usage policy for all tools in this toolset."""
+    """Usage policy applied to each tool individually (each tool gets its own counter).
+    
+    For aggregate limits across all tools, use `tools_policy` on the Agent instead.
+    """
 
     _id: str | None
 
