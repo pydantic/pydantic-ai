@@ -563,6 +563,15 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'Search for Python tutorials, get the API key, and analyze the results': [
+        ToolCallPart(tool_name='search_api', args={'query': 'Python tutorials'}, tool_call_id='search_api_1'),
+        ToolCallPart(tool_name='get_api_key', args={}, tool_call_id='get_api_key_1'),
+        ToolCallPart(
+            tool_name='analyze_results',
+            args={'data': 'Python tutorials search results'},
+            tool_call_id='analyze_results_1',
+        ),
+    ],
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -836,6 +845,10 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_current_time':
         return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'analyze_results':
+        return ModelResponse(
+            parts=[TextPart('I searched for Python tutorials, retrieved the API key, and analyzed the results.')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
