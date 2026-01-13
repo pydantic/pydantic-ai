@@ -57,7 +57,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import resolve_tool_choice
+from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'end_turn': 'stop',
@@ -673,7 +673,6 @@ class AnthropicModel(Model):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        thinking_enabled = model_settings.get('anthropic_thinking') is not None
         tool_defs = model_request_parameters.tool_defs
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
@@ -683,21 +682,21 @@ class AnthropicModel(Model):
         if resolved_tool_choice == 'auto':
             tool_choice = {'type': 'auto'}
         elif resolved_tool_choice == 'required':
-            _raise_incompatible_thinking_and_tool_forcing(thinking_enabled, "tool_choice='required'")
-            tool_choice = {'type': 'any'}
+            compatible = _is_compatible_with_tool_forcing(
+                model_settings, resolved_tool_choice, "tool_choice='required'"
+            )
+            tool_choice = {'type': 'any'} if compatible else {'type': 'auto'}
         elif resolved_tool_choice == 'none':
             tool_choice = {'type': 'none'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
+            compatible = _is_compatible_with_tool_forcing(model_settings, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                _raise_incompatible_thinking_and_tool_forcing(thinking_enabled)
-                tool_choice = {'type': 'tool', 'name': tool_names[0]}
+                tool_choice = {'type': 'tool', 'name': tool_names[0]} if compatible else {'type': 'auto'}
             else:
-                if tool_choice_mode == 'required':
-                    _raise_incompatible_thinking_and_tool_forcing(thinking_enabled)
                 # Breaks caching, but Anthropic doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' else {'type': 'any'}
+                tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not compatible else {'type': 'any'}
         else:
             assert_never(resolved_tool_choice)
 
@@ -1459,8 +1458,22 @@ def _map_mcp_server_result_block(
     )
 
 
-def _raise_incompatible_thinking_and_tool_forcing(thinking_enabled: bool, context: str = 'forcing specific tools'):
-    if thinking_enabled:
+def _is_compatible_with_tool_forcing(
+    model_settings: AnthropicModelSettings,
+    resolved_tool_choice: ResolvedToolChoice,
+    context: str = 'forcing specific tools',
+) -> bool:
+    thinking_enabled = model_settings.get('anthropic_thinking') is not None
+    if not thinking_enabled:
+        return True
+
+    explicit_choice = (model_settings or {}).get('tool_choice')
+    if explicit_choice == 'required' or isinstance(explicit_choice, list):
         raise UserError(
             f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
         )
+
+    if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, list):
+        return False
+
+    return True
