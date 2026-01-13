@@ -365,15 +365,18 @@ class ToolManager(Generic[AgentDepsT]):
             if (policy.max_uses is not None and projected_usage.tool_calls > policy.max_uses) or (
                 policy.max_uses_per_step is not None and batch_size > policy.max_uses_per_step
             ):
+                # TODO: Should be configurable via PromptConfig #3656
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
 
         # Check aggregate limits (policy-level) incrementally
         if policy is not None:
             if (policy.max_uses is not None) and (current_tool_calls + total_accepted_in_step == policy.max_uses):
                 # If already equal, going through with this call will put us over the limit
+                # TODO: Should be configurable via PromptConfig #3656
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
             if (policy.max_uses_per_step is not None) and (total_accepted_in_step == policy.max_uses_per_step):
                 # If already equal, going through with this call will put us over the limit
+                # TODO: Should be configurable via PromptConfig #3656
                 return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
 
         # For unknown tools, allow the call - error will be caught during execution
@@ -406,16 +409,19 @@ class ToolManager(Generic[AgentDepsT]):
                 or tool.usage_policy.partial_acceptance is not False  # None means inherit default True
             )
             if not (policy_allows_partial and tool_allows_partial):
+                # TODO: Should be configurable via PromptConfig #3656
                 return f'Tool use limit reached for tool "{tool_name}".'
 
         # Check incremental call for tool
 
         if (max_uses_per_step is not None) and (tool_accepted_in_step == max_uses_per_step):
             # If already equal, going through with this call will put us over the limit
+            # TODO: Should be configurable via PromptConfig #3656
             return f'Tool use limit reached for tool "{tool_name}".'
 
         if (max_uses is not None) and (current_tool_uses + tool_accepted_in_step == max_uses):
             # If already equal, going through with this call will put us over the limit
+            # TODO: Should be configurable via PromptConfig #3656
             return f'Tool use limit reached for tool "{tool_name}".'
 
         return None
