@@ -548,6 +548,80 @@ All options count only **successful** tool invocations:
 | `ToolsPolicy.max_uses` | All tools | Returns message to model | Soft limit where you want the model to adapt gracefully |
 | `UsageLimits.tool_calls_limit` | All tools | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop when you need to prevent runaway costs |
 
+#### Programmatic Usage Control
+
+You can access usage counts within your tools via [`RunContext`][pydantic_ai.RunContext]:
+
+- [`ctx.tool_use`][pydantic_ai.RunContext.tool_use]: The current tool's successful call count (before this call)
+- [`ctx.tools_use_counts`][pydantic_ai.RunContext.tools_use_counts]: Dict of all tools' successful call counts
+
+This is useful when your tool needs to behave differently based on how many times it has been called, or when you want to guide the model to use previous results instead of making redundant calls:
+
+```python
+from pydantic_ai import Agent, RunContext
+
+agent = Agent('openai:gpt-4o')
+
+
+@agent.tool
+def get_secret(ctx: RunContext[None]) -> str:
+    """Get a secret value. Can only be retrieved once per run."""
+    if ctx.tool_use and ctx.tool_use > 0:
+        # Already called - guide the model to use the previous result
+        return 'Secret already retrieved. Use the value from the previous call.'
+    return 'secret-key-xyz-123'
+```
+
+!!! tip "Runtime vs Configuration-based limits"
+    For static limits that are known ahead of time, prefer `ToolPolicy(max_uses=N)` as it's cleaner and automatically removes the tool from the available tools list after the limit is reached. Use programmatic checks when you need dynamic behavior based on runtime conditions.
+
+#### Comprehensive Example
+
+Here's a complete example showcasing multiple features working together:
+
+```python
+from pydantic_ai import Agent, RunContext, ToolPolicy, ToolsPolicy
+
+# Agent with aggregate limit (max 10 tool calls total) and per-step limit (max 5 per step)
+agent = Agent(
+    'openai:gpt-4o',
+    tools_policy=ToolsPolicy(max_uses=10, max_uses_per_step=5),
+)
+
+
+@agent.tool(usage_policy=ToolPolicy(max_uses=3))
+def search_api(ctx: RunContext[None], query: str) -> str:
+    """Search an external API. Rate-limited to 3 calls per run."""
+    call_num = (ctx.tool_use or 0) + 1
+    return f'[Search #{call_num}] Results for: {query}'
+
+
+@agent.tool(usage_policy=ToolPolicy(max_uses=1))
+def get_api_key(ctx: RunContext[None]) -> str:
+    """Get the API key. Should only be called once."""
+    return 'api-key-12345'
+
+
+@agent.tool
+def analyze_results(ctx: RunContext[None], data: str) -> str:
+    """Analyze search results. No per-tool limit, but counts toward aggregate."""
+    # Check how many total tool calls have been made
+    total_calls = sum(ctx.tools_use_counts.values())
+    return f'Analysis complete. Total tool calls so far: {total_calls}'
+
+
+# Override per-tool limits at runtime without modifying tool code
+result = agent.run_sync(
+    'Search for Python tutorials, get the API key, and analyze the results',
+    tools_policy=ToolsPolicy(
+        max_uses=10,
+        per_tool={
+            'search_api': ToolPolicy(max_uses=2),  # Stricter limit for this run
+        },
+    ),
+)
+```
+
 #### Output Tool Calls
 
 When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.

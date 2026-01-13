@@ -1488,7 +1488,10 @@ def test_tools_policy_max_uses():
 
 
 def test_tools_policy_partial_acceptance_false_batch_rejection():
-    """Test that partial_acceptance=False on policy rejects entire batch when limit would be exceeded."""
+    """Test that partial_acceptance=False on policy rejects entire batch when limit would be exceeded.
+
+    Also tests that when batch is within limits, it falls through to incremental checks (covers line 365->372).
+    """
     call_count = 0
 
     def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1496,7 +1499,7 @@ def test_tools_policy_partial_acceptance_false_batch_rejection():
         call_count += 1
 
         if call_count == 1:
-            # Try to call 3 tools at once, but max_uses is 2
+            # Try to call 3 tools at once, but max_uses is 2 - batch exceeds limits
             return ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_1'),
@@ -1504,12 +1507,15 @@ def test_tools_policy_partial_acceptance_false_batch_rejection():
                     ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_3'),
                 ]
             )
+        elif call_count == 2:
+            # Call 1 tool - batch is within limits, falls through to incremental check
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_4')])
         return ModelResponse(parts=[TextPart(content='Done')])
 
     agent = Agent(FunctionModel(my_model), tools_policy=ToolsPolicy(max_uses=2, partial_acceptance=False))
 
     @agent.tool_plain
-    def my_tool() -> str:  # pragma: no cover
+    def my_tool() -> str:
         return 'used'
 
     result = agent.run_sync('Hello')
@@ -1555,9 +1561,24 @@ def test_tools_policy_partial_acceptance_false_batch_rejection():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
+            # Second round: batch within limits, falls through to incremental check (line 365->372)
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_4')],
+                usage=RequestUsage(input_tokens=99, output_tokens=8),
+                model_name='function:my_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='my_tool', content='used', tool_call_id='call_4', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=RequestUsage(input_tokens=99, output_tokens=7),
+                usage=RequestUsage(input_tokens=100, output_tokens=9),
                 model_name='function:my_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1566,8 +1587,8 @@ def test_tools_policy_partial_acceptance_false_batch_rejection():
     )
 
 
-def test_tools_policy_max_uses_per_step_partial_acceptance_false():
-    """Test max_uses_per_step with partial_acceptance=False rejects all when at limit."""
+def test_tools_policy_max_uses_per_step_partial_acceptance():
+    """Test max_uses_per_step with partial acceptance accepts some and rejects rest (covers line 380)."""
     call_count = 0
 
     def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1575,19 +1596,21 @@ def test_tools_policy_max_uses_per_step_partial_acceptance_false():
         call_count += 1
 
         if call_count == 1:
-            # Try to call 2 tools, but max_uses_per_step is 1
+            # Try to call 3 tools, but max_uses_per_step is 2
+            # With partial acceptance, first 2 succeed, third hits incremental limit (line 380)
             return ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_1'),
                     ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_2'),
+                    ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_3'),
                 ]
             )
         return ModelResponse(parts=[TextPart(content='Done')])
 
-    agent = Agent(FunctionModel(my_model), tools_policy=ToolsPolicy(max_uses_per_step=1, partial_acceptance=False))
+    agent = Agent(FunctionModel(my_model), tools_policy=ToolsPolicy(max_uses_per_step=2))
 
     @agent.tool_plain
-    def my_tool() -> str:  # pragma: no cover
+    def my_tool() -> str:
         return 'used'
 
     result = agent.run_sync('Hello')
@@ -1602,8 +1625,9 @@ def test_tools_policy_max_uses_per_step_partial_acceptance_false():
                 parts=[
                     ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_1'),
                     ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_2'),
+                    ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call_3'),
                 ],
-                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='function:my_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1613,22 +1637,18 @@ def test_tools_policy_max_uses_per_step_partial_acceptance_false():
                     ToolReturnPart(
                         tool_name='my_tool',
                         content='Tool use limit reached for all tools. Please produce an output without calling any tools.',
-                        tool_call_id='call_1',
+                        tool_call_id='call_3',
                         timestamp=IsDatetime(),
                     ),
-                    ToolReturnPart(
-                        tool_name='my_tool',
-                        content='Tool use limit reached for all tools. Please produce an output without calling any tools.',
-                        tool_call_id='call_2',
-                        timestamp=IsDatetime(),
-                    ),
+                    ToolReturnPart(tool_name='my_tool', content='used', tool_call_id='call_1', timestamp=IsDatetime()),
+                    ToolReturnPart(tool_name='my_tool', content='used', tool_call_id='call_2', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=RequestUsage(input_tokens=83, output_tokens=5),
+                usage=RequestUsage(input_tokens=69, output_tokens=7),
                 model_name='function:my_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
