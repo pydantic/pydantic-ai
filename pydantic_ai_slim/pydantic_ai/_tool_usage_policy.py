@@ -102,7 +102,7 @@ class ToolsPolicy(ToolPolicy):
 
     Example:
         ```python
-        from pydantic_ai import Agent, ToolsPolicy, ToolPolicy
+        from pydantic_ai import Agent, ToolPolicy, ToolsPolicy
 
         # Agent can make at most 5 successful tool uses per step, 20 total (across ALL tools)
         agent = Agent(

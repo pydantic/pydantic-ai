@@ -544,9 +544,9 @@ All options count only **successful** tool invocations:
 
 | Parameter | Scope | Behavior | Use Case |
 | --------- | ----- | -------- | -------- |
-| `ToolPolicy.max_uses` | Per-tool | Tool removed from available tools | Limit specific expensive/rate-limited tools |
-| `ToolsPolicy.max_uses` | All tools | Returns message to model | Soft limit; model adapts gracefully |
-| `UsageLimits.tool_calls_limit` | All tools | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop to prevent runaway costs |
+| `ToolPolicy.max_uses` | Per-tool | Tool removed from available tools | Limit specific expensive or rate-limited tools |
+| `ToolsPolicy.max_uses` | All tools | Returns message to model | Soft limit where you want the model to adapt gracefully |
+| `UsageLimits.tool_calls_limit` | All tools | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop when you need to prevent runaway costs |
 
 #### Output Tool Calls
 

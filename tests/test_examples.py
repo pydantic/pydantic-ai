@@ -557,6 +557,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
     'What is the first sentence on https://ai.pydantic.dev?': 'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
     'Search for Python docs, then fetch the top 3 results': 'I found the Python documentation and fetched the top 3 results...',
+    'Do something': 'Done!',
     'Create a record with name "test" and value 42': ToolCallPart(
         tool_name='final_result',
         args={'name': 'test', 'value': 42},
