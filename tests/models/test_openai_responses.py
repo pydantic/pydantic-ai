@@ -1261,49 +1261,178 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 previous_part_kind='thinking',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' weather', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' today', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' (', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Tuesday', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' September', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='16', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='202', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='5', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='):', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Mostly', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' sunny', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' pleasant', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Current', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' conditions', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' around', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='71', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°F', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=';', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' expected', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' high', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' near', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='73', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°F', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' low', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' around', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='58', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°F', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' A light jacket', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is useful', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for the', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' cooler evening', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='. ', provider_name='openai')),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' weather', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' today', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' (', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='Tuesday', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=',', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' September', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' ', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='16', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=',', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' ', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='202', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='5', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='):', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' Mostly', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' sunny', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' and', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' pleasant', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='.', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' Current', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' conditions', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' around', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' ', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='71', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='°F', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=';', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' expected', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' high', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' near', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' ', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='73', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='°F', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' and', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' low', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' around', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' ', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='58', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='°F', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='.', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' A light jacket', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' is useful', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' for the', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' cooler evening', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='. ', provider_name='openai'),
+            ),
             PartEndEvent(
                 index=4,
                 part=TextPart(
@@ -3625,220 +3754,862 @@ I\
                 previous_part_kind='builtin-tool-return',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='456', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='^', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='123', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' equals', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=':\n', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='180', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='302', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='106', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='304', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='044', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='807', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='508', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='140', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='927', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='865', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='938', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='572', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='807', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='342', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='688', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='638', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='559', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='680', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='488', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='440', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='159', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='857', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='958', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='502', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='360', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='813', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='732', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='502', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='197', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='826', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='969', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='863', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='225', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='730', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='871', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='630', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='436', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='419', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='794', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='758', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='932', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='074', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='350', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='380', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='367', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='697', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='649', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='814', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='626', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='542', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='926', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='602', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='664', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='707', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='275', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='874', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='269', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='201', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='777', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='743', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='912', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='313', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='197', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='516', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='323', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='690', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='221', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='274', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='713', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='845', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='895', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='457', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='748', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='735', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='309', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='484', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='337', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='191', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='373', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='255', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='527', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='928', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='271', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='785', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='206', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='382', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='967', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='998', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='984', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='330', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='482', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='105', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='350', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='942', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='229', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='970', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='677', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='054', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='940', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='838', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='210', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='936', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='952', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='303', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='939', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='401', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='656', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='756', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='127', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='607', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='778', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='599', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='667', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='243', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='702', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='814', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='072', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='746', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='219', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='431', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='942', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='293', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='005', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='416', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='411', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='635', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='076', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='021', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='296', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='045', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='493', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='305', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='133', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='645', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='615', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='566', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='590', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='735', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='965', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='652', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='587', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='934', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='290', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='425', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='473', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='827', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='719', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='935', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='012', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='870', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='093', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='575', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='987', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='789', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='431', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='818', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='047', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='013', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='404', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='691', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='795', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='773', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='170', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='405', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='764', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='614', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='646', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='054', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='949', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='298', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='846', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='184', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='678', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='296', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='813', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='625', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='595', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='333', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='311', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='611', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='385', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='251', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='735', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='244', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='505', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='448', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='443', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='050', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='050', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='547', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='161', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='779', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='229', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='749', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='134', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='489', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='643', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='622', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='579', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='100', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='908', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='331', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='839', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='817', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='426', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='366', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='854', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='332', provider_name='openai')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='416', provider_name='openai')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='456', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='^', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='123', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta=' equals', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta=':\n', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='180', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='302', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='106', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='304', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='044', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='807', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='508', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='140', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='927', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='865', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='938', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='572', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='807', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='342', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='688', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='638', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='559', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='680', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='488', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='440', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='159', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='857', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='958', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='502', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='360', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='813', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='732', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='502', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='197', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='826', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='969', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='863', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='225', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='730', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='871', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='630', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='436', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='419', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='794', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='758', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='932', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='074', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='350', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='380', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='367', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='697', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='649', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='814', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='626', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='542', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='926', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='602', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='664', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='707', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='275', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='874', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='269', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='201', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='777', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='743', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='912', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='313', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='197', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='516', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='323', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='690', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='221', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='274', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='713', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='845', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='895', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='457', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='748', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='735', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='309', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='484', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='337', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='191', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='373', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='255', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='527', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='928', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='271', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='785', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='206', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='382', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='967', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='998', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='984', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='330', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='482', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='105', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='350', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='942', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='229', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='970', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='677', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='054', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='940', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='838', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='210', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='936', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='952', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='303', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='939', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='401', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='656', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='756', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='127', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='607', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='778', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='599', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='667', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='243', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='702', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='814', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='072', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='746', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='219', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='431', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='942', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='293', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='005', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='416', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='411', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='635', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='076', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='021', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='296', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='045', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='493', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='305', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='133', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='645', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='615', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='566', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='590', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='735', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='965', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='652', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='587', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='934', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='290', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='425', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='473', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='827', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='719', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='935', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='012', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='870', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='093', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='575', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='987', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='789', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='431', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='818', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='047', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='013', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='404', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='691', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='795', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='773', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='170', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='405', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='764', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='614', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='646', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='054', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='949', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='298', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='846', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='184', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='678', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='296', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='813', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='625', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='595', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='333', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='311', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='611', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='385', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='251', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='735', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='244', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='505', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='448', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='443', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='050', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='050', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='547', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='161', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='779', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='229', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='749', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='134', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='489', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='643', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='622', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='579', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='100', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='908', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='331', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='839', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='817', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='426', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='366', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='854', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='332', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='416', provider_name='openai'),
+            ),
             PartEndEvent(
                 index=7,
                 part=TextPart(
@@ -5769,45 +6540,162 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 ),
                 previous_part_kind='builtin-tool-return',
             ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=IsStr(), provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' chart', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' y', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' =', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' x', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='^', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='2', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' x', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' from', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='5', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='5', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='  \n', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Download', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' image', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=':', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' [', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Download', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' chart', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='](', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='sandbox', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=':/', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='mnt', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='/data', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='/y', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_eq', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_x', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_squared', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_plot', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.png', provider_name='openai')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=')', provider_name='openai')),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=IsStr(), provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' the', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' chart', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' of', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' y', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' =', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' x', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='^', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='2', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' for', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' x', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' from', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' -', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='5', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' to', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' ', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='5', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='.', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='  \n', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='Download', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' the', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' image', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=':', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' [', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='Download', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' the', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' chart', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='](', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='sandbox', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=':/', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='mnt', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='/data', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='/y', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='_eq', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='_x', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='_squared', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='_plot', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='.png', provider_name='openai'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=')', provider_name='openai'),
+            ),
             PartEndEvent(
                 index=4,
                 part=TextPart(
@@ -8852,12 +9740,30 @@ async def test_openai_responses_model_file_search_tool_stream(
                     previous_part_kind='builtin-tool-return',
                 ),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
-                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' capital', provider_name='openai')),
-                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' of', provider_name='openai')),
-                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' France', provider_name='openai')),
-                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' is', provider_name='openai')),
-                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' Paris', provider_name='openai')),
-                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='.', provider_name='openai')),
+                PartDeltaEvent(
+                    index=2,
+                    delta=TextPartDelta(content_delta=' capital', provider_name='openai'),
+                ),
+                PartDeltaEvent(
+                    index=2,
+                    delta=TextPartDelta(content_delta=' of', provider_name='openai'),
+                ),
+                PartDeltaEvent(
+                    index=2,
+                    delta=TextPartDelta(content_delta=' France', provider_name='openai'),
+                ),
+                PartDeltaEvent(
+                    index=2,
+                    delta=TextPartDelta(content_delta=' is', provider_name='openai'),
+                ),
+                PartDeltaEvent(
+                    index=2,
+                    delta=TextPartDelta(content_delta=' Paris', provider_name='openai'),
+                ),
+                PartDeltaEvent(
+                    index=2,
+                    delta=TextPartDelta(content_delta='.', provider_name='openai'),
+                ),
                 PartEndEvent(
                     index=2,
                     part=TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),

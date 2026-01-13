@@ -2275,7 +2275,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         tool_call_id=chunk.item.call_id,
                         id=chunk.item.id,
                         provider_name=self.provider_name,
-                        provider_details=self.provider_details,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
                     pass
@@ -2443,7 +2442,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     content=chunk.delta,
                     id=chunk.item_id,
                     provider_name=self.provider_name,
-                    provider_details=self.provider_details,
                 ):
                     yield event
 
