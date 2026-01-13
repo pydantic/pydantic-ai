@@ -1,3 +1,7 @@
+---
+title: Pydantic AI Beta Graph API Reference
+description: "Master stateful agentic logic with the experimental Pydantic Graph API. Access technical documentation for nodes, state management, and workflow execution."
+---
 # Beta Graph API
 
 !!! warning "Beta API"

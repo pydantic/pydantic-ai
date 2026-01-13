@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI Stream Markdown: Technical Example"
+description: Example code for streaming and rendering Markdown responses. Learn how to handle incremental LLM outputs for a better user experience.
+---
 This example shows how to stream markdown from an agent, using the [`rich`](https://github.com/Textualize/rich) library to highlight the output in the terminal.
 
 It'll run the example with both OpenAI and Google Gemini models if the required environment variables are set.

@@ -1,3 +1,7 @@
+---
+title: "Pydantic Model: Pydantic AI Model Construct Example"
+description: Simple example showing how to use a standard Pydantic model for structured AI outputs. Learn the basics of data validation in Pydantic AI.
+---
 # Pydantic Model
 
 Simple example of using Pydantic AI to construct a Pydantic model from a text input.

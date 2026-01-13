@@ -1,3 +1,7 @@
+---
+title: "pydantic_ai.models.function Documentation & Example"
+description: Define programmatic agent responses with FunctionModel. Learn to mock LLM behavior for testing and building deterministic AI workflows in Pydantic AI.
+---
 # `pydantic_ai.models.function`
 
 A model controlled by a local function.

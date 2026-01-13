@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI: Multi-agent Applications & Workflows"
+description: "Orchestrate multiple AI agents to solve complex tasks. Learn how to build collaborative workflows, hand-offs, and multi-agent systems using Pydantic AI."
+---
 # Multi-agent Applications
 
 There are roughly five levels of complexity when building applications with Pydantic AI:
