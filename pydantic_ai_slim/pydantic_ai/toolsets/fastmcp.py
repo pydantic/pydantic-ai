@@ -77,7 +77,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     usage_policy: ToolPolicy | None
     """Usage policy applied to each tool individually (each tool gets its own counter).
-    
+
     For aggregate limits across all tools, use `tools_policy` on the Agent instead.
     """
 
