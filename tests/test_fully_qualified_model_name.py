@@ -6,12 +6,13 @@ across all model types in pydantic_ai.
 
 # All tests use the correct pytest.importorskip() pattern without deprecated parameters
 
+from unittest.mock import Mock
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 import pytest
 
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-
-
+ 
 def test_test_model_fully_qualified_name():
     model = TestModel()
     assert model.fully_qualified_model_name == 'test:test'
@@ -163,3 +164,90 @@ def test_cerebras_model_fully_qualified_name():
     from pydantic_ai.models.cerebras import CerebrasModel
 
     assert isinstance(CerebrasModel.fully_qualified_model_name, property)
+    
+def test_openai_model_fully_qualified_name_hit():
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    obj = OpenAIChatModel(provider=fake_provider, model_name="dummy-model")
+    _ = obj.fully_qualified_model_name
+    
+def test_openai_responses_model_fully_qualified_name_hit():
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    obj = OpenAIResponsesModel(provider=fake_provider, model_name="dummy-model")
+    _ = obj.fully_qualified_model_name
+
+def test_anthropic_model_fully_qualified_name_hit():
+    pytest.importorskip('pydantic_ai.models.anthropic', exc_type=ImportError)
+    from pydantic_ai.models.anthropic import AnthropicModel
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    obj = AnthropicModel(provider=fake_provider, model_name="dummy-model")
+    _ = obj.fully_qualified_model_name
+
+def test_bedrock_model_fully_qualified_name_hit():
+    pytest.importorskip('pydantic_ai.models.bedrock', exc_type=ImportError)
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    obj = BedrockConverseModel(provider=fake_provider, model_name="dummy-model")
+    _ = obj.fully_qualified_model_name
+
+def test_cohere_model_fully_qualified_name_hit():
+    pytest.importorskip('pydantic_ai.models.cohere', exc_type=ImportError)
+    from pydantic_ai.models.cohere import CohereModel
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    obj = CohereModel(provider=fake_provider, model_name="dummy-model")
+    _ = obj.fully_qualified_model_name
+
+def test_google_model_fully_qualified_name_hit():
+    pytest.importorskip('pydantic_ai.models.google', exc_type=ImportError)
+    from pydantic_ai.models.google import GoogleModel
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    obj = GoogleModel(provider=fake_provider, model_name="dummy-model")
+    _ = obj.fully_qualified_model_name
+
+def test_groq_model_fully_qualified_name_hit():
+    pytest.importorskip('pydantic_ai.models.groq', exc_type=ImportError)
+    from pydantic_ai.models.groq import GroqModel
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    obj = GroqModel(provider=fake_provider, model_name="dummy-model")
+    _ = obj.fully_qualified_model_name
+
+def test_huggingface_model_fully_qualified_name_hit():
+    pytest.importorskip('pydantic_ai.models.huggingface', exc_type=ImportError)
+    from pydantic_ai.models.huggingface import HuggingFaceModel
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    obj = HuggingFaceModel(provider=fake_provider, model_name="dummy-model")
+    _ = obj.fully_qualified_model_name
+
+def test_mcp_sampling_model_fully_qualified_name_hit():
+    pytest.importorskip('pydantic_ai.models.mcp_sampling', exc_type=ImportError)
+    from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    fake_session = Mock()
+    obj = MCPSamplingModel(session=fake_session, default_max_tokens=16384)
+    _ = obj.fully_qualified_model_name
+
+def test_mistral_model_fully_qualified_name_hit():
+    pytest.importorskip('pydantic_ai.models.mistral', exc_type=ImportError)
+    from pydantic_ai.models.mistral import MistralModel
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    obj = MistralModel(provider=fake_provider, model_name="dummy-model")
+    _ = obj.fully_qualified_model_name
+
+def test_outlines_model_fully_qualified_name_hit():
+    pytest.importorskip('pydantic_ai.models.outlines', exc_type=ImportError)
+    from pydantic_ai.models.outlines import OutlinesModel
+    fake_provider = Mock()
+    fake_provider.name = "dummy"
+    fake_model = Mock()
+    obj = OutlinesModel(model=fake_model)
+    _ = obj.fully_qualified_model_name
+
