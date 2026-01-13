@@ -106,19 +106,19 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `use_encrypted_content` value of the model settings in the Responses API.
     """
 
-    xai_include_code_execution_outputs: bool
+    xai_include_code_execution_output: bool
     """Whether to include the code execution results in the response.
 
     Corresponds to the `code_interpreter_call.outputs` value of the `include` parameter in the Responses API.
     """
 
-    xai_include_web_search_outputs: bool
+    xai_include_web_search_output: bool
     """Whether to include the web search results in the response.
 
     Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
     """
 
-    xai_include_mcp_outputs: bool
+    xai_include_mcp_output: bool
     """Whether to include the MCP results in the response.
 
     Corresponds to the `mcp_call.outputs` value of the `include` parameter in the Responses API.
@@ -470,13 +470,13 @@ class XaiModel(Model):
         use_encrypted_content = False
         if profile.grok_supports_encrypted_reasoning_content and model_settings.get('xai_include_encrypted_content'):
             use_encrypted_content = True
-        if model_settings.get('xai_include_code_execution_outputs'):
+        if model_settings.get('xai_include_code_execution_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
-        if model_settings.get('xai_include_web_search_outputs'):
+        if model_settings.get('xai_include_web_search_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
         # x_search not yet supported
         # collections_search not yet supported (could be mapped to file search)
-        if model_settings.get('xai_include_mcp_outputs'):
+        if model_settings.get('xai_include_mcp_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
         # Create and return chat instance
