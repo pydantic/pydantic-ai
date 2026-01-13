@@ -1,3 +1,7 @@
+---
+title: "Pydantic Logfire Documentation: Debugging & Monitoring"
+description: "Monitor and debug your Pydantic AI agents with Pydantic Logfire. Get full visibility into LLM calls, tool execution & performance."
+---
 # Pydantic Logfire Debugging and Monitoring
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
@@ -245,6 +249,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Confident AI](https://documentation.confident-ai.com/docs/llm-tracing/integrations/pydanticai)
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
 - [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
+- [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
 
 ## Advanced usage
 

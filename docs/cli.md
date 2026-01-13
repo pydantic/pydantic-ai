@@ -1,3 +1,7 @@
+---
+title: Pydantic AI Command Line Interface (CLI) Guide
+description: "Use the Pydantic AI CLI to run agents, manage configurations, and streamline your GenAI development workflow from the terminal."
+---
 # Command Line Interface (CLI)
 
 **Pydantic AI** comes with a CLI, `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.

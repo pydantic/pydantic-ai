@@ -1,3 +1,7 @@
+---
+title: "Outlines Setup & Initialization with Pydantic AI"
+description: "Implement structured LLM generation with Outlines and Pydantic AI. Learn to initialize models for guided text, JSON schema validation, and local inference."
+---
 # Outlines
 
 ## Install

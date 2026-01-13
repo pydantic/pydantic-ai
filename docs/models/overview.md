@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI: Models and Supported Providers"
+description: "Explore supported LLM providers in Pydantic AI. Configure OpenAI, Anthropic, Gemini, and more using a unified, type-safe interface for GenAI models."
+---
 # Models and Providers
 
 Pydantic AI is model-agnostic and has built-in support for multiple model providers.

@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI: Gemini API Setup & Configuration"
+description: "Technical API reference for the Google Gemini model integration in Pydantic AI. Configure Vertex AI and AI Studio for Python-based agents."
+---
 # `pydantic_ai.models.google`
 
 Interface that uses the [`google-genai`](https://pypi.org/project/google-genai/) package under the hood to
