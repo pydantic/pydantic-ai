@@ -12,7 +12,7 @@ import pytest
 
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
- 
+
 def test_test_model_fully_qualified_name():
     model = TestModel()
     assert model.fully_qualified_model_name == 'test:test'
@@ -164,13 +164,13 @@ def test_cerebras_model_fully_qualified_name():
     from pydantic_ai.models.cerebras import CerebrasModel
 
     assert isinstance(CerebrasModel.fully_qualified_model_name, property)
-    
+
 def test_openai_model_fully_qualified_name_hit():
     fake_provider = Mock()
     fake_provider.name = "dummy"
     obj = OpenAIChatModel(provider=fake_provider, model_name="dummy-model")
     _ = obj.fully_qualified_model_name
-    
+
 def test_openai_responses_model_fully_qualified_name_hit():
     fake_provider = Mock()
     fake_provider.name = "dummy"
@@ -250,4 +250,3 @@ def test_outlines_model_fully_qualified_name_hit():
     fake_model = Mock()
     obj = OutlinesModel(model=fake_model)
     _ = obj.fully_qualified_model_name
-
