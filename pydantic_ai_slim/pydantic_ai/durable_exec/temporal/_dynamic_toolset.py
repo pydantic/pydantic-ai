@@ -8,7 +8,7 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai._tool_usage_policy import ToolLimits
+from pydantic_ai._tool_usage_policy import ToolPolicy
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -29,7 +29,7 @@ class _ToolInfo:
 
     tool_def: ToolDefinition
     max_retries: int
-    usage_limits: ToolLimits | None
+    usage_policy: ToolPolicy | None
 
 
 class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
@@ -64,7 +64,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                     name: _ToolInfo(
                         tool_def=tool.tool_def,
                         max_retries=tool.max_retries,
-                        usage_limits=tool.usage_limits,
+                        usage_policy=tool.usage_policy,
                     )
                     for name, tool in tools.items()
                 }
@@ -162,6 +162,6 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             toolset=self,
             tool_def=tool_info.tool_def,
             max_retries=tool_info.max_retries,
-            usage_limits=tool_info.usage_limits,
+            usage_policy=tool_info.usage_policy,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )

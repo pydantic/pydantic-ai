@@ -7,7 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
-from pydantic_ai._tool_usage_policy import ToolLimits
+from pydantic_ai._tool_usage_policy import ToolPolicy
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
@@ -49,7 +49,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     schema_generator: type[GenerateJsonSchema]
-    usage_limits: ToolLimits | None
+    usage_policy: ToolPolicy | None
 
     def __init__(
         self,
@@ -65,7 +65,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         id: str | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ):
         """Build a new function toolset.
 
@@ -94,7 +94,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
-            usage_limits: Usage limits for tools in this toolset (max calls, per-step limits, etc.).
+            usage_policy: Usage policy for tools in this toolset (max calls, per-step limits, etc.).
                 Applies to all tools, unless overridden when adding a tool.
         """
         self.max_retries = max_retries
@@ -107,7 +107,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
-        self.usage_limits = usage_limits
+        self.usage_policy = usage_policy
 
         self.tools = {}
         for tool in tools:
@@ -140,7 +140,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -160,7 +160,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -219,7 +219,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            usage_limits: Usage limits for this tool (max calls, per-step limits, etc.).
+            usage_policy: Usage policy for this tool (max calls, per-step limits, etc.).
                 If `None`, the default value is determined by the toolset.
         """
 
@@ -242,7 +242,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
-                usage_limits=usage_limits,
+                usage_policy=usage_policy,
             )
             return func_
 
@@ -264,7 +264,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -301,7 +301,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            usage_limits: Usage limits for this tool (max calls, per-step limits, etc.).
+            usage_policy: Usage policy for this tool (max calls, per-step limits, etc.).
                 If `None`, the default value is determined by the toolset.
         """
         if docstring_format is None:
@@ -332,7 +332,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval=requires_approval,
             metadata=metadata,
             timeout=timeout,
-            usage_limits=usage_limits,
+            usage_policy=usage_policy,
         )
         self.add_tool(tool)
 
@@ -348,15 +348,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.max_retries = self.max_retries
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
-        if tool.usage_limits is None:
-            tool.usage_limits = self.usage_limits
+        if tool.usage_policy is None:
+            tool.usage_policy = self.usage_policy
         self.tools[tool.name] = tool
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
-            usage_limits = tool.usage_limits if tool.usage_limits is not None else self.usage_limits
+            usage_policy = tool.usage_policy if tool.usage_policy is not None else self.usage_policy
             run_context = replace(
                 ctx,
                 tool_name=original_name,
@@ -382,7 +382,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,
                 timeout=tool_def.timeout,
-                usage_limits=usage_limits,
+                usage_policy=usage_policy,
             )
         return tools
 

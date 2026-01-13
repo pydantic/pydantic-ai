@@ -15,7 +15,6 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
-    AgentToolPolicy,
     ExternalToolset,
     FunctionToolset,
     ModelMessage,
@@ -27,9 +26,10 @@ from pydantic_ai import (
     TextPart,
     Tool,
     ToolCallPart,
-    ToolLimits,
+    ToolPolicy,
     ToolReturn,
     ToolReturnPart,
+    ToolsPolicy,
     UserError,
     UserPromptPart,
 )
@@ -1329,15 +1329,15 @@ def test_tool_retries():
 
 
 def test_tool_max_uses():
-    """Test ToolLimits.max_uses_per_step with partial acceptance on an individual tool.
+    """Test ToolPolicy.max_uses_per_step with partial acceptance on an individual tool.
 
-    ToolLimits is set on individual tools via @agent.tool(usage_limits=...).
+    ToolPolicy is set on individual tools via @agent.tool(usage_policy=...).
     It limits how many times that specific tool can be called during an agent run.
 
     Here we set max_uses=2 and max_uses_per_step=1. When the model tries to call
     the tool twice in the same step (exceeding max_uses_per_step), partial acceptance
     kicks in: the first call is accepted and executed, the second call is rejected
-    with a message. Both ToolLimits.partial_acceptance and AgentToolPolicy.partial_acceptance
+    with a message. Both ToolPolicy.partial_acceptance and ToolsPolicy.partial_acceptance
     default to True, so partial acceptance works by default.
     """
     call_count = 0
@@ -1363,7 +1363,7 @@ def test_tool_max_uses():
 
     agent = Agent(FunctionModel(my_model), output_type=str)
 
-    @agent.tool(usage_limits=ToolLimits(max_uses=2, max_uses_per_step=1))
+    @agent.tool(usage_policy=ToolPolicy(max_uses=2, max_uses_per_step=1))
     def tool_with_max_use(ctx: RunContext[None]) -> str:
         return 'Used'
 
@@ -1421,18 +1421,18 @@ def test_tool_max_uses():
     )
 
 
-def test_tools_usage_policy_max_uses():
-    """Test AgentToolPolicy.max_uses on an agent.
+def test_tools_policy_max_uses():
+    """Test ToolsPolicy.max_uses on an agent.
 
-    AgentToolPolicy is set on the Agent via tools_usage_policy parameter.
-    It applies collectively to ALL tools during an agent run (unlike ToolLimits
+    ToolsPolicy is set on the Agent via tools_policy parameter.
+    It applies collectively to ALL tools during an agent run (unlike ToolPolicy
     which applies to a specific tool).
 
     Here we set max_uses=0 on the agent level, meaning no tool calls are allowed
     at all. When the model tries to call any tool, it receives an error message
     prompting it to produce output without using tools.
     """
-    agent = Agent(TestModel(), tools_usage_policy=AgentToolPolicy(max_uses=0))
+    agent = Agent(TestModel(), tools_policy=ToolsPolicy(max_uses=0))
 
     @agent.tool_plain
     def my_tool(x: int) -> int:  # pragma: no cover

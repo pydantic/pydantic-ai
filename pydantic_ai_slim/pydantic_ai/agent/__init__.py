@@ -15,7 +15,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
-from pydantic_ai._tool_usage_policy import AgentToolPolicy, ToolLimits
+from pydantic_ai._tool_usage_policy import ToolPolicy, ToolsPolicy
 
 from .. import (
     _agent_graph,
@@ -184,7 +184,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
@@ -214,7 +214,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
@@ -242,7 +242,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
@@ -279,7 +279,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
-            tools_usage_policy: The tools usage policy for this agent, if not provided, the default policy will be used.
+            tools_policy: The tools policy for this agent, if not provided, the default policy will be used.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
             builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
@@ -357,7 +357,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._max_tool_retries = retries
-        self._tools_usage_policy = tools_usage_policy
+        self._tools_policy = tools_policy
         self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
@@ -471,7 +471,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -492,7 +492,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -513,7 +513,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -592,7 +592,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
+            tools_policy: The tools policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -673,7 +673,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             usage_limits=usage_limits,
             max_result_retries=self._max_result_retries,
-            tools_usage_policy=tools_usage_policy or self._tools_usage_policy,
+            tools_policy=tools_policy or self._tools_policy,
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
@@ -1159,7 +1159,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1179,7 +1179,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1231,7 +1231,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
-            usage_limits: Optional usage limits for this tool (max calls, per-step limits, etc.).
+            usage_policy: Optional usage policy for this tool (max calls, per-step limits, etc.).
         """
 
         def tool_decorator(
@@ -1253,7 +1253,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
-                usage_limits=usage_limits,
+                usage_policy=usage_policy,
             )
             return func_
 
@@ -1279,7 +1279,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1299,7 +1299,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1351,7 +1351,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
-            usage_limits: Optional usage limits for this tool (max calls, per-step limits, etc.).
+            usage_policy: Optional usage policy for this tool (max calls, per-step limits, etc.).
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1371,7 +1371,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
-                usage_limits=usage_limits,
+                usage_policy=usage_policy,
             )
             return func_
 

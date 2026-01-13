@@ -9,7 +9,7 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
 
-from pydantic_ai._tool_usage_policy import ToolLimits
+from pydantic_ai._tool_usage_policy import ToolPolicy
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
@@ -285,8 +285,8 @@ class Tool(Generic[ToolAgentDepsT]):
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
-    usage_limits: ToolLimits | None
-    """Optional usage limits for this tool (max calls, per-step limits, etc.)."""
+    usage_policy: ToolPolicy | None
+    """Optional usage policy for this tool (max calls, per-step limits, etc.)."""
 
     def __init__(
         self,
@@ -306,7 +306,7 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ):
         """Create a new tool instance.
 
@@ -359,7 +359,7 @@ class Tool(Generic[ToolAgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
-            usage_limits: Optional usage limits for this tool (max calls, per-step limits, etc.).
+            usage_policy: Optional usage policy for this tool (max calls, per-step limits, etc.).
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -387,7 +387,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
-        self.usage_limits = usage_limits
+        self.usage_policy = usage_policy
 
     @classmethod
     def from_schema(

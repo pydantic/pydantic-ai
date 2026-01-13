@@ -22,7 +22,7 @@ from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
-from pydantic_ai._tool_usage_policy import ToolLimits
+from pydantic_ai._tool_usage_policy import ToolPolicy
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 from .direct import model_request
@@ -333,8 +333,8 @@ class MCPServer(AbstractToolset[Any], ABC):
     max_retries: int
     """The maximum number of times to retry a tool call."""
 
-    usage_limits: ToolLimits | None
-    """Usage limits for all tools in this toolset."""
+    usage_policy: ToolPolicy | None
+    """Usage policy for all tools in this toolset."""
 
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""
@@ -393,7 +393,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         *,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
-        usage_limits: ToolLimits | None = None,
+        usage_policy: ToolPolicy | None = None,
     ):
         self.tool_prefix = tool_prefix
         self.log_level = log_level
@@ -408,7 +408,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
         self.client_info = client_info
-        self.usage_limits = usage_limits
+        self.usage_policy = usage_policy
 
         self._id = id or tool_prefix
 
@@ -599,7 +599,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             toolset=self,
             tool_def=tool_def,
             max_retries=self.max_retries,
-            usage_limits=self.usage_limits,
+            usage_policy=self.usage_policy,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 

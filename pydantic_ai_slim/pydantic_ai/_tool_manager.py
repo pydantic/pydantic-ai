@@ -80,7 +80,7 @@ class ToolManager(Generic[AgentDepsT]):
         return [
             tool.tool_def
             for tool in self.tools.values()
-            if (limits := tool.usage_limits) is None
+            if (limits := tool.usage_policy) is None
             or (max_uses := limits.max_uses) is None
             or (self._get_current_uses_of_tool(tool.tool_def.name) < max_uses)
         ]
@@ -302,10 +302,10 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         tool = self.tools.get(tool_name, None)
-        if tool is None or tool.usage_limits is None:
+        if tool is None or tool.usage_policy is None:
             return None
 
-        return tool.usage_limits.max_uses
+        return tool.usage_policy.max_uses
 
     def _get_current_uses_of_tool(self, tool_name: str) -> int:
         """Get the current number of uses of a given tool."""
@@ -318,8 +318,8 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
         if (
             (tool := self.tools.get(tool_name)) is not None
-            and (usage_limits := tool.usage_limits) is not None
-            and (max_uses_per_step := usage_limits.max_uses_per_step) is not None
+            and (usage_policy := tool.usage_policy) is not None
+            and (max_uses_per_step := usage_policy.max_uses_per_step) is not None
         ):
             return max_uses_per_step
         return None
@@ -356,11 +356,11 @@ class ToolManager(Generic[AgentDepsT]):
 
         ctx = self._assert_ctx()
 
-        policy = ctx.tools_usage_policy
+        policy = ctx.tools_policy
 
         # All or nothing batches for all tool_calls
         # If partial_acceptance is not allowed and the batch will exceed limits then we need to return here
-        if policy is not None and not policy.partial_acceptance:
+        if policy is not None and policy.partial_acceptance is False:
             batch_size = projected_usage.tool_calls - current_tool_calls
             if (policy.max_uses is not None and projected_usage.tool_calls > policy.max_uses) or (
                 policy.max_uses_per_step is not None and batch_size > policy.max_uses_per_step
@@ -394,13 +394,13 @@ class ToolManager(Generic[AgentDepsT]):
             # If limits would be exceeded and partial acceptance is not allowed, reject all calls.
             # For partial acceptance to work:
             # 1. Policy must allow it (defaults to True; if no policy is set, we use the default True)
-            # 2. The tool's ToolLimits must have partial_acceptance != False (None means inherit default True)
-            policy_allows_partial = policy is None or policy.partial_acceptance
+            # 2. The tool's ToolPolicy must have partial_acceptance != False (None means inherit default True)
+            policy_allows_partial = policy is None or policy.partial_acceptance is not False
             if not (
                 policy_allows_partial
                 and (tool := self.tools.get(tool_name)) is not None
-                and (usage_limits := tool.usage_limits) is not None
-                and usage_limits.partial_acceptance is not False  # None means inherit default True
+                and (usage_policy := tool.usage_policy) is not None
+                and usage_policy.partial_acceptance is not False  # None means inherit default True
             ):
                 return f'Tool use limit reached for tool "{tool_name}".'
 

@@ -27,7 +27,7 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._tool_manager import ToolManager
-from .._tool_usage_policy import AgentToolPolicy
+from .._tool_usage_policy import ToolsPolicy
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
@@ -164,7 +164,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -186,7 +186,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -207,7 +207,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -243,7 +243,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
+            tools_policy: The tools policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -270,7 +270,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
-            tools_usage_policy=tools_usage_policy,
+            tools_policy=tools_policy,
             usage=usage,
             metadata=metadata,
             toolsets=toolsets,
@@ -299,7 +299,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -321,7 +321,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -342,7 +342,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -377,7 +377,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
+            tools_policy: The tools policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -403,7 +403,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
-                tools_usage_policy=tools_usage_policy,
+                tools_policy=tools_policy,
                 usage=usage,
                 metadata=metadata,
                 infer_name=False,
@@ -426,7 +426,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -448,7 +448,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -470,7 +470,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -513,7 +513,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
+            tools_policy: The tools policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -545,7 +545,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions=instructions,
             model_settings=model_settings,
             usage_limits=usage_limits,
-            tools_usage_policy=tools_usage_policy,
+            tools_policy=tools_policy,
             usage=usage,
             metadata=metadata,
             infer_name=False,
@@ -675,7 +675,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -696,7 +696,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -716,7 +716,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -761,7 +761,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
+            tools_policy: The tools policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -788,7 +788,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
-                tools_usage_policy=tools_usage_policy,
+                tools_policy=tools_policy,
                 usage=usage,
                 metadata=metadata,
                 infer_name=infer_name,
@@ -814,7 +814,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -835,7 +835,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -855,7 +855,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -907,7 +907,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
+            tools_policy: The tools policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1010,7 +1010,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -1031,7 +1031,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -1053,7 +1053,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        tools_usage_policy: AgentToolPolicy | None = None,
+        tools_policy: ToolsPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -1132,7 +1132,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            tools_usage_policy: The tools usage policy for this run, if not provided, the default policy will be used.
+            tools_policy: The tools policy for this run, if not provided, the default policy will be used.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
