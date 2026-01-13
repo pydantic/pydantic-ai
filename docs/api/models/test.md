@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI Model Testing: TestModel API Reference"
+description: "Documentation for TestModel, a specialized model class for unit testing. Mock LLM responses to test your agent logic and tool execution flows."
+---
 # `pydantic_ai.models.test`
 
 Utility model for quickly testing apps built with Pydantic AI.
