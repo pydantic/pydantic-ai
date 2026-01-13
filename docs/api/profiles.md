@@ -1,3 +1,6 @@
+---
+description: "Learn about response profiling in Pydantic AI. Technical guide on constructing model requests and processing complex, multimodal responses."
+---
 # `pydantic_ai.profiles`
 
 ::: pydantic_ai.profiles.ModelProfile
