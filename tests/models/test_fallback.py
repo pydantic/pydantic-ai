@@ -62,7 +62,7 @@ def test_init() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     assert fallback_model.model_name == snapshot('fallback:function:failure_response:,function:success_response:')
     assert fallback_model.fully_qualified_model_name == snapshot(
-        'fallback:function:failure_response:,function:success_response:'
+        'fallback:function:function:failure_response:,function:function:success_response:'
     )
     assert fallback_model.system == 'fallback:function,function'
     assert fallback_model.base_url is None
