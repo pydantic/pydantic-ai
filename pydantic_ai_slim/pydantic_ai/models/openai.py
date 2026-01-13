@@ -1040,22 +1040,35 @@ class OpenAIChatModel(Model):
                     audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
-                    if self._is_text_like_media_type(item.media_type):
-                        downloaded_text = await download_item(item, data_format='text')
-                        content.append(
-                            self._inline_text_file_part(
-                                downloaded_text['data'],
-                                media_type=item.media_type,
-                                identifier=item.identifier,
+                    if item.force_download:
+                        if self._is_text_like_media_type(item.media_type):
+                            downloaded_text = await download_item(item, data_format='text')
+                            content.append(
+                                self._inline_text_file_part(
+                                    downloaded_text['data'],
+                                    media_type=item.media_type,
+                                    identifier=item.identifier,
+                                )
                             )
-                        )
+                        else:
+                            downloaded_item = await download_item(
+                                item, data_format='base64_uri', type_format='extension'
+                            )
+                            content.append(
+                                File(
+                                    file=FileFile(
+                                        file_data=downloaded_item['data'],
+                                        filename=f'filename.{downloaded_item["data_type"]}',
+                                    ),
+                                    type='file',
+                                )
+                            )
                     else:
-                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                         content.append(
                             File(
                                 file=FileFile(
-                                    file_data=downloaded_item['data'],
-                                    filename=f'filename.{downloaded_item["data_type"]}',
+                                    file_data=item.url,
+                                    filename=f'filename.{item.format}',
                                 ),
                                 type='file',
                             )
