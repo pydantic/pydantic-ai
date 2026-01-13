@@ -7,9 +7,10 @@ across all model types in pydantic_ai.
 # All tests use the correct pytest.importorskip() pattern without deprecated parameters
 
 from unittest.mock import Mock
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+
 import pytest
 
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 
