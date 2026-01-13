@@ -1,3 +1,7 @@
+---
+title: Direct Model Requests with Pydantic AI
+description: "Use Pydantic AI to make raw model requests without full agents. Learn the lightweight patterns for structured output and type-safe LLM calls."
+---
 # Direct Model Requests
 
 The `direct` module provides low-level methods for making imperative requests to LLMs where the only abstraction is input and output schema translation, enabling you to use all models with the same API.

@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI Integration: Google Gemini & Vertex AI"
+description: "Integrate Google Gemini and Vertex AI models into your Pydantic AI agents. Guide on configuration, authentication, and using Google's powerful LLMs."
+---
 # Google
 
 The `GoogleModel` is a model that uses the [`google-genai`](https://pypi.org/project/google-genai/) package under the hood to

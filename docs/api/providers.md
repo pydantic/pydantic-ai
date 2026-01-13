@@ -1,3 +1,6 @@
+---
+description: Technical overview of the provider architecture in Pydantic AI. Learn how different LLM backends are abstracted and implemented in the library.
+---
 # `pydantic_ai.providers`
 
 ::: pydantic_ai.providers.Provider

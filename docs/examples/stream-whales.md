@@ -1,3 +1,7 @@
+---
+title: "Stream Whales: Streamed Structured Response Validation"
+description: "A technical example showing how to stream and validate structured Pydantic models in real-time. Learn streaming validation patterns in Pydantic AI."
+---
 Information about whales — an example of streamed structured response validation.
 
 Demonstrates:

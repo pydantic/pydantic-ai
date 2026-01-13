@@ -1,3 +1,7 @@
+---
+title: Pydantic AI Model Usage within MCP Servers
+description: "Guide to building MCP servers with Pydantic AI. Provide tools and resources to other AI clients using a standardized, production-ready framework."
+---
 # Server
 
 Pydantic AI models can also be used within MCP Servers.
