@@ -67,3 +67,9 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: update-model-prices
+        name: Update model prices
+        entry: uv run python docs/.hooks/update_model_prices.py
+        language: system
+        files: ^docs/models/popular-models\.md$
+        pass_filenames: false

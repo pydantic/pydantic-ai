@@ -2,48 +2,42 @@
 title: "Pydantic AI: Models and Supported Providers"
 description: "Explore supported LLM providers in Pydantic AI. Configure OpenAI, Anthropic, Gemini, and more using a unified, type-safe interface for GenAI models."
 ---
-# Model Providers
+# Models and Providers
 
-Pydantic AI is model-agnostic and has built-in support for multiple model providers:
+Pydantic AI is model-agnostic and has built-in support for multiple model providers.
 
-* [OpenAI](openai.md)
-* [Anthropic](anthropic.md)
-* [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
-* [Bedrock](bedrock.md)
-* [Cerebras](cerebras.md)
-* [Cohere](cohere.md)
-* [Groq](groq.md)
-* [Hugging Face](huggingface.md)
-* [Mistral](mistral.md)
-* [OpenRouter](openrouter.md)
-* [Outlines](outlines.md)
+## Supported Providers
 
-## OpenAI-compatible Providers
+Pydantic AI supports three types of providers:
 
-In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
+- **First-Party Providers**: Companies that develop and train their own AI models, accessed directly via their APIs
+- **Inference Providers**: Services that host and serve models from various sources
+- **Gateways**: Services that provide unified access to multiple model providers
 
-- [Alibaba Cloud Model Studio (DashScope)](openai.md#alibaba-cloud-model-studio-dashscope)
-- [Azure AI Foundry](openai.md#azure-ai-foundry)
-- [DeepSeek](openai.md#deepseek)
-- [Fireworks AI](openai.md#fireworks-ai)
-- [GitHub Models](openai.md#github-models)
-- [Grok (xAI)](openai.md#grok-xai)
-- [Heroku](openai.md#heroku-ai)
-- [LiteLLM](openai.md#litellm)
-- [Nebius AI Studio](openai.md#nebius-ai-studio)
-- [Ollama](openai.md#ollama)
-- [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
-- [Perplexity](openai.md#perplexity)
-- [Together AI](openai.md#together-ai)
-- [Vercel AI Gateway](openai.md#vercel-ai-gateway)
+| First-Party Providers | Inference Providers | Gateways |
+|-----------------------|---------------------|----------|
+| [Anthropic](anthropic.md) - Claude | [Alibaba (DashScope)](alibaba.md) | [Pydantic AI Gateway](../gateway.md) |
+| [Cohere](cohere.md) - Command R | [Azure AI Foundry](azure.md) | [OpenRouter](openrouter.md) |
+| [DeepSeek](deepseek.md) - DeepSeek | [Bedrock](bedrock.md) | [Vercel AI Gateway](vercel.md) |
+| [Google](google.md) - Gemini | [Cerebras](cerebras.md) | |
+| [Mistral](mistral.md) - Mistral | [Fireworks AI](fireworks.md) | |
+| [MoonshotAI](moonshotai.md) - Kimi | [GitHub Models](github-models.md) | |
+| [OpenAI](openai.md) - GPT | [Groq](groq.md) | |
+| [Perplexity](perplexity.md) - Sonar | [Heroku AI](heroku.md) | |
+| [xAI](xai.md) - Grok | [HuggingFace](huggingface.md) | |
+| | [LiteLLM](litellm.md) | |
+| | [Nebius AI Studio](nebius.md) | |
+| | [Ollama](ollama.md) | |
+| | [OVHcloud](ovhcloud.md) | |
+| | [Together AI](together.md) | |
 
 Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.
 
-To use each model provider, you need to configure your local environment and make sure you have the right
+To use each provider, you need to configure your local environment and make sure you have the right
 packages installed. If you try to use the model without having done so, you'll be told what to install.
 
-## Models and Providers
+## Terminology
 
 Pydantic AI uses a few key terms to describe how it interacts with different LLMs:
 
