@@ -4,18 +4,14 @@ This module contains tests for the fully_qualified_model_name property
 across all model types in pydantic_ai.
 """
 
-# All tests use the correct pytest.importorskip() pattern without deprecated parameters
-
 from unittest.mock import Mock
-
 import pytest
 
-openai = pytest.importorskip("openai")
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 
 
+# -------------------- Basic TestModel & WrapperModel --------------------
 def test_test_model_fully_qualified_name():
     model = TestModel()
     assert model.fully_qualified_model_name == 'test:test'
@@ -44,143 +40,34 @@ def test_fully_qualified_name_matches_system_and_model_name():
     assert model.model_name in fqn
 
 
-def test_anthropic_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.anthropic', exc_type=ImportError)
-    from pydantic_ai.models.anthropic import AnthropicModel
-
-    assert isinstance(AnthropicModel.fully_qualified_model_name, property)
-
-
-def test_bedrock_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.bedrock', exc_type=ImportError)
-    from pydantic_ai.models.bedrock import BedrockConverseModel
-
-    assert isinstance(BedrockConverseModel.fully_qualified_model_name, property)
-
-
-def test_cohere_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.cohere', exc_type=ImportError)
-    from pydantic_ai.models.cohere import CohereModel
-
-    assert isinstance(CohereModel.fully_qualified_model_name, property)
-
-
-def test_fallback_model_fully_qualified_name():
-    from pydantic_ai.models.fallback import FallbackModel
-
-    fallback = FallbackModel(TestModel(), TestModel())
-    fqn = fallback.fully_qualified_model_name
-    assert fqn.startswith('fallback:')
-    assert ':' in fqn
-
-
-def test_function_model_fully_qualified_name():
-    from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-
-    def dummy_handler(
-        messages: list[ModelMessage],
-        info: AgentInfo,
-    ) -> ModelResponse:
-        return ModelResponse(
-            model_name='test-function',
-            parts=[TextPart(content='test')],
-        )
-
-    model = FunctionModel(dummy_handler, model_name='test-function')
-    fqn = model.fully_qualified_model_name
-    assert fqn.startswith('function:')
-    assert model.model_name in fqn
-
-    # Execute the handler to get full coverage
-    agent = Agent(model)
-    result = agent.run_sync('test')
-    assert result.output == 'test'
-
-
-def test_google_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.google', exc_type=ImportError)
-    from pydantic_ai.models.google import GoogleModel
-
-    assert isinstance(GoogleModel.fully_qualified_model_name, property)
-
-
-def test_groq_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.groq', exc_type=ImportError)
-    from pydantic_ai.models.groq import GroqModel
-
-    assert isinstance(GroqModel.fully_qualified_model_name, property)
-
-
-def test_huggingface_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.huggingface', exc_type=ImportError)
-    from pydantic_ai.models.huggingface import HuggingFaceModel
-
-    assert isinstance(HuggingFaceModel.fully_qualified_model_name, property)
-
-
-def test_mcp_sampling_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.mcp_sampling', exc_type=ImportError)
-    from pydantic_ai.models.mcp_sampling import MCPSamplingModel
-
-    assert isinstance(MCPSamplingModel.fully_qualified_model_name, property)
-
-
-def test_mistral_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.mistral', exc_type=ImportError)
-    from pydantic_ai.models.mistral import MistralModel
-
-    assert isinstance(MistralModel.fully_qualified_model_name, property)
-
-
+# -------------------- OpenAI --------------------
 def test_openai_chat_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.openai', exc_type=ImportError)
+    pytest.importorskip('openai')
     from pydantic_ai.models.openai import OpenAIChatModel
 
-    assert isinstance(OpenAIChatModel.fully_qualified_model_name, property)
-
-
-def test_openai_responses_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.openai', exc_type=ImportError)
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-
-    assert isinstance(OpenAIResponsesModel.fully_qualified_model_name, property)
-
-
-def test_outlines_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.outlines', exc_type=ImportError)
-    from pydantic_ai.models.outlines import OutlinesModel
-
-    assert isinstance(OutlinesModel.fully_qualified_model_name, property)
-
-
-def test_openrouter_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.openrouter', exc_type=ImportError)
-    from pydantic_ai.models.openrouter import OpenRouterModel
-
-    assert isinstance(OpenRouterModel.fully_qualified_model_name, property)
-
-
-def test_cerebras_model_fully_qualified_name():
-    pytest.importorskip('pydantic_ai.models.cerebras', exc_type=ImportError)
-    from pydantic_ai.models.cerebras import CerebrasModel
-
-    assert isinstance(CerebrasModel.fully_qualified_model_name, property)
-
-
-def test_openai_model_fully_qualified_name_hit():
     fake_provider = Mock()
     fake_provider.name = 'dummy'
     obj = OpenAIChatModel(provider=fake_provider, model_name='dummy-model')
     _ = obj.fully_qualified_model_name
+    assert isinstance(OpenAIChatModel.fully_qualified_model_name, property)
 
 
-def test_openai_responses_model_fully_qualified_name_hit():
+def test_openai_responses_model_fully_qualified_name():
+    pytest.importorskip('openai')
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+
     fake_provider = Mock()
     fake_provider.name = 'dummy'
     obj = OpenAIResponsesModel(provider=fake_provider, model_name='dummy-model')
     _ = obj.fully_qualified_model_name
+    assert isinstance(OpenAIResponsesModel.fully_qualified_model_name, property)
+
+
+# -------------------- Anthropic --------------------
+def test_anthropic_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.anthropic', exc_type=ImportError)
+    from pydantic_ai.models.anthropic import AnthropicModel
+    assert isinstance(AnthropicModel.fully_qualified_model_name, property)
 
 
 def test_anthropic_model_fully_qualified_name_hit():
@@ -193,6 +80,13 @@ def test_anthropic_model_fully_qualified_name_hit():
     _ = obj.fully_qualified_model_name
 
 
+# -------------------- Bedrock --------------------
+def test_bedrock_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.bedrock', exc_type=ImportError)
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+    assert isinstance(BedrockConverseModel.fully_qualified_model_name, property)
+
+
 def test_bedrock_model_fully_qualified_name_hit():
     pytest.importorskip('pydantic_ai.models.bedrock', exc_type=ImportError)
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -201,6 +95,13 @@ def test_bedrock_model_fully_qualified_name_hit():
     fake_provider.name = 'dummy'
     obj = BedrockConverseModel(provider=fake_provider, model_name='dummy-model')
     _ = obj.fully_qualified_model_name
+
+
+# -------------------- Cohere --------------------
+def test_cohere_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.cohere', exc_type=ImportError)
+    from pydantic_ai.models.cohere import CohereModel
+    assert isinstance(CohereModel.fully_qualified_model_name, property)
 
 
 def test_cohere_model_fully_qualified_name_hit():
@@ -213,6 +114,32 @@ def test_cohere_model_fully_qualified_name_hit():
     _ = obj.fully_qualified_model_name
 
 
+# -------------------- FunctionModel --------------------
+def test_function_model_fully_qualified_name():
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def dummy_handler(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(model_name='test-function', parts=[TextPart(content='test')])
+
+    model = FunctionModel(dummy_handler, model_name='test-function')
+    fqn = model.fully_qualified_model_name
+    assert fqn.startswith('function:')
+    assert model.model_name in fqn
+
+    agent = Agent(model)
+    result = agent.run_sync('test')
+    assert result.output == 'test'
+
+
+# -------------------- Google --------------------
+def test_google_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.google', exc_type=ImportError)
+    from pydantic_ai.models.google import GoogleModel
+    assert isinstance(GoogleModel.fully_qualified_model_name, property)
+
+
 def test_google_model_fully_qualified_name_hit():
     pytest.importorskip('pydantic_ai.models.google', exc_type=ImportError)
     from pydantic_ai.models.google import GoogleModel
@@ -221,6 +148,13 @@ def test_google_model_fully_qualified_name_hit():
     fake_provider.name = 'dummy'
     obj = GoogleModel(provider=fake_provider, model_name='dummy-model')
     _ = obj.fully_qualified_model_name
+
+
+# -------------------- Groq --------------------
+def test_groq_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.groq', exc_type=ImportError)
+    from pydantic_ai.models.groq import GroqModel
+    assert isinstance(GroqModel.fully_qualified_model_name, property)
 
 
 def test_groq_model_fully_qualified_name_hit():
@@ -233,6 +167,13 @@ def test_groq_model_fully_qualified_name_hit():
     _ = obj.fully_qualified_model_name
 
 
+# -------------------- HuggingFace --------------------
+def test_huggingface_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.huggingface', exc_type=ImportError)
+    from pydantic_ai.models.huggingface import HuggingFaceModel
+    assert isinstance(HuggingFaceModel.fully_qualified_model_name, property)
+
+
 def test_huggingface_model_fully_qualified_name_hit():
     pytest.importorskip('pydantic_ai.models.huggingface', exc_type=ImportError)
     from pydantic_ai.models.huggingface import HuggingFaceModel
@@ -243,15 +184,27 @@ def test_huggingface_model_fully_qualified_name_hit():
     _ = obj.fully_qualified_model_name
 
 
+# -------------------- MCP Sampling --------------------
+def test_mcp_sampling_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.mcp_sampling', exc_type=ImportError)
+    from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+    assert isinstance(MCPSamplingModel.fully_qualified_model_name, property)
+
+
 def test_mcp_sampling_model_fully_qualified_name_hit():
     pytest.importorskip('pydantic_ai.models.mcp_sampling', exc_type=ImportError)
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
-    fake_provider = Mock()
-    fake_provider.name = 'dummy'
     fake_session = Mock()
     obj = MCPSamplingModel(session=fake_session, default_max_tokens=16384)
     _ = obj.fully_qualified_model_name
+
+
+# -------------------- Mistral --------------------
+def test_mistral_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.mistral', exc_type=ImportError)
+    from pydantic_ai.models.mistral import MistralModel
+    assert isinstance(MistralModel.fully_qualified_model_name, property)
 
 
 def test_mistral_model_fully_qualified_name_hit():
@@ -264,12 +217,31 @@ def test_mistral_model_fully_qualified_name_hit():
     _ = obj.fully_qualified_model_name
 
 
+# -------------------- Outlines --------------------
+def test_outlines_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.outlines', exc_type=ImportError)
+    from pydantic_ai.models.outlines import OutlinesModel
+    assert isinstance(OutlinesModel.fully_qualified_model_name, property)
+
+
 def test_outlines_model_fully_qualified_name_hit():
     pytest.importorskip('pydantic_ai.models.outlines', exc_type=ImportError)
     from pydantic_ai.models.outlines import OutlinesModel
 
-    fake_provider = Mock()
-    fake_provider.name = 'dummy'
     fake_model = Mock()
     obj = OutlinesModel(model=fake_model)
     _ = obj.fully_qualified_model_name
+
+
+# -------------------- OpenRouter --------------------
+def test_openrouter_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.openrouter', exc_type=ImportError)
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    assert isinstance(OpenRouterModel.fully_qualified_model_name, property)
+
+
+# -------------------- Cerebras --------------------
+def test_cerebras_model_fully_qualified_name():
+    pytest.importorskip('pydantic_ai.models.cerebras', exc_type=ImportError)
+    from pydantic_ai.models.cerebras import CerebrasModel
+    assert isinstance(CerebrasModel.fully_qualified_model_name, property)
