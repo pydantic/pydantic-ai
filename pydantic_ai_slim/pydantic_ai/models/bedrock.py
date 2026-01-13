@@ -538,11 +538,14 @@ class BedrockConverseModel(Model):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
+        profile = BedrockModelProfile.from_profile(self.profile)
+        is_compatible = _is_compatible_with_tool_forcing(self.model_name, profile, model_settings)
+
         tool_choice: ToolChoiceTypeDef
         if resolved_tool_choice == 'auto':
             tool_choice = {'auto': {}}
         elif resolved_tool_choice == 'required':
-            tool_choice = {'any': {}}
+            tool_choice = {'any': {}} if is_compatible else {'auto': {}}
         elif resolved_tool_choice == 'none':
             # Bedrock doesn't support a native 'none' mode, so we don't send tools
             # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html
@@ -552,9 +555,9 @@ class BedrockConverseModel(Model):
             # Always filter to ensure only specified tools are sent even if toolChoice not supported
             tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'tool': {'name': tool_names[0]}}
+                tool_choice = {'tool': {'name': tool_names[0]}} if is_compatible else {'auto': {}}
             else:
-                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' else {'any': {}}
+                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not is_compatible else {'any': {}}
         else:
             assert_never(resolved_tool_choice)
 
@@ -563,7 +566,6 @@ class BedrockConverseModel(Model):
 
         tools: list[ToolTypeDef] = [self._map_tool_definition(t) for t in tool_defs.values()]
 
-        profile = BedrockModelProfile.from_profile(self.profile)
         if (
             model_settings
             and model_settings.get('bedrock_cache_tool_definitions')
@@ -574,13 +576,6 @@ class BedrockConverseModel(Model):
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
         if profile.bedrock_supports_tool_choice:
             tool_config['toolChoice'] = tool_choice
-        else:
-            explicit_choice = (model_settings or {}).get('tool_choice')
-            if explicit_choice == 'required':
-                raise UserError(
-                    f"tool_choice='required' is not supported by model {self.model_name!r}. "
-                    f'This model does not support forcing tool use.'
-                )
 
         return tool_config
 
@@ -657,7 +652,7 @@ class BedrockConverseModel(Model):
                         if (
                             item.provider_name == self.system
                             and item.signature
-                            and BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts
+                            and profile.bedrock_send_back_thinking_parts
                         ):
                             if item.id == 'redacted_content':
                                 reasoning_content: ReasoningContentBlockOutputTypeDef = {
@@ -1051,3 +1046,20 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise StopAsyncIteration
             else:
                 raise e  # pragma: lax no cover
+
+
+def _is_compatible_with_tool_forcing(
+    model_name: str,
+    profile: BedrockModelProfile,
+    model_settings: BedrockModelSettings | None,
+) -> bool:
+    """Check if model supports tool forcing, raising UserError if explicitly requested but unsupported."""
+    if not profile.bedrock_supports_tool_choice:
+        explicit_choice = (model_settings or {}).get('tool_choice')
+        if explicit_choice == 'required' or isinstance(explicit_choice, list):
+            raise UserError(
+                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
+                f'This model does not support forcing tool use.'
+            )
+        return False
+    return True
