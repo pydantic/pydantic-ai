@@ -1040,7 +1040,7 @@ class TextPart:
     """An optional identifier of the text part."""
 
     provider_name: str | None = None
-    """The name of the provider that generated the response. Set this when provider_details exists."""
+    """The name of the provider that generated the response. Set this when provider_details or id exists."""
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
@@ -1084,7 +1084,7 @@ class ThinkingPart:
     """The name of the provider that generated the response.
 
     Signatures are only sent back to the same provider.
-    Set this when provider_details or id exists as they are provider-specific information for thinking parts.
+    Set this when provider_details or id exists as they are provider-specific information
     """
 
     provider_details: dict[str, Any] | None = None
@@ -1115,7 +1115,7 @@ class FilePart:
     """The identifier of the file part."""
 
     provider_name: str | None = None
-    """The name of the provider that generated the response. Set this when provider_details exists.
+    """The name of the provider that generated the response. Set this when provider_details or id exists.
     """
 
     provider_details: dict[str, Any] | None = None
@@ -1162,7 +1162,7 @@ class BaseToolCallPart:
     provider_name: str | None = None
     """The name of the provider that generated the response.
 
-    Builtin tool calls are only sent back to the same provider. Set this when provider_details exists.
+    Builtin tool calls are only sent back to the same provider. Set this when provider_details or id exists.
     """
 
     provider_details: dict[str, Any] | None = None

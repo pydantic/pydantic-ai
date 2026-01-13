@@ -2184,7 +2184,11 @@ async def test_google_model_thinking_part_from_other_model(
                         id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
                         provider_name='openai',
                     ),
-                    TextPart(content=IsStr(), id='msg_68c1fb814fdc8196aec1a46164ddf7680c14a8a9087e8689'),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c1fb814fdc8196aec1a46164ddf7680c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=45, output_tokens=1719, details={'reasoning_tokens': 1408}),
                 model_name='gpt-5-2025-08-07',
@@ -4923,10 +4927,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         provider_name='openai',
                     ),
                     ToolCallPart(
-                        tool_name='get_country',
-                        args='{}',
-                        tool_call_id=IsStr(),
-                        id=IsStr(),
+                        tool_name='get_country', args='{}', tool_call_id=IsStr(), id=IsStr(), provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(input_tokens=37, output_tokens=272, details={'reasoning_tokens': 256}),
@@ -4962,7 +4963,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    TextPart(content='Mexico City (Ciudad de México).', id=IsStr()),
+                    TextPart(content='Mexico City (Ciudad de México).', id=IsStr(), provider_name='openai'),
                 ],
                 usage=RequestUsage(input_tokens=379, output_tokens=77, details={'reasoning_tokens': 64}),
                 model_name='gpt-5-2025-08-07',

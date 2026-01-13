@@ -2369,7 +2369,11 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
                         provider_name='openai',
                     ),
-                    TextPart(content=IsStr(), id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7'),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=23, output_tokens=2211, details={'reasoning_tokens': 1920}),
                 model_name='gpt-5-2025-08-07',
@@ -6481,6 +6485,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                     TextPart(
                         content='Tomorrow is November 20, 2025.',
                         id='msg_0dcd74f01910b54500691e5596124081a087e8fa7b2ca19d5a',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=329, output_tokens=12, details={'reasoning_tokens': 0}),
