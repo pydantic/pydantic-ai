@@ -384,11 +384,9 @@ class GroqModel(Model):
         tool_defs = model_request_parameters.tool_defs
 
         tool_choice: ChatCompletionToolChoiceOptionParam
-        if resolved_tool_choice in ('auto', 'required'):
-            tool_choice = resolved_tool_choice
-        elif resolved_tool_choice == 'none':
+        if resolved_tool_choice in ('auto', 'required', 'none'):
             # Use native 'none' mode to keep tool definitions cached while disabling tool calls
-            tool_choice = 'none'
+            tool_choice = resolved_tool_choice
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'required' and len(tool_names) == 1:
