@@ -1,14 +1,12 @@
 import datetime
 import json
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -656,7 +654,7 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
 
 
 async def test_openrouter_document_url_no_force_download(
-    allow_model_requests: None, openrouter_api_key: str, vcr: 'Cassette'
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ) -> None:
     """Test that OpenRouter passes DocumentUrl directly without downloading when force_download=False.
 
