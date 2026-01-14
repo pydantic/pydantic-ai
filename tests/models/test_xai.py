@@ -1819,7 +1819,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     content="The current temperature in San Francisco is approximately 14°C, with sunny conditions. Today's expected high is around 15–17°C and low around 9–10°C. (Data from recent updates around 8–9 AM PST; weather can vary slightly by exact location.)"
                 ),
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'query': 'San Francisco weather today Celsius', 'num_results': 5},
@@ -1827,7 +1827,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     provider_name='xai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=None,
@@ -1836,45 +1836,45 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     provider_name='xai',
                 )
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                    tool_call_id='call_45816005',
+                    tool_call_id=IsStr(),
                     provider_name='xai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=None,
-                    tool_call_id='call_45816005',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 )
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'query': 'San Francisco current weather temperature Celsius', 'num_results': 3},
-                    tool_call_id='call_35917192',
+                    tool_call_id=IsStr(),
                     provider_name='xai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=None,
-                    tool_call_id='call_35917192',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 )
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
-                    tool_call_id='call_01068089',
+                    tool_call_id=IsStr(),
                     provider_name='xai',
                 )
             ),
