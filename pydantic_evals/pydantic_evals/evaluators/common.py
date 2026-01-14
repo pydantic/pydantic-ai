@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Literal, cast
 
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import models
@@ -66,6 +67,8 @@ class Contains(Evaluator[object, object, object]):
     For strings, checks if expected_output is a substring of output.
     For lists/tuples, checks if expected_output is in output.
     For dicts, checks if all key-value pairs in expected_output are in output.
+    If either `output` or `value` is a Pydantic `BaseModel`, it is converted to a dict via
+      `model_dump(exclude_unset=True)` and compared using the dict logic above.
 
     Note: case_sensitive only applies when both the value and output are strings.
     """
@@ -99,25 +102,30 @@ class Contains(Evaluator[object, object, object]):
 
         try:
             # Handle different collection types
-            if isinstance(ctx.output, dict):
-                if isinstance(self.value, dict):
+            if isinstance(ctx.output, dict) or isinstance(ctx.output, BaseModel):
+                output = ctx.output if isinstance(ctx.output, dict) else ctx.output.model_dump(exclude_unset=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+
+                if isinstance(self.value, dict) or isinstance(self.value, BaseModel):
+                    value = self.value if isinstance(self.value, dict) else self.value.model_dump(exclude_unset=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                    failure_object_type = 'dictionary'  # if isinstance(self.value, dict) else 'model'
+
                     # Cast to Any to avoid type checking issues
-                    output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
-                    expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
+                    output_dict = cast(dict[Any, Any], output)
+                    expected_dict = cast(dict[Any, Any], value)
                     for k in expected_dict:
                         if k not in output_dict:
                             k_trunc = _truncated_repr(k, max_length=30)
-                            failure_reason = f'Output dictionary does not contain expected key {k_trunc}'
+                            failure_reason = f'Output {failure_object_type} does not contain expected key {k_trunc}'
                             break
                         elif output_dict[k] != expected_dict[k]:
                             k_trunc = _truncated_repr(k, max_length=30)
                             output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
                             expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
-                            failure_reason = f'Output dictionary has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
+                            failure_reason = f'Output {failure_object_type} has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
                             break
                 else:
-                    if self.value not in ctx.output:  # pyright: ignore[reportUnknownMemberType]
-                        output_trunc = _truncated_repr(ctx.output, max_length=200)  # pyright: ignore[reportUnknownMemberType]
+                    if self.value not in output:
+                        output_trunc = _truncated_repr(output, max_length=200)
                         failure_reason = f'Output {output_trunc} does not contain provided value as a key'
             elif self.value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
                 output_trunc = _truncated_repr(ctx.output, max_length=200)

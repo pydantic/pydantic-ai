@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
@@ -115,6 +116,67 @@ async def test_contains_dict():
     # Test non-dict value in dict
     evaluator_single = Contains(value='key')
     assert evaluator_single.evaluate(MockContext(output={'key': 'value'})) == snapshot(EvaluationReason(value=True))
+
+
+async def test_contains_basemodel():
+    """Test Contains evaluator with Pydantic BaseModel."""
+
+    class MockModel(BaseModel):
+        key: str | None = None
+        extra: str | None = None
+
+    dict_evaluator = Contains(value={'key': 'value'})
+
+    # Test model containment
+    assert dict_evaluator.evaluate(MockContext(output=MockModel(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test model key missing
+    assert dict_evaluator.evaluate(MockContext(output=MockModel(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+    )
+
+    # Test model value mismatch
+    assert dict_evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+        )
+    )
+
+    basemodel_evaluator = Contains(value=MockModel(key='value', extra='data'))
+
+    # Test model containment
+    assert basemodel_evaluator.evaluate(MockContext(output={'key': 'value', 'extra': 'data'})) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test model key missing
+    assert basemodel_evaluator.evaluate(MockContext(output={'different': 'value'})) == snapshot(
+        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+    )
+
+    # Test model value mismatch
+    assert basemodel_evaluator.evaluate(MockContext(output={'key': 'different'})) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+        )
+    )
+
+    # Test with both output and value as BaseModel
+    assert basemodel_evaluator.evaluate(MockContext(output=MockModel(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test with both output and value as BaseModel with mismatch
+    assert basemodel_evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+        )
+    )
 
 
 async def test_contains_list():
