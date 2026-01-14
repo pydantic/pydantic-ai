@@ -248,13 +248,16 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 self.is_strict_compatible = False
 
         if schema_type == 'object':
+            # Always ensure 'properties' key exists - OpenAI drops objects without it
+            if 'properties' not in schema:
+                _properties: dict[str, Any] = {}
+                schema['properties'] = _properties
+
             if self.strict is True:
                 # additional properties are disallowed
                 schema['additionalProperties'] = False
 
                 # all properties are required
-                if 'properties' not in schema:
-                    schema['properties'] = dict[str, Any]()
                 schema['required'] = list(schema['properties'].keys())
 
             elif self.strict is None:

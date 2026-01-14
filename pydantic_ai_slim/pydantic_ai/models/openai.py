@@ -954,8 +954,6 @@ class OpenAIChatModel(Model):
         )
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
-        _warn_on_dict_typed_params(self.system, o.name or DEFAULT_OUTPUT_TOOL_NAME, o.json_schema)
-
         response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
             'type': 'json_schema',
             'json_schema': {'name': o.name or DEFAULT_OUTPUT_TOOL_NAME, 'schema': o.json_schema},
@@ -967,8 +965,6 @@ class OpenAIChatModel(Model):
         return response_format_param
 
     def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
-        _warn_on_dict_typed_params(self.system, f.name, f.parameters_json_schema)
-
         tool_param: chat.ChatCompletionToolParam = {
             'type': 'function',
             'function': {
@@ -1605,8 +1601,6 @@ class OpenAIResponsesModel(Model):
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
-        _warn_on_dict_typed_params(self.system, f.name, f.parameters_json_schema)
-
         return {
             'name': f.name,
             'parameters': f.parameters_json_schema,
@@ -2836,58 +2830,3 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
-
-
-def _warn_on_dict_typed_params(provider_name: str, tool_name: str, json_schema: dict[str, Any]) -> bool:
-    """Detect if a JSON schema contains object-typed parameters without any specified properties and emit a warning if so.
-
-    JSON schema `properties` entries which have:
-        - "type": "object"
-        - no "properties" key
-    are incompatible with OpenAI's API which silently drops them.
-
-    These JSON schema entries typically come from dict-typed tool parameters.
-
-    c.f. https://github.com/pydantic/pydantic-ai/issues/3654
-    """
-    if provider_name != 'openai':
-        return False
-
-    has_dict_params = False
-
-    properties: dict[str, dict[str, Any]] = json_schema.get('properties', {})
-    for prop_schema in properties.values():
-        # Check for object type without any `properties`
-        if (prop_schema.get('type') == 'object') and 'properties' not in prop_schema:
-            has_dict_params = True
-
-        # Check arrays of objects with non False/absent additionalProperties
-        if prop_schema.get('type') == 'array':
-            items: Any = prop_schema.get('items', {})
-            if (
-                isinstance(items, dict)
-                and (items.get('type') == 'object')  # type: ignore[reportUnknownMemberType]
-                and 'properties' not in items
-            ):
-                has_dict_params = True
-
-    # Check $defs for nested model definitions (Pydantic uses $ref to reference these)
-    defs: dict[str, Any] = json_schema.get('$defs', {})
-    for def_schema in defs.values():
-        # Recursively check nested objects
-        # by default python's warnings module will filter out repeated warnings
-        # so even with recursion we'll emit a single warning
-        if isinstance(def_schema, dict) and _warn_on_dict_typed_params(provider_name, tool_name, def_schema):  # type: ignore[reportUnknownArgumentType]
-            has_dict_params = True
-
-    if has_dict_params:
-        warnings.warn(
-            f"Tool {tool_name!r} has `dict`-typed parameters that OpenAI's API will silently ignore. "
-            f'Use a Pydantic `BaseModel`, `dataclass`, or `TypedDict` with explicit fields instead, '
-            f'or switch to a different provider which supports `dict` types. '
-            f'See: https://github.com/pydantic/pydantic-ai/issues/3654',
-            UserWarning,
-            stacklevel=4,
-        )
-
-    return has_dict_params
