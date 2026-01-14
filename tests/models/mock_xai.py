@@ -272,11 +272,13 @@ def create_stream_chunk(
     tool_calls: list[chat_pb2.ToolCall] | None = None,
     reasoning_content: str = '',
     encrypted_content: str = '',
-    role: chat_pb2.MessageRole = chat_pb2.MessageRole.ROLE_ASSISTANT,
+    role: chat_pb2.MessageRole | None = None,
     finish_reason: FinishReason | None = None,
     index: int = 0,
 ) -> chat_types.Chunk:
     """Create a streaming Chunk."""
+    if role is None:
+        role = chat_pb2.MessageRole.ROLE_ASSISTANT
     output_chunk = chat_pb2.CompletionOutputChunk(
         index=index,
         delta=chat_pb2.Delta(
@@ -445,9 +447,11 @@ def _create_builtin_tool_response(
     content: ToolCallOutputType,
     tool_call_id: str,
     tool_type: chat_pb2.ToolCallType,
-    initial_status: chat_pb2.ToolCallStatus = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+    initial_status: chat_pb2.ToolCallStatus | None = None,
 ) -> chat_types.Response:
     """Create a Response with builtin tool outputs (shared helper)."""
+    if initial_status is None:
+        initial_status = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
     in_progress_output = chat_pb2.CompletionOutput(
         index=0,
         finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
