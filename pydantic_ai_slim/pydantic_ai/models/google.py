@@ -636,6 +636,8 @@ class GoogleModel(Model):
                         # functionResponse parts are treated as role=model even when role=user
                         # is explicitly specified, causing user prompts to be interpreted as
                         # model responses.
+                        #
+                        # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
                         if has_tool_return and message_parts:
                             contents.append({'role': 'user', 'parts': message_parts})
                             message_parts = []
