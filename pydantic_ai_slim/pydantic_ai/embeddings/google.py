@@ -104,7 +104,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
     def __init__(
         self,
-        model_name: GoogleEmbeddingModelName = 'gemini-embedding-001',
+        model_name: GoogleEmbeddingModelName,
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[Client] = 'google-gla',
         settings: EmbeddingSettings | None = None,
@@ -193,10 +193,20 @@ class GoogleEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(self._model_name)
 
     async def count_tokens(self, text: str) -> int:
-        response = await self._client.aio.models.count_tokens(
-            model=self._model_name,
-            contents=text,
-        )
+        try:
+            response = await self._client.aio.models.count_tokens(
+                model=self._model_name,
+                contents=text,
+            )
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                ) from e
+            raise  # pragma: no cover
+
         if response.total_tokens is None:
             raise UnexpectedModelBehavior('Token counting returned no result')  # pragma: no cover
         return response.total_tokens
