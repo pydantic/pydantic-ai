@@ -107,7 +107,6 @@ class Contains(Evaluator[object, object, object]):
 
                 if isinstance(self.value, dict) or isinstance(self.value, BaseModel):
                     value = self.value if isinstance(self.value, dict) else self.value.model_dump(exclude_unset=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-                    failure_object_type = 'dictionary'  # if isinstance(self.value, dict) else 'model'
 
                     # Cast to Any to avoid type checking issues
                     output_dict = cast(dict[Any, Any], output)
@@ -115,13 +114,15 @@ class Contains(Evaluator[object, object, object]):
                     for k in expected_dict:
                         if k not in output_dict:
                             k_trunc = _truncated_repr(k, max_length=30)
-                            failure_reason = f'Output {failure_object_type} does not contain expected key {k_trunc}'
+                            failure_reason = f'Output does not contain expected key {k_trunc}'
                             break
                         elif output_dict[k] != expected_dict[k]:
                             k_trunc = _truncated_repr(k, max_length=30)
                             output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
                             expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
-                            failure_reason = f'Output {failure_object_type} has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
+                            failure_reason = (
+                                f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
+                            )
                             break
                 else:
                     if self.value not in output:

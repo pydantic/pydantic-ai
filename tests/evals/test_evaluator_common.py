@@ -102,14 +102,14 @@ async def test_contains_dict():
 
     # Test dictionary key missing
     assert evaluator.evaluate(MockContext(output={'different': 'value'})) == snapshot(
-        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
     )
 
     # Test dictionary value mismatch
     assert evaluator.evaluate(MockContext(output={'key': 'different'})) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+            reason="Output has different value for key 'key': 'different' != 'value'",
         )
     )
 
@@ -134,14 +134,14 @@ async def test_contains_basemodel():
 
     # Test model key missing
     assert dict_evaluator.evaluate(MockContext(output=MockModel(extra='data'))) == snapshot(
-        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
     )
 
     # Test model value mismatch
     assert dict_evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+            reason="Output has different value for key 'key': 'different' != 'value'",
         )
     )
 
@@ -154,14 +154,14 @@ async def test_contains_basemodel():
 
     # Test model key missing
     assert basemodel_evaluator.evaluate(MockContext(output={'different': 'value'})) == snapshot(
-        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
     )
 
     # Test model value mismatch
     assert basemodel_evaluator.evaluate(MockContext(output={'key': 'different'})) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+            reason="Output has different value for key 'key': 'different' != 'value'",
         )
     )
 
@@ -174,7 +174,7 @@ async def test_contains_basemodel():
     assert basemodel_evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+            reason="Output has different value for key 'key': 'different' != 'value'",
         )
     )
 
