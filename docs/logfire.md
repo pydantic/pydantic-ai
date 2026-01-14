@@ -252,6 +252,33 @@ The following providers have dedicated documentation on Pydantic AI:
 - [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
 
 ## Advanced usage
+### Agent run token usage
+
+Agent run spans emit aggregated token usage attributes (`gen_ai.usage.input_tokens` and
+`gen_ai.usage.output_tokens`) by default. Some OpenTelemetry backends and aggregation
+pipelines (for example Datadog, New Relic, LangSmith, Opik, and similar services)
+may aggregate attributes across all spans when computing metrics. In those cases,
+having both leaf/model spans and the higher-level agent run span emit the same
+aggregated token counts can lead to double-counting when metrics are summed.
+
+To avoid this, Pydantic AI provides the `emit_agent_run_token_usage` option on
+`InstrumentationSettings`. When set to `False`, agent run spans will omit the
+aggregated `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes,
+leaving token emission to the leaf/model spans and preventing double-counting
+in observability backends that aggregate across spans. This behavior aligns with OpenTelemetry 
+semantics and is recommended when your backend performs span attribute aggregation across parent
+and child spans.
+
+
+Example:
+
+```python
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+settings = InstrumentationSettings(emit_agent_run_token_usage=False)
+```
+
+The default is `True` so existing instrumentation behavior remains unchanged.
 
 ### Configuring data format
 

@@ -831,7 +831,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
 
         return {
-            **usage.opentelemetry_attributes(),
+            **usage.opentelemetry_attributes(emit_agent_run_token_usage=settings.emit_agent_run_token_usage),
             **attrs,
             'logfire.json_schema': json.dumps(
                 {
