@@ -1,8 +1,3 @@
----
-title: "Pydantic AI: Durable Execution with Temporal
-"
-description: "Build resilient AI agents using Pydantic AI and Temporal. Implement durable execution to handle long-running workflows, retries, and state persistence."
----
 # Durable Execution with Temporal
 
 [Temporal](https://temporal.io) is a popular [durable execution](https://docs.temporal.io/evaluate/understanding-temporal#durable-execution) platform that's natively supported by Pydantic AI.

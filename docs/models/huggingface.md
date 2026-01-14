@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Hugging Face Setup & Configuration"
-description: "Use Hugging Face models and inference endpoints with Pydantic AI. Guide on configuring open-source LLMs with type-safe agentic features."
----
 # Hugging Face
 
 [Hugging Face](https://huggingface.co/) is an AI platform with all major open source models, datasets, MCPs, and demos. You can use [Inference Providers](https://huggingface.co/docs/inference-providers) to run open source models like DeepSeek R1 on scalable serverless infrastructure.

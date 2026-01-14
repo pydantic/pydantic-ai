@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: OpenAI Models & Configuration"
-description: "Seamlessly integrate OpenAI with Pydantic AI. Configure API keys, base URLs, and model settings for GPT-4o using the OpenAIModel class for Python agents."
----
 # OpenAI
 
 ## Install
