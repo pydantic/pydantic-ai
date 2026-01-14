@@ -17,7 +17,7 @@ You can set the `GROK_API_KEY` environment variable and use [`GrokProvider`][pyd
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('grok:grok-2-1212')
+agent = Agent('grok:grok-4-fast')
 ...
 ```
 
@@ -29,7 +29,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.grok import GrokProvider
 
 model = OpenAIChatModel(
-    'grok-2-1212',
+    'grok-4-fast',
     provider=GrokProvider(api_key='your-xai-api-key'),
 )
 agent = Agent(model)

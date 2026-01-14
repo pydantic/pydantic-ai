@@ -17,7 +17,7 @@ You can set the `VERCEL_AI_GATEWAY_API_KEY` and `VERCEL_OIDC_TOKEN` environment 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('vercel:anthropic/claude-4-sonnet')
+agent = Agent('vercel:anthropic/claude-sonnet-4-5')
 ...
 ```
 
@@ -29,7 +29,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.vercel import VercelProvider
 
 model = OpenAIChatModel(
-    'anthropic/claude-4-sonnet',
+    'anthropic/claude-sonnet-4-5',
     provider=VercelProvider(api_key='your-vercel-ai-gateway-api-key'),
 )
 agent = Agent(model)
