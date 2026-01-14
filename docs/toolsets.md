@@ -1,4 +1,7 @@
-
+---
+title: Pydantic AI Toolsets Documentation
+description: "Group related functions into Toolsets for better agent management. Learn how to share, reuse, and organize tool logic across different AI agents."
+---
 # Toolsets
 
 A toolset represents a collection of [tools](tools.md) that can be registered with an agent in one go. They can be reused by different agents, swapped out at runtime or during testing, and composed in order to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. A toolset can contain locally defined functions, depend on an external service to provide them, or implement custom logic to list available tools and handle them being called.

@@ -1,3 +1,7 @@
+---
+title: "Question Graph: Pydantic AI Graph Example"
+description: "See Pydantic Graph in action. This example demonstrates building a multi-step questioning flow using stateful, graph-based agent logic."
+---
 # Question Graph
 
 Example of a graph for asking and evaluating questions.
