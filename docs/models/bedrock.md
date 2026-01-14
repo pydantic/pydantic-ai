@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: AWS Bedrock Integration"
-description: "Integrate AWS Bedrock models like Claude and Llama with Pydantic AI. Learn how to configure BedrockModel, set up authentication, and manage region settings."
----
 # Bedrock
 
 ## Install

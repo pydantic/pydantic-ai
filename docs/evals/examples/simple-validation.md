@@ -1,7 +1,3 @@
----
-title: "Pydantic Evals: Simple Example Validation"
-description: A basic guide to getting started with evaluations. See how to run a simple validation test on LLM outputs using the Pydantic Evals framework.
----
 # Example: Simple Validation
 
 A proof of concept example of evaluating a simple text transformation function with deterministic checks.

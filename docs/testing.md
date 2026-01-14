@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Testing: Unit Testing with Pytest"
-description: "Guide to testing Pydantic AI agents. Use TestModel and pytest to write unit tests for agent logic, tool calls, and structured outputs without live APIs."
----
 # Unit testing
 
 Writing unit tests for Pydantic AI code is just like unit tests for any other Python code.

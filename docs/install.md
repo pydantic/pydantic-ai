@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Installation: Setup and Requirements"
-description: "Get started with Pydantic AI. Step-by-step guide on installation via pip or uv, system requirements, and initial project configuration for Python GenAI."
----
 # Installation
 
 Pydantic AI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pydantic-ai/) so installation is as simple as:

@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Groq Model Integration Guide"
-description: "Build lightning-fast AI agents using Groq and Pydantic AI. Configure Groq's high-performance LLM infrastructure with full type-safe support."
----
 # Groq
 
 ## Install
