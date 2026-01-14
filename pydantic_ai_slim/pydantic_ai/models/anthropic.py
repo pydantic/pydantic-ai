@@ -679,15 +679,14 @@ class AnthropicModel(Model):
 
         tool_choice: BetaToolChoiceParam
 
-        if resolved_tool_choice == 'auto':
-            tool_choice = {'type': 'auto'}
+        if resolved_tool_choice in ('auto', 'none'):
+            # tool_choice = {'type': resolved_tool_choice}`: pyright can't narrow this properly
+            tool_choice = {'type': 'auto'} if resolved_tool_choice == 'auto' else {'type': 'none'}
         elif resolved_tool_choice == 'required':
             is_compatible = _is_compatible_with_tool_forcing(
                 model_settings, resolved_tool_choice, "tool_choice='required'"
             )
             tool_choice = {'type': 'any'} if is_compatible else {'type': 'auto'}
-        elif resolved_tool_choice == 'none':
-            tool_choice = {'type': 'none'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             is_compatible = _is_compatible_with_tool_forcing(model_settings, resolved_tool_choice)
@@ -1463,6 +1462,12 @@ def _is_compatible_with_tool_forcing(
     resolved_tool_choice: ResolvedToolChoice,
     context: str = 'forcing specific tools',
 ) -> bool:
+    """Some `tool_choice` settings aren't compatible with thinking mode in Anthropic.
+
+    Only 'auto' and 'none' are compatible with thinking mode. But we only raise an error if the user explicitly set those.
+    Otherwise the value may come from the `tool_choice` resolution logic, in which case we fall back softly.
+    Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
+    """
     thinking_enabled = model_settings.get('anthropic_thinking') is not None
     if not thinking_enabled:
         return True
