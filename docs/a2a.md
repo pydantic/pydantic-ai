@@ -1,7 +1,3 @@
----
-title: "Pydantic AI | Agent2Agent (A2A) Protocol & FastA2A"
-description: "Discover the Agent2Agent (A2A) protocol for inter-agent communication. Use FastA2A to build interoperable AI agents that can collaborate across platforms."
----
 # Agent2Agent (A2A) Protocol
 
 The [Agent2Agent (A2A) Protocol](https://google.github.io/A2A/) is an open standard introduced by Google that enables

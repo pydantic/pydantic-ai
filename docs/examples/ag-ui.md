@@ -1,7 +1,3 @@
----
-title: "AG-UI: Pydantic AI Agent User Interaction Example"
-description: "See the AG-UI protocol in action. A practical example of building a dynamic web interface for Pydantic AI agents using standard interaction patterns."
----
 # Agent User Interaction (AG-UI)
 
 Example of using Pydantic AI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo) example app.

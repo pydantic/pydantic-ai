@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Thinking & Reasoning Effort Guide"
-description: Optimize reasoning models like OpenAI o1 with Pydantic AI. Configure thinking effort levels to balance reasoning depth and response speed in your agents.
----
 # Thinking
 
 Thinking (or reasoning) is the process by which a model works through a problem step-by-step before

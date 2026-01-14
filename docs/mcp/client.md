@@ -1,7 +1,3 @@
----
-title: Pydantic AI MCP Client Implementation
-description: Learn how to implement a Model Context Protocol (MCP) client. Connect your Pydantic AI agents to MCP servers for dynamic tool and resource access.
----
 # Client
 
 Pydantic AI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers

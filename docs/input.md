@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Image, Video & Audio Input Guide"
-description: "Handle multimodal inputs in Pydantic AI. Learn how to process images, video, and audio files within your agentic workflows using modern LLM capabilities."
----
 # Image, Audio, Video & Document Input
 
 Some LLMs are now capable of understanding audio, video, image and document content.

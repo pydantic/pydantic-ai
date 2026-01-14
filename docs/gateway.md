@@ -1,8 +1,8 @@
 ---
-title: Pydantic AI Gateway Documentation
-description: "The Pydantic AI Gateway provides enterprise-grade secure & scalable single API key interface to manage models from OpenAI, Google, Anthropic, Groq, AWS, etc."
+title: Pydantic AI Gateway
 status: new
 ---
+
 # Pydantic AI Gateway
 
 **[Pydantic AI Gateway](https://pydantic.dev/ai-gateway)** is a unified interface for accessing multiple AI providers with a single key. Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).

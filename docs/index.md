@@ -1,7 +1,7 @@
 ---
-title: "Pydantic AI: Python Agent Framework for GenAI"
-description: "Build production-grade GenAI apps with Pydantic AI. A Python agent framework offering strict type safety, structured output validation, and LLM integration."
+title: Pydantic AI
 ---
+
 # Pydantic AI {.hide}
 
 --8<-- "docs/.partials/index-header.html"

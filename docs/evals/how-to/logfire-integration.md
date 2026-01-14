@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Logfire Integration: How-To Guide"
-description: "Guide to using Logfire for AI evaluation monitoring. Trace evaluation runs, visualize performance metrics, and debug LLM outputs in real-time."
----
 # Logfire Integration
 
 Visualize and analyze evaluation results using Pydantic Logfire.
