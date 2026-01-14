@@ -57,7 +57,7 @@ try:
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
-    from xai_sdk.proto.v6 import chat_pb2, sample_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
     from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:

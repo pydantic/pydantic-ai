@@ -25,7 +25,7 @@ with try_import() as imports_successful:
     from google.protobuf.json_format import MessageToDict
     from google.protobuf.message import Message
     from xai_sdk import AsyncClient
-    from xai_sdk.proto.v6 import chat_pb2
+    from xai_sdk.proto import chat_pb2
 
 
 def _serialize_for_cassette(o: Any) -> Any:

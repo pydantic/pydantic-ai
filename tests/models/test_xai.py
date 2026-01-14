@@ -91,7 +91,7 @@ from .mock_xai import (
 
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
-    from xai_sdk.proto.v6 import chat_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, usage_pb2
 
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider

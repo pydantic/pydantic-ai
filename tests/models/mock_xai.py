@@ -21,7 +21,7 @@ with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from google.protobuf.json_format import MessageToDict
     from xai_sdk import AsyncClient
-    from xai_sdk.proto.v6 import chat_pb2, sample_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
 
 # Type aliases
 ToolCallArgumentsType = dict[str, Any]
