@@ -13,7 +13,6 @@ For all xAI tests, we use simplified mocks that verify:
 from __future__ import annotations as _annotations
 
 import json
-import os
 from datetime import timezone
 from typing import Any
 
@@ -48,13 +47,13 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
     WebSearchTool,
 )
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -70,10 +69,10 @@ from pydantic_ai.usage import RequestUsage
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
-    create_code_execution_responses,
+    create_code_execution_response,
     create_failed_builtin_tool_response,
     create_logprob,
-    create_mcp_server_responses,
+    create_mcp_server_response,
     create_mixed_tools_response,
     create_response,
     create_response_with_tool_calls,
@@ -81,7 +80,7 @@ from .mock_xai import (
     create_server_tool_call,
     create_stream_chunk,
     create_tool_call,
-    create_web_search_responses,
+    create_web_search_response,
     get_mock_chat_create_kwargs,
 )
 
@@ -106,8 +105,8 @@ pytestmark = [
 ]
 
 # Test model constants
-XAI_NON_REASONING_MODEL = 'grok-4-1-fast-non-reasoning'
-XAI_REASONING_MODEL = 'grok-4-1-fast-reasoning'
+XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
+XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
 
 
 def create_usage(
@@ -966,6 +965,8 @@ def grok_builtin_tool_chunk(
     tool_call: chat_pb2.ToolCall,
     response_id: str = 'grok-builtin',
     finish_reason: str = '',
+    reasoning_content: str = '',
+    encrypted_content: str = '',
 ) -> tuple[chat_types.Response, chat_types.Chunk]:
     """Create a streaming chunk for Grok with a builtin (server-side) tool call.
 
@@ -973,6 +974,8 @@ def grok_builtin_tool_chunk(
         tool_call: The server-side tool call proto object (chat_pb2.ToolCall)
         response_id: The response ID
         finish_reason: The finish reason (usually empty for tool call chunks)
+        reasoning_content: Optional reasoning content to attach to the response/chunk
+        encrypted_content: Optional encrypted reasoning signature to attach to the response/chunk
 
     Returns:
         Tuple of (accumulated Response, delta Chunk) - both using real SDK types
@@ -986,6 +989,8 @@ def grok_builtin_tool_chunk(
     chunk = create_stream_chunk(
         content='',
         tool_calls=[tool_call],
+        reasoning_content=reasoning_content,
+        encrypted_content=encrypted_content,
         finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
     )
 
@@ -995,6 +1000,8 @@ def grok_builtin_tool_chunk(
         tool_calls=[tool_call],
         finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
         usage=create_usage(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
+        reasoning_content=reasoning_content,
+        encrypted_content=encrypted_content,
     )
 
     return (response, chunk)
@@ -1586,21 +1593,17 @@ async def test_xai_image_as_binary_content_input(allow_model_requests: None, ima
     assert content[1]['image_url']['detail'] == 'DETAIL_AUTO'
 
 
-async def test_xai_document_url_input(allow_model_requests: None):
+async def test_xai_document_url_input(allow_model_requests: None, xai_provider: XaiProvider):
     """Test passing a document URL to the xAI model."""
-    response = create_response(content='This document is a dummy PDF file.')
-
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.output
-    # The document contains "Dummy PDF file"
-    response_text = result.output.lower()
-    assert 'dummy' in response_text or 'pdf' in response_text
+    assert result.output == snapshot(
+        'The main content of the document is a simple placeholder text reading "Dummy PDF file" centered on the page, with no additional substantive information or sections. It appears to be a minimal or test PDF.'
+    )
 
 
 async def test_xai_binary_content_document_input(allow_model_requests: None):
@@ -1727,21 +1730,20 @@ async def test_xai_response_with_logprobs(allow_model_requests: None):
 # Based on: https://github.com/xai-org/xai-sdk-python/blob/main/examples/aio/server_side_tools.py
 
 
-async def test_xai_builtin_web_search_tool(allow_model_requests: None):
-    """Test xAI's built-in web_search tool."""
-    # Create response with outputs
-    response = create_web_search_responses(
-        query='date of Jan 1 in 2026',
-        content='Thursday',
-        tool_call_id='ws_001',
+async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test xAI's built-in web_search tool (non-streaming, recorded via proto cassette)."""
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(
+        m,
+        builtin_tools=[WebSearchTool()],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,  # Encrypted reasoning and tool calls
+            xai_include_web_search_output=True,
+        ),
     )
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('Return just the day of week for the date of Jan 1 in 2026?')
-    assert result.output
-    assert 'thursday' in result.output.lower()
+    assert result.output == snapshot('**Thursday**')
 
     # Verify the builtin tool call and result appear in message history
     assert result.all_messages() == snapshot(
@@ -1758,25 +1760,45 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={'query': 'date of Jan 1 in 2026'},
-                        tool_call_id='ws_001',
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(content='Thursday'),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'January 1 2026 day of week'},
+                        tool_call_id='call_66722885',
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content='Thursday',
-                        tool_call_id='ws_001',
+                        content=None,
+                        tool_call_id='call_66722885',
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='**Thursday**'),
                 ],
-                model_name=XAI_NON_REASONING_MODEL,
+                usage=RequestUsage(
+                    input_tokens=2484,
+                    output_tokens=36,
+                    details={'reasoning_tokens': 324, 'cache_read_tokens': 1335, 'server_side_tools_web_search': 1},
+                ),
+                model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
-                provider_response_id='grok-ws_001',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1784,32 +1806,22 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
     )
 
 
-async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None):
-    """Test xAI's built-in web_search tool with streaming."""
-    # Create a mock web search server-side tool call
-    web_search_tool_call = create_server_tool_call(
-        tool_name='web_search',
-        arguments={'query': 'weather San Francisco'},
-        tool_call_id='ws_stream_001',
-        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
+async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test xAI's built-in web_search tool with streaming (recorded via proto cassette)."""
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
+
+    # Create an agent that includes encrypted content and web search output
+    agent = Agent(
+        m,
+        builtin_tools=[WebSearchTool()],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,  # Encrypted tool calls
+            xai_include_web_search_output=True,
+        ),
     )
 
-    # For streaming with builtin tools, the tool call appears in the first chunk
-    # and then subsequent chunks contain the text response
-    stream = [
-        # First chunk: builtin tool call
-        grok_builtin_tool_chunk(web_search_tool_call, response_id='grok-ws_stream_001'),
-        # Subsequent chunks: text response
-        grok_text_chunk('The weather '),
-        grok_text_chunk('is sunny.', finish_reason='stop'),
-    ]
-
-    mock_client = MockXai.create_mock_stream([stream])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
-
     event_parts: list[Any] = []
-    async with agent.iter(user_prompt='What is the weather in San Francisco?') as agent_run:
+    async with agent.iter(user_prompt='What is the weather in San Francisco today in celsius?') as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
@@ -1817,46 +1829,144 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None):
                         # Capture all events for validation
                         event_parts.append(event)
 
-    # Verify we got the expected builtin tool call events with snapshot
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in San Francisco today in celsius?', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
+                        tool_call_id='call_41803280',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=None,
+                        tool_call_id='call_41803280',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(
+                        content='The current weather in San Francisco is clear with a temperature of 15°C (feels like 14°C). High today around 15°C, low around 8°C.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2312,
+                    output_tokens=81,
+                    details={'cache_read_tokens': 826, 'server_side_tools_web_search': 1},
+                ),
+                model_name='grok-4-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id='50bdfe4b-2f58-d0b4-8c49-3dc24aeeaf1a',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Verify we got the expected builtin tool call events with snapshot.
+    # NOTE: IDs/signatures come from xAI, so we use matchers.
     assert event_parts == snapshot(
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolReturnPart(
+                part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    content={
-                        'status': 'completed',
-                        'results': [
-                            {
-                                'title': 'Sample Search Result',
-                                'url': 'https://example.com',
-                                'snippet': 'Sample search result snippet',
-                            }
-                        ],
-                    },
-                    tool_call_id='ws_stream_001',
-                    timestamp=IsDatetime(),
+                    args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
+                    tool_call_id='call_41803280',
                     provider_name='xai',
                 ),
             ),
-            PartStartEvent(index=1, part=TextPart(content='The weather '), previous_part_kind='builtin-tool-return'),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
+                    tool_call_id='call_41803280',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=None,
+                    tool_call_id='call_41803280',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=2, part=TextPart(content='The'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='is sunny.')),
-            PartEndEvent(index=1, part=TextPart(content='The weather is sunny.')),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' current')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' weather')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' San')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' Francisco')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' clear')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' temperature')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='15')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' (')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='fe')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='els')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' like')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='14')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=').')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' High')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' today')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' around')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='15')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' low')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' around')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='8')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=2,
+                part=TextPart(
+                    content='The current weather in San Francisco is clear with a temperature of 15°C (feels like 14°C). High today around 15°C, low around 8°C.'
+                ),
+            ),
+            BuiltinToolCallEvent(
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
+                    tool_call_id='call_41803280',
+                    provider_name='xai',
+                )
+            ),
+            BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={
-                        'status': 'completed',
-                        'results': [
-                            {
-                                'title': 'Sample Search Result',
-                                'url': 'https://example.com',
-                                'snippet': 'Sample search result snippet',
-                            }
-                        ],
-                    },
-                    tool_call_id='ws_stream_001',
+                    content=None,
+                    tool_call_id='call_41803280',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 )
@@ -1875,7 +1985,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None):
 async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
     """Test xAI's built-in code_execution tool."""
     # Create response with outputs
-    response = create_code_execution_responses(
+    response = create_code_execution_response(
         code='65465 - 6544 * 65464 - 6 + 1.02255',
         content='The result is -428,050,955.97745',
         tool_call_id='code_001',
@@ -2186,7 +2296,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
         finish_reason='tool_call',
     )
     # Response 2: Model uses builtin web_search and provides final answer
-    response2 = create_web_search_responses(
+    response2 = create_web_search_response(
         query='Tokyo weather forecast',
         content='Based on the local temperature of 72°F and the forecast, Tokyo weather is sunny.',
         tool_call_id='ws_003',
@@ -2280,13 +2390,15 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
 async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
     """Test xAI's MCP server tool with Linear."""
     # Create response with outputs
-    response = create_mcp_server_responses(
+    mcp_response = create_mcp_server_response(
         server_id='linear',
         tool_name='list_issues',
-        content='No issues found.',
+        tool_input={'name': 'linear.list_issues', 'arguments': '{"assignee":"me"}'},
+        content=[],  # No issues found
         tool_call_id='mcp_linear_001',
     )
-    mock_client = MockXai.create_mock([response])
+    assistant_response = create_response("I didn't found any issues", index=2)
+    mock_client = MockXai.create_mock([mcp_response, assistant_response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
@@ -2321,23 +2433,43 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server:linear',
-                        args={},
+                        args={'name': 'linear.list_issues', 'arguments': '{"assignee":"me"}'},
                         tool_call_id='mcp_linear_001',
                         provider_name='xai',
                     ),
-                    TextPart(content='No issues found.'),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:linear',
-                        content='No issues found.',
+                        content=[],
                         tool_call_id='mcp_linear_001',
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
                 ],
-                model_name=XAI_NON_REASONING_MODEL,
+                model_name='grok-4-1-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-mcp_linear_001',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text or call a tool.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content="I didn't found any issues")],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2659,14 +2791,6 @@ async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
             },
         ]
     )
-
-
-# Test for error handling
-@pytest.mark.skipif(os.getenv('XAI_API_KEY') is not None, reason='Skipped when XAI_API_KEY is set')
-async def test_xai_model_invalid_api_key():
-    """Test xAI provider with invalid API key."""
-    with pytest.raises(UserError, match='Set the `XAI_API_KEY` environment variable'):
-        XaiProvider(api_key='')
 
 
 async def test_xai_model_properties():
@@ -3054,7 +3178,39 @@ async def test_xai_stream_events_with_reasoning(allow_model_requests: None):
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is 4')),
             PartEndEvent(index=1, part=TextPart(content='The answer is 4')),
-            AgentRunResultEvent(result=AgentRunResult(output='The answer is 4')),
+            AgentRunResultEvent(result=AgentRunResult('The answer is 4')),
+        ]
+    )
+
+
+async def test_xai_stream_events_with_reasoning_deltas(allow_model_requests: None):
+    """Test xAI streaming events include ThinkingPartDelta when reasoning content accumulates across chunks."""
+    stream = [
+        (
+            create_response(content='The answer', reasoning_content='Let'),
+            create_stream_chunk(content='The answer', reasoning_content='Let', finish_reason=None),
+        ),
+        (
+            create_response(content='The answer is 4', reasoning_content='Let me think', finish_reason='stop'),
+            create_stream_chunk(content=' is 4', reasoning_content=' me think', finish_reason='stop'),
+        ),
+    ]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    events = [event async for event in agent.run_stream_events('What is 2+2?')]
+
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='Let')),
+            PartEndEvent(index=0, part=ThinkingPart(content='Let'), next_part_kind='text'),
+            PartStartEvent(index=1, part=TextPart(content='The answer'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me think')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is 4')),
+            PartEndEvent(index=1, part=TextPart(content='The answer is 4')),
+            AgentRunResultEvent(result=AgentRunResult('The answer is 4')),
         ]
     )
 
@@ -3084,7 +3240,7 @@ async def test_xai_stream_events_with_encrypted_reasoning(allow_model_requests: 
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is sunny')),
             PartEndEvent(index=1, part=TextPart(content='The weather is sunny')),
-            AgentRunResultEvent(result=AgentRunResult(output='The weather is sunny')),
+            AgentRunResultEvent(result=AgentRunResult('The weather is sunny')),
         ]
     )
 
@@ -3400,7 +3556,7 @@ async def test_xai_logprobs(allow_model_requests: None) -> None:
 
 async def test_xai_code_execution_default_output(allow_model_requests: None) -> None:
     """Test code execution with default example output."""
-    response = create_code_execution_responses(code='print(2+2)')
+    response = create_code_execution_response(code='print(2+2)')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
@@ -3445,7 +3601,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
 
 async def test_xai_web_search_default_output(allow_model_requests: None) -> None:
     """Test web search with default example output."""
-    response = create_web_search_responses(query='test query')
+    response = create_web_search_response(query='test query')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
@@ -3490,7 +3646,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
 
 async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None:
     """Test MCP server tool with default example output."""
-    response = create_mcp_server_responses(server_id='linear', tool_name='list_issues')
+    response = create_mcp_server_response(server_id='linear', tool_name='list_issues')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
@@ -3927,7 +4083,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
 async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
     """Test that BuiltinToolCallPart and BuiltinToolReturnPart in history are mapped."""
     # First response with code execution
-    response1 = create_code_execution_responses(code='print(2+2)')
+    response1 = create_code_execution_response(code='print(2+2)')
     # Second response
     response2 = create_response(content='The result was 4')
 
@@ -4156,9 +4312,9 @@ async def test_xai_include_settings(allow_model_requests: None):
     # Run with all include settings enabled
     settings: XaiModelSettings = {
         'xai_include_encrypted_content': True,
-        'xai_include_code_execution_outputs': True,
-        'xai_include_web_search_outputs': True,
-        'xai_include_mcp_outputs': True,
+        'xai_include_code_execution_output': True,
+        'xai_include_web_search_output': True,
+        'xai_include_mcp_output': True,
     }
     result = await agent.run('Hello', model_settings=settings)
     assert result.output == 'test'
@@ -4174,9 +4330,9 @@ async def test_xai_include_settings(allow_model_requests: None):
                 'response_format': None,
                 'use_encrypted_content': True,
                 'include': [
-                    3,
-                    1,
-                    6,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
                 ],
             }
         ]
@@ -4596,7 +4752,7 @@ async def test_xai_provider_string_initialization(allow_model_requests: None, mo
 async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     """Test that WebSearchTool builtin calls in history are mapped."""
     # First response with web search
-    response1 = create_web_search_responses(query='test query', content='Search results')
+    response1 = create_web_search_response(query='test query', content='Search results')
     # Second response
     response2 = create_response(content='The search found results')
 
@@ -4701,7 +4857,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
 async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
     """Test that MCPServerTool builtin calls in history are mapped."""
     # First response with MCP server tool
-    response1 = create_mcp_server_responses(
+    response1 = create_mcp_server_response(
         server_id='my-server', tool_name='get_data', content={'data': 'MCP result'}, tool_input={'param': 'value'}
     )
     # Second response

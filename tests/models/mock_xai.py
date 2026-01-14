@@ -204,10 +204,11 @@ def create_response(
     reasoning_content: str = '',
     encrypted_content: str = '',
     logprobs: list[chat_pb2.LogProb] | None = None,
+    index: int = 0,
 ) -> chat_types.Response:
     """Create a Response with a single output."""
     output = chat_pb2.CompletionOutput(
-        index=0,
+        index=index,
         finish_reason=_get_proto_finish_reason(finish_reason),
         message=chat_pb2.CompletionMessage(
             content=content,
@@ -333,6 +334,7 @@ def _create_builtin_tool_response(
     content: ToolCallOutputType,
     tool_call_id: str,
     tool_type: chat_pb2.ToolCallType,
+    initial_status: chat_pb2.ToolCallStatus = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
 ) -> chat_types.Response:
     """Create a Response with builtin tool outputs (shared helper)."""
     in_progress_output = chat_pb2.CompletionOutput(
@@ -346,7 +348,7 @@ def _create_builtin_tool_response(
                     arguments,
                     tool_call_id=tool_call_id,
                     tool_type=tool_type,
-                    status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_IN_PROGRESS,
+                    status=initial_status,
                 )
             ],
         ),
@@ -355,7 +357,7 @@ def _create_builtin_tool_response(
         index=1,
         finish_reason=sample_pb2.FinishReason.REASON_STOP,
         message=chat_pb2.CompletionMessage(
-            role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+            role=chat_pb2.MessageRole.ROLE_TOOL,
             content=_serialize_content(content),
             tool_calls=[
                 create_server_tool_call(
@@ -409,7 +411,7 @@ def create_failed_builtin_tool_response(
     )
 
 
-def create_code_execution_responses(
+def create_code_execution_response(
     code: str,
     content: ToolCallOutputType | None = None,
     *,
@@ -434,7 +436,7 @@ def create_code_execution_responses(
     )
 
 
-def create_web_search_responses(
+def create_web_search_response(
     query: str,
     content: ToolCallOutputType | None = None,
     *,
@@ -456,12 +458,12 @@ def create_web_search_responses(
     )
 
 
-def create_mcp_server_responses(
+def create_mcp_server_response(
     server_id: str,
     tool_name: str,
+    tool_input: ToolCallArgumentsType | None = None,
     content: ToolCallOutputType | None = None,
     *,
-    tool_input: ToolCallArgumentsType | None = None,
     tool_call_id: str = 'mcp_001',
 ) -> chat_types.Response:
     """Create a Response with MCP server tool outputs.

@@ -474,6 +474,8 @@ class XaiModel(Model):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
         if model_settings.get('xai_include_web_search_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_inline_citations'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
         # x_search not yet supported
         # collections_search not yet supported (could be mapped to file search)
         if model_settings.get('xai_include_mcp_output'):
@@ -559,11 +561,22 @@ class XaiModel(Model):
                 if output.logprobs and output.logprobs.content:
                     part_provider_details = {'logprobs': _map_logprobs(output.logprobs)}
                 parts.append(TextPart(content=message.content, provider_details=part_provider_details))
+            elif message.content and message.role == chat_types.chat_pb2.MessageRole.ROLE_TOOL:
+                # For server-side tools, xAI emits the tool result content on ROLE_TOOL messages. Some tools return
+                # plain text (e.g. `web_search`, `code_execution`) which should also be treated as assistant text.
+                tool_result_content = _get_tool_result_content(message.content)
+                if isinstance(tool_result_content, str):
+                    parts.append(TextPart(content=tool_result_content))
 
             # Process tool calls in this output
             for tool_call in message.tool_calls:
                 tool_result_content = _get_tool_result_content(message.content)
-                _, part = _create_tool_call_part(tool_call, tool_result_content, self.system)
+                _, part = _create_tool_call_part(
+                    tool_call,
+                    tool_result_content,
+                    self.system,
+                    message_role=message.role,
+                )
                 parts.append(part)
 
         # Convert usage with detailed token information
@@ -635,33 +648,127 @@ class XaiStreamedResponse(StreamedResponse):
         # Handle finish reason (SDK Response always provides a finish_reason)
         self.finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
 
+    def _collect_reasoning_events(
+        self,
+        *,
+        response: chat_types.Response,
+        prev_reasoning_content: str,
+        prev_encrypted_content: str,
+    ) -> tuple[str, str, list[ModelResponseStreamEvent]]:
+        """Collect thinking/reasoning events and return updated previous values.
+
+        Note: xAI exposes reasoning via the accumulated Response object (not the per-chunk delta), so we compute
+        deltas ourselves to avoid re-emitting the entire accumulated content on every chunk.
+        """
+        events: list[ModelResponseStreamEvent] = []
+
+        if response.reasoning_content and response.reasoning_content != prev_reasoning_content:
+            if response.reasoning_content.startswith(prev_reasoning_content):
+                reasoning_delta = response.reasoning_content[len(prev_reasoning_content) :]
+            else:  # pragma: no cover
+                reasoning_delta = response.reasoning_content
+            prev_reasoning_content = response.reasoning_content
+            if reasoning_delta:  # pragma: no branch
+                events.extend(
+                    self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='reasoning',
+                        content=reasoning_delta,
+                        # Only set provider_name when we have an encrypted signature to send back.
+                        provider_name=self.system if response.encrypted_content else None,
+                    )
+                )
+
+        if response.encrypted_content and response.encrypted_content != prev_encrypted_content:
+            prev_encrypted_content = response.encrypted_content
+            events.extend(
+                self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning',
+                    signature=response.encrypted_content,
+                    provider_name=self.system,
+                )
+            )
+
+        return prev_reasoning_content, prev_encrypted_content, events
+
+    def _handle_server_side_tool_call(
+        self,
+        *,
+        tool_call: chat_pb2.ToolCall,
+        delta: chat_pb2.Delta,
+        seen_tool_call_ids: set[str],
+        seen_tool_return_ids: set[str],
+        last_tool_return_content: dict[str, dict[str, Any] | str | None],
+    ) -> ModelResponseStreamEvent | None:
+        """Handle a single server-side tool call delta, emitting at most one stream event."""
+        builtin_tool_name = _get_builtin_tool_name(tool_call)
+
+        if delta.role == chat_pb2.MessageRole.ROLE_ASSISTANT:
+            # Emit the call part once per tool_call_id.
+            if tool_call.id in seen_tool_call_ids:
+                return None
+            seen_tool_call_ids.add(tool_call.id)
+
+            # NOTE: xAI provides the full tool arguments in one go (not incremental JSON deltas),
+            # so we emit a fully-formed `BuiltinToolCallPart` immediately rather than emitting a
+            # `ToolCallPartDelta`. This keeps the event stream simpler while still matching the
+            # final `ModelResponse.parts` which include the fully parsed args.
+            parsed_args = _parse_tool_args(tool_call.function.arguments)
+            return self._parts_manager.handle_part(
+                vendor_part_id=tool_call.id,
+                part=BuiltinToolCallPart(
+                    tool_name=builtin_tool_name,
+                    args=parsed_args,
+                    tool_call_id=tool_call.id,
+                    provider_name=self.system,
+                ),
+            )
+
+        if delta.role == chat_pb2.MessageRole.ROLE_TOOL:
+            # Emit the return part once per tool_call_id.
+            return_vendor_id = f'{tool_call.id}_return'
+            tool_result_content = _get_tool_result_content(delta.content)
+            if return_vendor_id in seen_tool_return_ids and tool_result_content == last_tool_return_content.get(
+                return_vendor_id
+            ):
+                return None
+            seen_tool_return_ids.add(return_vendor_id)
+            last_tool_return_content[return_vendor_id] = tool_result_content
+            return self._parts_manager.handle_part(
+                vendor_part_id=return_vendor_id,
+                part=BuiltinToolReturnPart(
+                    tool_name=builtin_tool_name,
+                    content=tool_result_content,
+                    tool_call_id=tool_call.id,
+                    provider_name=self.system,
+                ),
+            )
+
+        # Unknown role; ignore.
+        return None
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Iterate over streaming events from xAI SDK."""
-        reasoning_handled = False
+        # Local state to avoid re-emmiting duplicate events.
+        prev_reasoning_content = ''
+        prev_encrypted_content = ''
+        seen_tool_call_ids: set[str] = set()
+        seen_tool_return_ids: set[str] = set()
+        last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
+
+        def _is_server_side_tool_call(tool_call: chat_pb2.ToolCall) -> bool:
+            # xAI doesn't have a single SERVER_SIDE enum value; server-side tools are any non-client-side tool call type.
+            return tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
 
         async for response, chunk in self._response:
             self._update_response_state(response)
 
-            # Handle reasoning content (only emit once)
-            if not reasoning_handled:
-                if response.reasoning_content:
-                    # reasoning_content is the human-readable summary
-                    thinking_part = ThinkingPart(
-                        content=response.reasoning_content,
-                        signature=None,
-                        provider_name=None,
-                    )
-                    yield self._parts_manager.handle_part(vendor_part_id='reasoning', part=thinking_part)
-                    reasoning_handled = True
-                elif response.encrypted_content:
-                    # encrypted_content is a signature that can be sent back for reasoning continuity
-                    thinking_part = ThinkingPart(
-                        content='',  # No readable content for encrypted-only reasoning
-                        signature=response.encrypted_content,
-                        provider_name=self.system,
-                    )
-                    yield self._parts_manager.handle_part(vendor_part_id='encrypted_reasoning', part=thinking_part)
-                    reasoning_handled = True
+            prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
+                response=response,
+                prev_reasoning_content=prev_reasoning_content,
+                prev_encrypted_content=prev_encrypted_content,
+            )
+            for event in reasoning_events:
+                yield event
 
             # Handle text content (property filters for ROLE_ASSISTANT)
             if chunk.content:
@@ -671,13 +778,39 @@ class XaiStreamedResponse(StreamedResponse):
                 ):
                     yield event
 
-            # Handle tool calls
-            for tool_call in response.tool_calls:
-                if not tool_call.function.name:
+            # Handle tool calls/tool results from *this chunk*.
+            #
+            # Important: xAI SDK `Response` is an accumulated view; `response.tool_calls` includes tool calls from
+            # previous chunks. Iterating over it would re-emit tool calls repeatedly. Instead, we read tool calls
+            # from the chunk's deltas which represent what changed in this frame.
+            for output_chunk in chunk.proto.outputs:
+                delta = output_chunk.delta
+                if not delta.tool_calls:
                     continue
-                tool_result_content = _get_tool_result_content(response.content)
-                vendor_part_id, part = _create_tool_call_part(tool_call, tool_result_content, self.system)
-                yield self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=part)
+                for tool_call in delta.tool_calls:
+                    if not tool_call.function.name:
+                        continue
+
+                    if _is_server_side_tool_call(tool_call):
+                        maybe_event = self._handle_server_side_tool_call(
+                            tool_call=tool_call,
+                            delta=delta,
+                            seen_tool_call_ids=seen_tool_call_ids,
+                            seen_tool_return_ids=seen_tool_return_ids,
+                            last_tool_return_content=last_tool_return_content,
+                        )
+                        if maybe_event is not None:
+                            yield maybe_event
+                    else:
+                        # Client-side tools: emit as a whole part (no deltas today).
+                        tool_result_content = _get_tool_result_content(delta.content)
+                        vendor_part_id, part = _create_tool_call_part(
+                            tool_call,
+                            tool_result_content,
+                            self.system,
+                            message_role=delta.role,
+                        )
+                        yield self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=part)
 
     @property
     def model_name(self) -> str:
@@ -920,6 +1053,7 @@ def _create_tool_call_part(
     tool_call: chat_pb2.ToolCall,
     tool_result_content: dict[str, Any] | str | None,
     provider_name: str,
+    message_role: chat_pb2.MessageRole | None = None,
 ) -> tuple[str, ModelResponsePart]:
     """Create a part for a tool call, returning (vendor_part_id, part).
 
@@ -929,6 +1063,9 @@ def _create_tool_call_part(
         tool_call: The tool call from the xAI response.
         tool_result_content: The content for the tool result (extracted by caller).
         provider_name: The provider name for builtin tools.
+        message_role: The role of the message containing the tool call, if available. For server-side tools in
+            non-streamed responses, xAI emits tool *calls* on `ROLE_ASSISTANT` messages and tool *results* on
+            `ROLE_TOOL` messages; in those cases, role should take precedence over tool status.
 
     Returns:
         Tuple of (vendor_part_id, part).
@@ -946,11 +1083,10 @@ def _create_tool_call_part(
                 'error': tool_call.error_message,
             }
 
-        if status in (
-            chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
-            chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED,
-        ):
-            # Tool completed (or failed) - return part with result and provider status
+        # If we know the message role (non-streamed responses), use it to decide call vs return.
+        # Note: FAILED is always a return part (it may be emitted on an assistant message without a separate ROLE_TOOL
+        # message).
+        if status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED:
             return (
                 f'{tool_call.id}_return',
                 BuiltinToolReturnPart(
@@ -961,8 +1097,28 @@ def _create_tool_call_part(
                     provider_details=provider_details,
                 ),
             )
+        if message_role == chat_pb2.MessageRole.ROLE_TOOL:
+            return (
+                f'{tool_call.id}_return',
+                BuiltinToolReturnPart(
+                    tool_name=builtin_tool_name,
+                    content=tool_result_content,
+                    tool_call_id=tool_call.id,
+                    provider_name=provider_name,
+                    provider_details=provider_details,
+                ),
+            )
+        elif message_role == chat_pb2.MessageRole.ROLE_ASSISTANT:
+            return (
+                tool_call.id,
+                BuiltinToolCallPart(
+                    tool_name=builtin_tool_name,
+                    args=_parse_tool_args(tool_call.function.arguments),
+                    tool_call_id=tool_call.id,
+                    provider_name=provider_name,
+                ),
+            )
         else:
-            # Tool in progress - call part
             return (
                 tool_call.id,
                 BuiltinToolCallPart(
