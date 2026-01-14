@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 
 import pydantic_ai._utils as _utils
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -15,7 +15,6 @@ from .settings import EmbeddingSettings
 try:
     import numpy as np
     import torch
-    from numpy.typing import NDArray
     from sentence_transformers import SentenceTransformer
 except ImportError as _import_error:
     raise ImportError(
@@ -136,21 +135,18 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
         model = await self._get_model()
         encode_func = model.encode_query if input_type == 'query' else model.encode_document  # type: ignore[reportUnknownReturnType]
 
-        np_embeddings: NDArray[np.float64] = cast(
-            NDArray[np.float64],
-            await _utils.run_in_executor(
-                encode_func,  # type: ignore[reportArgumentType]
-                inputs,
-                show_progress_bar=False,
-                convert_to_numpy=True,
-                convert_to_tensor=False,
-                device=device,
-                normalize_embeddings=normalize,
-                truncate_dim=dimensions,
-                **{'batch_size': batch_size} if batch_size is not None else {},  # type: ignore[reportArgumentType]
-            ),
+        np_embeddings: np.ndarray[Any, float] = await _utils.run_in_executor(  # type: ignore[reportAssignmentType]
+            encode_func,  # type: ignore[reportArgumentType]
+            inputs,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            convert_to_tensor=False,
+            device=device,
+            normalize_embeddings=normalize,
+            truncate_dim=dimensions,
+            **{'batch_size': batch_size} if batch_size is not None else {},  # type: ignore[reportArgumentType]
         )
-        embeddings = cast(list[list[float]], np_embeddings.tolist())
+        embeddings = np_embeddings.tolist()
 
         return EmbeddingResult(
             embeddings=embeddings,
