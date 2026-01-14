@@ -54,3 +54,5 @@ description: Technical overview of the provider architecture in Pydantic AI. Lea
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider
 
 ::: pydantic_ai.providers.alibaba.AlibabaProvider
+
+::: pydantic_ai.providers.sambanova.SambaNovaProvider
