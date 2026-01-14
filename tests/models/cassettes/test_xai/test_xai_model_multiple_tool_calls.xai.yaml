@@ -1,0 +1,123 @@
+version: 1
+responses:
+- !!binary |
+  CiQ4ZGVmYjljMi02NGQ4LTM3NzEtYWUxYS04NjM4MzAwNTY0MGISOAgEGjQQAhowCg1jYWxsXzEy
+  OTYzNDQ0EAEYAVIbCghnZXRfZGF0YRIPeyJrZXkiOiJLRVlfMSJ9KgwIz5OcywYQheGDjgEyGWdy
+  b2stNC1mYXN0LW5vbi1yZWFzb25pbmc6DWZwXzQ2MTZlNzY0MTNKEggbEIkDGKQDIIkDOIgDWMip
+  FFqOAjoCCAFCfwp9CghnZXRfZGF0YSJxeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAi
+  cHJvcGVydGllcyI6IHsia2V5IjogeyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJr
+  ZXkiXSwgInR5cGUiOiAib2JqZWN0In1ChgEKgwEKDHByb2Nlc3NfZGF0YSJzeyJhZGRpdGlvbmFs
+  UHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHsiZGF0YSI6IHsidHlwZSI6ICJzdHJp
+  bmcifX0sICJyZXF1aXJlZCI6IFsiZGF0YSJdLCAidHlwZSI6ICJvYmplY3QifQ==
+- !!binary |
+  CiQyOGE0ZGRhZC01MjVhLWZlMGUtOWI5My1jZTBiZjg0ODAwYTASPQgEGjkQAho1Cg1jYWxsXzc5
+  NTYyMDg4EAEYAVIgCgxwcm9jZXNzX2RhdGESEHsiZGF0YSI6IkhFTExPIn0qDAjPk5zLBhCi+4jO
+  AjIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZzoNZnBfNDYxNmU3NjQxM0oSCBoQsQMYywMgsQM4
+  sANY4J4VWo4COgIIAUJ/Cn0KCGdldF9kYXRhInF7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFs
+  c2UsICJwcm9wZXJ0aWVzIjogeyJrZXkiOiB7InR5cGUiOiAic3RyaW5nIn19LCAicmVxdWlyZWQi
+  OiBbImtleSJdLCAidHlwZSI6ICJvYmplY3QifUKGAQqDAQoMcHJvY2Vzc19kYXRhInN7ImFkZGl0
+  aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjogeyJkYXRhIjogeyJ0eXBlIjog
+  InN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJkYXRhIl0sICJ0eXBlIjogIm9iamVjdCJ9
+- !!binary |
+  CiQzYTA1MzVhZC0zNzFjLTAxY2QtYzY1Yy1kM2Y3OGYwYmIyMmISGAgDGhQKEHRoZSByZXN1bHQg
+  aXM6IDUQAioLCNCTnMsGENa6hEUyGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmc6DWZwXzQ2MTZl
+  NzY0MTNKEggGENwDGOIDINwDONMDWJyXEVqOAjoCCAFCfwp9CghnZXRfZGF0YSJxeyJhZGRpdGlv
+  bmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHsia2V5IjogeyJ0eXBlIjogInN0
+  cmluZyJ9fSwgInJlcXVpcmVkIjogWyJrZXkiXSwgInR5cGUiOiAib2JqZWN0In1ChgEKgwEKDHBy
+  b2Nlc3NfZGF0YSJzeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6
+  IHsiZGF0YSI6IHsidHlwZSI6ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiZGF0YSJdLCAidHlw
+  ZSI6ICJvYmplY3QifQ==
+responses_json:
+- id: 8defb9c2-64d8-3771-ae1a-86383005640b
+  outputs:
+  - finish_reason: REASON_TOOL_CALLS
+    message:
+      role: ROLE_ASSISTANT
+      tool_calls:
+      - id: call_12963444
+        type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+        status: TOOL_CALL_STATUS_COMPLETED
+        function:
+          name: get_data
+          arguments: '{"key":"KEY_1"}'
+  created: '2026-01-14T03:13:19.297857157Z'
+  model: grok-4-fast-non-reasoning
+  system_fingerprint: fp_4616e76413
+  usage:
+    completion_tokens: 27
+    prompt_tokens: 393
+    total_tokens: 420
+    prompt_text_tokens: 393
+    cached_prompt_text_tokens: 392
+  settings:
+    tool_choice:
+      mode: TOOL_MODE_AUTO
+    tools:
+    - function:
+        name: get_data
+        parameters: '{"additionalProperties": false, "properties": {"key": {"type":
+          "string"}}, "required": ["key"], "type": "object"}'
+    - function:
+        name: process_data
+        parameters: '{"additionalProperties": false, "properties": {"data": {"type":
+          "string"}}, "required": ["data"], "type": "object"}'
+- id: 28a4ddad-525a-fe0e-9b93-ce0bf84800a0
+  outputs:
+  - finish_reason: REASON_TOOL_CALLS
+    message:
+      role: ROLE_ASSISTANT
+      tool_calls:
+      - id: call_79562088
+        type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+        status: TOOL_CALL_STATUS_COMPLETED
+        function:
+          name: process_data
+          arguments: '{"data":"HELLO"}'
+  created: '2026-01-14T03:13:19.700595618Z'
+  model: grok-4-fast-non-reasoning
+  system_fingerprint: fp_4616e76413
+  usage:
+    completion_tokens: 26
+    prompt_tokens: 433
+    total_tokens: 459
+    prompt_text_tokens: 433
+    cached_prompt_text_tokens: 432
+  settings:
+    tool_choice:
+      mode: TOOL_MODE_AUTO
+    tools:
+    - function:
+        name: get_data
+        parameters: '{"additionalProperties": false, "properties": {"key": {"type":
+          "string"}}, "required": ["key"], "type": "object"}'
+    - function:
+        name: process_data
+        parameters: '{"additionalProperties": false, "properties": {"data": {"type":
+          "string"}}, "required": ["data"], "type": "object"}'
+- id: 3a0535ad-371c-01cd-c65c-d3f78f0bb22b
+  outputs:
+  - finish_reason: REASON_STOP
+    message:
+      content: 'the result is: 5'
+      role: ROLE_ASSISTANT
+  created: '2026-01-14T03:13:20.144776534Z'
+  model: grok-4-fast-non-reasoning
+  system_fingerprint: fp_4616e76413
+  usage:
+    completion_tokens: 6
+    prompt_tokens: 476
+    total_tokens: 482
+    prompt_text_tokens: 476
+    cached_prompt_text_tokens: 467
+  settings:
+    tool_choice:
+      mode: TOOL_MODE_AUTO
+    tools:
+    - function:
+        name: get_data
+        parameters: '{"additionalProperties": false, "properties": {"key": {"type":
+          "string"}}, "required": ["key"], "type": "object"}'
+    - function:
+        name: process_data
+        parameters: '{"additionalProperties": false, "properties": {"data": {"type":
+          "string"}}, "required": ["data"], "type": "object"}'

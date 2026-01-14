@@ -1,0 +1,53 @@
+version: 1
+stream_chunks:
+- - !!binary |
+    CiRkNGJkMTVmZS00ZTE1LTViY2QtMTRlOS02N2JlMjYwY2U4ZDAStwQKtAQKAjI5EAIqqwQvYU1X
+    NjVOYVpFN0kwcnI3TnBlTElIbDlUS0FDS1dRc1phNnBnOFVoM0dpbUZzcWtnRDFqZDZhN0gyUjhJ
+    c1RCQktXL29TaTNsdTNJY1pYajIzS3VjQndDNE5iTWJWdnZyeTJqaU1DcmN6ZHMyc1hnOUtDUktG
+    cndhSEozMHJOV0JLSG1rS1F5aGx0U3FFMk92bjh6cHdVT0hjVWsyS3pBMnVsOEllRnhlYlNXdDVX
+    U0NMK25mbnQ2LzcrRlM3REJHaW8waytxQlZtS1B0RTliQzBsNTNSZ2hzOHdKM3pwMHRSd3QrYjFp
+    NE1kSGcvcGliSHVNZzlxeFlNc3FneWxiNE90aGdOcC84Z0lsOEdzOVVqR3hHekdGZWppTnZudEhE
+    Sjl5WHJRTXZtdmVHaXRtc01CWXRBMVpIem9KaGhjeVIrYTd2SVB1SnNWOXJqNytQL1JDalFVUjU0
+    UGdvWFNPcjJqc1Vsc3crNjR3UFRjTmNKaFM1dFpsbGpYZGJaZDlIbUZhOHZodStOd1Z4RlhGbTN0
+    ME1xNHF6V3FwUFp4NU8weUl3dzhkdi9iV0hKZW5MU3UwVFk5SXZ2cFBPZ1dtNHR4K3p2T2dJd2xs
+    anJsczZNY2wyYjdLZXdaWHFEQUQ2cklvdVVYZ0tWU3dDeUNOQWJZVHNKaTRGNGNQRnpiZnJPaktH
+    cjJQT3VwdkNHcWRHNEw1c3IxUWJrNEpGb1pJbXUzeVdLaDZ6R1kaCwi8rJzLBhCZ14tOIhVncm9r
+    LTQtZmFzdC1yZWFzb25pbmcqDWZwX2NmY2M4NWZmODYyFQgBEKUBGL8CIKUBMJkBOKQBWPCPNA==
+  - !!binary |
+    CiRkNGJkMTVmZS00ZTE1LTViY2QtMTRlOS02N2JlMjYwY2U4ZDASBgoCEAIYAxoLCLysnMsGEOb8
+    jE4iFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIVCAEQpQEYvwIgpQEwmQE4
+    pAFY8I80
+stream_chunks_json:
+- - chunk:
+      id: d4bd15fe-4e15-5bcd-14e9-67be260ce8d0
+      outputs:
+      - delta:
+          content: '29'
+          role: ROLE_ASSISTANT
+          encrypted_content: /aMW65NaZE7I0rr7NpeLIHl9TKACKWQsZa6pg8Uh3GimFsqkgD1jd6a7H2R8IsTBBKW/oSi3lu3IcZXj23KucBwC4NbMbVvvry2jiMCrczds2sXg9KCRKFrwaHJ30rNWBKHmkKQyhltSqE2Ovn8zpwUOHcUk2KzA2ul8IeFxebSWt5WSCL+nfnt6/7+FS7DBGio0k+qBVmKPtE9bC0l53Rghs8wJ3zp0tRwt+b1i4MdHg/pibHuMg9qxYMsqgylb4OthgNp/8gIl8Gs9UjGxGzGFejiNvntHDJ9yXrQMvmveGitmsMBYtA1ZHzoJhhcyR+a7vIPuJsV9rj7+P/RCjQUR54PgoXSOr2jsUlsw+64wPTcNcJhS5tZlljXdbZd9HmFa8vhu+NwVxFXFm3t0Mq4qzWqpPZx5O0yIww8dv/bWHJenLSu0TY9IvvpPOgWm4tx+zvOgIwlljrls6Mcl2b7KewZXqDAD6rIouUXgKVSwCyCNAbYTsJi4F4cPFzbfrOjKGr2POupvCGqdG4L5sr1Qbk4JFoZImu3yWKh6zGY
+      created: '2026-01-14T04:06:20.163769241Z'
+      model: grok-4-fast-reasoning
+      system_fingerprint: fp_cfcc85ff86
+      usage:
+        completion_tokens: 1
+        prompt_tokens: 165
+        total_tokens: 319
+        prompt_text_tokens: 165
+        reasoning_tokens: 153
+        cached_prompt_text_tokens: 164
+  - chunk:
+      id: d4bd15fe-4e15-5bcd-14e9-67be260ce8d0
+      outputs:
+      - delta:
+          role: ROLE_ASSISTANT
+        finish_reason: REASON_STOP
+      created: '2026-01-14T04:06:20.163790438Z'
+      model: grok-4-fast-reasoning
+      system_fingerprint: fp_cfcc85ff86
+      usage:
+        completion_tokens: 1
+        prompt_tokens: 165
+        total_tokens: 319
+        prompt_text_tokens: 165
+        reasoning_tokens: 153
+        cached_prompt_text_tokens: 164

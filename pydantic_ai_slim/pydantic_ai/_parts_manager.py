@@ -62,6 +62,10 @@ class ModelResponsePartsManager:
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict, init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
 
+    def has_vendor_part(self, vendor_part_id: VendorId) -> bool:
+        """Return `True` if a part exists for the given vendor part ID."""
+        return vendor_part_id in self._vendor_id_to_part_index
+
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
 
