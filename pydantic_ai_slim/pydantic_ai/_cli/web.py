@@ -17,7 +17,7 @@ def run_web_command(
     tools: list[str] = [],
     instructions: str | None = None,
     default_model: str = 'openai:gpt-5',
-    custom_cdn_url: str | None = None,
+    ui_source: str | None = None,
 ) -> int:
     """Run the web command to serve an agent via web UI.
 
@@ -32,7 +32,7 @@ def run_web_command(
         tools: List of builtin tool IDs (e.g., ['web_search', 'code_execution']).
         instructions: System instructions passed as extra instructions to each agent run.
         default_model: Default model to use when no agent or models are specified.
-        custom_cdn_url: Custom URL or file path for the chat UI.
+        ui_source: URL or file path for the chat UI HTML.
     """
     console = Console()
 
@@ -66,7 +66,7 @@ def run_web_command(
         models=models or None,
         builtin_tools=tool_instances,
         instructions=instructions,
-        custom_cdn_url=custom_cdn_url,
+        ui_source=ui_source,
     )
 
     agent_desc = agent_path or 'generic agent'

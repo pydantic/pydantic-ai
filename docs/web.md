@@ -102,18 +102,26 @@ The web UI app uses the following routes which should not be overwritten:
 
 The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
 
-## Custom CDN or Local File Path
+## Custom UI Source
 
-You can provide a `custom_cdn_url` to serve the UI from a specific URL or local file path. This is useful for enterprise environments or offline usage.
+By default, the web UI is fetched from a CDN and cached locally. You can provide a `ui_source` to override this behavior for enterprise environments, offline usage, or custom UI builds.
 
 ```python
+from pathlib import Path
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-5')
 
-# Use a custom CDN
-app = agent.to_web(custom_cdn_url='https://cdn.example.com/ui/index.html')
+# Use a custom URL
+app = agent.to_web(ui_source='https://cdn.example.com/ui/index.html')
 
-# Or use a local file path
-app = agent.to_web(custom_cdn_url='/path/to/local/ui.html')
+# Use a local file path (string)
+app = agent.to_web(ui_source='/path/to/local/ui.html')
+
+# Use a Path instance
+app = agent.to_web(ui_source=Path('/path/to/local/ui.html'))
+
+# Use raw HTML directly
+app = agent.to_web(ui_source='<html><body>My custom UI</body></html>')
 ```
+

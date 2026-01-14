@@ -8,6 +8,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
@@ -1618,13 +1619,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
-        custom_cdn_url: str | None = None,
+        ui_source: str | Path | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
         This method returns a pre-configured Starlette application that provides a web-based
-        chat interface for interacting with the agent. The UI is downloaded and cached on
-        first use, and includes support for model selection and builtin tool configuration.
+        chat interface for interacting with the agent. By default, the UI is fetched from a
+        CDN and cached on first use.
 
         The returned Starlette application can be mounted into a FastAPI app or run directly
         with any ASGI server (uvicorn, hypercorn, etc.).
@@ -1645,8 +1646,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
-            custom_cdn_url: Optional custom URL or file path for the chat UI.
-                Useful for enterprise environments behind proxies or with no internet access.
+            ui_source: Source for the chat UI HTML. Can be:
+                - None (default): Fetches from CDN and caches locally
+                - A Path instance: Reads from the local file
+                - A string starting with '<': Treated as raw HTML content
+                - A URL string (http:// or https://): Fetches from the URL
+                - A file path string: Reads from the local file
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -1676,7 +1681,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
-            custom_cdn_url=custom_cdn_url,
+            ui_source=ui_source,
         )
 
     @asynccontextmanager
