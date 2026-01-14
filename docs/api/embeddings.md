@@ -1,7 +1,3 @@
----
-description: "Technical API reference for embeddings in Pydantic AI.
----
-
 # `pydantic_ai.embeddings`
 
 ::: pydantic_ai.embeddings

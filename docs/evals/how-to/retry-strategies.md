@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Retries: Robust Model Retry Strategies"
-description: "Optimize your evaluation workflows with robust retry logic. Learn how to handle transient LLM failures during large-scale AI performance testing."
----
 # Retry Strategies
 
 Handle transient failures in tasks and evaluators with automatic retry logic.

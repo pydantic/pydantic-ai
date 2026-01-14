@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Mistral Model Setup & Configuration"
-description: "Use Mistral AI models with Pydantic AI. Learn to configure the MistralModel class, manage API keys, and deploy Mistral LLMs for type-safe Python agents."
----
 # Mistral
 
 ## Install
