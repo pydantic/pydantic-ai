@@ -4075,3 +4075,12 @@ async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_
         ),
     ):
         await agent.run('What is the weather?', model_settings=settings)
+
+
+def test_transformer_adds_properties_to_object_schemas():
+    """OpenAI drops object schemas without a 'properties' key. The transformer must add it."""
+
+    schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
+    result = OpenAIJsonSchemaTransformer(schema, strict=None).walk()
+
+    assert result['properties'] == {}
