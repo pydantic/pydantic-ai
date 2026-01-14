@@ -1,10 +1,14 @@
 import datetime
+import json
 from collections.abc import Sequence
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -651,7 +655,9 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
     assert text_part.content == 'According to the source, this is the answer.'
 
 
-async def test_openrouter_document_url_no_force_download(allow_model_requests: None, openrouter_api_key: str) -> None:
+async def test_openrouter_document_url_no_force_download(
+    allow_model_requests: None, openrouter_api_key: str, vcr: 'Cassette'
+) -> None:
     """Test that OpenRouter passes DocumentUrl directly without downloading when force_download=False.
 
     OpenRouter supports file URLs directly in the Chat API, unlike native OpenAI which only
@@ -662,10 +668,23 @@ async def test_openrouter_document_url_no_force_download(allow_model_requests: N
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
     agent = Agent(model)
 
-    document_url = DocumentUrl(
-        url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-        force_download=False,
-    )
+    pdf_url = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
+    document_url = DocumentUrl(url=pdf_url, force_download=False)
 
     result = await agent.run(['What is the main content of this document?', document_url])
     assert 'dummy' in result.output.lower() or 'pdf' in result.output.lower()
+
+    # Verify URL was passed directly (not downloaded and base64-encoded)
+    assert vcr is not None
+    assert len(vcr.requests) == 1, 'Should only have one request (to OpenRouter, not a download)'  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    file_content = request_body['messages'][0]['content'][1]
+    assert file_content == snapshot(
+        {
+            'file': {
+                'file_data': 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+                'filename': 'filename.pdf',
+            },
+            'type': 'file',
+        }
+    )
