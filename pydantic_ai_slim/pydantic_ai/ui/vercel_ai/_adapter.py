@@ -19,7 +19,6 @@ from ...messages import (
     BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
-    FileId,
     FilePart,
     ImageUrl,
     ModelMessage,
@@ -31,6 +30,7 @@ from ...messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
@@ -427,8 +427,8 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
-            elif isinstance(item, FileId):
-                # FileId references provider-hosted files, skip for UI conversion as we don't have the URL
+            elif isinstance(item, UploadedFile):
+                # UploadedFile references provider-hosted files, skip for UI conversion as we don't have the URL
                 pass
             elif isinstance(item, CachePoint):
                 # CachePoint is metadata for prompt caching, skip for UI conversion

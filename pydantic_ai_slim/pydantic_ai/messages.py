@@ -654,43 +654,99 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-@dataclass(repr=False)
-class FileId:
-    """A reference to a file uploaded to a provider's file storage.
+@dataclass(init=False, repr=False)
+class UploadedFile:
+    """A reference to a file uploaded to a provider's file storage by ID.
 
     This allows referencing files that have been uploaded via provider-specific file APIs
-    (e.g., Anthropic's Files API) rather than providing the file content directly.
+    rather than providing the file content directly.
+
+    Supported by:
+
+    - [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files)
+    - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]: via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files)
+    - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]: via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files)
+    - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]: via S3 URLs (`s3://bucket/key`)
+
+    Note: For [`GoogleModel`][pydantic_ai.models.google.GoogleModel], use [`DocumentUrl`][pydantic_ai.DocumentUrl]
+    with the file URI from the [Google Files API](https://ai.google.dev/gemini-api/docs/files) instead.
     """
 
     file_id: str
-    """The provider-specific file identifier."""
+    """The provider-specific file identifier.
+
+    This can be a file ID (e.g., 'file-abc123' for Anthropic/OpenAI), a file URI
+    (e.g., 'https://generativelanguage.googleapis.com/v1beta/files/abc123' for Google),
+    or an S3 URL (e.g., 's3://bucket/key' for Bedrock).
+    """
+
+    provider_name: str
+    """The provider this file belongs to (e.g., 'anthropic', 'openai', 'google-gla', 'bedrock').
+
+    This is required because file IDs are not portable across providers, and using a file ID
+    with the wrong provider will always result in an error.
+    """
 
     _: KW_ONLY
 
-    provider: str | None = None
-    """The provider this file belongs to (e.g., 'anthropic').
+    media_type: str | None = None
+    """Optional media type hint for the file.
 
-    If not specified, the model will attempt to use the file with the current provider.
+    Required by some providers (e.g., Google) for certain file types.
     """
 
-    media_type: str | None = None
-    """Optional media type hint for the file."""
+    vendor_metadata: dict[str, Any] | None = None
+    """Vendor-specific metadata for the file.
 
-    kind: Literal['file-id'] = 'file-id'
+    Supported by:
+    - `GoogleModel`: used as `video_metadata` for video files
+    - `OpenAIChatModel`, `OpenAIResponsesModel`: `vendor_metadata['detail']` is used as `detail` setting for images
+    """
+
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+
+    kind: Literal['uploaded-file'] = 'uploaded-file'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    def __init__(
+        self,
+        file_id: str,
+        provider_name: str,
+        *,
+        media_type: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        identifier: str | None = None,
+        kind: Literal['uploaded-file'] = 'uploaded-file',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None:
+        self.file_id = file_id
+        self.provider_name = provider_name
+        self.media_type = media_type
+        self.vendor_metadata = vendor_metadata
+        self._identifier = identifier or _identifier
+        self.kind = kind
+
+    @pydantic.computed_field
     @property
     def identifier(self) -> str:
-        """The identifier of the file.
+        """The identifier of the file, such as a unique ID.
 
-        For FileId, this returns the file_id which serves as its unique identifier.
+        This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+        and the tool can look up the file in question by iterating over the message history and finding the matching `UploadedFile`.
+
+        This identifier is only automatically passed to the model when the `UploadedFile` is returned by a tool.
+        If you're passing the `UploadedFile` as a user message, it's up to you to include a separate text part with the identifier,
+        e.g. "This is file <identifier>:" preceding the `UploadedFile`.
         """
-        return self.file_id
+        return self._identifier or _multi_modal_content_identifier(self.file_id)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | FileId
+MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 
@@ -811,10 +867,21 @@ class UserPromptPart:
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
-            elif isinstance(part, FileId):
-                # FileId references provider-hosted files by ID, not a URL
-                # We don't have a specific otel message type for this, so skip it
-                pass
+            elif isinstance(part, UploadedFile):
+                # UploadedFile references provider-hosted files
+                # Use a URI format: if file_id is already a URL, use it; otherwise use x-{provider}-file-id:{id}
+                file_id = part.file_id
+                if file_id.startswith('http://') or file_id.startswith('https://') or file_id.startswith('s3://'):
+                    uri = file_id
+                else:
+                    provider = part.provider_name or 'unknown'
+                    uri = f'x-{provider}-file-id:{file_id}'
+                parts.append(
+                    _otel_messages.MediaUrlPart(
+                        type='uploaded-file',
+                        **{'url': uri} if settings.include_content else {},
+                    )
+                )
             else:
                 parts.append({'type': part.kind})  # pragma: no cover
         return parts

@@ -22,7 +22,6 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
-    FileId,
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
@@ -43,6 +42,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UploadedFile,
     UsageLimitExceeded,
     UserPromptPart,
 )
@@ -438,33 +438,6 @@ async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
     otel_parts = part.otel_message_parts(settings)
 
     # Should have 2 text parts, CachePoint is skipped
-    assert otel_parts == snapshot(
-        [{'type': 'text', 'content': 'text before'}, {'type': 'text', 'content': 'text after'}]
-    )
-
-
-def test_file_id_identifier_property():
-    """Test that FileId.identifier returns the file_id."""
-    file_id = FileId(file_id='file-abc123')
-    assert file_id.identifier == 'file-abc123'
-
-    # Also test with provider and media_type
-    file_id_with_extras = FileId(file_id='file-xyz789', provider='anthropic', media_type='application/pdf')
-    assert file_id_with_extras.identifier == 'file-xyz789'
-
-
-async def test_file_id_in_otel_message_parts(allow_model_requests: None):
-    """Test that FileId is handled correctly in otel message parts conversion (skipped)."""
-    from pydantic_ai.agent import InstrumentationSettings
-
-    # Create a UserPromptPart with FileId
-    part = UserPromptPart(content=['text before', FileId(file_id='file-abc123'), 'text after'])
-
-    # Convert to otel message parts
-    settings = InstrumentationSettings(include_content=True)
-    otel_parts = part.otel_message_parts(settings)
-
-    # Should have 2 text parts, FileId is skipped (no otel type for file references)
     assert otel_parts == snapshot(
         [{'type': 'text', 'content': 'text before'}, {'type': 'text', 'content': 'text after'}]
     )
@@ -1918,8 +1891,8 @@ async def test_text_document_as_binary_content_input(
     assert result.output == snapshot('The text file says "Dummy TXT file".')
 
 
-async def test_file_id_with_text(allow_model_requests: None) -> None:
-    """Test that FileId is correctly mapped to a document block with file source."""
+async def test_uploaded_file_with_text(allow_model_requests: None) -> None:
+    """Test that UploadedFile is correctly mapped to a document block with file source."""
     c = completion_message(
         [BetaTextBlock(text='The file contains important data.', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=8),
@@ -1928,7 +1901,7 @@ async def test_file_id_with_text(allow_model_requests: None) -> None:
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    result = await agent.run(['Analyze this file', FileId(file_id='file-abc123')])
+    result = await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
     assert result.output == 'The file contains important data.'
 
@@ -1947,8 +1920,8 @@ async def test_file_id_with_text(allow_model_requests: None) -> None:
     )
 
 
-async def test_file_id_only(allow_model_requests: None) -> None:
-    """Test FileId as the only content in a message."""
+async def test_uploaded_file_only(allow_model_requests: None) -> None:
+    """Test UploadedFile as the only content in a message."""
     c = completion_message(
         [BetaTextBlock(text='This is a PDF document.', type='text')],
         usage=BetaUsage(input_tokens=5, output_tokens=6),
@@ -1957,7 +1930,7 @@ async def test_file_id_only(allow_model_requests: None) -> None:
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    result = await agent.run([FileId(file_id='file-xyz789')])
+    result = await agent.run([UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
     assert result.output == 'This is a PDF document.'
 
@@ -1966,8 +1939,8 @@ async def test_file_id_only(allow_model_requests: None) -> None:
     assert content == snapshot([{'source': {'file_id': 'file-xyz789', 'type': 'file'}, 'type': 'document'}])
 
 
-async def test_multiple_file_ids(allow_model_requests: None) -> None:
-    """Test multiple FileIds in a single message."""
+async def test_multiple_uploaded_files(allow_model_requests: None) -> None:
+    """Test multiple UploadedFiles in a single message."""
     c = completion_message(
         [BetaTextBlock(text='Both files contain similar data.', type='text')],
         usage=BetaUsage(input_tokens=15, output_tokens=7),
@@ -1976,7 +1949,13 @@ async def test_multiple_file_ids(allow_model_requests: None) -> None:
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    result = await agent.run(['Compare these files', FileId(file_id='file-001'), FileId(file_id='file-002')])
+    result = await agent.run(
+        [
+            'Compare these files',
+            UploadedFile(file_id='file-001', provider_name='anthropic'),
+            UploadedFile(file_id='file-002', provider_name='anthropic'),
+        ]
+    )
 
     assert result.output == 'Both files contain similar data.'
 
@@ -1989,6 +1968,20 @@ async def test_multiple_file_ids(allow_model_requests: None) -> None:
             {'source': {'file_id': 'file-002', 'type': 'file'}, 'type': 'document'},
         ]
     )
+
+
+async def test_uploaded_file_wrong_provider(allow_model_requests: None) -> None:
+    """Test that UploadedFile with wrong provider raises an error."""
+    c = completion_message(
+        [BetaTextBlock(text='Should not reach here.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=8),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with AnthropicModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')])
 
 
 def test_init_with_provider():

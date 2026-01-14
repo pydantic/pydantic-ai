@@ -28,7 +28,6 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
-    FileId,
     FilePart,
     FileUrl,
     FinishReason,
@@ -43,6 +42,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -677,7 +677,7 @@ class GoogleModel(Model):
 
         return system_instruction, contents
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
+    async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:  # noqa: C901
         if isinstance(part.content, str):
             return [{'text': part.content}]
         else:
@@ -729,13 +729,23 @@ class GoogleModel(Model):
                         if isinstance(item, VideoUrl) and item.vendor_metadata:
                             part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                         content.append(part_dict)  # pragma: lax no cover
-                elif isinstance(item, FileId):
-                    # FileId.file_id should be a file URI from the Google Files API
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name not in ('google-gla', 'google-vertex'):
+                        raise UserError(
+                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with GoogleModel. '
+                            f'Expected provider_name to be "google-gla" or "google-vertex".'
+                        )
+                    # UploadedFile.file_id should be a file URI from the Google Files API
                     # e.g., 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
                     file_data_dict: FileDataDict = {'file_uri': item.file_id}
                     if item.media_type:
                         file_data_dict['mime_type'] = item.media_type
-                    content.append({'file_data': file_data_dict})
+                    part_dict: PartDict = {'file_data': file_data_dict}
+                    # Include video_metadata if present in vendor_metadata
+                    if item.vendor_metadata:
+                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                    content.append(part_dict)
                 elif isinstance(item, CachePoint):
                     # Google doesn't support inline CachePoint markers. Google's caching requires
                     # pre-creating cache objects via the API, then referencing them by name using

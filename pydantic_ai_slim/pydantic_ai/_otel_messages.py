@@ -33,7 +33,7 @@ class ToolCallResponsePart(TypedDict):
 
 
 class MediaUrlPart(TypedDict):
-    type: Literal['image-url', 'audio-url', 'video-url', 'document-url']
+    type: Literal['image-url', 'audio-url', 'video-url', 'document-url', 'uploaded-file']
     url: NotRequired[str]
 
 

@@ -131,88 +131,114 @@ DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 
 ## Uploaded Files
 
-Some model providers support passing URLs to files hosted on their platform:
+Some model providers have their own file storage APIs where you can upload files and reference them by ID or URL.
 
-- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] supports the [Files API](models/google.md#document-image-audio-and-video-input) for uploading and referencing files.
-- [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] supports `s3://<bucket-name>/<object-key>` URIs, provided that the assumed role has the `s3:GetObject` permission. An optional `bucketOwner` query parameter must be specified if the bucket is not owned by the account making the request. For example: `s3://my-bucket/my-file.png?bucketOwner=123456789012`.
-
-## File References by ID
-
-Some model providers have their own file storage APIs where you can upload files and reference them by ID. You can use [`FileId`][pydantic_ai.FileId] to reference these uploaded files.
+- For providers that return a **file ID** (Anthropic, OpenAI), use [`UploadedFile`][pydantic_ai.UploadedFile]
+- For providers that return a **file URL** (Google Files API), use [`DocumentUrl`][pydantic_ai.DocumentUrl]
+- For S3 URLs with Bedrock, use [`UploadedFile`][pydantic_ai.UploadedFile]
 
 ### Supported Models
 
-| Model | File ID Support |
-|-------|-----------------|
-| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | ✅ Supported via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files) |
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | ✅ Supported via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
-| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ Supported via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
-| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ Supported via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
+| Model | Support |
+|-------|---------|
+| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | ✅ `UploadedFile` via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files) |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | ✅ `UploadedFile` via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ `UploadedFile` via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ `DocumentUrl` via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | ✅ `UploadedFile` via S3 URLs (`s3://bucket/key`) |
 | Other models | ❌ Not supported |
 
-### Anthropic Example
+### Anthropic
 
-```py {title="file_id_anthropic.py" test="skip"}
-import anthropic
+```py {title="uploaded_file_anthropic.py" test="skip"}
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from pydantic_ai import Agent, FileId
+provider = AnthropicProvider()
+model = AnthropicModel('claude-sonnet-4-5', provider=provider)
 
-# Upload a file using the Anthropic SDK
-client = anthropic.Anthropic()
+# Upload a file using the provider's client
 with open('document.pdf', 'rb') as f:
-    uploaded_file = client.files.create(file=f, purpose='user_data')
+    uploaded_file = provider.client.files.create(file=f, purpose='user_data')
 
-# Reference the uploaded file by ID
-agent = Agent(model='anthropic:claude-sonnet-4-5')
+# Reference the uploaded file
+agent = Agent(model)
 result = agent.run_sync([
     'Summarize this document',
-    FileId(file_id=uploaded_file.id),
+    UploadedFile(file_id=uploaded_file.id, provider_name='anthropic'),
 ])
 print(result.output)
 ```
 
-### OpenAI Example
+### OpenAI
 
-```py {title="file_id_openai.py" test="skip"}
-from openai import OpenAI
+```py {title="uploaded_file_openai.py" test="skip"}
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
-from pydantic_ai import Agent, FileId
+provider = OpenAIProvider()
+model = OpenAIChatModel('gpt-4o', provider=provider)
 
-# Upload a file using the OpenAI SDK
-client = OpenAI()
+# Upload a file using the provider's client
 with open('document.pdf', 'rb') as f:
-    uploaded_file = client.files.create(file=f, purpose='user_data')
+    uploaded_file = provider.client.files.create(file=f, purpose='user_data')
 
-# Reference the uploaded file by ID
-agent = Agent(model='openai:gpt-4o')
+# Reference the uploaded file
+agent = Agent(model)
 result = agent.run_sync([
     'Summarize this document',
-    FileId(file_id=uploaded_file.id),
+    UploadedFile(file_id=uploaded_file.id, provider_name='openai'),
 ])
 print(result.output)
 ```
 
-### Google Example
+### Google
 
-```py {title="file_id_google.py" test="skip"}
-from google import genai
+Google's Files API returns a URI, so you can use [`DocumentUrl`][pydantic_ai.DocumentUrl] directly:
 
-from pydantic_ai import Agent, FileId
+```py {title="uploaded_file_google.py" test="skip"}
+from pydantic_ai import Agent, DocumentUrl
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
 
-# Upload a file using the Google GenAI SDK
-client = genai.Client()
-with open('document.pdf', 'rb') as f:
-    uploaded_file = client.files.upload(file=f)
+provider = GoogleProvider()
+model = GoogleModel('gemini-2.0-flash', provider=provider)
+
+# Upload a file using the provider's client
+file = provider.client.files.upload(file='document.pdf')
+assert file.uri is not None
 
 # Reference the uploaded file by URI
-agent = Agent(model='google-gla:gemini-2.0-flash')
+agent = Agent(model)
 result = agent.run_sync([
     'Summarize this document',
-    FileId(file_id=uploaded_file.uri, media_type=uploaded_file.mime_type),
+    DocumentUrl(url=file.uri, media_type=file.mime_type),
+])
+print(result.output)
+```
+
+### Bedrock (S3)
+
+```py {title="uploaded_file_bedrock.py" test="skip"}
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.bedrock import BedrockConverseModel
+
+# Files must be uploaded to S3 separately (e.g., using boto3)
+# The assumed role must have s3:GetObject permission on the bucket
+
+agent = Agent(BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0'))
+result = agent.run_sync([
+    'Summarize this document',
+    UploadedFile(
+        file_id='s3://my-bucket/document.pdf',
+        provider_name='bedrock',
+        media_type='application/pdf',
+    ),
 ])
 print(result.output)
 ```
 
 !!! note
-    Files must be uploaded to the provider's file storage before they can be referenced by ID.
-    For Google, use the file URI (e.g., `https://generativelanguage.googleapis.com/v1beta/files/abc123`) as the `file_id`.
+    For Bedrock, you can optionally specify a `bucketOwner` query parameter if the bucket is not owned by the account making the request: `s3://my-bucket/document.pdf?bucketOwner=123456789012`

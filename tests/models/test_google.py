@@ -26,7 +26,6 @@ from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
-    FileId,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -46,6 +45,7 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UsageLimitExceeded,
     UserPromptPart,
     VideoUrl,
@@ -4678,25 +4678,29 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
-async def test_file_id_mapping():
-    """Test that FileId is correctly mapped to file_data in Google model."""
+async def test_uploaded_file_mapping():
+    """Test that UploadedFile is correctly mapped to file_data in Google model."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
-    content = await model._map_user_prompt(UserPromptPart(content=['Analyze this file', FileId(file_id=file_uri)]))  # pyright: ignore[reportPrivateUsage]
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=['Analyze this file', UploadedFile(file_id=file_uri, provider_name='google-gla')])
+    )
 
     assert len(content) == 2
     assert content[0] == {'text': 'Analyze this file'}
     assert content[1] == {'file_data': {'file_uri': file_uri}}
 
 
-async def test_file_id_mapping_with_media_type():
-    """Test that FileId with media_type is correctly mapped."""
+async def test_uploaded_file_mapping_with_media_type():
+    """Test that UploadedFile with media_type is correctly mapped."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/xyz789'
     content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        UserPromptPart(content=[FileId(file_id=file_uri, media_type='application/pdf')])
+        UserPromptPart(
+            content=[UploadedFile(file_id=file_uri, provider_name='google-gla', media_type='application/pdf')]
+        )
     )
 
     assert len(content) == 1

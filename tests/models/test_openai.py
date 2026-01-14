@@ -21,7 +21,6 @@ from pydantic_ai import (
     BinaryContent,
     CachePoint,
     DocumentUrl,
-    FileId,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
@@ -36,6 +35,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UploadedFile,
     UserError,
     UserPromptPart,
 )
@@ -1469,8 +1469,8 @@ async def test_document_as_binary_content_input_with_tool(
     assert result.output == snapshot('The main content of the document is "DUMMY PDF FILE" in uppercase.')
 
 
-async def test_file_id_chat_model(allow_model_requests: None) -> None:
-    """Test that FileId is correctly mapped in OpenAIChatModel."""
+async def test_uploaded_file_chat_model(allow_model_requests: None) -> None:
+    """Test that UploadedFile is correctly mapped in OpenAIChatModel."""
     c = completion_message(
         ChatCompletionMessage(content='The file contains important data.', role='assistant'),
     )
@@ -1478,7 +1478,7 @@ async def test_file_id_chat_model(allow_model_requests: None) -> None:
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    result = await agent.run(['Analyze this file', FileId(file_id='file-abc123')])
+    result = await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')])
 
     assert result.output == 'The file contains important data.'
 
@@ -1497,8 +1497,8 @@ async def test_file_id_chat_model(allow_model_requests: None) -> None:
     )
 
 
-async def test_file_id_responses_model(allow_model_requests: None) -> None:
-    """Test that FileId is correctly mapped in OpenAIResponsesModel."""
+async def test_uploaded_file_responses_model(allow_model_requests: None) -> None:
+    """Test that UploadedFile is correctly mapped in OpenAIResponsesModel."""
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
     output_item = ResponseOutputMessage(
@@ -1513,7 +1513,9 @@ async def test_file_id_responses_model(allow_model_requests: None) -> None:
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    result = await agent.run(['What does this document say?', FileId(file_id='file-xyz789')])
+    result = await agent.run(
+        ['What does this document say?', UploadedFile(file_id='file-xyz789', provider_name='openai')]
+    )
 
     assert result.output == 'The document says hello.'
 

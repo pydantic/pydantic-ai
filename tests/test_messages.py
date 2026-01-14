@@ -15,6 +15,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstrumentationSettings,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -24,6 +25,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -710,3 +712,76 @@ def test_binary_content_from_path(tmp_path: Path):
     assert binary_content == snapshot(
         BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
     )
+
+
+def test_uploaded_file_identifier_property():
+    """Test that UploadedFile.identifier hashes the file_id."""
+    # Test basic identifier (should be hashed)
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.identifier == snapshot('3a1a6c')
+
+    # Test with custom identifier
+    uploaded_file_with_id = UploadedFile(file_id='file-xyz789', provider_name='anthropic', identifier='my-custom-id')
+    assert uploaded_file_with_id.identifier == 'my-custom-id'
+
+    # Test with URL file_id (should still be hashed)
+    uploaded_file_url = UploadedFile(
+        file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+        provider_name='google-gla',
+    )
+    assert uploaded_file_url.identifier == snapshot('d8d637')
+
+
+def test_uploaded_file_in_otel_message_parts():
+    """Test that UploadedFile is handled correctly in otel message parts conversion."""
+    # Test with file ID (should use x-{provider}-file-id:{id} format)
+    part = UserPromptPart(
+        content=['text before', UploadedFile(file_id='file-abc123', provider_name='anthropic'), 'text after']
+    )
+    settings = InstrumentationSettings(include_content=True)
+    otel_parts = part.otel_message_parts(settings)
+    assert otel_parts == snapshot(
+        [
+            {'type': 'text', 'content': 'text before'},
+            {'type': 'uploaded-file', 'url': 'x-anthropic-file-id:file-abc123'},
+            {'type': 'text', 'content': 'text after'},
+        ]
+    )
+
+    # Test with URL file_id (should use the URL directly)
+    part_url = UserPromptPart(
+        content=[
+            'analyze this',
+            UploadedFile(
+                file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+                provider_name='google-gla',
+            ),
+        ]
+    )
+    otel_parts_url = part_url.otel_message_parts(settings)
+    assert otel_parts_url == snapshot(
+        [
+            {'type': 'text', 'content': 'analyze this'},
+            {'type': 'uploaded-file', 'url': 'https://generativelanguage.googleapis.com/v1beta/files/abc123'},
+        ]
+    )
+
+    # Test with S3 URL (should use the URL directly)
+    part_s3 = UserPromptPart(
+        content=[
+            'process this',
+            UploadedFile(file_id='s3://my-bucket/my-file.pdf', provider_name='bedrock', media_type='application/pdf'),
+        ]
+    )
+    otel_parts_s3 = part_s3.otel_message_parts(settings)
+    assert otel_parts_s3 == snapshot(
+        [
+            {'type': 'text', 'content': 'process this'},
+            {'type': 'uploaded-file', 'url': 's3://my-bucket/my-file.pdf'},
+        ]
+    )
+
+    # Test without include_content (should not include URL)
+    settings_no_content = InstrumentationSettings(include_content=False)
+    otel_parts_no_content = part.otel_message_parts(settings_no_content)
+    assert otel_parts_no_content == snapshot([{'type': 'text'}, {'type': 'uploaded-file'}, {'type': 'text'}])

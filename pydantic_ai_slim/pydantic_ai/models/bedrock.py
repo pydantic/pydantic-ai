@@ -21,7 +21,6 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
-    FileId,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -36,6 +35,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
     _utils,
@@ -43,6 +43,10 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.messages import (
+    _document_format_lookup,  # pyright: ignore[reportPrivateUsage]
+    _video_format_lookup,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
@@ -790,10 +794,66 @@ class BedrockConverseModel(Model):
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
-                elif isinstance(item, FileId):  # pragma: no cover
-                    raise NotImplementedError(
-                        'FileId is not supported by Bedrock. Use S3 URLs or BinaryContent instead.'
-                    )
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name != 'bedrock':
+                        raise UserError(
+                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with BedrockConverseModel. '
+                            f'Expected provider_name to be "bedrock".'
+                        )
+                    # UploadedFile.file_id should be an S3 URL for Bedrock
+                    if not item.file_id.startswith('s3://'):
+                        raise UserError(
+                            f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
+                        )
+                    parsed = urlparse(item.file_id)
+                    s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+                    if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+                        s3_location['bucketOwner'] = bucket_owner
+                    source: DocumentSourceTypeDef = {'s3Location': s3_location}
+
+                    # Determine file type from media_type or extension
+                    media_type = item.media_type
+                    if not media_type:
+                        # Try to infer from the URL path
+                        from mimetypes import guess_type
+
+                        media_type, _ = guess_type(parsed.path)
+                    if not media_type:
+                        raise UserError(
+                            'UploadedFile for Bedrock requires a media_type when the file extension is ambiguous.'
+                        )
+
+                    if media_type.startswith('image/'):
+                        format = media_type.split('/')[1]
+                        assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
+                        image: ImageBlockTypeDef = {'format': format, 'source': source}
+                        content.append({'image': image})
+                    elif media_type.startswith('video/'):
+                        format = _video_format_lookup.get(media_type)
+                        assert format in (
+                            'mkv',
+                            'mov',
+                            'mp4',
+                            'webm',
+                            'flv',
+                            'mpeg',
+                            'mpg',
+                            'wmv',
+                            'three_gp',
+                        ), f'Unsupported video format: {format}'
+                        video: VideoBlockTypeDef = {'format': format, 'source': source}
+                        content.append({'video': video})
+                    else:
+                        format = _document_format_lookup.get(media_type)
+                        if format is None:
+                            raise UserError(f'Unsupported media type for Bedrock UploadedFile: {media_type}')
+                        document: DocumentBlockTypeDef = {
+                            'format': format,
+                            'name': item.identifier,
+                            'source': source,
+                        }
+                        content.append({'document': document})
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
