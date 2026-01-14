@@ -1,7 +1,3 @@
----
-title: Pydantic AI Dependency Injection
-description: "Leverage type-safe dependency injection in Pydantic AI. Use RunContext to pass runtime data to agents and easily override dependencies during testing."
----
 # Dependencies
 
 Pydantic AI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).

@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Agent-User Interaction (AG-UI) Protocol"
-description: "Implement the Agent-User Interaction (AG-UI) protocol for better AI frontends. Connect Pydantic AI agents to rich user interfaces with standardized events."
----
 # Agent-User Interaction (AG-UI) Protocol
 
 The [Agent-User Interaction (AG-UI) Protocol](https://docs.ag-ui.com/introduction) is an open standard introduced by the

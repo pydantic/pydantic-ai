@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: RAG & Embeddings Examples"
-description: "Implement Retrieval-Augmented Generation (RAG) using Pydantic AI. View examples of vector searches, embedding generation, and context-aware agent responses."
----
 # RAG
 
 RAG search example. This demo allows you to ask question of the [logfire](https://pydantic.dev/logfire) documentation.
