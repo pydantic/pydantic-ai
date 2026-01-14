@@ -812,7 +812,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: list[_messages.ModelMessage],
         new_message_index: int,
         metadata: dict[str, Any] | None = None,
-    ):
+    ) -> dict[str, str | int | float | bool]:
         if settings.version == 1:
             attrs = {
                 'all_messages_events': json.dumps(
@@ -848,8 +848,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if metadata is not None:
             attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
 
-        return {
-            **usage.opentelemetry_attributes(emit_agent_run_token_usage=settings.emit_agent_run_token_usage),
+        usage_attrs: dict[str, int] = usage.opentelemetry_attributes()
+
+        # Translate aggregated token attribute names for agent run spans to avoid
+        # duplicating the same attribute names used on leaf/model spans.
+        translated_usage_attrs: dict[str, str | int | float | bool] = {}
+        for key, value in usage_attrs.items():
+            if key == 'gen_ai.usage.input_tokens':
+                translated_usage_attrs['gen_ai.usage.aggregated_input_tokens'] = value
+            elif key == 'gen_ai.usage.output_tokens':
+                translated_usage_attrs['gen_ai.usage.aggregated_output_tokens'] = value
+            else:
+                translated_usage_attrs[key] = value
+
+        result: dict[str, str | int | float | bool] = {
+            **translated_usage_attrs,
             **attrs,
             'logfire.json_schema': json.dumps(
                 {
@@ -861,6 +874,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 }
             ),
         }
+
+        return result
 
     @contextmanager
     def override(
