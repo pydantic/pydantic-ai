@@ -681,8 +681,7 @@ class GoogleModel(Model):
                         reworked_parts_has_function_response = part_has_function_response
                         reworked_parts.append(part)
 
-                    if reworked_parts:
-                        contents.append({'role': 'user', 'parts': reworked_parts})
+                    contents.append({'role': 'user', 'parts': reworked_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(m, self.system)
                 if maybe_content:
