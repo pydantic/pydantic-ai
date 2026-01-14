@@ -254,31 +254,35 @@ The following providers have dedicated documentation on Pydantic AI:
 ## Advanced usage
 ### Agent run token usage
 
-Agent run spans emit aggregated token usage attributes (`gen_ai.usage.input_tokens` and
-`gen_ai.usage.output_tokens`) by default. Some OpenTelemetry backends and aggregation
-pipelines (for example Datadog, New Relic, LangSmith, Opik, and similar services)
-may aggregate attributes across all spans when computing metrics. In those cases,
-having both leaf/model spans and the higher-level agent run span emit the same
-aggregated token counts can lead to double-counting when metrics are summed.
+Model/request spans report authoritative per-call token usage using the GenAI
+attributes:
 
-To avoid this, Pydantic AI provides the `emit_agent_run_token_usage` option on
-`InstrumentationSettings`. When set to `False`, agent run spans will omit the
-aggregated `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes,
-leaving token emission to the leaf/model spans and preventing double-counting
-in observability backends that aggregate across spans. This behavior aligns with OpenTelemetry 
-semantics and is recommended when your backend performs span attribute aggregation across parent
-and child spans.
+- `gen_ai.usage.input_tokens`
+- `gen_ai.usage.output_tokens`
 
+These attributes represent the actual token usage for individual model or
+chat requests and should be treated as the source of truth for per-call
+metrics such as billing and latency analysis.
 
-Example:
+Agent run spans may also report token usage, but this represents an aggregation
+over all child model/request spans within a single agent run. To avoid ambiguity
+and accidental double-counting in observability backends that aggregate span
+attributes across parent and child spans, aggregated usage on agent run spans
+is emitted using agent-scoped attribute names:
 
-```python
-from pydantic_ai.models.instrumented import InstrumentationSettings
+- `gen_ai.usage.aggregated_input_tokens`
+- `gen_ai.usage.aggregated_output_tokens`
 
-settings = InstrumentationSettings(emit_agent_run_token_usage=False)
-```
+This distinction makes the semantics explicit:
 
-The default is `True` so existing instrumentation behavior remains unchanged.
+- Model/request spans report per-call token usage.
+- Agent run spans report aggregated token usage across the full agent run.
+
+When using observability backends that aggregate span attributes, consumers
+should prefer model/request span usage for billing and fine-grained metrics,
+and treat agent run usage as a high-level summary representing the total
+resource consumption of the agent execution.
+
 
 ### Configuring data format
 

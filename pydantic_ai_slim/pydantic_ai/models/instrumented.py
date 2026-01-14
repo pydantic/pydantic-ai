@@ -92,14 +92,6 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    emit_agent_run_token_usage: bool = True
-    """
-    Whether agent run spans should emit gen_ai.usage.input_tokens and
-    gen_ai.usage.output_tokens attributes.
-
-    Disable this when using observability backends that aggregate attributes
-    across all spans to prevent double-counting of token usage.
-    """
     version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION
 
     def __init__(
@@ -112,7 +104,6 @@ class InstrumentationSettings:
         version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         logger_provider: LoggerProvider | None = None,
-        emit_agent_run_token_usage: bool = True,
     ):
         """Create instrumentation options.
 
@@ -154,7 +145,6 @@ class InstrumentationSettings:
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
-        self.emit_agent_run_token_usage = emit_agent_run_token_usage
 
         if event_mode == 'logs' and version != 1:
             warnings.warn(

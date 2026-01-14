@@ -65,20 +65,13 @@ class UsageBase:
         """Sum of `input_tokens + output_tokens`."""
         return self.input_tokens + self.output_tokens
 
-    def opentelemetry_attributes(self, include_aggregated: bool = True) -> dict[str, int]:
-        """Get the token usage values as OpenTelemetry attributes.
-
-        Args:
-            include_aggregated: If False, omit aggregated token counts (e.g. for parent/agent spans)
-                while still returning any `details` attributes. This allows instrumentation to avoid
-                double-counting when aggregating child spans.
-        """
+    def opentelemetry_attributes(self) -> dict[str, int]:
+        """Get the token usage values as OpenTelemetry attributes."""
         result: dict[str, int] = {}
-        if include_aggregated:
-            if self.input_tokens:
-                result['gen_ai.usage.input_tokens'] = self.input_tokens
-            if self.output_tokens:
-                result['gen_ai.usage.output_tokens'] = self.output_tokens
+        if self.input_tokens:
+            result['gen_ai.usage.input_tokens'] = self.input_tokens
+        if self.output_tokens:
+            result['gen_ai.usage.output_tokens'] = self.output_tokens
 
         details = self.details.copy()
         if self.cache_write_tokens:
@@ -227,8 +220,8 @@ class RunUsage(UsageBase):
         new_usage.incr(other)
         return new_usage
 
-    def opentelemetry_attributes(self, include_aggregated: bool = True) -> dict[str, int]:
-        return super().opentelemetry_attributes(include_aggregated=include_aggregated)
+    def opentelemetry_attributes(self) -> dict[str, int]:
+        return super().opentelemetry_attributes()
 
 
 def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
