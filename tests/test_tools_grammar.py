@@ -8,9 +8,10 @@ from typing import Annotated
 from unittest.mock import patch
 
 import pytest
+from pydantic.json_schema import GenerateJsonSchema
 
 from pydantic_ai import UserError
-from pydantic_ai._function_schema import function_schema
+from pydantic_ai._function_schema import extract_text_format, function_schema
 from pydantic_ai.tools import FreeformText, LarkGrammar, RegexGrammar
 
 
@@ -136,7 +137,6 @@ class TestMultipleTextFormatParameters:
 
     def test_multiple_text_format_error(self):
         """Test that multiple TextFormat parameters raise UserError."""
-        from pydantic.json_schema import GenerateJsonSchema
 
         def tool_with_multiple_grammars(
             param1: Annotated[str, RegexGrammar(r'\d+')],
@@ -157,7 +157,6 @@ class TestDescriptionCombination:
 
     def test_description_with_grammar_combined(self):
         """Test that parameter description is combined with grammar constraint description."""
-        from pydantic.json_schema import GenerateJsonSchema
 
         def tool_with_description(
             phone: Annotated[str, RegexGrammar(r'\d{3}-\d{4}')],
@@ -188,7 +187,6 @@ class TestDescriptionCombination:
 
     def test_description_without_docstring(self):
         """Test that grammar description is used when no docstring description exists."""
-        from pydantic.json_schema import GenerateJsonSchema
 
         def tool_no_docstring(
             phone: Annotated[str, RegexGrammar(r'\d{3}-\d{4}')],
@@ -213,14 +211,12 @@ class TestExtractTextFormat:
 
     def test_non_annotated_returns_none(self):
         """Test that non-Annotated types return None."""
-        from pydantic_ai._function_schema import extract_text_format
 
         assert extract_text_format(str) is None
         assert extract_text_format(int) is None
 
     def test_annotated_with_text_format_returns_format(self):
         """Test that Annotated with TextFormat returns the format."""
-        from pydantic_ai._function_schema import extract_text_format
 
         regex = RegexGrammar(r'\d+')
         result = extract_text_format(Annotated[str, regex])
@@ -228,13 +224,11 @@ class TestExtractTextFormat:
 
     def test_annotated_non_str_returns_none(self):
         """Test that Annotated[non-str, TextFormat] returns None."""
-        from pydantic_ai._function_schema import extract_text_format
 
         # TextFormat on non-str type should return None
         assert extract_text_format(Annotated[int, RegexGrammar(r'\d+')]) is None
 
     def test_annotated_without_text_format_returns_none(self):
         """Test that Annotated without TextFormat returns None."""
-        from pydantic_ai._function_schema import extract_text_format
 
         assert extract_text_format(Annotated[str, 'some metadata']) is None
