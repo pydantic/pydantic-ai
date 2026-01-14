@@ -11,6 +11,8 @@ from typing import (
     cast,
 )
 
+from typing_extensions import assert_never
+
 from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     AudioUrl,
@@ -163,8 +165,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                     else:  # pragma: no cover
                                         raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
                                     user_prompt_content.append(binary_part)
-                                case _:  # pragma: no cover
-                                    raise ValueError(f'Unsupported user message part type: {type(part)}')
+                                case _:
+                                    assert_never(part)
 
                         if user_prompt_content:  # pragma: no branch
                             content_to_add = (
@@ -242,5 +244,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             provider_details=content.get('provider_details'),
                         )
                     )
+
+                case _:  # pragma: no cover
+                    raise ValueError(f'Unsupported message type: {type(msg)}')
 
         return builder.messages
