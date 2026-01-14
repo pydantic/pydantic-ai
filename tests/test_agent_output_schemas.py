@@ -238,22 +238,13 @@ async def test_image_output_json_schema():
         {
             'properties': {
                 'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
-                'file_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'File Name'},
-                'media_type': {
-                    'description': """\
-The media type of the binary content.
-
-Automatically detects the media type from the file name if not provided.\
-""",
-                    'readOnly': True,
-                    'title': 'Media Type',
-                    'type': 'string',
-                },
+                'media_type': {'title': 'Media Type', 'type': 'string'},
                 'vendor_metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                     'default': None,
                     'title': 'Vendor Metadata',
                 },
+                'file_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'File Name'},
                 'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                 'identifier': {
                     'description': """\
@@ -274,7 +265,7 @@ distinguish multiple files.\
                     'type': 'string',
                 },
             },
-            'required': ['data', 'identifier', 'media_type'],
+            'required': ['data', 'media_type', 'identifier'],
             'title': 'BinaryImage',
             'type': 'object',
         }
@@ -290,25 +281,16 @@ distinguish multiple files.\
                 {
                     'properties': {
                         'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
-                        'file_name': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'File Name',
-                        },
-                        'media_type': {
-                            'description': """\
-The media type of the binary content.
-
-Automatically detects the media type from the file name if not provided.\
-""",
-                            'readOnly': True,
-                            'title': 'Media Type',
-                            'type': 'string',
-                        },
+                        'media_type': {'title': 'Media Type', 'type': 'string'},
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Vendor Metadata',
+                        },
+                        'file_name': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'File Name',
                         },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                         'identifier': {
@@ -330,7 +312,7 @@ distinguish multiple files.\
                             'type': 'string',
                         },
                     },
-                    'required': ['data', 'identifier', 'media_type'],
+                    'required': ['data', 'media_type', 'identifier'],
                     'title': 'BinaryImage',
                     'type': 'object',
                 },
@@ -410,25 +392,16 @@ async def test_deferred_output_json_schema():
                 {
                     'properties': {
                         'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
-                        'file_name': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'File Name',
-                        },
-                        'media_type': {
-                            'description': """\
-The media type of the binary content.
-
-Automatically detects the media type from the file name if not provided.\
-""",
-                            'readOnly': True,
-                            'title': 'Media Type',
-                            'type': 'string',
-                        },
+                        'media_type': {'title': 'Media Type', 'type': 'string'},
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Vendor Metadata',
+                        },
+                        'file_name': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'File Name',
                         },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                         'identifier': {
@@ -450,7 +423,7 @@ distinguish multiple files.\
                             'type': 'string',
                         },
                     },
-                    'required': ['data', 'identifier', 'media_type'],
+                    'required': ['data', 'media_type', 'identifier'],
                     'title': 'BinaryImage',
                     'type': 'object',
                 },

@@ -590,12 +590,8 @@ Let's generate an image
 
 And then, call the 'hello_world' tool\
 """)
-    assert response.files == snapshot(
-        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
-    )
-    assert response.images == snapshot(
-        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
-    )
+    assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
     assert response.builtin_tool_calls == snapshot(
         [
@@ -699,7 +695,6 @@ def test_binary_content_from_path(tmp_path: Path):
         BinaryContent(
             data=b'<think>about trains</think>',
             file_name='test.xml',
-            _media_type='application/xml',
             media_type='application/xml',
         )
     )
@@ -721,7 +716,7 @@ def test_binary_content_from_path(tmp_path: Path):
     string_path = test_txt_file.as_posix()
     binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
     assert binary_content == snapshot(
-        BinaryContent(data=b'just some text', file_name='test.txt', _media_type='text/plain', media_type='text/plain')
+        BinaryContent(data=b'just some text', file_name='test.txt', media_type='text/plain')
     )
 
     # test image file
@@ -732,8 +727,8 @@ def test_binary_content_from_path(tmp_path: Path):
         BinaryImage(
             data=b'\xff\xd8\xff\xe0' + b'0' * 100,
             media_type='image/jpeg',
-            _media_type='image/jpeg',
-            _identifier='bc8d49-test.jpg',
+            file_name='test.jpg',
+            _identifier='bc8d49',
         )
     )
 
@@ -742,9 +737,7 @@ def test_binary_content_from_path(tmp_path: Path):
     test_yaml_file.write_text('key: value', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_yaml_file)
     assert binary_content == snapshot(
-        BinaryContent(
-            data=b'key: value', file_name='config.yaml', _media_type='application/yaml', media_type='application/yaml'
-        )
+        BinaryContent(data=b'key: value', file_name='config.yaml', media_type='application/yaml')
     )
 
     # test yml file (alternative extension)
@@ -755,7 +748,6 @@ def test_binary_content_from_path(tmp_path: Path):
         BinaryContent(
             data=b'version: "3"',
             file_name='docker-compose.yml',
-            _media_type='application/yaml',
             media_type='application/yaml',
         )
     )
@@ -768,7 +760,6 @@ def test_binary_content_from_path(tmp_path: Path):
         BinaryContent(
             data=b'[project]\nname = "test"',
             file_name='pyproject.toml',
-            _media_type='application/toml',
             media_type='application/toml',
         )
     )
