@@ -683,19 +683,17 @@ class AnthropicModel(Model):
             # tool_choice = {'type': resolved_tool_choice}`: pyright can't narrow this properly
             tool_choice = {'type': 'auto'} if resolved_tool_choice == 'auto' else {'type': 'none'}
         elif resolved_tool_choice == 'required':
-            is_compatible = _is_compatible_with_tool_forcing(
-                model_settings, resolved_tool_choice, "tool_choice='required'"
-            )
-            tool_choice = {'type': 'any'} if is_compatible else {'type': 'auto'}
+            supports = _support_tool_forcing(model_settings, resolved_tool_choice, "tool_choice='required'")
+            tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            is_compatible = _is_compatible_with_tool_forcing(model_settings, resolved_tool_choice)
+            supports = _support_tool_forcing(model_settings, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'type': 'tool', 'name': tool_names[0]} if is_compatible else {'type': 'auto'}
+                tool_choice = {'type': 'tool', 'name': tool_names[0]} if supports else {'type': 'auto'}
             else:
                 # Breaks caching, but Anthropic doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not is_compatible else {'type': 'any'}
+                tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not supports else {'type': 'any'}
         else:
             assert_never(resolved_tool_choice)
 
@@ -1457,7 +1455,7 @@ def _map_mcp_server_result_block(
     )
 
 
-def _is_compatible_with_tool_forcing(
+def _support_tool_forcing(
     model_settings: AnthropicModelSettings,
     resolved_tool_choice: ResolvedToolChoice,
     context: str = 'forcing specific tools',

@@ -841,8 +841,8 @@ class OpenAIChatModel(Model):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            is_compatible = _is_compatible_with_tool_forcing(self.model_name, openai_profile, model_settings)
-            tool_choice = 'required' if is_compatible else 'auto'
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             tool_choice = ChatCompletionAllowedToolChoiceParam(
@@ -1619,8 +1619,8 @@ class OpenAIResponsesModel(Model):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            is_compatible = _is_compatible_with_tool_forcing(self.model_name, openai_profile, model_settings)
-            tool_choice = 'required' if is_compatible else 'auto'
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             tool_choice = ToolChoiceAllowedParam(
@@ -2671,7 +2671,7 @@ def _map_logprobs(
     ]
 
 
-def _is_compatible_with_tool_forcing(
+def _support_tool_forcing(
     model_name: str,
     openai_profile: OpenAIModelProfile,
     model_settings: ModelSettings | None,
