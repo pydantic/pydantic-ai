@@ -250,8 +250,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if schema_type == 'object':
             # Always ensure 'properties' key exists - OpenAI drops objects without it
             if 'properties' not in schema:
-                _properties: dict[str, Any] = {}
-                schema['properties'] = _properties
+                schema['properties'] = dict[str, Any]()
 
             if self.strict is True:
                 # additional properties are disallowed
