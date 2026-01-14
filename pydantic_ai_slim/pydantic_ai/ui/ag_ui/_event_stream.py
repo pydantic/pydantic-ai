@@ -171,21 +171,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             self._thinking_text = False
 
         if not followed_by_thinking:
-            pydantic_ai_meta: dict[str, Any] = {}
-            if part.id is not None:
-                pydantic_ai_meta['id'] = part.id
-            if part.signature is not None:
-                pydantic_ai_meta['signature'] = part.signature
-            if part.provider_name is not None:
-                pydantic_ai_meta['provider_name'] = part.provider_name
-            if part.provider_details is not None:
-                pydantic_ai_meta['provider_details'] = part.provider_details
-
-            raw_event = {'pydantic_ai': pydantic_ai_meta} if pydantic_ai_meta else None
+            _args = ['id', 'signature', 'provider_name', 'provider_details']
+            pydantic_ai_meta: dict[str, Any] = {
+                arg: getattr(part, arg) for arg in _args if getattr(part, arg) is not None
+            }
 
             yield ThinkingEndEvent(
                 type=EventType.THINKING_END,
-                raw_event=raw_event,
+                raw_event={'pydantic_ai': pydantic_ai_meta} if pydantic_ai_meta else None,
                 encryptedContent=part.signature,  # pyright: ignore[reportCallIssue]
             )
 
