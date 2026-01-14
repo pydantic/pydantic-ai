@@ -91,16 +91,14 @@ class XaiSampleProtoCassette:
 
 @dataclass
 class _CassetteChatInstance:
-    _cassette: XaiSampleProtoCassette
-    _idx: int = 0
-    _stream_idx: int = 0
+    _client: XaiProtoCassetteClient
 
     async def sample(self) -> chat_types.Response:
         try:
-            proto_bytes = self._cassette.responses[self._idx]
+            proto_bytes = self._client.cassette.responses[self._client.sample_idx]
         except IndexError as e:  # pragma: no cover
-            raise IndexError(f'Cassette exhausted at index {self._idx}') from e
-        self._idx += 1
+            raise IndexError(f'Cassette exhausted at index {self._client.sample_idx}') from e
+        self._client.sample_idx += 1
 
         proto = chat_pb2.GetChatCompletionResponse()
         proto.ParseFromString(proto_bytes)
@@ -108,17 +106,17 @@ class _CassetteChatInstance:
 
     def stream(self) -> Any:
         async def _aiter():
-            if not self._cassette.stream_chunks:
+            if not self._client.cassette.stream_chunks:
                 raise RuntimeError(
                     'xAI proto cassette is missing streaming data (`stream_chunks`).\n'
                     'Re-record this cassette with:\n'
                     '  XAI_PROTO_CASSETTE_RECORD=1 XAI_API_KEY=... uv run pytest <test> -v'
                 )
             try:
-                chunk_list = self._cassette.stream_chunks[self._stream_idx]
+                chunk_list = self._client.cassette.stream_chunks[self._client.stream_idx]
             except IndexError as e:  # pragma: no cover
-                raise IndexError(f'Cassette stream exhausted at index {self._stream_idx}') from e
-            self._stream_idx += 1
+                raise IndexError(f'Cassette stream exhausted at index {self._client.stream_idx}') from e
+            self._client.stream_idx += 1
 
             # Reconstruct the aggregated response by applying each chunk, mirroring the SDK behavior.
             aggregated = chat_types.Response(chat_pb2.GetChatCompletionResponse(), index=None)
@@ -136,6 +134,11 @@ class XaiProtoCassetteClient:
     """Drop-in-ish xAI SDK client for replaying recorded protobuf responses."""
 
     cassette: XaiSampleProtoCassette
+    # Important: these indices must be shared across `chat.create(...).sample()` calls,
+    # otherwise multi-step agent runs will keep replaying the first response and can
+    # get stuck in tool-call loops until `UsageLimits` fails (e.g. request_limit=50).
+    sample_idx: int = 0
+    stream_idx: int = 0
 
     @classmethod
     def from_path(cls, path: Path) -> XaiProtoCassetteClient:
@@ -151,9 +154,7 @@ class XaiProtoCassetteClient:
         return type('Files', (), {'upload': self._files_upload})
 
     def _chat_create(self, *_args: Any, **_kwargs: Any) -> _CassetteChatInstance:
-        # NOTE: `_CassetteChatInstance` holds its own index. Since tests typically create a new Agent per test,
-        # the simplistic index is good enough for now.
-        return _CassetteChatInstance(self.cassette)
+        return _CassetteChatInstance(self)
 
     async def _files_upload(self, data: bytes, filename: str) -> Any:
         # Deterministic ID; good enough for replay since we don't actually call the backend.

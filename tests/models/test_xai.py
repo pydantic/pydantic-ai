@@ -13,6 +13,7 @@ For all xAI tests, we use simplified mocks that verify:
 from __future__ import annotations as _annotations
 
 import json
+import os
 from datetime import timezone
 from typing import Any
 
@@ -77,7 +78,6 @@ from .mock_xai import (
     create_response,
     create_response_with_tool_calls,
     create_response_without_usage,
-    create_server_tool_call,
     create_stream_chunk,
     create_tool_call,
     create_web_search_response,
@@ -1954,7 +1954,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     content='The current weather in San Francisco is clear with a temperature of 15°C (feels like 14°C). High today around 15°C, low around 8°C.'
                 ),
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
@@ -1962,7 +1962,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     provider_name='xai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=None,
@@ -1982,19 +1982,26 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None):
     pytest.skip('XSearchTool not yet implemented in pydantic-ai')
 
 
-async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
-    """Test xAI's built-in code_execution tool."""
-    # Create response with outputs
-    response = create_code_execution_response(
-        code='65465 - 6544 * 65464 - 6 + 1.02255',
-        content='The result is -428,050,955.97745',
-        tool_call_id='code_001',
+async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test xAI's built-in code_execution tool (non-streaming, recorded via proto cassette)."""
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=False,
+            xai_include_code_execution_output=True,
+            max_tokens=20,
+        ),
     )
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
-    result = await agent.run('What is 65465 - 6544 * 65464 - 6 + 1.02255? Use code to calculate this.')
+    prompt = (
+        'Use the builtin tool `code_execution` to compute:\n'
+        '  65465 - 6544 * 65464 - 6 + 1.02255\n'
+        'Return just the numeric result and nothing else.'
+    )
+    result = await agent.run(prompt)
+    assert result.output == snapshot('-428330955.97745')
 
     # Verify the builtin tool call and result appear in message history
     assert result.all_messages() == snapshot(
@@ -2002,7 +2009,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='What is 65465 - 6544 * 65464 - 6 + 1.02255? Use code to calculate this.',
+                        content=prompt,
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
@@ -2013,23 +2020,34 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={'code': '65465 - 6544 * 65464 - 6 + 1.02255'},
-                        tool_call_id='code_001',
+                        args={'code': 'print(65465 - 6544 * 65464 - 6 + 1.02255)'},
+                        tool_call_id='call_65643640',
                         provider_name='xai',
                     ),
-                    TextPart(content='The result is -428,050,955.97745'),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content='The result is -428,050,955.97745',
-                        tool_call_id='code_001',
+                        content={
+                            'stdout': '-428330955.97745\n',
+                            'stderr': '',
+                            'output_files': {},
+                            'error': '',
+                            'ret': '',
+                        },
+                        tool_call_id='call_65643640',
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    TextPart(content='-428330955.97745'),
                 ],
-                model_name=XAI_NON_REASONING_MODEL,
+                usage=RequestUsage(
+                    input_tokens=1878,
+                    output_tokens=52,
+                    details={'reasoning_tokens': 151, 'cache_read_tokens': 1838, 'server_side_tools_code_execution': 1},
+                ),
+                model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
-                provider_response_id='grok-code_001',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2037,59 +2055,119 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
     )
 
 
-async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None):
-    """Test xAI's built-in code_execution tool with streaming."""
-    # Create a mock code execution server-side tool call
-    code_tool_call = create_server_tool_call(
-        tool_name='code_execution',
-        arguments={'code': '2 + 2'},
-        tool_call_id='code_stream_001',
-        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
+async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test xAI's built-in code_execution tool with streaming (recorded via proto cassette)."""
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        model_settings=XaiModelSettings(xai_include_code_execution_output=True),
     )
 
-    # For streaming with builtin tools, the tool call appears in the first chunk
-    stream = [
-        # First chunk: builtin tool call
-        grok_builtin_tool_chunk(code_tool_call, response_id='grok-code_stream_001'),
-        # Subsequent chunks: text response
-        grok_text_chunk('The result '),
-        grok_text_chunk('is 4', finish_reason='stop'),
-    ]
-
-    mock_client = MockXai.create_mock_stream([stream])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
-
     event_parts: list[Any] = []
-    async with agent.iter(user_prompt='Calculate 2 + 2 using code') as agent_run:
+    async with agent.iter(
+        user_prompt='Use the builtin tool `code_execution` to compute 2 + 2. Return just the numeric result and nothing else.'
+    ) as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
                         event_parts.append(event)
 
-    # Verify we got the expected builtin tool call events with snapshot
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot('4')
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Use the builtin tool `code_execution` to compute 2 + 2. Return just the numeric result and nothing else.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'code': 'print(2 + 2)'},
+                        tool_call_id='call_94648273',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
+                        tool_call_id='call_94648273',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='4'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=1718,
+                    output_tokens=31,
+                    details={'cache_read_tokens': 1668, 'server_side_tools_code_execution': 1},
+                ),
+                model_name='grok-4-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id='07064506-c80a-6578-ca78-4dbe34b931b7',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
     assert event_parts == snapshot(
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolReturnPart(
+                part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    content={'output': 'Code execution result for: ', 'return_code': 0, 'stderr': ''},
-                    tool_call_id='code_stream_001',
-                    timestamp=IsDatetime(),
+                    args={'code': 'print(2 + 2)'},
+                    tool_call_id='call_94648273',
                     provider_name='xai',
                 ),
             ),
-            PartStartEvent(index=1, part=TextPart(content='The result '), previous_part_kind='builtin-tool-return'),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={'code': 'print(2 + 2)'},
+                    tool_call_id='call_94648273',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
+                    tool_call_id='call_94648273',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=2, part=TextPart(content='4'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='is 4')),
-            PartEndEvent(index=1, part=TextPart(content='The result is 4')),
+            PartEndEvent(index=2, part=TextPart(content='4')),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={'code': 'print(2 + 2)'},
+                    tool_call_id='call_94648273',
+                    provider_name='xai',
+                )
+            ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'output': 'Code execution result for: ', 'return_code': 0, 'stderr': ''},
-                    tool_call_id='code_stream_001',
+                    content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
+                    tool_call_id='call_94648273',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 )
@@ -2199,47 +2277,40 @@ async def test_xai_builtin_x_search_tool_stream_with_in_progress(allow_model_req
     )
 
 
-async def test_xai_builtin_multiple_tools(allow_model_requests: None):
-    """Test using multiple built-in tools together."""
-    # Create a response that simulates using both web search and code execution
-    web_search_tool = create_server_tool_call(
-        tool_name='web_search',
-        arguments={'query': 'current price of Bitcoin'},
-        tool_call_id='ws_002',
-        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
-    )
-    code_tool = create_server_tool_call(
-        tool_name='code_execution',
-        arguments={'code': '((65000 - 50000) / 50000) * 100'},
-        tool_call_id='code_002',
-        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
-    )
-
-    response = create_mixed_tools_response(
-        server_tools=[web_search_tool, code_tool],
-        text_content='Bitcoin has increased by 30.0% from last week.',
-    )
-
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+async def test_xai_builtin_multiple_tools(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test using multiple built-in tools together (recorded via proto cassette)."""
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
         builtin_tools=[WebSearchTool(), CodeExecutionTool()],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,
+            xai_include_web_search_output=True,
+            xai_include_code_execution_output=True,
+        ),
     )
 
-    result = await agent.run(
-        'Search for the current price of Bitcoin and calculate its percentage change if it was $50000 last week.'
+    prompt = (
+        'You MUST do these steps in order:\n'
+        '1) Use the builtin tool `web_search` to find the release year of Python 3.0.\n'
+        '2) Use the builtin tool `code_execution` to compute (year + 1).\n'
+        'Return just the final number with no other text.'
     )
-
-    # Verify both builtin tool calls appear in message history
+    result = await agent.run(prompt)
+    assert result.output == snapshot('2009')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Search for the current price of Bitcoin and calculate its percentage change if it was $50000 last week.',
-                        timestamp=IsNow(tz=timezone.utc),
+                        content="""\
+You MUST do these steps in order:
+1) Use the builtin tool `web_search` to find the release year of Python 3.0.
+2) Use the builtin tool `code_execution` to compute (year + 1).
+Return just the final number with no other text.\
+""",
+                        timestamp=IsDatetime(),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2248,26 +2319,52 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'release year of Python 3.0'},
+                        tool_call_id='call_73579919',
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content=None,
-                        tool_call_id='ws_002',
+                        tool_call_id='call_73579919',
                         timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'code': 'print(2008 + 1)'},
+                        tool_call_id='call_17343356',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=None,
-                        tool_call_id='code_002',
+                        content={'stdout': '2009\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
+                        tool_call_id='call_17343356',
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(content='Bitcoin has increased by 30.0% from last week.'),
+                    TextPart(content='2009'),
                 ],
-                model_name=XAI_NON_REASONING_MODEL,
+                usage=RequestUsage(
+                    input_tokens=11140,
+                    output_tokens=68,
+                    details={
+                        'cache_read_tokens': 6768,
+                        'server_side_tools_web_search': 1,
+                        'server_side_tools_code_execution': 1,
+                    },
+                ),
+                model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
-                provider_response_id='grok-multi-tool',
+                provider_response_id='4372f92c-6672-8612-78f0-c2bb68a0ac6c',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2275,111 +2372,133 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
     )
 
 
-async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
-    """Test mixing xAI's built-in tools with custom (client-side) tools.
+async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test mixing xAI's built-in tools with custom (client-side) tools (recorded via proto cassette).
 
-    This test verifies that both builtin tools (web_search) and custom tools
-    (get_local_temperature) can be used in the same conversation.
+    This test verifies that both builtin tools (`web_search`) and custom tools
+    (`get_local_temperature`) can be used in the same conversation.
     """
-    # Response 1: Model calls the custom tool
-    response1 = create_response_with_tool_calls(
-        tool_calls=[
-            chat_pb2.ToolCall(
-                id='custom_001',
-                type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL,
-                function=chat_pb2.FunctionCall(
-                    name='get_local_temperature',
-                    arguments='{"city": "Tokyo"}',
-                ),
-            )
-        ],
-        finish_reason='tool_call',
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(
+        m,
+        instructions=(
+            'Use tools to get the users city and then use the web search tool to find a famous landmark in that city.'
+        ),
+        builtin_tools=[WebSearchTool()],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,  # Encrypted tool calls
+            xai_include_web_search_output=True,
+            parallel_tool_calls=False,
+        ),
     )
-    # Response 2: Model uses builtin web_search and provides final answer
-    response2 = create_web_search_response(
-        query='Tokyo weather forecast',
-        content='Based on the local temperature of 72°F and the forecast, Tokyo weather is sunny.',
-        tool_call_id='ws_003',
-    )
-
-    mock_client = MockXai.create_mock([response1, response2])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     # Track if custom tool was called
     tool_was_called = False
 
     @agent.tool_plain
-    def get_local_temperature(city: str) -> str:
-        """Get the local temperature for a city."""
+    def guess_city() -> str:
+        """The city to guess"""
         nonlocal tool_was_called
         tool_was_called = True
-        return f'The local temperature in {city} is 72°F'
+        return 'Chicago'
 
-    result = await agent.run('What is the weather in Tokyo?')
+    result = await agent.run('I am thinking of a city, can you tell me about a famours landmark in this city?')
+    assert result.output == snapshot(
+        "One of Chicago's most iconic landmarks is **Cloud Gate**, often nicknamed \"The Bean,\" located in Millennium Park. This massive, reflective stainless-steel sculpture by artist Anish Kapoor was unveiled in 2006 and has become a must-see attraction. Shaped like a kidney bean, it mirrors the city's skyline, surrounding architecture, and visitors, creating surreal and interactive photo opportunities. It's free to visit, draws millions annually, and symbolizes Chicago's blend of modern art and urban energy. If you're planning a trip, it's best viewed at sunrise or sunset for stunning reflections!"
+    )
 
     # Verify custom tool was actually called
-    assert tool_was_called, 'Custom tool get_local_temperature should have been called'
+    assert tool_was_called, 'Custom tool guess_city should have been called'
 
     # Verify full message history with both custom and builtin tool calls
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is the weather in Tokyo?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[
+                    UserPromptPart(
+                        content='I am thinking of a city, can you tell me about a famours landmark in this city?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
                 timestamp=IsDatetime(),
+                instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_local_temperature',
-                        args='{"city": "Tokyo"}',
-                        tool_call_id='custom_001',
-                    )
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    ToolCallPart(tool_name='guess_city', args='{}', tool_call_id='call_90503665'),
                 ],
-                usage=RequestUsage(),
-                model_name=XAI_NON_REASONING_MODEL,
+                usage=RequestUsage(
+                    input_tokens=743, output_tokens=15, details={'reasoning_tokens': 135, 'cache_read_tokens': 179}
+                ),
+                model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
-                provider_response_id='grok-123',
+                provider_response_id='2ac934ed-1ba8-40e2-48c5-332c14c7ca71',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_local_temperature',
-                        content='The local temperature in Tokyo is 72°F',
-                        tool_call_id='custom_001',
-                        timestamp=IsNow(tz=timezone.utc),
+                        tool_name='guess_city',
+                        content='Chicago',
+                        tool_call_id='call_90503665',
+                        timestamp=IsDatetime(),
                     )
                 ],
                 timestamp=IsDatetime(),
+                instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={'query': 'Tokyo weather forecast'},
-                        tool_call_id='ws_003',
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(
-                        content='Based on the local temperature of 72°F and the forecast, Tokyo weather is sunny.'
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'famous landmarks in Chicago', 'num_results': 5},
+                        tool_call_id='call_77070235',
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content='Based on the local temperature of 72°F and the forecast, Tokyo weather is sunny.',
-                        tool_call_id='ws_003',
+                        content=None,
+                        tool_call_id='call_77070235',
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    TextPart(
+                        content="One of Chicago's most iconic landmarks is **Cloud Gate**, often nicknamed \"The Bean,\" located in Millennium Park. This massive, reflective stainless-steel sculpture by artist Anish Kapoor was unveiled in 2006 and has become a must-see attraction. Shaped like a kidney bean, it mirrors the city's skyline, surrounding architecture, and visitors, creating surreal and interactive photo opportunities. It's free to visit, draws millions annually, and symbolizes Chicago's blend of modern art and urban energy. If you're planning a trip, it's best viewed at sunrise or sunset for stunning reflections!"
+                    ),
                 ],
-                model_name=XAI_NON_REASONING_MODEL,
+                usage=RequestUsage(
+                    input_tokens=2280,
+                    output_tokens=153,
+                    details={'reasoning_tokens': 142, 'cache_read_tokens': 1161, 'server_side_tools_web_search': 1},
+                ),
+                model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
-                provider_response_id='grok-ws_003',
+                provider_response_id='c242ba61-01bb-e362-c878-bdbe1bd1573a',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2387,19 +2506,13 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
     )
 
 
-async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
-    """Test xAI's MCP server tool with Linear."""
-    # Create response with outputs
-    mcp_response = create_mcp_server_response(
-        server_id='linear',
-        tool_name='list_issues',
-        tool_input={'name': 'linear.list_issues', 'arguments': '{"assignee":"me"}'},
-        content=[],  # No issues found
-        tool_call_id='mcp_linear_001',
-    )
-    assistant_response = create_response("I didn't found any issues", index=2)
-    mock_client = MockXai.create_mock([mcp_response, assistant_response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test xAI's MCP server tool with Linear (non-streaming, recorded via proto cassette)."""
+    # NOTE: Recording requires a real Linear token so xAI can call the MCP server.
+    # Replay mode uses the recorded proto cassette, so the token isn't required there.
+    linear_access_token = os.getenv('LINEAR_ACCESS_TOKEN') or 'mock-token'
+
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -2408,21 +2521,26 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                 id='linear',
                 url='https://mcp.linear.app/mcp',
                 description='MCP server for Linear the project management tool.',
-                authorization_token='mock-token',  # Won't be used with mock
+                authorization_token=linear_access_token or 'mock-token',
+                allowed_tools=['list_issues'],
             ),
         ],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=False,
+            xai_include_mcp_output=False,
+        ),
     )
 
-    result = await agent.run('Can you list my Linear issues? Keep your answer brief.')
-
-    # Verify the response and check builtin tool parts appear in message history
+    prompt = 'What whas the identifier of my last issue opened?'
+    result = await agent.run(prompt)
+    assert result.output == snapshot('The identifier of your last opened issue is **PAPI-955**.')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Can you list my Linear issues? Keep your answer brief.',
-                        timestamp=IsNow(tz=timezone.utc),
+                        content='What whas the identifier of my last issue opened?',
+                        timestamp=IsDatetime(),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2433,43 +2551,21 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server:linear',
-                        args={'name': 'linear.list_issues', 'arguments': '{"assignee":"me"}'},
-                        tool_call_id='mcp_linear_001',
+                        args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
+                        tool_call_id='call_45974691',
                         provider_name='xai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:linear',
-                        content=[],
-                        tool_call_id='mcp_linear_001',
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                    ),
+                    TextPart(content='The identifier of your last opened issue is **PAPI-955**.'),
                 ],
-                model_name='grok-4-1-fast-non-reasoning',
+                usage=RequestUsage(
+                    input_tokens=2097,
+                    output_tokens=64,
+                    details={'cache_read_tokens': 1007, 'server_side_tools_mcp_server': 1},
+                ),
+                model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
-                provider_response_id='grok-mcp_linear_001',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content='Please return text or call a tool.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                instructions='You are a helpful assistant.',
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content="I didn't found any issues")],
-                model_name='grok-4-1-fast-non-reasoning',
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_response_id='grok-123',
+                provider_response_id='9ab72fa8-1674-06f7-6936-412dcf83bcb3',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2477,27 +2573,11 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
     )
 
 
-async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None):
-    """Test xAI's MCP server tool with Linear using streaming."""
-    # Create a mock MCP server tool call
-    mcp_tool_call = create_server_tool_call(
-        tool_name='linear.list_issues',  # xAI format: server_label.tool_name
-        arguments={},
-        tool_call_id='mcp_stream_001',
-        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL,
-    )
+async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test xAI's MCP server tool with Linear using streaming (recorded via proto cassette)."""
+    linear_access_token = os.getenv('LINEAR_ACCESS_TOKEN') or 'mock-token'
 
-    # For streaming with builtin tools, the tool call appears in the first chunk
-    stream = [
-        # First chunk: builtin tool call
-        grok_builtin_tool_chunk(mcp_tool_call, response_id='grok-mcp_stream_001'),
-        # Subsequent chunks: text response
-        grok_text_chunk('No issues '),
-        grok_text_chunk('found.', finish_reason='stop'),
-    ]
-
-    mock_client = MockXai.create_mock_stream([stream])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -2506,49 +2586,120 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None):
                 id='linear',
                 url='https://mcp.linear.app/mcp',
                 description='MCP server for Linear the project management tool.',
-                authorization_token='mock-token',
+                authorization_token=linear_access_token,
+                allowed_tools=['list_issues'],
             ),
         ],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=False,
+            xai_include_mcp_output=False,
+        ),
     )
 
     event_parts: list[Any] = []
-    async with agent.iter(user_prompt='Can you list my Linear issues?') as agent_run:
+    prompt = 'What whas the identifier of my last issue opened?'
+    async with agent.iter(prompt) as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
                         event_parts.append(event)
 
-    # Verify we got the expected builtin tool call events with snapshot
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot('PAPI-955')
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='What whas the identifier of my last issue opened?', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:linear',
+                        args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
+                        tool_call_id='call_11137098',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:linear',
+                        content=None,
+                        tool_call_id='call_11137098',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='PAPI-955'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2097,
+                    output_tokens=54,
+                    details={'cache_read_tokens': 1007, 'server_side_tools_mcp_server': 1},
+                ),
+                model_name='grok-4-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id='23540c94-612d-0208-947f-34635d2d86be',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
     assert event_parts == snapshot(
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolReturnPart(
+                part=BuiltinToolCallPart(
                     tool_name='mcp_server:linear',
-                    content={
-                        'result': {
-                            'content': [{'type': 'text', 'text': 'MCP tool linear.list_issues executed successfully'}]
-                        }
-                    },
-                    tool_call_id='mcp_stream_001',
-                    timestamp=IsDatetime(),
+                    args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
+                    tool_call_id='call_11137098',
                     provider_name='xai',
                 ),
             ),
-            PartStartEvent(index=1, part=TextPart(content='No issues '), previous_part_kind='builtin-tool-return'),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:linear',
+                    args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
+                    tool_call_id='call_11137098',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:linear',
+                    content=None,
+                    tool_call_id='call_11137098',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=2, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='found.')),
-            PartEndEvent(index=1, part=TextPart(content='No issues found.')),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='API')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='-')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='955')),
+            PartEndEvent(index=2, part=TextPart(content='PAPI-955')),
+            BuiltinToolCallEvent(
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:linear',
+                    args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
+                    tool_call_id='call_11137098',
+                    provider_name='xai',
+                )
+            ),
+            BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
                     tool_name='mcp_server:linear',
-                    content={
-                        'result': {
-                            'content': [{'type': 'text', 'text': 'MCP tool linear.list_issues executed successfully'}]
-                        }
-                    },
-                    tool_call_id='mcp_stream_001',
+                    content=None,
+                    tool_call_id='call_11137098',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 )
