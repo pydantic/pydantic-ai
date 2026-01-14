@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import datetime
+import json
 import os
 import re
 import tempfile
@@ -58,7 +59,13 @@ from pydantic_ai.builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelRetry,
+    UserError,
+)
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -1018,8 +1025,82 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     )
     agent = Agent(m, instructions='You hate the world!', model_settings=settings)
 
-    with pytest.raises(UnexpectedModelBehavior, match="Content filter 'SAFETY' triggered"):
+    with pytest.raises(
+        ContentFilterError,
+        match="Content filter triggered. Finish reason: 'SAFETY'",
+    ) as exc_info:
         await agent.run('Tell me a joke about a Brazilians.')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+
+    assert body_json == snapshot(
+        [
+            {
+                'parts': [],
+                'usage': {
+                    'input_tokens': 14,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {'text_prompt_tokens': 14},
+                },
+                'model_name': 'gemini-1.5-flash',
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'provider_name': 'google-gla',
+                'provider_url': 'https://generativelanguage.googleapis.com/',
+                'provider_details': {
+                    'finish_reason': 'SAFETY',
+                    'safety_ratings': [
+                        {
+                            'blocked': True,
+                            'category': 'HARM_CATEGORY_HATE_SPEECH',
+                            'overwrittenThreshold': None,
+                            'probability': 'LOW',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                        {
+                            'blocked': None,
+                            'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+                            'overwrittenThreshold': None,
+                            'probability': 'NEGLIGIBLE',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                        {
+                            'blocked': None,
+                            'category': 'HARM_CATEGORY_HARASSMENT',
+                            'overwrittenThreshold': None,
+                            'probability': 'NEGLIGIBLE',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                        {
+                            'blocked': None,
+                            'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            'overwrittenThreshold': None,
+                            'probability': 'NEGLIGIBLE',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                    ],
+                },
+                'provider_response_id': IsStr(),
+                'finish_reason': 'content_filter',
+                'run_id': IsStr(),
+                'metadata': None,
+            }
+        ]
+    )
 
 
 async def test_google_model_web_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
@@ -5324,3 +5405,59 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
         }
     )
     assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
+
+
+async def test_google_stream_safety_filter(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that safety ratings are captured in the exception body when streaming."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    safety_rating = mocker.Mock(category='HARM_CATEGORY_HATE_SPEECH', probability='HIGH', blocked=True)
+
+    safety_rating.model_dump.return_value = {
+        'category': 'HARM_CATEGORY_HATE_SPEECH',
+        'probability': 'HIGH',
+        'blocked': True,
+    }
+
+    candidate = mocker.Mock(
+        finish_reason=GoogleFinishReason.SAFETY,
+        content=None,
+        safety_ratings=[safety_rating],
+        grounding_metadata=None,
+        url_context_metadata=None,
+    )
+
+    chunk = mocker.Mock(
+        candidates=[candidate],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_123',
+    )
+    chunk.model_dump_json.return_value = '{"mock": "json"}'
+
+    async def stream_iterator():
+        yield chunk
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        async with agent.run_stream('bad content'):
+            pass
+
+    # Verify exception message
+    assert 'Content filter triggered' in str(exc_info.value)
+
+    # Verify safety ratings are present in the body (serialized ModelResponse)
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+
+    # body_json is a list of messages, check the first one
+    response_msg = body_json[0]
+    assert response_msg['provider_details']['finish_reason'] == 'SAFETY'
+    assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'

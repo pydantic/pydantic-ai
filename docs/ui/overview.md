@@ -1,3 +1,7 @@
+---
+title: "UI Event Streams: Pydantic AI run_stream_events"
+description: "Stream real-time agent progress, tool calls, and messages to your frontend. Master UI adapters and event sequences to build interactive AI applications."
+---
 # UI Event Streams
 
 If you're building a chat app or other interactive frontend for an AI agent, your backend will need to receive agent run input (like a chat message or complete [message history](../message-history.md)) from the frontend, and will need to stream the [agent's events](../agents.md#streaming-all-events) (like text, thinking, and tool calls) to the frontend so that the user knows what's happening in real time.

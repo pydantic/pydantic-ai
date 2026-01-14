@@ -64,6 +64,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -7594,3 +7595,43 @@ async def test_dynamic_tool_in_run_call():
     assert isinstance(tool, WebSearchTool)
     assert tool.user_location is not None
     assert tool.user_location.get('city') == 'Berlin'
+
+
+async def test_central_content_filter_handling():
+    """
+    Test that the agent graph correctly raises ContentFilterError
+    when a model returns finish_reason='content_filter' AND empty content.
+    """
+
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[],
+            model_name='test-model',
+            finish_reason='content_filter',
+            provider_details={'finish_reason': 'content_filter'},
+        )
+
+    model = FunctionModel(function=filtered_response, model_name='test-model')
+    agent = Agent(model)
+
+    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
+        await agent.run('Trigger filter')
+
+
+async def test_central_content_filter_with_partial_content():
+    """
+    Test that the agent graph returns partial content (does not raise exception)
+    even if finish_reason='content_filter', provided parts are not empty.
+    """
+
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('Partially generated content...')], model_name='test-model', finish_reason='content_filter'
+        )
+
+    model = FunctionModel(function=filtered_response, model_name='test-model')
+    agent = Agent(model)
+
+    # Should NOT raise ContentFilterError
+    result = await agent.run('Trigger filter')
+    assert result.output == 'Partially generated content...'
