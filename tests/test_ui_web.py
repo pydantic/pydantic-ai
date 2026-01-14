@@ -590,17 +590,6 @@ async def test_get_ui_html_local_file_path_instance(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.anyio
-async def test_get_ui_html_raw_html_string(monkeypatch: pytest.MonkeyPatch):
-    """Test that _get_ui_html supports raw HTML strings starting with '<'."""
-    import pydantic_ai.ui._web.app as app_module
-
-    raw_html = '<html><body>Raw HTML Content</body></html>'
-    result = await app_module._get_ui_html(ui_source=raw_html)  # pyright: ignore[reportPrivateUsage]
-
-    assert result == raw_html.encode('utf-8')
-
-
-@pytest.mark.anyio
 async def test_get_ui_html_local_file_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html raises FileNotFoundError for missing local file paths."""
     import pydantic_ai.ui._web.app as app_module
@@ -622,3 +611,15 @@ async def test_get_ui_html_path_instance_not_found(monkeypatch: pytest.MonkeyPat
 
     with pytest.raises(FileNotFoundError, match='Local UI file not found'):
         await app_module._get_ui_html(ui_source=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_chat_app_index_file_not_found(tmp_path: Path):
+    """Test that index endpoint returns 404 for non-existent ui_source file."""
+    agent = Agent('test')
+    nonexistent_file = tmp_path / 'nonexistent-ui.html'
+    app = create_web_app(agent, ui_source=str(nonexistent_file))
+
+    with TestClient(app) as client:
+        response = client.get('/')
+        assert response.status_code == 404
+        assert 'Local UI file not found' in response.text

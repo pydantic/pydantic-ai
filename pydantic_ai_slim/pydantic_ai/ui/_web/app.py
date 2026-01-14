@@ -52,7 +52,7 @@ def _sanitize_version(version: str) -> str:
     return re.sub(r'[^a-zA-Z0-9._-]', '_', version)
 
 
-async def _get_ui_html(version: str, ui_source: str | Path | None = None) -> bytes:
+async def _get_ui_html(version: str | None = None, ui_source: str | Path | None = None) -> bytes:
     """Get UI HTML content from the specified source or default CDN.
 
     When ui_source is provided, it is used directly without version templating.
@@ -63,12 +63,12 @@ async def _get_ui_html(version: str, ui_source: str | Path | None = None) -> byt
         ui_source: Source for the chat UI HTML. Can be:
             - None: Uses the default CDN with version (cached locally)
             - A Path instance: Reads from the local file
-            - A string starting with '<': Treated as HTML string content
             - A URL (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
     """
     # Use default CDN with version and caching
     if ui_source is None:
+        version = version or DEFAULT_UI_VERSION
         cache_dir = _get_cache_dir()
         cache_file = cache_dir / f'{_sanitize_version(version)}.html'
 
@@ -89,10 +89,6 @@ async def _get_ui_html(version: str, ui_source: str | Path | None = None) -> byt
         if ui_source.is_file():
             return ui_source.read_bytes()
         raise FileNotFoundError(f'Local UI file not found: {ui_source}')
-
-    # Handle raw HTML strings (starts with '<')
-    if ui_source.startswith('<'):
-        return ui_source.encode('utf-8')
 
     # Handle URLs
     if ui_source.startswith(('http://', 'https://')):
@@ -138,7 +134,6 @@ def create_web_app(
         ui_source: Source for the chat UI HTML. Can be:
             - None (default): Fetches from CDN and caches locally
             - A Path instance: Reads from the local file
-            - A string starting with '<': Treated as HTML string content
             - A URL string (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
 

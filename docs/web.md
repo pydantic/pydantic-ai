@@ -104,24 +104,44 @@ The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI 
 
 ## Custom UI Source
 
-By default, the web UI is fetched from a CDN and cached locally. You can provide a `ui_source` to override this behavior for enterprise environments, offline usage, or custom UI builds.
+By default, the web UI is fetched from a CDN and cached locally. You can provide a `ui_source` to override this behavior for offline usage (e.g., on a plane) or enterprise environments.
+
+### Offline Usage
+
+To use the web UI offline, download the UI HTML file once while you have internet access:
+
+```bash
+curl -o ~/pydantic-ai-ui.html https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.0.0/dist/index.html
+```
+
+Then point your app to the downloaded file:
 
 ```python
-from pathlib import Path
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-5')
 
-# Use a custom URL
+# Use the downloaded local file (update the path to match where you saved it)
+app = agent.to_web(ui_source='~/pydantic-ai-ui.html')
+```
+
+### Other Use Cases
+
+You can also use `ui_source` with custom URLs or file paths:
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5')
+
+# Use a custom URL (e.g., for enterprise environments)
 app = agent.to_web(ui_source='https://cdn.example.com/ui/index.html')
 
-# Use a local file path (string)
+# Use a local file path as a string
 app = agent.to_web(ui_source='/path/to/local/ui.html')
 
 # Use a Path instance
 app = agent.to_web(ui_source=Path('/path/to/local/ui.html'))
-
-# Use raw HTML directly
-app = agent.to_web(ui_source='<html><body>My custom UI</body></html>')
 ```
-
