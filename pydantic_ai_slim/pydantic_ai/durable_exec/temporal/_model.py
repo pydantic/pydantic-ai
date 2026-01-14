@@ -149,9 +149,27 @@ class TemporalModel(WrapperModel):
             request_stream_activity
         )
 
+        @activity.defn(name=f'{activity_name_prefix}__model_count_tokens')
+        async def count_tokens_activity(params: _RequestParams, deps: Any | None = None) -> RequestUsage:
+            run_context = (
+                self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+                if params.serialized_run_context is not None
+                else None
+            )
+            model_for_request = self._resolve_model_id(params.model_id, run_context)
+            return await model_for_request.count_tokens(
+                params.messages,
+                cast(ModelSettings | None, params.model_settings),
+                params.model_request_parameters,
+            )
+
+        self.count_tokens_activity = count_tokens_activity
+        # Union with None for backward compatibility with activity payloads created before deps was added
+        self.count_tokens_activity.__annotations__['deps'] = deps_type | None
+
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
-        return [self.request_activity, self.request_stream_activity]
+        return [self.request_activity, self.request_stream_activity, self.count_tokens_activity]
 
     async def request(
         self,
@@ -235,6 +253,37 @@ class TemporalModel(WrapperModel):
             **activity_config,
         )
         yield TemporalStreamedResponse(model_request_parameters, response)
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        if not workflow.in_workflow():
+            return await super().count_tokens(messages, model_settings, model_request_parameters)
+
+        model_id = self._current_model_id()
+        run_context = get_current_run_context()
+        serialized_run_context = self.run_context_type.serialize_run_context(run_context) if run_context else None
+        deps = run_context.deps if run_context else None
+
+        model_name = model_id or f'{self.system}:{self.model_name}'
+        activity_config: ActivityConfig = {'summary': f'count tokens: {model_name}', **self.activity_config}
+        return await workflow.execute_activity(
+            activity=self.count_tokens_activity,
+            args=[
+                _RequestParams(
+                    messages=messages,
+                    model_settings=cast(dict[str, Any] | None, model_settings),
+                    model_request_parameters=model_request_parameters,
+                    serialized_run_context=serialized_run_context,
+                    model_id=model_id,
+                ),
+                deps,
+            ],
+            **activity_config,
+        )
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
