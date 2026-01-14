@@ -57,7 +57,7 @@ try:
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
-    from xai_sdk.proto.v6 import chat_pb2, usage_pb2
+    from xai_sdk.proto.v6 import chat_pb2, sample_pb2, usage_pb2
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
     from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:
@@ -76,6 +76,14 @@ _FINISH_REASON_MAP: dict[str, FinishReason] = {
     'max_output_tokens': 'length',
     'cancelled': 'error',
     'failed': 'error',
+}
+
+# `GetChatCompletionResponse.outputs[*].finish_reason` uses the proto enum (ints), not the string values returned by
+# `Response.finish_reason`.
+_FINISH_REASON_PROTO_MAP: dict[int, FinishReason] = {
+    sample_pb2.FinishReason.REASON_STOP: 'stop',
+    sample_pb2.FinishReason.REASON_MAX_LEN: 'length',
+    sample_pb2.FinishReason.REASON_TOOL_CALLS: 'tool_call',
 }
 
 
@@ -116,6 +124,12 @@ class XaiModelSettings(ModelSettings, total=False):
     """Whether to include the web search results in the response.
 
     Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
+    """
+
+    xai_include_inline_citations: bool
+    """Whether to include inline citations in the response.
+
+    Corresponds to the `inline_citations` option in the xAI `include` parameter.
     """
 
     xai_include_mcp_output: bool
@@ -343,7 +357,7 @@ class XaiModel(Model):
                     arguments=item.args_as_json_str(),
                 ),
             )
-        return None  # pragma: no cover
+        return None
 
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
         """Upload a file to xAI files API and return the file ID.
@@ -393,7 +407,7 @@ class XaiModel(Model):
                     filename = item.identifier or f'document.{item.format}'
                     file_id = await self._upload_file_to_xai(item.data, filename)
                     content_items.append(file(file_id))
-                else:  # pragma: no cover
+                else:
                     raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, AudioUrl):
                 raise NotImplementedError('AudioUrl is not supported by xAI SDK')
@@ -540,6 +554,10 @@ class XaiModel(Model):
         """
         parts: list[ModelResponsePart] = []
         outputs = response.proto.outputs
+        has_any_assistant_text = any(
+            o.message.role == chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT and bool(o.message.content)
+            for o in outputs
+        )
 
         for output in outputs:
             message = output.message
@@ -562,11 +580,14 @@ class XaiModel(Model):
                     part_provider_details = {'logprobs': _map_logprobs(output.logprobs)}
                 parts.append(TextPart(content=message.content, provider_details=part_provider_details))
             elif message.content and message.role == chat_types.chat_pb2.MessageRole.ROLE_TOOL:
-                # For server-side tools, xAI emits the tool result content on ROLE_TOOL messages. Some tools return
-                # plain text (e.g. `web_search`, `code_execution`) which should also be treated as assistant text.
-                tool_result_content = _get_tool_result_content(message.content)
-                if isinstance(tool_result_content, str):
-                    parts.append(TextPart(content=tool_result_content))
+                # For server-side tools, xAI emits the tool result content on ROLE_TOOL messages.
+                #
+                # We only surface the raw tool output as `TextPart` when the response contains *no* assistant text
+                # at all. This ensures:
+                # - mock responses that only contain tool output still produce some text output (avoids a retry loop)
+                # - real responses that also contain assistant text don't pollute `result.output` with tool JSON
+                if not has_any_assistant_text:
+                    parts.append(TextPart(content=message.content))
 
             # Process tool calls in this output
             for tool_call in message.tool_calls:
@@ -582,8 +603,17 @@ class XaiModel(Model):
         # Convert usage with detailed token information
         usage = _extract_usage(response)
 
-        # Map finish reason
-        finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
+        # Map finish reason.
+        #
+        # The xAI SDK exposes `response.finish_reason` as a *string* for the overall response, but in
+        # multi-output responses (e.g. server-side tools) it can reflect an intermediate TOOL_CALLS
+        # output rather than the final STOP output. We derive the finish reason from the final output
+        # when available.
+        if outputs:
+            last_reason = outputs[-1].finish_reason
+            finish_reason = _FINISH_REASON_PROTO_MAP.get(last_reason, 'stop')
+        else:  # pragma: no cover
+            finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
 
         return ModelResponse(
             parts=parts,
@@ -603,7 +633,7 @@ class XaiModel(Model):
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_item = await peekable_response.peek()
-        if isinstance(first_item, _utils.Unset):  # pragma: no cover
+        if isinstance(first_item, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         first_response, _ = first_item
@@ -665,7 +695,7 @@ class XaiStreamedResponse(StreamedResponse):
         if response.reasoning_content and response.reasoning_content != prev_reasoning_content:
             if response.reasoning_content.startswith(prev_reasoning_content):
                 reasoning_delta = response.reasoning_content[len(prev_reasoning_content) :]
-            else:  # pragma: no cover
+            else:
                 reasoning_delta = response.reasoning_content
             prev_reasoning_content = response.reasoning_content
             if reasoning_delta:  # pragma: no branch
@@ -770,10 +800,6 @@ class XaiStreamedResponse(StreamedResponse):
         seen_tool_return_ids: set[str] = set()
         last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
 
-        def _is_server_side_tool_call(tool_call: chat_pb2.ToolCall) -> bool:
-            # xAI doesn't have a single SERVER_SIDE enum value; server-side tools are any non-client-side tool call type.
-            return tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
-
         async for response, chunk in self._response:
             self._update_response_state(response)
 
@@ -806,7 +832,7 @@ class XaiStreamedResponse(StreamedResponse):
                     if not tool_call.function.name:
                         continue
 
-                    if _is_server_side_tool_call(tool_call):
+                    if tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL:
                         maybe_event = self._handle_server_side_tool_call(
                             tool_call=tool_call,
                             delta=delta,
@@ -817,10 +843,35 @@ class XaiStreamedResponse(StreamedResponse):
                         if maybe_event is not None:
                             yield maybe_event
                     else:
-                        # Client-side tools: emit as a whole part (no deltas today).
+                        # Client-side tools: xAI provides tool-call argument deltas per chunk, but pydantic-ai
+                        # expects *accumulated* JSON for validation (especially for streamed output tools).
+                        #
+                        # The accumulated view is available on `response.tool_calls`; prefer that when present.
+                        accumulated_tool_call = None
+                        for tc in response.tool_calls:
+                            if tc.id == tool_call.id:
+                                accumulated_tool_call = tc
+                                break
+
+                        # Ignore "tool started" frames with no args at all; these are just a name signal.
+                        if tool_call.function.arguments == '' and (
+                            accumulated_tool_call is None or accumulated_tool_call.function.arguments == ''
+                        ):
+                            continue
+
+                        # Prefer the accumulated arguments from `response` when available so downstream validation
+                        # sees a coherent JSON string.
+                        #
+                        # Note: The finish reason can arrive in a separate frame where the tool-call delta has empty
+                        # arguments; in that case we still want to keep the accumulated arguments rather than
+                        # overwriting them with empty args.
+                        if accumulated_tool_call is not None and accumulated_tool_call.function.arguments != '':
+                            tool_call_for_part = accumulated_tool_call
+                        else:
+                            tool_call_for_part = tool_call
                         tool_result_content = _get_tool_result_content(delta.content)
                         vendor_part_id, part = _create_tool_call_part(
-                            tool_call,
+                            tool_call_for_part,
                             tool_result_content,
                             self.system,
                             message_role=delta.role,
@@ -1101,7 +1152,7 @@ def _create_tool_call_part(
         # If we know the message role (non-streamed responses), use it to decide call vs return.
         # Note: FAILED is always a return part (it may be emitted on an assistant message without a separate ROLE_TOOL
         # message).
-        if status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED:
+        if status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED or message_role == chat_pb2.MessageRole.ROLE_TOOL:
             return (
                 f'{tool_call.id}_return',
                 BuiltinToolReturnPart(
@@ -1110,27 +1161,6 @@ def _create_tool_call_part(
                     tool_call_id=tool_call.id,
                     provider_name=provider_name,
                     provider_details=provider_details,
-                ),
-            )
-        if message_role == chat_pb2.MessageRole.ROLE_TOOL:
-            return (
-                f'{tool_call.id}_return',
-                BuiltinToolReturnPart(
-                    tool_name=builtin_tool_name,
-                    content=tool_result_content,
-                    tool_call_id=tool_call.id,
-                    provider_name=provider_name,
-                    provider_details=provider_details,
-                ),
-            )
-        elif message_role == chat_pb2.MessageRole.ROLE_ASSISTANT:
-            return (
-                tool_call.id,
-                BuiltinToolCallPart(
-                    tool_name=builtin_tool_name,
-                    args=_parse_tool_args(tool_call.function.arguments),
-                    tool_call_id=tool_call.id,
-                    provider_name=provider_name,
                 ),
             )
         else:

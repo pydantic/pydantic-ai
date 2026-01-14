@@ -21,7 +21,7 @@ with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from google.protobuf.json_format import MessageToDict
     from xai_sdk import AsyncClient
-    from xai_sdk.proto.v6 import chat_pb2, sample_pb2
+    from xai_sdk.proto.v6 import chat_pb2, sample_pb2, usage_pb2
 
 # Type aliases
 ToolCallArgumentsType = dict[str, Any]
@@ -251,7 +251,7 @@ def create_server_tool_call(
     error_message: str = '',
 ) -> chat_pb2.ToolCall:
     """Create a server-side (builtin) ToolCall proto."""
-    if tool_type is None:  # pragma: no cover
+    if tool_type is None:
         tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL
     if status is None:
         status = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
@@ -272,6 +272,7 @@ def create_stream_chunk(
     tool_calls: list[chat_pb2.ToolCall] | None = None,
     reasoning_content: str = '',
     encrypted_content: str = '',
+    role: chat_pb2.MessageRole = chat_pb2.MessageRole.ROLE_ASSISTANT,
     finish_reason: FinishReason | None = None,
     index: int = 0,
 ) -> chat_types.Chunk:
@@ -282,7 +283,7 @@ def create_stream_chunk(
             content=content,
             reasoning_content=reasoning_content,
             encrypted_content=encrypted_content,
-            role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+            role=role,
             tool_calls=tool_calls or [],
         ),
     )
@@ -293,6 +294,116 @@ def create_stream_chunk(
     proto.outputs.append(output_chunk)
     proto.created.GetCurrentTime()
     return chat_types.Chunk(proto, index=None)
+
+
+def get_grok_tool_chunk(
+    tool_name: str | None,
+    tool_arguments: str | None,
+    finish_reason: str = '',
+    accumulated_args: str = '',
+) -> tuple[chat_types.Response, chat_types.Chunk]:
+    """Create a client-side tool-call streaming chunk for Grok.
+
+    This is used by xAI model streaming tests where:
+    - `Chunk` contains the per-frame delta
+    - `Response` contains the accumulated view (including accumulated tool args when available)
+
+    Note: Unlike the real xAI SDK (which may only send the tool name in the first chunk),
+    this helper includes the effective tool name in every chunk to simplify test tracking.
+    """
+    # Infer tool name from accumulated state if not provided
+    effective_tool_name = tool_name or ('final_result' if accumulated_args else None)
+
+    # Create the chunk tool call (delta)
+    chunk_tool_calls: list[chat_pb2.ToolCall] = []
+    if effective_tool_name is not None or tool_arguments is not None:
+        chunk_tool_calls = [
+            chat_pb2.ToolCall(
+                id='tool-123',
+                type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL,
+                function=chat_pb2.FunctionCall(
+                    name=effective_tool_name or '',
+                    arguments=tool_arguments if tool_arguments is not None else '',
+                ),
+            )
+        ]
+
+    chunk = create_stream_chunk(
+        content='',
+        tool_calls=chunk_tool_calls,
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+    )
+
+    # Create response tool calls (accumulated view)
+    response_tool_calls: list[chat_pb2.ToolCall] = []
+    if effective_tool_name is not None or accumulated_args:
+        response_tool_calls = [
+            chat_pb2.ToolCall(
+                id='tool-123',
+                type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL,
+                function=chat_pb2.FunctionCall(
+                    name=effective_tool_name or '',
+                    arguments=accumulated_args,
+                ),
+            )
+        ]
+
+    usage = usage_pb2.SamplingUsage(prompt_tokens=20, completion_tokens=1) if finish_reason else None
+    response = create_response(
+        content='',
+        tool_calls=response_tool_calls,
+        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
+        usage=usage,
+    )
+
+    return (response, chunk)
+
+
+def get_grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_types.Response, chat_types.Chunk]:
+    """Create a text streaming chunk for Grok.
+
+    Note: For streaming, `Response` is the accumulated view and `Chunk` is the delta. For simplicity in mocks,
+    we set `response.content` to the same value as the chunk delta.
+    """
+    chunk = create_stream_chunk(
+        content=text,
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+    )
+
+    usage = usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1) if finish_reason else None
+    response = create_response(
+        content=text,
+        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
+        usage=usage,
+    )
+
+    return (response, chunk)
+
+
+def get_grok_reasoning_text_chunk(
+    text: str,
+    reasoning_content: str = '',
+    encrypted_content: str = '',
+    finish_reason: str = 'stop',
+) -> tuple[chat_types.Response, chat_types.Chunk]:
+    """Create a text streaming chunk for Grok with reasoning content/signature."""
+    chunk = create_stream_chunk(
+        content=text,
+        reasoning_content=reasoning_content,
+        encrypted_content=encrypted_content,
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+    )
+
+    usage = usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1) if finish_reason else None
+    response = create_response(
+        content=text,
+        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
+        usage=usage,
+        reasoning_content=reasoning_content,
+        encrypted_content=encrypted_content,
+    )
+
+    return (response, chunk)
 
 
 # =============================================================================

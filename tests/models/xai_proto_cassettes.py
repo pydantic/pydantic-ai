@@ -23,8 +23,20 @@ with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     import yaml
     from google.protobuf.json_format import MessageToDict
+    from google.protobuf.message import Message
     from xai_sdk import AsyncClient
     from xai_sdk.proto.v6 import chat_pb2
+
+
+def _serialize_for_cassette(o: Any) -> Any:
+    """Best-effort conversion of protobuf messages (and nested structures) to JSON-like dicts."""
+    if isinstance(o, dict):
+        return {str(k): _serialize_for_cassette(v) for k, v in cast(dict[str, Any], o).items()}
+    if isinstance(o, list | tuple):
+        return [_serialize_for_cassette(v) for v in cast(list[Any] | tuple[Any, ...], o)]
+    if isinstance(o, Message):
+        return MessageToDict(o, preserving_proto_field_name=True)
+    return o
 
 
 class XaiAsyncClientLike(Protocol):
@@ -45,11 +57,20 @@ class XaiSampleProtoCassette:
     """A simple cassette for a sequence of `chat.sample()` responses."""
 
     responses: list[bytes]
+    # Recorded protobuf requests for `chat.create(...).sample()` calls (lossless).
+    # NOTE: this is a serialized `GetCompletionsRequest` from the xAI SDK chat object.
+    sample_requests: list[bytes] = field(default_factory=list)
+    # Optional debug representation of the request kwargs, only recorded when enabled.
+    sample_requests_json: list[dict[str, Any]] = field(default_factory=list)
     # Optional debug representation (only recorded when enabled), ignored by replay.
     responses_json: list[dict[str, Any]] = field(default_factory=list)
     # Streaming format: store only chunk protos and reconstruct response via `Response.process_chunk`.
     # Each entry corresponds to one `chat.stream()` call and contains the ordered chunks as serialized bytes.
     stream_chunks: list[list[bytes]] = field(default_factory=list)
+    # Recorded protobuf requests for `chat.create(...).stream()` calls (lossless).
+    stream_requests: list[bytes] = field(default_factory=list)
+    # Optional debug representation of the request kwargs, only recorded when enabled.
+    stream_requests_json: list[dict[str, Any]] = field(default_factory=list)
     # Optional debug representation (only recorded when enabled), ignored by replay.
     stream_chunks_json: list[list[dict[str, Any]]] = field(default_factory=list)
     version: int = 1
@@ -59,13 +80,21 @@ class XaiSampleProtoCassette:
         data = yaml.safe_load(path.read_text(encoding='utf-8'))
         version = int(data.get('version', 1))
         responses = cast(list[bytes], data.get('responses', []))
+        sample_requests = cast(list[bytes], data.get('sample_requests', []))
+        sample_requests_json = cast(list[dict[str, Any]], data.get('sample_requests_json', []))
         responses_json = cast(list[dict[str, Any]], data.get('responses_json', []))
         stream_chunks = cast(list[list[bytes]], data.get('stream_chunks', []))
+        stream_requests = cast(list[bytes], data.get('stream_requests', []))
+        stream_requests_json = cast(list[dict[str, Any]], data.get('stream_requests_json', []))
         stream_chunks_json = cast(list[list[dict[str, Any]]], data.get('stream_chunks_json', []))
         return cls(
             responses=responses,
+            sample_requests=sample_requests,
+            sample_requests_json=sample_requests_json,
             responses_json=responses_json,
             stream_chunks=stream_chunks,
+            stream_requests=stream_requests,
+            stream_requests_json=stream_requests_json,
             stream_chunks_json=stream_chunks_json,
             version=version,
         )
@@ -78,9 +107,17 @@ class XaiSampleProtoCassette:
         # Only include non-streaming responses if present; most cassettes are streaming-only.
         if self.responses:
             data['responses'] = self.responses
+        if self.sample_requests:
+            data['sample_requests'] = self.sample_requests
+        if self.sample_requests_json:
+            data['sample_requests_json'] = self.sample_requests_json
         # Streaming is the default/primary format.
         if self.stream_chunks:
             data['stream_chunks'] = self.stream_chunks
+        if self.stream_requests:
+            data['stream_requests'] = self.stream_requests
+        if self.stream_requests_json:
+            data['stream_requests_json'] = self.stream_requests_json
         # Only include debug JSON fields if present to avoid bloating committed cassettes by default.
         if self.responses_json:
             data['responses_json'] = self.responses_json
@@ -197,8 +234,19 @@ class XaiProtoRecorder:
         os = __import__('os')
         include_debug_json = os.getenv('XAI_PROTO_CASSETTE_DEBUG_JSON', '').lower() in {'1', 'true', 'yes'}
 
+        request_json: dict[str, Any] | None = None
+        if include_debug_json:
+            request_json = {
+                'args': _serialize_for_cassette(list(args)),
+                'kwargs': _serialize_for_cassette(kwargs),
+            }
+
         class _RecorderChatInstance:
             async def sample(self) -> chat_types.Response:
+                # Always record the request proto (lossless); only record JSON when debug is enabled.
+                recorder.cassette.sample_requests.append(inner_chat.proto.SerializeToString())
+                if request_json is not None:
+                    recorder.cassette.sample_requests_json.append(request_json)
                 response = await inner_chat.sample()
                 recorder.cassette.responses.append(response.proto.SerializeToString())
                 if include_debug_json:
@@ -211,6 +259,10 @@ class XaiProtoRecorder:
                 async def _aiter():
                     chunks: list[bytes] = []
                     chunks_json: list[dict[str, Any]] = []
+                    # Always record the request proto (lossless); only record JSON when debug is enabled.
+                    recorder.cassette.stream_requests.append(inner_chat.proto.SerializeToString())
+                    if request_json is not None:
+                        recorder.cassette.stream_requests_json.append(request_json)
                     try:
                         async for response, chunk in inner_chat.stream():
                             chunks.append(chunk.proto.SerializeToString())

@@ -1,0 +1,10 @@
+version: 1
+responses:
+- !!binary |
+  CiQ3NDk0YjU1Ni00ZWM4LWEyYmItY2MxYS1hZGNiNmYxMzVkMmESDQgDGgkKBVBhcmlzEAIqCwjf
+  taDLBhDFgINRMhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nOg1mcF80NjE2ZTc2NDEzShIIARC1
+  ARi2ASC1ATinAViUjgdaAhAB
+sample_requests:
+- !!binary |
+  CiIKHgocWW91IGFyZSBhIGhlbHBmdWwgYXNzaXN0YW50LhADCiQKIAoeV2hhdCBpcyB0aGUgY2Fw
+  aXRhbCBvZiBGcmFuY2U/EAESGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmc=
