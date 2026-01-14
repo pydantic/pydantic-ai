@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI HTTP Request Retries & Rate Limits"
+description: Manage network reliability and rate limits. Configure HTTP retry logic and exponential backoff for robust communication with LLM provider APIs.
+---
 # HTTP Request Retries
 
 Pydantic AI provides retry functionality for HTTP requests made by model providers through custom HTTP transports.

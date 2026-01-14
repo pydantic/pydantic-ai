@@ -1,3 +1,7 @@
+---
+title: "Pydantic AI | Common Tools: Web Search & DuckDuckGo"
+description: "Explore ready-to-use tools for Pydantic AI agents. Includes pre-built integrations for DuckDuckGo search, web browsing, and common utility functions."
+---
 # Common Tools
 
 Pydantic AI ships with native tools that can be used to enhance your agent's capabilities.
