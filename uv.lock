@@ -3781,6 +3781,11 @@ wheels = [
 ]
 
 [[package]]
+name = "monty-python"
+version = "0.1.0"
+source = { git = "ssh://git@github.com/pydantic/monty.git?subdirectory=crates%2Fmonty-python#f31bc78c78e678b4085c2f93e151b59cbc371c36" }
+
+[[package]]
 name = "more-itertools"
 version = "10.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6092,6 +6097,7 @@ dependencies = [
     { name = "genai-prices" },
     { name = "griffe" },
     { name = "httpx" },
+    { name = "monty-python" },
     { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "pydantic-graph" },
@@ -6232,6 +6238,7 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.18.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.11" },
+    { name = "monty-python", git = "ssh://git@github.com/pydantic/monty.git?subdirectory=crates%2Fmonty-python" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.11.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.8.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
