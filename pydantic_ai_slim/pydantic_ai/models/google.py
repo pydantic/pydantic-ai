@@ -624,27 +624,13 @@ class GoogleModel(Model):
         for m in messages:
             if isinstance(m, ModelRequest):
                 message_parts: list[PartDict] = []
-                has_tool_return = False
 
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        # If we have accumulated tool returns and now have a user prompt,
-                        # flush the tool returns into a separate content object first.
-                        # This works around a Gemini bug where content objects containing
-                        # functionResponse parts are treated as role=model even when role=user
-                        # is explicitly specified, causing user prompts to be interpreted as
-                        # model responses.
-                        #
-                        # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
-                        if has_tool_return and message_parts:
-                            contents.append({'role': 'user', 'parts': message_parts})
-                            message_parts = []
-                            has_tool_return = False
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        has_tool_return = True
                         message_parts.append(
                             {
                                 'function_response': {
@@ -655,15 +641,9 @@ class GoogleModel(Model):
                             }
                         )
                     elif isinstance(part, RetryPromptPart):
-                        # Similar to UserPromptPart, flush tool returns if present
                         if part.tool_name is None:
-                            if has_tool_return and message_parts:
-                                contents.append({'role': 'user', 'parts': message_parts})
-                                message_parts = []
-                                has_tool_return = False
                             message_parts.append({'text': part.model_response()})
                         else:
-                            has_tool_return = True
                             message_parts.append(
                                 {
                                     'function_response': {
@@ -676,8 +656,33 @@ class GoogleModel(Model):
                     else:
                         assert_never(part)
 
+                # Work around a Gemini bug where content objects containing functionResponse parts are treated as
+                # role=model even when role=user is explicitly specified.
+                #
+                # We build `message_parts` first, then split into multiple content objects whenever we transition
+                # between function_response and non-function_response parts.
+                #
+                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
                 if message_parts:
-                    contents.append({'role': 'user', 'parts': message_parts})
+                    reworked_parts: list[PartDict] = []
+                    reworked_parts_has_function_response: bool | None = None
+
+                    for part in message_parts:
+                        part_has_function_response = 'function_response' in part
+
+                        if (
+                            reworked_parts_has_function_response is not None
+                            and part_has_function_response != reworked_parts_has_function_response
+                            and reworked_parts
+                        ):
+                            contents.append({'role': 'user', 'parts': reworked_parts})
+                            reworked_parts = []
+
+                        reworked_parts_has_function_response = part_has_function_response
+                        reworked_parts.append(part)
+
+                    if reworked_parts:
+                        contents.append({'role': 'user', 'parts': reworked_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(m, self.system)
                 if maybe_content:
