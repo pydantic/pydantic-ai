@@ -747,7 +747,7 @@ class Model(ABC):
     @property
     def fully_qualified_model_name(self) -> str:
         """Return the fully qualified model name in format 'provider:model_name'.
-        
+
         Returns:
             The fully qualified model name in the format "{provider}:{model_name}".
         """
