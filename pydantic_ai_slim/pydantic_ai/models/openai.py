@@ -722,29 +722,6 @@ class OpenAIChatModel(Model):
 
         choice = response.choices[0]
 
-        items: list[ModelResponsePart] = []
-
-        if thinking_parts := self._process_thinking(choice.message):
-            items.extend(thinking_parts)
-
-        if choice.message.content:
-            items.extend(
-                (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
-                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
-            )
-        if choice.message.tool_calls is not None:
-            for c in choice.message.tool_calls:
-                if isinstance(c, ChatCompletionMessageFunctionToolCall):
-                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
-                elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
-                    # NOTE: Custom tool calls are not supported.
-                    # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
-                    raise RuntimeError('Custom tool calls are not supported')
-                else:
-                    assert_never(c)
-                part.tool_call_id = _guard_tool_call_id(part)
-                items.append(part)
-
         provider_details = self._process_provider_details(response)
         if response.created:  # pragma: no branch
             if provider_details is None:
