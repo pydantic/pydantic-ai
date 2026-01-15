@@ -155,7 +155,6 @@ class GeminiModel(Model):
         """The model name."""
         return self._model_name
 
-
     @property
     def system(self) -> str:
         """The model provider."""

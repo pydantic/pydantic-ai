@@ -751,7 +751,7 @@ class Model(ABC):
         Returns:
             The fully qualified model name in the format "{provider}:{model_name}".
         """
-        return f"{self.system}:{self.model_name}"
+        return f'{self.system}:{self.model_name}'
 
     @property
     def label(self) -> str:
