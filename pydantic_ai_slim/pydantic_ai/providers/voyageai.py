@@ -34,9 +34,6 @@ class VoyageAIProvider(Provider[AsyncClient]):
         *,
         api_key: str | None = None,
         voyageai_client: AsyncClient | None = None,
-        base_url: str | None = None,
-        max_retries: int = 0,
-        timeout: float | None = None,
     ) -> None:
         """Create a new VoyageAI provider.
 
@@ -45,16 +42,10 @@ class VoyageAIProvider(Provider[AsyncClient]):
                 will be used if available.
             voyageai_client: An existing
                 [AsyncClient](https://github.com/voyage-ai/voyageai-python)
-                client to use. If provided, `api_key`, `base_url`, `max_retries`, and `timeout` must be `None`/default.
-            base_url: The base URL for the VoyageAI API. Defaults to `https://api.voyageai.com/v1`.
-            max_retries: Maximum number of retries for failed requests.
-            timeout: Request timeout in seconds.
+                client to use. If provided, `api_key` must be `None`.
         """
         if voyageai_client is not None:
             assert api_key is None, 'Cannot provide both `voyageai_client` and `api_key`'
-            assert base_url is None, 'Cannot provide both `voyageai_client` and `base_url`'
-            assert max_retries == 0, 'Cannot provide both `voyageai_client` and `max_retries`'
-            assert timeout is None, 'Cannot provide both `voyageai_client` and `timeout`'
             self._client = voyageai_client
         else:
             api_key = api_key or os.getenv('VOYAGE_API_KEY')
@@ -64,11 +55,4 @@ class VoyageAIProvider(Provider[AsyncClient]):
                     'to use the VoyageAI provider.'
                 )
 
-            # Only pass base_url if explicitly set; otherwise use VoyageAI's default
-            base_url = base_url or os.getenv('VOYAGE_BASE_URL')
-            self._client = AsyncClient(
-                api_key=api_key,
-                max_retries=max_retries,
-                timeout=timeout,
-                base_url=base_url,
-            )
+            self._client = AsyncClient(api_key=api_key)

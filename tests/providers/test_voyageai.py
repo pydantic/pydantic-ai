@@ -32,10 +32,3 @@ def test_voyageai_provider_pass_voyageai_client() -> None:
     voyageai_client = AsyncClient(api_key='test-api-key')
     provider = VoyageAIProvider(voyageai_client=voyageai_client)
     assert provider.client == voyageai_client
-
-
-def test_voyageai_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    custom_base_url = 'https://custom.voyageai.com/'
-    monkeypatch.setenv('VOYAGE_BASE_URL', custom_base_url)
-    provider = VoyageAIProvider(api_key='api-key')
-    assert provider.base_url == custom_base_url
