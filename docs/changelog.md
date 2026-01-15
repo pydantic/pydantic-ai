@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Changelog: Versions & Upgrade Guide"
-description: "Stay up to date with Pydantic AI releases. View the latest features, bug fixes, breaking changes, and version upgrade instructions for the framework."
----
 # Upgrade Guide
 
 In September 2025, Pydantic AI reached V1, which means we're committed to API stability: we will not introduce changes that break your code until V2. For more information, review our [Version Policy](version-policy.md).

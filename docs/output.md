@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Structured Output & Result Validation"
-description: "Ensure LLM outputs match your data models. Leverage Pydantic AI for structured result validation, type checking, and guaranteed response formats."
----
 "Output" refers to the final value returned from [running an agent](agents.md#running-agents). This can be either plain text, [structured data](#structured-output), an [image](#image-output), or the result of a [function](#output-functions) called with arguments provided by the model.
 
 The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so that you can access other data, like [usage][pydantic_ai.usage.RunUsage] of the run and [message history](message-history.md#accessing-messages-from-results).

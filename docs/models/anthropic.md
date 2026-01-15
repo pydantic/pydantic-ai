@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Anthropic / Claude Integration Guide"
-description: Set up Anthropic Claude models with Pydantic AI. Detailed configuration guide for using Claude 3.5 Sonnet and other models with type safety.
----
 # Anthropic
 
 ## Install

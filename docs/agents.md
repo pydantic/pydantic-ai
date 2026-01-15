@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Agents: Interacting with LLMs"
-description: "Learn to define and configure agents in Pydantic AI. Use system prompts and dependency injection to create robust, type-safe interactions with LLMs."
----
 ## Introduction
 
 Agents are Pydantic AI's primary interface for interacting with LLMs.

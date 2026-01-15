@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Agent Example: Bank Support"
-description: "Example of a production-ready customer support agent. See how Pydantic AI uses tools and dependency injection to manage banking requests safely."
----
 Small but complete example of using Pydantic AI to build a support agent for a bank.
 
 Demonstrates:

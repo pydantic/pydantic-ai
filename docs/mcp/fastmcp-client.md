@@ -1,7 +1,3 @@
----
-title: "FastMCP Client Example & Pydantic AI Reference"
-description: "Use FastMCP with Pydantic AI for rapid tool integration. Example guide on setting up high-performance MCP clients for agentic workflows."
----
 # FastMCP Client
 
 [FastMCP](https://gofastmcp.com/) is a higher-level MCP framework that bills itself as "The fast, Pythonic way to build MCP servers and clients." It supports additional capabilities on top of the MCP specification like [Tool Transformation](https://gofastmcp.com/patterns/tool-transformation), [OAuth](https://gofastmcp.com/clients/auth/oauth), and more.
