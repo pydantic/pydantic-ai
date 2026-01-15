@@ -10,7 +10,7 @@ from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
 from ..builtin_tools import AbstractBuiltinTool, ImageGenerationTool
-from ..exceptions import ModelHTTPError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryImage,
     FilePart,
@@ -532,7 +532,7 @@ def _openrouter_settings_to_openai_settings(
         extra_body['usage'] = usage
 
     for builtin_tool in model_request_parameters.builtin_tools:
-        if isinstance(builtin_tool, ImageGenerationTool):  # pragma: lax no cover
+        if isinstance(builtin_tool, ImageGenerationTool):  # pragma: no branch
             extra_body['modalities'] = ['text', 'image']
 
             image_config: dict[str, str] = {}
@@ -637,9 +637,9 @@ class OpenRouterModel(OpenAIChatModel):
                 message_param['reasoning_details'] = self.reasoning_details  # type: ignore[reportGeneralTypeIssues]
             if self.file_inputs:
                 content = message_param.get('content')
-                if isinstance(content, str):  # pragma: lax no cover
+                if isinstance(content, str):
                     message_param['content'] = [{'type': 'text', 'text': content}] + self.file_inputs  # type: ignore[reportGeneralTypeIssues]
-                elif isinstance(content, list):  # pragma: lax no cover
+                elif isinstance(content, list):
                     message_param['content'] = content + self.file_inputs  # type: ignore[reportGeneralTypeIssues]
                 else:
                     message_param['content'] = self.file_inputs  # type: ignore[reportGeneralTypeIssues]
@@ -661,9 +661,11 @@ class OpenRouterModel(OpenAIChatModel):
                 'image/jpeg',
                 'image/webp',
                 'image/gif',
-            ):  # pragma: lax no cover
+            ):
                 encoding = base64.b64encode(item.content.data).decode('utf-8')
                 self.file_inputs.append({'image_url': {'url': encoding}})
+            else:
+                raise UserError(f'Invalid media type: {item.content.media_type}')
 
     @property
     @override
