@@ -36,6 +36,10 @@ __all__ = [
 KnownEmbeddingModelName = TypeAliasType(
     'KnownEmbeddingModelName',
     Literal[
+        'google-gla:gemini-embedding-001',
+        'google-vertex:gemini-embedding-001',
+        'google-vertex:text-embedding-005',
+        'google-vertex:text-multilingual-embedding-002',
         'openai:text-embedding-ada-002',
         'openai:text-embedding-3-small',
         'openai:text-embedding-3-large',
@@ -96,6 +100,10 @@ def infer_embedding_model(
         from .bedrock import BedrockEmbeddingModel
 
         return BedrockEmbeddingModel(model_name, provider=provider)
+    elif model_kind in ('google-gla', 'google-vertex'):
+        from .google import GoogleEmbeddingModel
+
+        return GoogleEmbeddingModel(model_name, provider=provider)
     elif model_kind == 'sentence-transformers':
         from .sentence_transformers import SentenceTransformerEmbeddingModel
 
