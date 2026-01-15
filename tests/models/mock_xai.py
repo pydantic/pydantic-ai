@@ -447,11 +447,9 @@ def _create_builtin_tool_response(
     content: ToolCallOutputType,
     tool_call_id: str,
     tool_type: chat_pb2.ToolCallType,
-    initial_status: chat_pb2.ToolCallStatus | None = None,
+    initial_status: chat_pb2.ToolCallStatus,
 ) -> chat_types.Response:
     """Create a Response with builtin tool outputs (shared helper)."""
-    if initial_status is None:
-        initial_status = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
     in_progress_output = chat_pb2.CompletionOutput(
         index=0,
         finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
@@ -548,6 +546,7 @@ def create_code_execution_response(
         content=actual_content,
         tool_call_id=tool_call_id,
         tool_type=tool_type,
+        initial_status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
 
 
@@ -570,6 +569,7 @@ def create_web_search_response(
         content=actual_content,
         tool_call_id=tool_call_id,
         tool_type=tool_type,
+        initial_status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
 
 
@@ -597,6 +597,7 @@ def create_mcp_server_response(
         content=actual_content,
         tool_call_id=tool_call_id,
         tool_type=tool_type,
+        initial_status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
 
 
