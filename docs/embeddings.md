@@ -395,6 +395,8 @@ The `extra_body` dict is deep-merged with the generated request body, allowing y
 For advanced configuration, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly:
 
 ```python {title="bedrock_provider.py" test="skip"}
+import boto3
+
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
 from pydantic_ai.providers.bedrock import BedrockProvider
@@ -411,8 +413,6 @@ embedder = Embedder(model)
 
 
 # Using an existing boto3 client
-import boto3
-
 bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
 provider = BedrockProvider(bedrock_client=bedrock_client)
 
