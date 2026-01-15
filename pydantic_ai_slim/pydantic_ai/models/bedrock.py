@@ -648,7 +648,7 @@ class BedrockConverseModel(Model):
                         tool_result_content: list[Any] = []
 
                         # Add data content (text or JSON based on profile)
-                        if part.text_or_json_content is not None:
+                        if part.content_excluding_files is not None:
                             if profile.bedrock_tool_result_format == 'text':
                                 tool_result_content.append({'text': part.model_response_str()})
                             else:

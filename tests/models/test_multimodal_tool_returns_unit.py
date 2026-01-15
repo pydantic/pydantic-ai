@@ -85,7 +85,7 @@ def test_tool_return_part_file_content_methods():
         )
     )
     # Verify the new methods work correctly
-    assert tool_return.text_or_json_content is None
+    assert tool_return.content_excluding_files is None
     assert tool_return.model_response_object() == {}
     assert tool_return.model_response_str() == ''
     assert tool_return.multimodal_content == [binary_content]
@@ -368,7 +368,7 @@ def test_tool_return_mixed_list():
         BinaryContent(data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR', media_type='image/png'),
         ImageUrl(url='https://example.com/chart.jpg'),
     ]
-    assert tool_return_part.text_or_json_content == [
+    assert tool_return_part.content_excluding_files == [
         'Here is some analysis text',
         {'data': 'structured result', 'count': 42},
     ]

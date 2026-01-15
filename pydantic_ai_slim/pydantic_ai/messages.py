@@ -842,7 +842,7 @@ class BaseToolReturnPart:
         return []
 
     @property
-    def text_or_json_content(self) -> Any:
+    def content_excluding_files(self) -> Any:
         """The text/json data from content, excluding multimodal files.
 
         Returns the data portion of the content with files filtered out:
@@ -871,7 +871,7 @@ class BaseToolReturnPart:
 
         This excludes multimodal files - use `multimodal_content` to get those separately.
         """
-        data = self.text_or_json_content
+        data = self.content_excluding_files
         if data is None:
             return ''
         elif isinstance(data, str):
@@ -885,7 +885,7 @@ class BaseToolReturnPart:
         This excludes multimodal files - use `multimodal_content` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
         """
-        data = self.text_or_json_content
+        data = self.content_excluding_files
         if data is None:
             return {}
         json_content = tool_return_ta.dump_python(data, mode='json')
