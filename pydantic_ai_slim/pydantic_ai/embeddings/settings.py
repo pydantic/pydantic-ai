@@ -22,6 +22,22 @@ class EmbeddingSettings(TypedDict, total=False):
     * OpenAI
     * Cohere
     * Sentence Transformers
+    * VoyageAI
+    """
+
+    truncate: bool
+    """Whether to truncate inputs that exceed the model's context length.
+
+    If `True`, inputs that are too long will be truncated.
+    If `False`, an error will be raised for inputs that exceed the context length.
+
+    Provider-specific truncation settings (e.g., `cohere_truncate`) take precedence
+    if specified.
+
+    Supported by:
+
+    * Cohere
+    * VoyageAI
     """
 
     extra_headers: dict[str, str]

@@ -291,7 +291,7 @@ embedder = Embedder(
     'voyageai:voyage-3.5',
     settings=VoyageAIEmbeddingSettings(
         dimensions=512,  # Reduce output dimensions
-        voyageai_truncation=True,  # Truncate input if it exceeds context length
+        truncate=True,  # Truncate input if it exceeds context length
     ),
 )
 ```

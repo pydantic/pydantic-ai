@@ -141,12 +141,18 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
 
         voyageai_input_type = 'document' if input_type == 'document' else 'query'
 
+        # Determine truncation: voyageai_truncation takes precedence over truncate
+        if 'voyageai_truncation' in settings:
+            truncation = settings['voyageai_truncation']
+        else:
+            truncation = settings.get('truncate', False)
+
         try:
             response = await self._provider.client.embed(
                 texts=list(inputs),
                 model=self.model_name,
                 input_type=voyageai_input_type,
-                truncation=settings.get('voyageai_truncation', False),
+                truncation=truncation,
                 output_dimension=settings.get('dimensions'),
             )
         except VoyageError as e:
