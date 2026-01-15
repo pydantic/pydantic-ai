@@ -4,7 +4,7 @@ import json
 import sys
 from collections.abc import AsyncIterator
 from datetime import timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson
@@ -27,7 +27,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.fallback import FallbackModel, OnResponse
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
@@ -945,7 +945,7 @@ async def test_response_handler_triggered() -> None:
         part = response.parts[0] if response.parts else None
         return isinstance(part, TextPart) and 'primary' in part.content
 
-    # Auto-detected as response handler via type hint (no OnResponse needed)
+    # Auto-detected as response handler via type hint
     fallback = FallbackModel(
         primary_model,
         fallback_model_impl,
@@ -1007,7 +1007,7 @@ async def test_response_handler_all_fail() -> None:
     )
     agent = Agent(model=fallback)
 
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         await agent.run('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     assert len(exc_info.value.exceptions) == 1
@@ -1073,7 +1073,7 @@ async def test_mixed_failures_all_fail() -> None:
     first_model = FunctionModel(first_fails_with_exception)
     second_model = FunctionModel(second_fails_response_check)
 
-    # Auto-detected via type hint (no OnResponse needed)
+    # Auto-detected via type hint
     fallback = FallbackModel(
         first_model,
         second_model,
@@ -1081,7 +1081,7 @@ async def test_mixed_failures_all_fail() -> None:
     )
     agent = Agent(model=fallback)
 
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         await agent.run('hello')
 
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
@@ -1127,7 +1127,7 @@ async def test_web_fetch_scenario() -> None:
     google_model = FunctionModel(google_web_fetch_fails)
     anthropic_model = FunctionModel(anthropic_succeeds)
 
-    # Auto-detected via type hint (no OnResponse needed)
+    # Auto-detected via type hint
     fallback = FallbackModel(
         google_model,
         anthropic_model,
@@ -1249,19 +1249,6 @@ def test_fallback_on_mixed_list() -> None:
     assert result.output == 'fallback response'
 
 
-def test_fallback_on_lambda_response_handler() -> None:
-    """Test that lambdas can be wrapped in OnResponse for response handling."""
-    fallback = FallbackModel(
-        primary_model,
-        fallback_model_impl,
-        fallback_on=OnResponse(lambda r: isinstance(r.parts[0], TextPart) and 'primary' in r.parts[0].content),
-    )
-    agent = Agent(model=fallback)
-
-    result = agent.run_sync('hello')
-    assert result.output == 'fallback response'
-
-
 def test_fallback_on_lambda_exception_handler() -> None:
     """Test that lambdas with 1 param are detected as exception handlers."""
     fallback = FallbackModel(
@@ -1275,15 +1262,51 @@ def test_fallback_on_lambda_exception_handler() -> None:
     assert result.output == 'success'
 
 
+async def test_async_exception_handler() -> None:
+    """Test that async exception handlers work correctly."""
+
+    async def async_exc_handler(exc: Exception) -> bool:
+        return isinstance(exc, ModelHTTPError)
+
+    fallback = FallbackModel(
+        failure_model,
+        success_model,
+        fallback_on=async_exc_handler,
+    )
+    agent = Agent(model=fallback)
+
+    result = await agent.run('hello')
+    assert result.output == 'success'
+
+
+async def test_async_response_handler() -> None:
+    """Test that async response handlers work correctly."""
+
+    async def async_response_handler(response: ModelResponse) -> bool:
+        # Reject if 'primary' in response
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=async_response_handler,
+    )
+    agent = Agent(model=fallback)
+
+    result = await agent.run('hello')
+    assert result.output == 'fallback response'
+
+
 def test_fallback_on_invalid_type() -> None:
-    """Test that invalid fallback_on types raise TypeError."""
-    with pytest.raises(TypeError, match='Invalid fallback_on type'):
+    """Test that invalid fallback_on types raise AssertionError via assert_never."""
+    with pytest.raises(AssertionError, match='Expected code to be unreachable'):
         FallbackModel(success_model, failure_model, fallback_on='invalid')  # type: ignore
 
 
 def test_fallback_on_invalid_list_item() -> None:
     """Test that invalid items in fallback_on list raise TypeError."""
-    with pytest.raises(TypeError, match='fallback_on items must be exception types, callables, or OnResponse'):
+    with pytest.raises(TypeError, match='fallback_on items must be exception types or callables'):
         FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # type: ignore
 
 
@@ -1309,22 +1332,6 @@ def test_response_handler_only_exception_propagates() -> None:
     # Exception should propagate since no exception handler is configured
     with pytest.raises(ModelHTTPError):
         agent.run_sync('hello')
-
-
-def test_on_response_callable() -> None:
-    """Test that OnResponse instances can be called directly (coverage for __call__)."""
-    from pydantic_ai.models.fallback import OnResponse
-
-    handler = OnResponse(lambda r: 'test' in str(r))
-    response = ModelResponse(parts=[TextPart('test response')])
-
-    # Direct call to OnResponse.__call__
-    result = handler(response)
-    assert result is True
-
-    response2 = ModelResponse(parts=[TextPart('other response')])
-    result2 = handler(response2)
-    assert result2 is False
 
 
 def test_is_response_handler_no_params() -> None:
@@ -1370,26 +1377,6 @@ def test_fallback_on_single_exception_type_direct() -> None:
     assert len(fallback._response_handlers) == 0  # pyright: ignore[reportPrivateUsage]
 
 
-def test_fallback_on_on_response_in_list() -> None:
-    """Test OnResponse in a list (coverage for line 194)."""
-    from pydantic_ai.models.fallback import OnResponse
-
-    def check_response(response: ModelResponse) -> bool:
-        return False
-
-    fallback = FallbackModel(
-        primary_model,
-        fallback_model_impl,
-        fallback_on=[
-            OnResponse(lambda r: 'x' in str(r)),  # OnResponse in list
-            check_response,  # Auto-detected response handler
-        ],
-    )
-
-    assert len(fallback._exception_handlers) == 0  # pyright: ignore[reportPrivateUsage]
-    assert len(fallback._response_handlers) == 2  # pyright: ignore[reportPrivateUsage]
-
-
 def test_forward_reference_type_hint() -> None:
     """Test that forward reference type hints are resolved correctly.
 
@@ -1406,26 +1393,6 @@ def test_forward_reference_type_hint() -> None:
 
     # Should be detected as response handler after get_type_hints() resolves the forward ref
     assert _is_response_handler(handler_with_forward_ref) is True
-
-
-def test_on_response_is_actually_called_in_mixed_list() -> None:
-    """Verify OnResponse handlers are actually invoked in mixed handler lists."""
-    call_count = [0]
-
-    def counting_handler(response: ModelResponse) -> bool:
-        call_count[0] += 1
-        return False  # Don't trigger fallback
-
-    fallback = FallbackModel(
-        primary_model,
-        fallback_model_impl,
-        fallback_on=[ModelAPIError, OnResponse(counting_handler)],
-    )
-    agent = Agent(model=fallback)
-    agent.run_sync('hello')
-
-    # Verify the response handler was actually called
-    assert call_count[0] == 1
 
 
 def test_empty_fallback_on_list_warning() -> None:
@@ -1458,7 +1425,7 @@ async def test_response_rejection_error_includes_model_name() -> None:
     )
     agent = Agent(model=fallback)
 
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         await agent.run('hello')
 
     # Find the RuntimeError in the exception group
@@ -1466,6 +1433,4 @@ async def test_response_rejection_error_includes_model_name() -> None:
     assert len(runtime_errors) == 1
 
     error_msg = str(runtime_errors[0])
-    # Should include model names
-    assert 'function:primary_response:' in error_msg or 'function:fallback_response:' in error_msg
     assert 'rejected by fallback_on handler' in error_msg

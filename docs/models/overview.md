@@ -247,11 +247,10 @@ The `fallback_on` parameter accepts:
 
 - A tuple of exception types: `(ModelAPIError, RateLimitError)`
 - An exception handler: `lambda exc: isinstance(exc, MyError)`
-- A response handler (auto-detected via type hint): `def check(r: ModelResponse) -> bool`
-- A response handler (explicit): [`OnResponse`][pydantic_ai.models.fallback.OnResponse]`(lambda r: 'error' in str(r))`
-- A list mixing all of the above: `[ModelAPIError, handler, response_check]`
+- A response handler: `def check(r: ModelResponse) -> bool`
+- A list mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
 
-Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as `ModelResponse`, it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler. Use the `OnResponse` wrapper for lambdas that should be response handlers.
+Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as `ModelResponse`, it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
 #### Finish Reason Example
 
@@ -297,7 +296,7 @@ def web_fetch_failed(response: ModelResponse) -> bool:
 google_model = GoogleModel('gemini-2.5-flash')
 anthropic_model = AnthropicModel('claude-sonnet-4-5')
 
-# Auto-detected as response handler via type hint (no wrapper needed)
+# Auto-detected as response handler via type hint
 fallback_model = FallbackModel(
     google_model,
     anthropic_model,
@@ -317,7 +316,7 @@ You can combine exception types, exception handlers, and response handlers in a 
 
 ```python {title="fallback_on_mixed.py" test="skip" lint="skip"}
 from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.models.fallback import FallbackModel, OnResponse
+from pydantic_ai.models.fallback import FallbackModel
 
 fallback_model = FallbackModel(
     google_model,
@@ -326,7 +325,6 @@ fallback_model = FallbackModel(
         ModelAPIError,  # Exception type
         lambda exc: 'rate limit' in str(exc).lower(),  # Exception handler (untyped lambda)
         web_fetch_failed,  # Response handler (auto-detected via type hint)
-        OnResponse(lambda r: 'error' in str(r)),  # Response handler (lambda needs OnResponse)
     ],
 )
 ```
