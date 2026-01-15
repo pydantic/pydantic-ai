@@ -2382,7 +2382,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                 BuiltinToolReturnPart(
                     provider_name='bedrock',
                     tool_name='foo',
-                    content=[{'text': 'success\n'}],
+                    content={'other': 'content'},
                     tool_call_id='call_4',
                     provider_details={'status': 'success'},
                 ),
