@@ -241,6 +241,159 @@ embedder = Embedder(
 )
 ```
 
+### Bedrock
+
+[`BedrockEmbeddingModel`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingModel] provides access to embedding models through AWS Bedrock, including Amazon Titan, Cohere, and Amazon Nova models.
+
+#### Install
+
+To use Bedrock embedding models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `bedrock` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[bedrock]"
+```
+
+#### Configuration
+
+Authentication with AWS Bedrock uses standard AWS credentials. You can configure credentials via:
+
+- **Environment variables**:
+  ```bash
+  export AWS_ACCESS_KEY_ID='your-access-key'
+  export AWS_SECRET_ACCESS_KEY='your-secret-key'
+  export AWS_REGION='us-east-1'
+  ```
+- **AWS credentials file** (`~/.aws/credentials`)
+- **IAM roles** (when running on AWS infrastructure)
+
+Ensure your AWS account has access to the Bedrock embedding models you want to use. See [AWS Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) for details.
+
+#### Basic Usage
+
+```python {title="bedrock_embeddings.py" test="skip"}
+from pydantic_ai import Embedder
+
+# Using Amazon Titan
+embedder = Embedder('bedrock:amazon.titan-embed-text-v2:0')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1024
+```
+
+_(This example requires AWS credentials configured)_
+
+#### Supported Models
+
+Bedrock supports three families of embedding models:
+
+**Amazon Titan Embeddings**
+
+- `amazon.titan-embed-text-v1` — 1536 dimensions, 8K tokens
+- `amazon.titan-embed-text-v2:0` — 256/384/1024 dimensions (configurable), 8K tokens
+
+```python {title="bedrock_titan.py" test="skip"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingSettings
+
+# Titan v2 with custom dimensions
+embedder = Embedder(
+    'bedrock:amazon.titan-embed-text-v2:0',
+    settings=EmbeddingSettings(dimensions=256),
+)
+```
+
+**Cohere Embed on Bedrock**
+
+- `cohere.embed-english-v3` — English-only, 512 tokens
+- `cohere.embed-multilingual-v3` — Multilingual, 512 tokens
+- `cohere.embed-v4:0` — Latest Cohere model, 128K tokens
+
+```python {title="bedrock_cohere.py" test="skip"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('bedrock:cohere.embed-english-v3')
+```
+
+**Amazon Nova Embeddings**
+
+- `amazon.nova-2-multimodal-embeddings-v1:0` — Multimodal embeddings, 8K tokens
+
+```python {title="bedrock_nova.py" test="skip"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('bedrock:amazon.nova-2-multimodal-embeddings-v1:0')
+```
+
+See the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models.
+
+#### Bedrock-Specific Settings
+
+Bedrock models support additional settings via [`BedrockEmbeddingSettings`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings]:
+
+```python {title="bedrock_settings.py" test="skip"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+# Titan with normalization
+embedder = Embedder(
+    'bedrock:amazon.titan-embed-text-v2:0',
+    settings=BedrockEmbeddingSettings(
+        dimensions=512,
+        bedrock_normalize=True,  # Normalize vectors for similarity calculations
+    ),
+)
+
+# Cohere with truncation
+embedder = Embedder(
+    'bedrock:cohere.embed-english-v3',
+    settings=BedrockEmbeddingSettings(
+        bedrock_truncate='END',  # Truncate long inputs instead of erroring
+    ),
+)
+
+# Nova with custom embedding purpose
+embedder = Embedder(
+    'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
+    settings=BedrockEmbeddingSettings(
+        dimensions=1024,
+        bedrock_embedding_purpose='TEXT_RETRIEVAL',  # Optimized for text retrieval
+    ),
+)
+```
+
+#### Using a Custom Provider
+
+For advanced configuration, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly:
+
+```python {title="bedrock_provider.py" test="skip"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+# Using explicit credentials
+provider = BedrockProvider(
+    region_name='us-west-2',
+    aws_access_key_id='your-access-key',
+    aws_secret_access_key='your-secret-key',
+)
+
+model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=provider)
+embedder = Embedder(model)
+
+
+# Using an existing boto3 client
+import boto3
+
+bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
+provider = BedrockProvider(bedrock_client=bedrock_client)
+
+model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=provider)
+embedder = Embedder(model)
+```
+
 ### Sentence Transformers (Local)
 
 [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [sentence-transformers](https://www.sbert.net/) library. This is ideal for:
