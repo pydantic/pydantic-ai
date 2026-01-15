@@ -306,18 +306,11 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 
 def pytest_addoption(parser: Any) -> None:
     parser.addoption(
-        '--xai-proto-json',
+        '--xai-proto-include-json',
         action='store_true',
         default=False,
+        dest='xai_proto_include_json',
         help='Include JSON representations in xAI proto cassette YAML files.',
-    )
-    # Back-compat alias:
-    parser.addoption(
-        '--xai-proto-debug-json',
-        action='store_true',
-        default=False,
-        dest='xai_proto_json',
-        help='Alias for `--xai-proto-json`.',
     )
 
 
@@ -491,10 +484,10 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
-        record_mode = cast(Any, request.config).getoption('record_mode')  # type: ignore[call-arg]
+        record_mode = cast(Any, request.config).getoption('record_mode')
     except Exception:  # pragma: no cover
         record_mode = None
-    include_debug_json = bool(cast(Any, request.config).getoption('xai_proto_json'))  # type: ignore[call-arg]
+    include_debug_json = bool(cast(Any, request.config).getoption('xai_proto_include_json'))
     session = xai_proto_cassette_session(
         cassette_path,
         record_mode=record_mode,
