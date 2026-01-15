@@ -430,6 +430,25 @@ embedder = Embedder('bedrock:amazon.nova-2-multimodal-embeddings-v1:0')
 
 See the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models.
 
+#### Regional Prefixes (Cross-Region Inference)
+
+Bedrock supports cross-region inference using geographic prefixes. You can use prefixes like `us.`, `eu.`, or `apac.` to route requests:
+
+```python {title="bedrock_regional.py" test="skip"}
+from pydantic_ai import Embedder
+
+# Use US cross-region inference
+embedder = Embedder('bedrock:us.amazon.titan-embed-text-v2:0')
+
+# Use EU cross-region inference
+embedder = Embedder('bedrock:eu.cohere.embed-english-v3')
+```
+
+The model automatically normalizes these prefixes when looking up `max_input_tokens()`.
+
+!!! note "Token Counting"
+    Unlike OpenAI and Cohere, Bedrock embedding models do not support the `count_tokens()` method because AWS Bedrock doesn't provide a tokenization API. Calling `count_tokens()` will raise `NotImplementedError`.
+
 #### Bedrock-Specific Settings
 
 
