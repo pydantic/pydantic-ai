@@ -204,6 +204,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
         name='error_report',
     )
 
+    assert isinstance(report.cases[0], ReportCase)
     assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
