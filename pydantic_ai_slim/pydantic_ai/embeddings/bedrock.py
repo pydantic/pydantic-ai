@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import functools
 import json
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -104,12 +103,6 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     For Nova: defaults to END.
     """
 
-    bedrock_embedding_types: list[Literal['float', 'int8', 'uint8', 'binary', 'ubinary']]
-    """The embedding types to return (Cohere models only).
-
-    If not specified, model default is used (typically `['float']`).
-    """
-
     # ==================== Amazon Nova Settings ====================
 
     bedrock_embedding_purpose: Literal[
@@ -175,17 +168,9 @@ class BedrockEmbeddingHandler(ABC):
         raise NotImplementedError
 
     @property
-    def supports_batch(self) -> bool:
+    def supports_batch(self) -> bool:  # pragma: no cover
         """Whether the model supports batch embedding in a single request."""
         return False
-
-
-def _strip_regional_prefix(model_name: str) -> str:
-    """Remove regional prefix (e.g., 'us.', 'eu.') from model name if present."""
-    for prefix in BEDROCK_GEO_PREFIXES:
-        if model_name.startswith(f'{prefix}.'):
-            return model_name.removeprefix(f'{prefix}.')
-    return model_name
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -313,11 +298,6 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
         # Optional: Truncation strategy (model default: NONE - raise error if input exceeds max tokens)
         if truncate := settings.get('bedrock_truncate'):
             body['truncate'] = truncate
-
-        # Optional: Specify embedding types to return (model default: float)
-        # Cohere supports: float, int8, uint8, binary, ubinary
-        if embedding_types := settings.get('bedrock_embedding_types'):
-            body['embedding_types'] = embedding_types
 
         return _apply_extra_body(body, settings)
 
@@ -447,7 +427,12 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
 
 def _get_handler_for_model(model_name: str) -> BedrockEmbeddingHandler:
     """Get the appropriate handler for a Bedrock embedding model."""
-    normalized_name = _strip_regional_prefix(model_name)
+    # Remove inference geo prefix if present (e.g., 'us.', 'eu.')
+    normalized_name = model_name
+    for prefix in BEDROCK_GEO_PREFIXES:
+        if model_name.startswith(f'{prefix}.'):
+            normalized_name = model_name.removeprefix(f'{prefix}.')
+            break
 
     if normalized_name.startswith('amazon.titan-embed'):
         return TitanEmbeddingHandler()
@@ -659,12 +644,19 @@ class BedrockEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(normalized)
 
     @staticmethod
-    def _normalize_model_name(model_name: str) -> str:
+    def _remove_inference_geo_prefix(model_name: str) -> str:
+        """Remove inference geographic prefix from model ID if present."""
+        for prefix in BEDROCK_GEO_PREFIXES:
+            if model_name.startswith(f'{prefix}.'):
+                return model_name.removeprefix(f'{prefix}.')
+        return model_name
+
+    @classmethod
+    def _normalize_model_name(cls, model_name: str) -> str:
         """Normalize model name by removing regional prefix and version suffix."""
-        model_name = _strip_regional_prefix(model_name)
+        model_name = cls._remove_inference_geo_prefix(model_name)
 
         # Remove version suffix like :0
-        version_match = re.match(r'(.+?)(?::\d+)?$', model_name)
-        if version_match:
-            return version_match.group(1)
+        if ':' in model_name:
+            return model_name.rsplit(':', 1)[0]
         return model_name

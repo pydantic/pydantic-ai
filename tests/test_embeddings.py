@@ -567,6 +567,20 @@ class TestBedrock:
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(8192)
 
+    async def test_base_url_property(self, bedrock_provider: BedrockProvider):
+        """Test that base_url property returns the endpoint URL."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        assert model.base_url is not None
+        assert isinstance(model.base_url, str)
+
+    async def test_regional_prefix_model_name(self, bedrock_provider: BedrockProvider):
+        """Test model with regional prefix (e.g., us.amazon.titan-embed-text-v2:0)."""
+        model = BedrockEmbeddingModel('us.amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        assert model.model_name == 'us.amazon.titan-embed-text-v2:0'
+        # max_input_tokens should work with normalized name
+        max_tokens = await model.max_input_tokens()
+        assert max_tokens == snapshot(8192)
+
     async def test_unsupported_model_error(self, bedrock_provider: BedrockProvider):
         with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
             BedrockEmbeddingModel('unsupported.model', provider=bedrock_provider)
@@ -842,6 +856,235 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 def test_infer_model_error():
     with pytest.raises(ValueError, match='You must provide a provider prefix when specifying an embedding model name'):
         infer_embedding_model('nonexistent')
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+class TestBedrockHandlers:
+    """Unit tests for Bedrock embedding handlers."""
+
+    def test_cohere_handler_supports_batch(self):
+        """Test that Cohere handler supports batch."""
+        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
+
+        handler = CohereEmbeddingHandler()
+        assert handler.supports_batch is True
+
+    def test_titan_handler_does_not_support_batch(self):
+        """Test that Titan handler does not support batch."""
+        from pydantic_ai.embeddings.bedrock import TitanEmbeddingHandler
+
+        handler = TitanEmbeddingHandler()
+        assert handler.supports_batch is False
+
+    def test_nova_handler_does_not_support_batch(self):
+        """Test that Nova handler does not support batch."""
+        from pydantic_ai.embeddings.bedrock import NovaEmbeddingHandler
+
+        handler = NovaEmbeddingHandler()
+        assert handler.supports_batch is False
+
+    def test_cohere_handler_parse_response_dict_format(self):
+        """Test Cohere handler parsing dict format embeddings (embedding_types response)."""
+        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
+
+        handler = CohereEmbeddingHandler()
+        # Dict format response when embedding_types is specified
+        response_body = {
+            'embeddings': {'float': [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]},
+            'id': 'test-id',
+        }
+        result = handler.parse_response(
+            response_body=response_body,
+            inputs=['hello', 'world'],
+            input_type='document',
+            model_name='cohere.embed-english-v3',
+            provider_name='bedrock',
+            input_tokens=10,
+        )
+        assert result.embeddings == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+
+    def test_cohere_handler_parse_response_list_format(self):
+        """Test Cohere handler parsing direct list format embeddings (default response)."""
+        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
+
+        handler = CohereEmbeddingHandler()
+        # List format response (default when embedding_types not specified)
+        response_body = {
+            'embeddings': [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+            'id': 'test-id',
+        }
+        result = handler.parse_response(
+            response_body=response_body,
+            inputs=['hello', 'world'],
+            input_type='document',
+            model_name='cohere.embed-english-v3',
+            provider_name='bedrock',
+            input_tokens=10,
+        )
+        assert result.embeddings == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+
+    def test_cohere_handler_parse_response_missing_embeddings(self):
+        """Test Cohere handler raises error when embeddings field is missing."""
+        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        handler = CohereEmbeddingHandler()
+        response_body = {'id': 'test-id'}  # No embeddings field
+        with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
+            handler.parse_response(
+                response_body=response_body,
+                inputs=['hello'],
+                input_type='query',
+                model_name='cohere.embed-english-v3',
+                provider_name='bedrock',
+                input_tokens=5,
+            )
+
+    def test_cohere_handler_parse_response_empty_dict_embeddings(self):
+        """Test Cohere handler raises error when embeddings dict has no float key."""
+        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        handler = CohereEmbeddingHandler()
+        # Dict format but no 'float' key
+        response_body = {'embeddings': {'int8': [[1, 2, 3]]}, 'id': 'test-id'}
+        with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
+            handler.parse_response(
+                response_body=response_body,
+                inputs=['hello'],
+                input_type='query',
+                model_name='cohere.embed-english-v3',
+                provider_name='bedrock',
+                input_tokens=5,
+            )
+
+    def test_cohere_handler_parse_response_unexpected_embeddings_type(self):
+        """Test Cohere handler raises error when embeddings is unexpected type."""
+        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        handler = CohereEmbeddingHandler()
+        # Embeddings is a string (unexpected type - neither dict nor list)
+        response_body: dict[str, Any] = {'embeddings': 'unexpected', 'id': 'test-id'}
+        with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
+            handler.parse_response(
+                response_body=response_body,
+                inputs=['hello'],
+                input_type='query',
+                model_name='cohere.embed-english-v3',
+                provider_name='bedrock',
+                input_tokens=5,
+            )
+
+    def test_nova_handler_parse_response_empty_embeddings(self):
+        """Test Nova handler raises error when embeddings list is empty."""
+        from pydantic_ai.embeddings.bedrock import NovaEmbeddingHandler
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        handler = NovaEmbeddingHandler()
+        response_body: dict[str, Any] = {'embeddings': []}  # Empty list
+        with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
+            handler.parse_response(
+                response_body=response_body,
+                inputs=['hello'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                input_tokens=5,
+            )
+
+    def test_nova_handler_parse_response_missing_embedding(self):
+        """Test Nova handler raises error when embedding field is missing in response item."""
+        from pydantic_ai.embeddings.bedrock import NovaEmbeddingHandler
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        handler = NovaEmbeddingHandler()
+        response_body = {'embeddings': [{'embeddingType': 'TEXT'}]}  # Missing 'embedding' key
+        with pytest.raises(UnexpectedModelBehavior, match='did not have an `embedding` field'):
+            handler.parse_response(
+                response_body=response_body,
+                inputs=['hello'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                input_tokens=5,
+            )
+
+    async def test_invoke_model_client_error_with_status_code(self, bedrock_provider: BedrockProvider):
+        """Test error handling when ClientError is raised with HTTP status code."""
+        from botocore.exceptions import ClientError
+
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'ValidationException', 'Message': 'Invalid input'},
+            'ResponseMetadata': {'HTTPStatusCode': 400},
+        }
+        with patch.object(
+            model.client,
+            'invoke_model',
+            side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
+        ):
+            with pytest.raises(ModelHTTPError) as exc_info:
+                await model.embed(['test'], input_type='query')
+            assert exc_info.value.status_code == 400
+
+    async def test_invoke_model_client_error_without_status_code(self, bedrock_provider: BedrockProvider):
+        """Test error handling when ClientError is raised without HTTP status code."""
+        from botocore.exceptions import ClientError
+
+        from pydantic_ai.exceptions import ModelAPIError
+
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'UnknownError', 'Message': 'Something went wrong'},
+            'ResponseMetadata': {},  # No HTTPStatusCode
+        }
+        with patch.object(
+            model.client,
+            'invoke_model',
+            side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
+        ):
+            with pytest.raises(ModelAPIError):
+                await model.embed(['test'], input_type='query')
+
+    def test_normalize_model_name_variants(self):
+        """Test _normalize_model_name handles various model name formats."""
+        # Test with version suffix
+        result = BedrockEmbeddingModel._normalize_model_name('amazon.titan-embed-text-v2:0')  # pyright: ignore[reportPrivateUsage]
+        assert result == 'amazon.titan-embed-text-v2'
+
+        # Test without version suffix
+        result = BedrockEmbeddingModel._normalize_model_name('amazon.titan-embed-text-v1')  # pyright: ignore[reportPrivateUsage]
+        assert result == 'amazon.titan-embed-text-v1'
+
+        # Test with regional prefix
+        result = BedrockEmbeddingModel._normalize_model_name('us.amazon.titan-embed-text-v2:0')  # pyright: ignore[reportPrivateUsage]
+        assert result == 'amazon.titan-embed-text-v2'
+
+    def test_remove_inference_geo_prefix(self):
+        """Test _remove_inference_geo_prefix removes geo prefixes correctly."""
+        # Test with 'us.' prefix
+        result = BedrockEmbeddingModel._remove_inference_geo_prefix('us.amazon.titan-embed-text-v2:0')  # pyright: ignore[reportPrivateUsage]
+        assert result == 'amazon.titan-embed-text-v2:0'
+
+        # Test with 'eu.' prefix
+        result = BedrockEmbeddingModel._remove_inference_geo_prefix('eu.cohere.embed-v4:0')  # pyright: ignore[reportPrivateUsage]
+        assert result == 'cohere.embed-v4:0'
+
+        # Test without prefix (unchanged)
+        result = BedrockEmbeddingModel._remove_inference_geo_prefix('amazon.titan-embed-text-v2:0')  # pyright: ignore[reportPrivateUsage]
+        assert result == 'amazon.titan-embed-text-v2:0'
+
+    def test_model_with_string_provider(self, bedrock_provider: BedrockProvider):
+        """Test BedrockEmbeddingModel can be created with string provider."""
+        with patch('pydantic_ai.embeddings.bedrock.infer_provider', return_value=bedrock_provider) as mock_infer:
+            model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider='bedrock')
+            mock_infer.assert_called_once_with('bedrock')
+            assert model.model_name == 'amazon.titan-embed-text-v2:0'
 
 
 async def test_instrument_all():
