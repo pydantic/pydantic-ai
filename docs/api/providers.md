@@ -20,6 +20,8 @@
 
 ::: pydantic_ai.providers.cohere
 
+::: pydantic_ai.providers.voyageai.VoyageAIProvider
+
 ::: pydantic_ai.providers.cerebras.CerebrasProvider
 
 ::: pydantic_ai.providers.mistral.MistralProvider
