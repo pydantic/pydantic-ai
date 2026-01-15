@@ -99,7 +99,7 @@ Most providers support multimodal content natively in tool results. For provider
 
 For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
 
-- Separate the programmatic return value from additional context sent to the model
+- Separate the programmatic return value from additional content sent to the model
 - Explicitly send content as a separate user message (rather than in the tool result)
 - Include additional metadata that shouldn't be sent to the LLM
 
@@ -150,7 +150,7 @@ print(result.output)
 ```
 
 - **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Multimodal Tool Returns](#multimodal-tool-returns) above).
-- **`content`**: Additional context sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich contextual content.
+- **`content`**: Additional content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich contextual content.
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature "artifacts".
 
 !!! tip
