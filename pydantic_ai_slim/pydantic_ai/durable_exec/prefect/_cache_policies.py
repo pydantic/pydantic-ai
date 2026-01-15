@@ -44,23 +44,27 @@ def _replace_run_context(
     return inputs
 
 
-def _strip_timestamps(
+_CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id'})
+"""Fields excluded from cache key computation as they vary per-run."""
+
+
+def _strip_cache_excluded_fields(
     obj: Any | dict[str, Any] | list[Any] | tuple[Any, ...],
 ) -> Any:
-    """Recursively convert dataclasses to dicts, excluding timestamp fields."""
+    """Recursively convert dataclasses to dicts, excluding cache-irrelevant fields."""
     if is_dataclass(obj) and not isinstance(obj, type):
         result: dict[str, Any] = {}
         for f in fields(obj):
-            if f.name != 'timestamp':
+            if f.name not in _CACHE_EXCLUDED_FIELDS:
                 value = getattr(obj, f.name)
-                result[f.name] = _strip_timestamps(value)
+                result[f.name] = _strip_cache_excluded_fields(value)
         return result
     elif _is_dict(obj):
-        return {k: _strip_timestamps(v) for k, v in obj.items() if k != 'timestamp'}
+        return {k: _strip_cache_excluded_fields(v) for k, v in obj.items() if k not in _CACHE_EXCLUDED_FIELDS}
     elif _is_list(obj):
-        return [_strip_timestamps(item) for item in obj]
+        return [_strip_cache_excluded_fields(item) for item in obj]
     elif _is_tuple(obj):
-        return tuple(_strip_timestamps(item) for item in obj)
+        return tuple(_strip_cache_excluded_fields(item) for item in obj)
     return obj
 
 
@@ -78,7 +82,7 @@ def _replace_toolsets(
 class PrefectAgentInputs(CachePolicy):
     """Cache policy designed to handle input hashing for PrefectAgent cache keys.
 
-    Computes a cache key based on inputs, ignoring nested 'timestamp' fields
+    Computes a cache key based on inputs, ignoring per-run fields like 'timestamp' and 'run_id',
     and serializing RunContext objects to only include hashable fields.
     """
 
@@ -89,13 +93,13 @@ class PrefectAgentInputs(CachePolicy):
         flow_parameters: dict[str, Any],
         **kwargs: Any,
     ) -> str | None:
-        """Compute cache key from inputs with timestamps removed and RunContext serialized."""
+        """Compute cache key from inputs with per-run fields removed and RunContext serialized."""
         if not inputs:
             return None
 
         inputs_without_toolsets = _replace_toolsets(inputs)
         inputs_with_hashable_context = _replace_run_context(inputs_without_toolsets)
-        filtered_inputs = _strip_timestamps(inputs_with_hashable_context)
+        filtered_inputs = _strip_cache_excluded_fields(inputs_with_hashable_context)
 
         return INPUTS.compute_key(task_ctx, filtered_inputs, flow_parameters, **kwargs)
 
