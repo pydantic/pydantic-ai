@@ -58,11 +58,6 @@ class WrapperModel(Model):
         return self.wrapped.model_name
 
     @property
-    def fully_qualified_model_name(self) -> str:
-        """The model name with provider prefix."""
-        return self.wrapped.fully_qualified_model_name
-
-    @property
     def system(self) -> str:
         return self.wrapped.system
 

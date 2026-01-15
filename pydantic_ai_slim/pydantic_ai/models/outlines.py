@@ -235,12 +235,6 @@ class OutlinesModel(Model):
     @property
     def model_name(self) -> str:
         return self._model_name
-
-    @property
-    def fully_qualified_model_name(self) -> str:
-        """The model name with provider prefix."""
-        return f'outlines:{self.model_name}'
-
     @property
     def system(self) -> str:
         return 'outlines'

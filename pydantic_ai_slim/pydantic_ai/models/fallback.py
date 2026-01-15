@@ -59,11 +59,6 @@ class FallbackModel(Model):
         return f'fallback:{",".join(model.model_name for model in self.models)}'
 
     @property
-    def fully_qualified_model_name(self) -> str:
-        """The model name with provider prefix."""
-        return f'fallback:{",".join(model.fully_qualified_model_name for model in self.models)}'
-
-    @property
     def system(self) -> str:
         return f'fallback:{",".join(model.system for model in self.models)}'
 

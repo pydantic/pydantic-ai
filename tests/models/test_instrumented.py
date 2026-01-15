@@ -66,10 +66,6 @@ class MyModel(Model):
         return 'gpt-4o'
 
     @property
-    def fully_qualified_model_name(self) -> str:
-        return f'{self.system}:{self.model_name}'
-
-    @property
     def base_url(self) -> str:
         return 'https://example.com:8000/foo'
 
