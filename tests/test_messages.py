@@ -466,7 +466,7 @@ def test_pre_usage_refactor_messages_deserializable():
                         content='What is the capital of Mexico?',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City.')],
@@ -683,8 +683,7 @@ def test_binary_content_from_path(tmp_path: Path):
     test_xml_file = tmp_path / 'test.xml'
     test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_xml_file)
-    assert binary_content.data == b'<think>about trains</think>'
-    assert binary_content.media_type in ('application/xml', 'text/xml')  # Depends on the platform
+    assert binary_content == snapshot(BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
 
     # test non-existent file
     non_existent_file = tmp_path / 'non-existent.txt'
@@ -711,3 +710,21 @@ def test_binary_content_from_path(tmp_path: Path):
     assert binary_content == snapshot(
         BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
     )
+
+    # test yaml file
+    test_yaml_file = tmp_path / 'config.yaml'
+    test_yaml_file.write_text('key: value', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_yaml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'key: value', media_type='application/yaml'))
+
+    # test yml file (alternative extension)
+    test_yml_file = tmp_path / 'docker-compose.yml'
+    test_yml_file.write_text('version: "3"', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_yml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'version: "3"', media_type='application/yaml'))
+
+    # test toml file
+    test_toml_file = tmp_path / 'pyproject.toml'
+    test_toml_file.write_text('[project]\nname = "test"', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_toml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'[project]\nname = "test"', media_type='application/toml'))

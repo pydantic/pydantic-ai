@@ -245,6 +245,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Confident AI](https://documentation.confident-ai.com/docs/llm-tracing/integrations/pydanticai)
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
 - [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
+- [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
 
 ## Advanced usage
 
@@ -337,3 +338,9 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
+
+### Adding Custom Metadata
+
+Use the agent's `metadata` parameter to attach additional data to the agent's span.
+When instrumentation is enabled, the computed metadata is recorded on the agent span under the `metadata` attribute.
+See the [usage and metadata example in the agents guide](agents.md#run-metadata) for details and usage.

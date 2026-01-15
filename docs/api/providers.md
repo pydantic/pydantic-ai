@@ -4,6 +4,8 @@
 
 ::: pydantic_ai.providers.gateway.gateway_provider
 
+::: pydantic_ai.providers.anthropic.AnthropicProvider
+
 ::: pydantic_ai.providers.google
 
 ::: pydantic_ai.providers.openai
@@ -49,3 +51,5 @@
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider
 
 ::: pydantic_ai.providers.alibaba.AlibabaProvider
+
+::: pydantic_ai.providers.sambanova.SambaNovaProvider

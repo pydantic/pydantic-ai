@@ -149,10 +149,18 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .alibaba import AlibabaProvider
 
         return AlibabaProvider
+    elif provider == 'sambanova':
+        from .sambanova import SambaNovaProvider
+
+        return SambaNovaProvider
     elif provider == 'outlines':
         from .outlines import OutlinesProvider
 
         return OutlinesProvider
+    elif provider == 'sentence-transformers':
+        from .sentence_transformers import SentenceTransformersProvider
+
+        return SentenceTransformersProvider
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 

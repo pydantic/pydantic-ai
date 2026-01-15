@@ -41,12 +41,14 @@ ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 SystemPromptFunc: TypeAlias = (
-    Callable[[RunContext[AgentDepsT]], str]
-    | Callable[[RunContext[AgentDepsT]], Awaitable[str]]
-    | Callable[[], str]
-    | Callable[[], Awaitable[str]]
+    Callable[[RunContext[AgentDepsT]], str | None]
+    | Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]
+    | Callable[[], str | None]
+    | Callable[[], Awaitable[str | None]]
 )
 """A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
+
+Functions which return None are excluded from model requests.
 
 Usage `SystemPromptFunc[AgentDepsT]`.
 """
@@ -224,6 +226,8 @@ class DeferredToolResults:
     """Map of tool call IDs to results for tool calls that required external execution."""
     approvals: dict[str, bool | DeferredToolApprovalResult] = field(default_factory=dict)
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
 
 
 A = TypeVar('A')
