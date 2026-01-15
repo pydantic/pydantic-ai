@@ -30,6 +30,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Ollama](openai.md#ollama)
 - [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
 - [Perplexity](openai.md#perplexity)
+- [SambaNova](openai.md#sambanova)
 - [Together AI](openai.md#together-ai)
 - [Vercel AI Gateway](openai.md#vercel-ai-gateway)
 

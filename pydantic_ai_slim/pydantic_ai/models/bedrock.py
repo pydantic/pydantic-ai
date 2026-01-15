@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
+from mimetypes import guess_type
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
@@ -816,7 +817,6 @@ class BedrockConverseModel(Model):
                     media_type = item.media_type
                     if not media_type:
                         # Try to infer from the URL path
-                        from mimetypes import guess_type
 
                         media_type, _ = guess_type(parsed.path)
                     if not media_type:
