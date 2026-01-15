@@ -450,7 +450,7 @@ def _create_builtin_tool_response(
     initial_status: chat_pb2.ToolCallStatus | None = None,
 ) -> chat_types.Response:
     """Create a Response with builtin tool outputs (shared helper)."""
-    if initial_status is None:
+    if initial_status is None:  # pragma: no cover
         initial_status = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
     in_progress_output = chat_pb2.CompletionOutput(
         index=0,
@@ -535,7 +535,7 @@ def create_code_execution_response(
     """Create a Response with code execution tool outputs.
 
     Example:
-        >>> response = create_code_execution_responses(
+        >>> response = create_code_execution_response(
         ...     code='2 + 2',
         ...     content={'stdout': '4\\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
         ... )
@@ -584,7 +584,7 @@ def create_mcp_server_response(
     """Create a Response with MCP server tool outputs.
 
     Example:
-        >>> response = create_mcp_server_responses(
+        >>> response = create_mcp_server_response(
         ...     server_id='linear', tool_name='list_issues', content=[{'id': 'issue_001'}]
         ... )
     """
