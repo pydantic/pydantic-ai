@@ -224,7 +224,7 @@ def _map_usage(
     Vertex AI (google-vertex) returns token_count in embedding statistics.
     """
     total_tokens = 0
-    if response.embeddings:
+    if response.embeddings:  # pragma: no branch
         for emb in response.embeddings:
             if emb.statistics and emb.statistics.token_count:
                 total_tokens += int(emb.statistics.token_count)

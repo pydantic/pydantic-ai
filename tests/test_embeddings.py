@@ -43,6 +43,7 @@ with try_import() as cohere_imports_successful:
 with try_import() as google_imports_successful:
     from pydantic_ai.embeddings.google import (
         GoogleEmbeddingModel,
+        GoogleEmbeddingSettings,
         LatestGoogleGLAEmbeddingModelNames,
         LatestGoogleVertexEmbeddingModelNames,
     )
@@ -355,6 +356,13 @@ class TestGoogle:
         assert model.model_name == 'gemini-embedding-001'
         assert model.system == 'google-vertex'
 
+    async def test_model_with_string_provider(self, gemini_api_key: str):
+        with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
+            model = GoogleEmbeddingModel('gemini-embedding-001', provider='google-gla')
+        assert isinstance(model, GoogleEmbeddingModel)
+        assert model.model_name == 'gemini-embedding-001'
+        assert model.system == 'google-gla'
+
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
@@ -410,6 +418,28 @@ class TestGoogle:
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='not found'):
             await embedder.embed_query('Hello, world!')
+
+    async def test_count_tokens_error(self, gemini_api_key: str):
+        model = GoogleEmbeddingModel('nonexistent-model', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model)
+        with pytest.raises(ModelHTTPError, match='not found'):
+            await embedder.count_tokens('Hello, world!')
+
+    async def test_query_with_task_type(self, embedder: Embedder):
+        result = await embedder.embed_query(
+            'Hello, world!', settings=GoogleEmbeddingSettings(google_task_type='RETRIEVAL_QUERY')
+        )
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            )
+        )
 
     @pytest.mark.skipif(
         not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
