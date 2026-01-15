@@ -9,11 +9,52 @@ See [skills documentation](../skills.md) for more information.
 
 Key components:
 - [`SkillsToolset`][pydantic_ai.toolsets.skills.SkillsToolset]: Main toolset for integrating skills with agents
-- [`Skill`][pydantic_ai.toolsets.skills.Skill]: Data class representing a loaded skill with resource/script methods
+- [`Skill`][pydantic_ai.toolsets.skills.Skill]: Data class representing a skill with resource/script decorators
 - [`SkillsDirectory`][pydantic_ai.toolsets.skills.SkillsDirectory]: Filesystem-based skill discovery and management
-- [`SkillScriptExecutor`][pydantic_ai.toolsets.skills.SkillScriptExecutor]: Protocol for executing skill scripts
 
-Example:
+Example - Programmatic skills:
+    ```python
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai.toolsets.skills import Skill, SkillResource, SkillsToolset
+
+    # Create a skill with static content and resources
+    my_skill = Skill(
+        name='hr-analytics-skill',
+        description='Skill for HR analytics',
+        content='Use this skill for HR data analysis...',
+        resources=[
+            SkillResource(name='table-schemas', content='Schema definitions...')
+        ]
+    )
+
+    # Add callable resources using decorator
+    @my_skill.resource
+    def get_db_context() -> str:
+        return "Dynamic database context information."
+
+    @my_skill.resource
+    async def get_samples(ctx: RunContext[MyDeps]) -> str:
+        return await ctx.deps.fetch_samples()
+
+    # Add callable scripts using decorator
+    @my_skill.script
+    async def load_dataset(ctx: RunContext[MyDeps]) -> str:
+        await ctx.deps.load_data()
+        return 'Dataset loaded.'
+
+    @my_skill.script
+    async def run_query(ctx: RunContext[MyDeps], query: str) -> str:
+        result = await ctx.deps.db.execute(query)
+        return str(result)
+
+    # Use with agent
+    agent = Agent(
+        model='openai:gpt-5',
+        toolsets=[SkillsToolset(skills=[my_skill])]
+    )
+    ```
+
+Example - File-based skills:
     ```python
     from pydantic_ai import Agent
     from pydantic_ai.toolsets import SkillsToolset
@@ -48,27 +89,28 @@ from pydantic_ai.toolsets.skills._exceptions import (
 )
 from pydantic_ai.toolsets.skills._local import (
     CallableSkillScriptExecutor,
-    LocalSkill,
+    FileBasedSkillResource,
+    FileBasedSkillScript,
     LocalSkillScriptExecutor,
 )
 from pydantic_ai.toolsets.skills._toolset import SkillsToolset
-from pydantic_ai.toolsets.skills._types import Skill, SkillMetadata, SkillResource, SkillScript, SkillScriptExecutor
+from pydantic_ai.toolsets.skills._types import Skill, SkillResource, SkillScript
 
 __all__ = (
     # Main toolset
     'SkillsToolset',
     # Directory discovery
     'SkillsDirectory',
-    # Executors
-    'SkillScriptExecutor',
-    'LocalSkillScriptExecutor',
-    'CallableSkillScriptExecutor',
     # Types
     'Skill',
-    'LocalSkill',
-    'SkillMetadata',
     'SkillResource',
     'SkillScript',
+    # Filesystem implementations
+    'FileBasedSkillResource',
+    'FileBasedSkillScript',
+    # Executors (for advanced use cases)
+    'LocalSkillScriptExecutor',
+    'CallableSkillScriptExecutor',
     # Exceptions
     'SkillException',
     'SkillNotFoundError',

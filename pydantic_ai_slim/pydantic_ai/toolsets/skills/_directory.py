@@ -3,16 +3,14 @@
 This module provides [`SkillsDirectory`][pydantic_ai.toolsets.skills.SkillsDirectory]
 for discovering and loading skills from a filesystem directory.
 
-Supports nested skill directories (e.g., ./skills/data/analysis, ./skills/dev/engineer)
-and provides methods for loading skill instructions, reading resource files,
-and executing scripts.
+Supports nested skill directories with configurable depth limits and provides
+internal helper functions for skill validation, metadata parsing, and resource/script discovery.
 """
 
 from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +20,13 @@ from ._exceptions import (
     SkillNotFoundError,
     SkillValidationError,
 )
-from ._local import CallableSkillScriptExecutor, LocalSkill, LocalSkillScriptExecutor
-from ._types import Skill, SkillMetadata, SkillResource, SkillScript, SkillScriptExecutor
+from ._local import (
+    CallableSkillScriptExecutor,
+    LocalSkillScriptExecutor,
+    create_file_based_resource,
+    create_file_based_script,
+)
+from ._types import Skill, SkillResource, SkillScript
 
 __all__ = ['SkillsDirectory']
 
@@ -149,9 +152,10 @@ def _discover_resources(skill_folder: Path) -> list[SkillResource]:
     for md_file in skill_folder.glob('*.md'):
         if md_file.name.upper() != 'SKILL.MD':
             resources.append(
-                SkillResource(
+                create_file_based_resource(
                     name=md_file.name,
                     uri=str(md_file.resolve()),
+                    skill_uri=str(skill_folder.resolve()),
                 )
             )
 
@@ -162,9 +166,10 @@ def _discover_resources(skill_folder: Path) -> list[SkillResource]:
             if resource_file.is_file():
                 rel_path = resource_file.relative_to(skill_folder)
                 resources.append(
-                    SkillResource(
+                    create_file_based_resource(
                         name=str(rel_path),
                         uri=str(resource_file.resolve()),
+                        skill_uri=str(skill_folder.resolve()),
                     )
                 )
 
@@ -200,7 +205,11 @@ def _find_skill_files(root_dir: Path, max_depth: int | None) -> list[Path]:
     return skill_files
 
 
-def _discover_scripts(skill_folder: Path, skill_name: str) -> list[SkillScript]:
+def _discover_scripts(
+    skill_folder: Path,
+    skill_name: str,
+    executor: LocalSkillScriptExecutor | CallableSkillScriptExecutor,
+) -> list[SkillScript]:
     """Discover executable scripts in a skill folder.
 
     Looks for Python scripts in:
@@ -210,6 +219,7 @@ def _discover_scripts(skill_folder: Path, skill_name: str) -> list[SkillScript]:
     Args:
         skill_folder: Path to the skill directory.
         skill_name: Name of the parent skill.
+        executor: Executor for running file-based scripts.
 
     Returns:
         List of discovered SkillScript objects.
@@ -220,10 +230,12 @@ def _discover_scripts(skill_folder: Path, skill_name: str) -> list[SkillScript]:
     for py_file in skill_folder.glob('*.py'):
         if py_file.name != '__init__.py':
             scripts.append(
-                SkillScript(
+                create_file_based_script(
                     name=py_file.stem,  # filename without .py
                     uri=str(py_file.resolve()),
                     skill_name=skill_name,
+                    executor=executor,
+                    skill_uri=str(skill_folder.resolve()),
                 )
             )
 
@@ -233,10 +245,12 @@ def _discover_scripts(skill_folder: Path, skill_name: str) -> list[SkillScript]:
         for py_file in scripts_dir.glob('*.py'):
             if py_file.name != '__init__.py':
                 scripts.append(
-                    SkillScript(
+                    create_file_based_script(
                         name=py_file.stem,
                         uri=str(py_file.resolve()),
                         skill_name=skill_name,
+                        executor=executor,
+                        skill_uri=str(skill_folder.resolve()),
                     )
                 )
 
@@ -247,7 +261,7 @@ def _discover_skills(
     path: str | Path,
     validate: bool = True,
     max_depth: int | None = 3,
-    script_executor: SkillScriptExecutor | None = None,
+    script_executor: LocalSkillScriptExecutor | CallableSkillScriptExecutor | None = None,
 ) -> list[Skill]:
     """Discover skills from a filesystem directory.
 
@@ -259,7 +273,7 @@ def _discover_skills(
         validate: Whether to validate skill structure (requires name and description).
         max_depth: Maximum depth to search for SKILL.md files. None for unlimited.
             Default is 3 levels deep to prevent performance issues with large trees.
-        script_executor: Script executor for running skill scripts.
+        script_executor: Optional custom script executor for file-based scripts.
 
     Returns:
         List of discovered Skill objects.
@@ -300,15 +314,8 @@ def _discover_skills(
                     # Use folder name as fallback when validation is disabled
                     name = skill_folder.name
 
-            # Extract extra metadata fields
-            extra = {k: v for k, v in frontmatter.items() if k not in ('name', 'description')}
-
-            # Create metadata
-            metadata = SkillMetadata(
-                name=name,
-                description=description,
-                extra=extra if extra else None,
-            )
+            # Extract metadata fields (beyond name and description)
+            metadata = {k: v for k, v in frontmatter.items() if k not in ('name', 'description')}
 
             # Validate metadata
             if validate:
@@ -316,17 +323,17 @@ def _discover_skills(
 
             # Discover resources and scripts
             resources = _discover_resources(skill_folder)
-            scripts = _discover_scripts(skill_folder, name)
+            scripts = _discover_scripts(skill_folder, name, script_executor or LocalSkillScriptExecutor())
 
-            # Create skill
-            skill = LocalSkill(
+            # Create skill instance
+            skill = Skill(
                 name=name,
-                uri=str(skill_folder.resolve()),
-                metadata=metadata,
+                description=description,
                 content=instructions,
-                resources=resources if resources else None,
-                scripts=scripts if scripts else None,
-                script_executor=script_executor,
+                uri=str(skill_folder.resolve()),
+                resources=resources,
+                scripts=scripts,
+                metadata=metadata if metadata else None,
             )
 
             skills.append(skill)
@@ -336,22 +343,21 @@ def _discover_skills(
                 raise
             else:
                 warnings.warn(f'Skipping invalid skill at {skill_file}: {sve}', UserWarning, stacklevel=2)
-        except Exception as e:
-            # Don't re-wrap warnings as exceptions
-            if not isinstance(e, Warning):
-                raise SkillValidationError(f'Failed to load skill from {skill_file}: {e}') from e
+        except (OSError, ValueError, KeyError) as e:
+            # Catch specific exceptions that can occur during skill loading
+            raise SkillValidationError(f'Failed to load skill from {skill_file}: {e}') from e
 
     return skills
 
 
 class SkillsDirectory:
-    """Skill source for a single filesystem directory or programmatic skills.
+    """Skill source for a single filesystem directory.
 
-    Can operate in two modes:
-    1. Discovery mode: Discovers and loads skills from a single local directory
-    2. Programmatic mode: Accepts pre-built Skill objects
+    Discovers and loads skills from a local directory by finding SKILL.md files
+    and automatically discovering associated resources and scripts.
 
-    Scripts are executed using the bound SkillScriptExecutor.
+    File-based scripts are executed using the configured script executor
+    (LocalSkillScriptExecutor or CallableSkillScriptExecutor).
     """
 
     def __init__(
@@ -360,21 +366,17 @@ class SkillsDirectory:
         path: str | Path,
         validate: bool = True,
         max_depth: int | None = 3,
-        script_executor: SkillScriptExecutor | Callable[..., Any] | None = None,
+        script_executor: LocalSkillScriptExecutor | CallableSkillScriptExecutor | None = None,
     ) -> None:
         """Initialize the skills directory source.
 
         Args:
-            path: Directory path to search for skills (discovery mode).
+            path: Directory path to search for skills.
             validate: Validate skill structure on discovery.
             max_depth: Maximum depth for skill discovery (None for unlimited).
-            script_executor: Script executor for running scripts. Can be:
-                - A SkillScriptExecutor instance
-                - A callable (function) that will be wrapped in CallableSkillScriptExecutor
-                - None (uses LocalSkillScriptExecutor with default settings)
-
-        Raises:
-            ValueError: If neither or both `path` and `skills` are provided.
+            script_executor: Optional custom script executor for file-based scripts.
+                Can be LocalSkillScriptExecutor or CallableSkillScriptExecutor.
+                If None, uses LocalSkillScriptExecutor with default settings.
 
         Example:
             ```python
@@ -388,27 +390,19 @@ class SkillsDirectory:
             source = SkillsDirectory(path="./skills", script_executor=executor)
 
             # With callable executor
-            async def my_executor(skill, script, args=None):
-                # Custom execution logic
-                return "result"
+            from pydantic_ai.toolsets.skills import CallableSkillScriptExecutor
 
-            source = SkillsDirectory(
-                path="./skills",
-                script_executor=my_executor
-            )
+            async def my_executor(script, args=None, skill_uri=None):
+                return f"Executed {script.name}"
+
+            executor = CallableSkillScriptExecutor(func=my_executor)
+            source = SkillsDirectory(path="./skills", script_executor=executor)
             ```
         """
         self._path = Path(path).expanduser().resolve()
         self._validate = validate
         self._max_depth = max_depth
-
-        # Handle script_executor parameter
-        if script_executor is None:
-            self._executor: SkillScriptExecutor = LocalSkillScriptExecutor()
-        elif callable(script_executor):
-            self._executor = CallableSkillScriptExecutor(func=script_executor)
-        else:
-            self._executor = script_executor
+        self._script_executor = script_executor or LocalSkillScriptExecutor()
 
         # Discover skills from directory
         self._skills: dict[str, Skill] = self.get_skills()
@@ -423,10 +417,10 @@ class SkillsDirectory:
             path=self._path,
             validate=self._validate,
             max_depth=self._max_depth,
-            script_executor=self._executor,
+            script_executor=self._script_executor,
         )
 
-        return {skill.uri: skill for skill in skills}
+        return {skill.uri: skill for skill in skills if skill.uri is not None}
 
     @property
     def skills(self) -> dict[str, Skill]:

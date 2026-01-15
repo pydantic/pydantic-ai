@@ -64,7 +64,7 @@ The YAML frontmatter must include:
 - `name`: Unique identifier (lowercase letters, numbers, and hyphens only)
 - `description`: Brief summary (appears in skill listings, max 1024 characters)
 
-All other fields are optional and stored in the `extra` dictionary of [`SkillMetadata`](../api/skills.md#pydantic_ai.toolsets.skills.SkillMetadata).
+All other fields are optional and stored in the `metadata` dictionary of the [`Skill`](../api/skills.md#pydantic_ai.toolsets.skills.Skill) object.
 
 !!! note "Validation Behavior"
     When `validate=True` (default), skills missing the `name` field are skipped with a warning. When `validate=False`, the folder name is used as a fallback for missing `name` fields. See [Validation](#skill-validation) for details.
@@ -138,43 +138,88 @@ my-skill/
 
 ### Writing Scripts
 
-Scripts should:
+Scripts must accept **named arguments only** via command-line flags. Positional arguments are not supported.
 
-- Accept command-line arguments via `sys.argv`
+**Requirements:**
+
+- Use command-line argument parser (e.g., `argparse`) for named arguments
 - Print output to stdout
 - Exit with code 0 on success, non-zero on error
 - Handle errors gracefully
 
+**Example using argparse:**
+
 ```python {title="process_data.py"}
 #!/usr/bin/env python3
-"""Example skill script."""
+"""Example skill script with named arguments."""
 
+import argparse
 import sys
-import json
+
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: process_data.py <input>")
-        sys.exit(1)
-
-    input_data = sys.argv[1]
+    parser = argparse.ArgumentParser(description='Process data')
+    parser.add_argument(
+        '--input',
+        type=str,
+        required=True,
+        help='Input data to process'
+    )
+    parser.add_argument(
+        '--format',
+        type=str,
+        default='json',
+        help='Output format (default: json)'
+    )
+    
+    args = parser.parse_args()
 
     try:
         # Process the input
-        result = {"processed": input_data.upper()}
-        print(json.dumps(result, indent=2))
-
+        result = args.input.upper()
+        print(f'Processed: {result}')
+        print(f'Format: {args.format}')
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
 ```
 
+**How arguments are passed:**
+
+When the agent calls `run_skill_script` with:
+
+```python
+run_skill_script(
+    skill_name="my-skill",
+    script_name="process_data",
+    args={"input": "test data", "format": "xml"}
+)
+```
+
+The framework converts the dictionary to command-line arguments:
+
+```bash
+python process_data.py --input "test data" --format "xml"
+```
+
+!!! note "Argument Naming Convention"
+    Dictionary keys are used exactly as provided without any conversion.
+    Ensure your script's argument names match the dictionary keys you use.
+    For example, `{"max-papers": 5}` becomes `--max-papers 5`.
+
+!!! warning "Known Limitation"
+    **Positional arguments are not supported.** All scripts must use named arguments (flags) only.
+    This ensures consistent and predictable argument passing across different script types.
+
 ## Complete Example
 
-Here's a complete example with a skill that searches for research papers:
+Here's a complete example combining file-based skills with programmatic enhancements:
+
+### File-Based Skill with Scripts
 
 ```markdown
 skills/
@@ -198,7 +243,7 @@ Search the arXiv preprint server for academic papers.
 
 Use `run_skill_script` with:
 - **script_name**: "arxiv_search"
-- **args**: ["your search query", "--max-papers", "5"]
+- **args**: {"query": "your search query", "max-papers": 5}
 
 ## Example
 
@@ -208,7 +253,7 @@ To find papers about transformers:
 run_skill_script(
     skill_name="arxiv-search",
     script_name="arxiv_search",
-    args=["transformers attention mechanism", "--max-papers", "3"]
+    args={"query": "transformers attention mechanism", "max-papers": 3}
 )
 ```
 ````
@@ -250,9 +295,19 @@ def search_arxiv(query: str, max_results: int = 5) -> list[dict]:
     return results
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("query", help="Search query")
-    parser.add_argument("--max-papers", type=int, default=5)
+    parser = argparse.ArgumentParser(description='Search arXiv for research papers')
+    parser.add_argument(
+        '--query',
+        type=str,
+        required=True,
+        help='Search query string'
+    )
+    parser.add_argument(
+        '--max-papers',
+        type=int,
+        default=5,
+        help='Maximum number of papers to retrieve (default: 5)'
+    )
     args = parser.parse_args()
 
     results = search_arxiv(args.query, args.max_papers)
@@ -267,161 +322,203 @@ if __name__ == "__main__":
     main()
 ```
 
-```python {title="agent_example.py"}
-import asyncio
-from pydantic_ai import Agent
+### Programmatic Skill
+
+```python {title="programmatic_skill.py"}
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.toolsets import SkillsToolset
+from pydantic_ai.toolsets.skills import Skill, SkillResource
+from dataclasses import dataclass
 
-async def main():
-    # Initialize Skills Toolset
-    skills_toolset = SkillsToolset(directories=["./skills"])
+@dataclass
+class MyDeps:
+    db: DatabaseConnection
+    api_key: str
 
-    # Create agent with skills
-    agent = Agent(
-        model='openai:gpt-4o',
-        instructions="You are a research assistant.",
-        toolsets=[skills_toolset]
-    )
-    # Skills instructions are automatically injected via get_instructions()
+# Create programmatic skill
+data_skill = Skill(
+    name='data-analyzer',
+    description='Analyze datasets with various algorithms',
+    content='''# Data Analyzer
 
-    # Run agent - skills tools are automatically available
-    result = await agent.run(
-        "Find the 3 most recent papers about large language models"
-    )
-    print(result.output)
+Use this skill to analyze datasets.
 
-if __name__ == "__main__":
-    asyncio.run(main())
-```
+## Available Operations
 
-## Understanding Skill Types
+1. Load dataset using `load_dataset` script
+2. Get schema using `get_schema` resource
+3. Run analysis using `analyze` script
+''',
+    resources=[
+        SkillResource(name='readme', content='# README\n\nSupports CSV and JSON formats.')
+    ]
+)
 
-The skills framework uses an abstract base class pattern with two main classes:
+@data_skill.resource
+async def get_schema(ctx: RunContext[MyDeps]) -> str:
+    """Get current dataset schema."""
+    schema = await ctx.deps.db.get_schema()
+    return f"Schema: {schema}"
 
-- **[`Skill`][pydantic_ai.toolsets.skills.Skill]** (abstract base class): Defines the interface all skills must implement
-  - Cannot be instantiated directly
-  - Used for type hints and custom implementations
-  - Subclasses must implement `read_resource()` and `run_script()` methods
+@data_skill.script
+async def load_dataset(ctx: RunContext[MyDeps], path: str) -> str:
+    """Load dataset from path.
+    
+    Args:
+        path: Path to dataset file.
+    """
+    await ctx.deps.db.load(path)
+    return f'Loaded dataset from {path}'
 
-- **[`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill]** (concrete implementation): Filesystem-based skills
-  - Used by automatic directory-based discovery
-  - Used for programmatic skills with filesystem access
-  - Implements resource reading and script execution for local files
+@data_skill.script
+async def analyze(ctx: RunContext[MyDeps], metric: str) -> str:
+    """Analyze dataset with specified metric.
+    
+    Args:
+        metric: Analysis metric (mean, median, mode).
+    """
+    result = await ctx.deps.db.analyze(metric)
+    return f'{metric}: {result}'
 
-**When creating skills programmatically, use `LocalSkill`** (or create your own `Skill` subclass for custom backends):
+# Use with agent
+agent = Agent(
+    model='openai:gpt-4o',
+    deps_type=MyDeps,
+    toolsets=[SkillsToolset(
+        skills=[data_skill],
+        directories=['./skills']  # Also load file-based skills
+    )]
+)
 
-```python
-from pydantic_ai.toolsets.skills import LocalSkill  # ✅ Use this
-
-# Correct:
-skill = LocalSkill(name="my-skill", ...)
-
-# Wrong (will fail):
-from pydantic_ai.toolsets.skills import Skill
-skill = Skill(name="my-skill", ...)  # ❌ Error: can't instantiate abstract class
+# Run agent
+deps = MyDeps(db=my_database, api_key='...')
+result = await agent.run(
+    'Search for papers about LLMs and analyze the results',
+    deps=deps
+)
 ```
 
 ## Programmatic Skills
 
-You can create skills programmatically using [`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill]:
+You can create skills programmatically using the [`Skill`][pydantic_ai.toolsets.skills.Skill] class. Programmatic skills are ideal when you need dynamic resources or scripts that interact with your application's dependencies.
+
+### Basic Programmatic Skill
 
 ```python
-from pydantic_ai.toolsets.skills import LocalSkill, SkillMetadata, SkillResource, SkillScript
-from pydantic_ai.toolsets import SkillsToolset
-from pathlib import Path
+from pydantic_ai.toolsets.skills import Skill, SkillResource
 
-# Create skill with full control
-skill = LocalSkill(
-    name="custom-analyzer",
-    uri=str(Path("./custom-skills/analyzer").resolve()),
-    metadata=SkillMetadata(
-        name="custom-analyzer",
-        description="Custom data analysis skill",
-        extra={"version": "2.0.0", "author": "Your Name"}
-    ),
-    content="""# Custom Analyzer
-
-## When to Use
-Use this skill for advanced data analysis tasks.
-
-## Instructions
-1. Load data using the load_data script
-2. Process with analyze_data script
-3. Export results
-""",
+# Create a skill with static content
+my_skill = Skill(
+    name='data-processor',
+    description='Process data using various algorithms',
+    content='Use this skill for data processing tasks...',
     resources=[
-        SkillResource(
-            name="REFERENCE.md",
-            uri=str(Path("./custom-skills/analyzer/REFERENCE.md").resolve())
-        )
-    ],
-    scripts=[
-        SkillScript(
-            name="load_data",
-            uri=str(Path("./custom-skills/analyzer/scripts/load_data.py").resolve()),
-            skill_name="custom-analyzer"
-        ),
-        SkillScript(
-            name="analyze_data",
-            uri=str(Path("./custom-skills/analyzer/scripts/analyze_data.py").resolve()),
-            skill_name="custom-analyzer"
-        )
-    ],
-    # Optional: provide custom script executor
-    script_executor=None  # Uses LocalSkillScriptExecutor by default
+        SkillResource(name='algorithms', content='Available algorithms: sort, filter, transform')
+    ]
 )
-
-# Use with toolset
-toolset = SkillsToolset(skills=[skill])
 ```
 
-### Custom Skill Implementations
+### Adding Dynamic Resources
 
-For advanced scenarios, you can create custom [`Skill`][pydantic_ai.toolsets.skills.Skill] subclasses:
+Use the `@skill.resource` decorator to add callable resources that can access dependencies:
 
 ```python
-from pydantic_ai.toolsets.skills import Skill, SkillMetadata
 from pydantic_ai import RunContext
-import httpx
 
-class APISkill(Skill):
-    """Skill that fetches resources and executes scripts via API."""
+@my_skill.resource
+def get_config() -> str:
+    """Get current configuration (static)."""
+    return "Config: mode=production"
 
-    def __init__(self, api_base_url: str, **kwargs):
-        super().__init__(**kwargs)
-        self.api_base_url = api_base_url
-        self.client = httpx.AsyncClient()
+@my_skill.resource
+async def get_data_schema(ctx: RunContext[MyDeps]) -> str:
+    """Get data schema from database (dynamic)."""
+    schema = await ctx.deps.db.get_schema()
+    return f"Schema: {schema}"
 
-    async def read_resource(self, ctx: RunContext, resource_uri: str) -> str:
-        """Fetch resource from API."""
-        response = await self.client.get(
-            f"{self.api_base_url}/resources/{resource_uri}"
-        )
-        response.raise_for_status()
-        return response.text
+@my_skill.resource
+async def get_samples(ctx: RunContext[MyDeps], count: int = 5) -> str:
+    """Get sample data.
+    
+    Args:
+        count: Number of samples to return.
+    """
+    samples = await ctx.deps.db.fetch_samples(count)
+    return f"Samples: {samples}"
+```
 
-    async def run_script(self, ctx: RunContext, script_uri: str, args: list[str] | None = None) -> str:
-        """Execute script via API."""
-        response = await self.client.post(
-            f"{self.api_base_url}/scripts/{script_uri}",
-            json={"args": args or []}
-        )
-        response.raise_for_status()
-        return response.text
+**Key points:**
 
-# Create API-based skill
-api_skill = APISkill(
-    name="remote-processor",
-    uri="https://api.example.com/skills/processor",
-    api_base_url="https://api.example.com/skills/processor",
-    metadata=SkillMetadata(
-        name="remote-processor",
-        description="Remote data processing via API"
-    ),
-    content="Instructions for using the remote processor..."
+- Resources can be sync or async functions
+- Resources can optionally take `RunContext` to access dependencies (auto-detected)
+- Resources can accept additional parameters (will be available as tool arguments)
+- Description is inferred from docstring if not provided
+
+### Adding Executable Scripts
+
+Use the `@skill.script` decorator to add callable scripts:
+
+```python
+@my_skill.script
+async def load_dataset(ctx: RunContext[MyDeps], path: str) -> str:
+    """Load a dataset from the given path.
+    
+    Args:
+        path: Path to the dataset file.
+    """
+    await ctx.deps.data_loader.load(path)
+    return f'Dataset loaded from {path}'
+
+@my_skill.script
+async def run_query(ctx: RunContext[MyDeps], query: str, limit: int = 10) -> str:
+    """Execute a query on the loaded dataset.
+    
+    Args:
+        query: SQL-like query string.
+        limit: Maximum number of results to return.
+    """
+    result = await ctx.deps.db.execute(query, limit)
+    return str(result)
+```
+
+**Key points:**
+
+- Scripts can be sync or async functions
+- Scripts can optionally take `RunContext` to access dependencies (auto-detected)
+- Scripts accept named arguments matching their function signature
+- Description is inferred from docstring if not provided
+
+### Using with Agent
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.toolsets import SkillsToolset
+
+agent = Agent(
+    model='openai:gpt-4o',
+    toolsets=[SkillsToolset(skills=[my_skill])]
 )
 
-toolset = SkillsToolset(skills=[api_skill])
+result = await agent.run('Load dataset from data.csv and show 3 samples')
+```
+
+### Mixing Static and Callable Resources/Scripts
+
+You can combine static and callable resources/scripts in the same skill:
+
+```python
+skill = Skill(
+    name='mixed-skill',
+    description='Skill with mixed resources',
+    content='Instructions here...',
+    resources=[
+        SkillResource(name='static-doc', content='Static documentation')
+    ]
+)
+
+@skill.resource
+async def dynamic_data(ctx: RunContext[MyDeps]) -> str:
+    return await ctx.deps.fetch_live_data()
 ```
 
 ## Skill Validation

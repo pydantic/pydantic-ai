@@ -9,14 +9,16 @@ from .prefixed import PrefixedToolset
 from .prepared import PreparedToolset
 from .renamed import RenamedToolset
 from .skills import (
+    CallableSkillScriptExecutor,
+    LocalSkillScriptExecutor,
     Skill,
     SkillException,
-    SkillMetadata,
     SkillNotFoundError,
     SkillResource,
     SkillResourceLoadError,
     SkillScript,
     SkillScriptExecutionError,
+    SkillsDirectory,
     SkillsToolset,
     SkillValidationError,
 )
@@ -38,10 +40,12 @@ __all__ = (
     'ApprovalRequiredToolset',
     # Skills toolset
     'SkillsToolset',
+    'SkillsDirectory',
     'Skill',
-    'SkillMetadata',
     'SkillResource',
     'SkillScript',
+    'LocalSkillScriptExecutor',
+    'CallableSkillScriptExecutor',
     'SkillException',
     'SkillNotFoundError',
     'SkillResourceLoadError',

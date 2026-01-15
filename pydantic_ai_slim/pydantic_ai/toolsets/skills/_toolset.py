@@ -1,11 +1,18 @@
 """Skills toolset implementation.
 
-This module provides the main SkillsToolset class that integrates
-skill discovery and management with Pydantic AI agents.
+This module provides the main [`SkillsToolset`][pydantic_ai.toolsets.skills.SkillsToolset]
+class that integrates skill discovery and management with Pydantic AI agents.
+
+The toolset provides four main tools for agents:
+- list_skills: List all available skills
+- load_skill: Load full instructions for a specific skill
+- read_skill_resource: Read skill resource files or invoke callable resources
+- run_skill_script: Execute skill scripts
 """
 
 from __future__ import annotations
 
+import json
 import warnings
 from pathlib import Path
 from typing import Any
@@ -13,11 +20,12 @@ from typing import Any
 from ..._run_context import RunContext
 from ..function import FunctionToolset
 from ._directory import SkillsDirectory
-from ._exceptions import SkillNotFoundError
-from ._types import Skill
+from ._exceptions import SkillNotFoundError, SkillResourceNotFoundError
+from ._types import Skill, SkillResource, SkillScript
 
 # Default instruction template for skills system prompt
 DEFAULT_INSTRUCTION_TEMPLATE = """<skills>
+
 Here is a list of skills that contain domain specific knowledge on a variety of topics.
 Each skill comes with a description of the topic and instructions on how to use it.
 When a user asks you to perform a task that falls within the domain of a skill, use the `load_skill` tool to acquire the full instructions.
@@ -25,9 +33,11 @@ When a user asks you to perform a task that falls within the domain of a skill, 
 {skills_list}
 
 Use progressive disclosure: load only what you need, when you need it.
-- First, use `load_skill(skill_name)` to read the full instructions
-- To read additional resources within a skill, use `read_skill_resource(skill_name, resource_name)`
-- To execute skill scripts, use `run_skill_script(skill_name, script_name, args)`
+
+- First, use `load_skill` tool to read the full skill instructions
+- To read additional resources within a skill, use `read_skill_resource` tool.
+- To execute skill scripts, use `run_skill_script` tool.
+
 </skills>
 """
 
@@ -36,8 +46,14 @@ LOAD_SKILL_TEMPLATE = """<skill>
 <name>{skill_name}</name>
 <description>{description}</description>
 <path>{path}</path>
-<resources>{resources_list}</resources>
-<scripts>{scripts_list}</scripts>
+
+<resources>
+{resources_list}
+</resources>
+
+<scripts>
+{scripts_list}
+</scripts>
 
 <instructions>
 
@@ -259,6 +275,76 @@ class SkillsToolset(FunctionToolset):
                     )
                 self._skills[skill_name] = skill
 
+    def _build_resource_xml(self, resource: SkillResource) -> str:
+        """Build XML representation of a resource.
+
+        Args:
+            resource: The resource to format.
+
+        Returns:
+            XML string representation of the resource.
+        """
+        res_xml = f'<resource name="{resource.name}"'
+        if resource.description:
+            res_xml += f' description="{resource.description}"'
+        if resource.function and resource.function_schema:
+            params_json = json.dumps(resource.function_schema.json_schema)
+            res_xml += f' parameters={json.dumps(params_json)}'
+        res_xml += ' />'
+        return res_xml
+
+    def _build_script_xml(self, script: SkillScript) -> str:
+        """Build XML representation of a script.
+
+        Args:
+            script: The script to format.
+
+        Returns:
+            XML string representation of the script.
+        """
+        scr_xml = f'<script name="{script.name}"'
+        if script.description:
+            scr_xml += f' description="{script.description}"'
+        if script.function and script.function_schema:
+            params_json = json.dumps(script.function_schema.json_schema)
+            scr_xml += f' parameters={json.dumps(params_json)}'
+        scr_xml += ' />'
+        return scr_xml
+
+    def _find_skill_resource(self, skill: Skill, resource_name: str) -> SkillResource | None:
+        """Find a resource in a skill by name.
+
+        Args:
+            skill: The skill to search in.
+            resource_name: The resource name to find.
+
+        Returns:
+            The resource if found, None otherwise.
+        """
+        if not skill.resources:
+            return None
+        for r in skill.resources:
+            if r.name == resource_name:
+                return r
+        return None
+
+    def _find_skill_script(self, skill: Skill, script_name: str) -> SkillScript | None:
+        """Find a script in a skill by name.
+
+        Args:
+            skill: The skill to search in.
+            script_name: The script name to find.
+
+        Returns:
+            The script if found, None otherwise.
+        """
+        if not skill.scripts:
+            return None
+        for s in skill.scripts:
+            if s.name == script_name:
+                return s
+        return None
+
     def _register_tools(self) -> None:
         """Register skill management tools with the toolset.
 
@@ -279,10 +365,10 @@ class SkillsToolset(FunctionToolset):
                 Dictionary mapping skill names to brief descriptions.
                 Empty dictionary if no skills are available.
             """
-            return {name: skill.metadata.description for name, skill in self._skills.items()}
+            return {name: skill.description for name, skill in self._skills.items()}
 
         @self.tool
-        async def load_skill(ctx: RunContext[Any], skill_name: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def load_skill(ctx: RunContext[Any], skill_name: str) -> str:  # pyright: ignore[reportUnusedFunction]  # noqa: D417
             """Load complete instructions and metadata for a specific skill.
 
             Do NOT infer or guess resource names or script names - they must come from
@@ -305,22 +391,24 @@ class SkillsToolset(FunctionToolset):
 
             skill = self._skills[skill_name]
 
-            # Build resources list
+            # Build resources list with schemas for callable resources
+            resources_parts: list[str] = []
             if skill.resources:
-                resources_list = '\n'.join(f'<resource>{res.name}</resource>' for res in skill.resources)
-            else:
-                resources_list = ''
+                for res in skill.resources:
+                    resources_parts.append(self._build_resource_xml(res))
+            resources_list = '\n'.join(resources_parts) if resources_parts else '<!-- No resources -->'
 
-            # Build scripts list
+            # Build scripts list with schemas for callable scripts
+            scripts_parts: list[str] = []
             if skill.scripts:
-                scripts_list = '\n'.join(f'<script>{scr.name}</script>' for scr in skill.scripts)
-            else:
-                scripts_list = ''
+                for scr in skill.scripts:
+                    scripts_parts.append(self._build_script_xml(scr))
+            scripts_list = '\n'.join(scripts_parts) if scripts_parts else '<!-- No scripts -->'
 
             # Format response
             return LOAD_SKILL_TEMPLATE.format(
                 skill_name=skill.name,
-                description=skill.metadata.description,
+                description=skill.description,
                 path=skill.uri or 'N/A',
                 resources_list=resources_list,
                 scripts_list=scripts_list,
@@ -332,35 +420,49 @@ class SkillsToolset(FunctionToolset):
             ctx: RunContext[Any],
             skill_name: str,
             resource_name: str,
+            args: dict[str, Any] | None = None,
         ) -> str:
-            """Read a resource file from a skill.
+            """Read a resource file from a skill or invoke a callable resource.
 
             Do NOT guess or infer resource names, use load_skill first to get the resource names.
 
             Resources contain supplementary documentation like form templates,
-            reference guides, or data schemas.
+            reference guides, or data schemas. They can be static content or dynamic callables.
 
             Args:
                 ctx: Run context (required by toolset protocol).
                 skill_name: Exact name of the skill (from list_skills or load_skill).
                 resource_name: Exact resource filename as listed in load_skill output
                     (e.g., "FORMS.md", "REFERENCE.md").
+                args: Named arguments as a dictionary matching the resource's parameter schema.
+                    Keys should match parameter names from the resource's schema.
 
             Returns:
-                Complete content of the requested resource file.
+                Complete content of the requested resource.
             """
             if skill_name not in self._skills:
                 raise SkillNotFoundError(f"Skill '{skill_name}' not found.")
 
             skill = self._skills[skill_name]
-            return await skill.read_resource(ctx, resource_name)
+
+            # Find the resource
+            resource = self._find_skill_resource(skill, resource_name)
+
+            if resource is None:
+                available = [r.name for r in skill.resources] if skill.resources else []
+                raise SkillResourceNotFoundError(
+                    f"Resource '{resource_name}' not found in skill '{skill_name}'. Available: {available}"
+                )
+
+            # Use resource.load() interface - implementation handles the details
+            return await resource.load(ctx=ctx, args=args)
 
         @self.tool
         async def run_skill_script(  # pyright: ignore[reportUnusedFunction]
             ctx: RunContext[Any],
             skill_name: str,
             script_name: str,
-            args: list[str] | None = None,
+            args: dict[str, Any] | None = None,
         ) -> str:
             """Execute a script provided by a skill.
 
@@ -371,8 +473,8 @@ class SkillsToolset(FunctionToolset):
                 ctx: Run context (required by toolset protocol).
                 skill_name: Exact name of the skill (from list_skills or load_skill).
                 script_name: Exact script name as listed in load_skill output (without .py extension).
-                args: Command-line arguments as specified in load_skill instructions.
-                    Include positional args, flags, and values in order (e.g., ["--format", "json", "input.txt"]).
+                args: Named arguments as a dictionary matching the script's parameter schema.
+                    Keys should match parameter names from the script's schema.
 
             Returns:
                 Script output including both stdout and stderr.
@@ -381,7 +483,18 @@ class SkillsToolset(FunctionToolset):
                 raise SkillNotFoundError(f"Skill '{skill_name}' not found.")
 
             skill = self._skills[skill_name]
-            return await skill.run_script(ctx, script_name, args)
+
+            # Find the script
+            script = self._find_skill_script(skill, script_name)
+
+            if script is None:
+                available = [s.name for s in skill.scripts] if skill.scripts else []
+                raise SkillResourceNotFoundError(
+                    f"Script '{script_name}' not found in skill '{skill_name}'. Available: {available}"
+                )
+
+            # Use script.run() interface - implementation handles the details
+            return await script.run(ctx=ctx, args=args)
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         """Return instructions to inject into the agent's system prompt.
@@ -403,7 +516,7 @@ class SkillsToolset(FunctionToolset):
         for skill in sorted(self._skills.values(), key=lambda s: s.name):
             skills_list_lines.append('<skill>')
             skills_list_lines.append(f'<name>{skill.name}</name>')
-            skills_list_lines.append(f'<description>{skill.metadata.description}</description>')
+            skills_list_lines.append(f'<description>{skill.description}</description>')
             if skill.uri:
                 skills_list_lines.append(f'<path>{skill.uri}</path>')
             skills_list_lines.append('</skill>')

@@ -1,7 +1,6 @@
 """Tests for skills toolset."""
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -9,10 +8,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets.skills import (
-    CallableSkillScriptExecutor,
-    LocalSkillScriptExecutor,
     Skill,
-    SkillMetadata,
     SkillNotFoundError,
     SkillResource,
     SkillScript,
@@ -85,38 +81,24 @@ Skill with executable scripts.
     scripts_dir = skill3_dir / 'scripts'
     scripts_dir.mkdir()
     (scripts_dir / 'hello.py').write_text("""#!/usr/bin/env python3
-import sys
-print(f"Hello, {sys.argv[1] if len(sys.argv) > 1 else 'World'}!")
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--name', type=str, default='World')
+args = parser.parse_args()
+print(f"Hello, {args.name}!")
 """)
     (scripts_dir / 'echo.py').write_text("""#!/usr/bin/env python3
-import sys
-print(' '.join(sys.argv[1:]))
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--message', type=str, required=True)
+args = parser.parse_args()
+print(args.message)
 """)
 
     return tmp_path
 
 
 # ==================== Type Tests ====================
-
-
-def test_skill_metadata_creation() -> None:
-    """Test creating SkillMetadata with required fields."""
-    metadata = SkillMetadata(name='test-skill', description='A test skill')
-
-    assert metadata.name == 'test-skill'
-    assert metadata.description == 'A test skill'
-    assert metadata.extra is None
-
-
-def test_skill_metadata_with_extra_fields() -> None:
-    """Test SkillMetadata with additional fields."""
-    metadata = SkillMetadata(
-        name='test-skill', description='A test skill', extra={'version': '1.0.0', 'author': 'Test Author'}
-    )
-
-    assert metadata.extra is not None
-    assert metadata.extra['version'] == '1.0.0'
-    assert metadata.extra['author'] == 'Test Author'
 
 
 def test_skill_resource_creation() -> None:
@@ -139,29 +121,51 @@ def test_skill_script_creation() -> None:
 
 def test_skill_creation() -> None:
     """Test creating a complete Skill."""
-    from pydantic_ai.toolsets.skills import LocalSkill
-
-    metadata = SkillMetadata(name='test-skill', description='A test skill')
     resource = SkillResource(name='FORMS.md', uri='/tmp/skill/FORMS.md')
     script = SkillScript(name='test_script', uri='/tmp/skill/scripts/test_script.py', skill_name='test-skill')
 
-    skill = LocalSkill(
+    skill = Skill(
         name='test-skill',
-        uri='/tmp/skill',
-        metadata=metadata,
+        description='A test skill',
         content='# Instructions\n\nTest instructions.',
+        uri='/tmp/skill',
         resources=[resource],
         scripts=[script],
     )
 
     assert skill.name == 'test-skill'
     assert skill.uri == '/tmp/skill'
-    assert skill.metadata.name == 'test-skill'
+    assert skill.description == 'A test skill'
     assert skill.content == '# Instructions\n\nTest instructions.'
-    assert skill.resources is not None
     assert len(skill.resources) == 1
-    assert skill.scripts is not None
     assert len(skill.scripts) == 1
+
+
+def test_skill_metadata() -> None:
+    """Test Skill metadata field."""
+    skill = Skill(
+        name='test-skill',
+        description='A test skill',
+        content='# Instructions\n\nTest instructions.',
+        metadata={'version': '1.0.0', 'author': 'Test Author'},
+    )
+
+    assert skill.metadata == {'version': '1.0.0', 'author': 'Test Author'}
+
+
+def test_skill_extra_is_deprecated() -> None:
+    """Test that Skill.extra is deprecated and returns metadata."""
+    skill = Skill(
+        name='test-skill',
+        description='A test skill',
+        content='# Instructions\n\nTest instructions.',
+        metadata={'version': '1.0.0', 'author': 'Test Author'},
+    )
+
+    with pytest.warns(DeprecationWarning, match='Use `metadata` instead'):
+        result = skill.extra
+
+    assert result == {'version': '1.0.0', 'author': 'Test Author'}
 
 
 # ==================== Parsing Tests ====================
@@ -526,7 +530,6 @@ def test_toolset_tool_definitions(sample_skills_dir: Path) -> None:
     """Test SkillsToolset tool definitions with snapshot."""
     from pydantic_ai._run_context import RunContext
     from pydantic_ai._tool_manager import ToolManager
-    from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import ToolDefinition
     from pydantic_ai.usage import RunUsage
 
@@ -561,8 +564,8 @@ def test_toolset_tool_definitions(sample_skills_dir: Path) -> None:
 
 Only use this tool if the available skills are not in your system prompt.</summary>
 <returns>
-<description>Dictionary mapping skill names to their descriptions.
-    An empty dictionary if no skills are available.</description>
+<description>Dictionary mapping skill names to brief descriptions.
+Empty dictionary if no skills are available.</description>
 </returns>\
 """,
                 parameters_json_schema={
@@ -574,18 +577,22 @@ Only use this tool if the available skills are not in your system prompt.</summa
             ToolDefinition(
                 name='load_skill',
                 description="""\
-<summary>Load full instructions for a skill.
+<summary>Load complete instructions and metadata for a specific skill.
 
-Always load the skill before using read_skill_resource
-or run_skill_script to understand the skill's capabilities, available
-resources, scripts, and their usage patterns.</summary>
+Do NOT infer or guess resource names or script names - they must come from
+the output of this tool.</summary>
 <returns>
-<description>Full skill instructions including available resources and scripts.</description>
+<type>Complete skill documentation including</type>
+<description>
+- Skill description and purpose
+- List of available resource files (e.g., FORMS.md, REFERENCE.md)
+- List of available scripts with their names
+- Detailed usage instructions and examples</description>
 </returns>\
 """,
                 parameters_json_schema={
                     'additionalProperties': False,
-                    'properties': {'skill_name': {'description': 'Name of the skill to load.', 'type': 'string'}},
+                    'properties': {'skill_name': {'description': 'Exact name of the skill.', 'type': 'string'}},
                     'required': ['skill_name'],
                     'type': 'object',
                 },
@@ -593,21 +600,38 @@ resources, scripts, and their usage patterns.</summary>
             ToolDefinition(
                 name='read_skill_resource',
                 description="""\
-<summary>Read a resource file from a skill (e.g., FORMS.md, REFERENCE.md).
+<summary>Read a resource file from a skill or invoke a callable resource.
 
-Call load_skill first to see which resources are available.</summary>
+Do NOT guess or infer resource names, use load_skill first to get the resource names.
+
+Resources contain supplementary documentation like form templates,
+reference guides, or data schemas. They can be static content or dynamic callables.</summary>
 <returns>
-<description>The resource file content.</description>
+<description>Complete content of the requested resource.</description>
 </returns>\
 """,
                 parameters_json_schema={
                     'additionalProperties': False,
                     'properties': {
                         'resource_name': {
-                            'description': 'The resource filename (e.g., "FORMS.md").',
+                            'description': """\
+Exact resource filename as listed in load_skill output
+(e.g., "FORMS.md", "REFERENCE.md").\
+""",
                             'type': 'string',
                         },
-                        'skill_name': {'description': 'Name of the skill.', 'type': 'string'},
+                        'skill_name': {
+                            'description': 'Exact name of the skill (from list_skills or load_skill).',
+                            'type': 'string',
+                        },
+                        'args': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'description': """\
+Named arguments as a dictionary matching the resource's parameter schema.
+Keys should match parameter names from the resource's schema.\
+""",
+                        },
                     },
                     'required': ['skill_name', 'resource_name'],
                     'type': 'object',
@@ -616,28 +640,33 @@ Call load_skill first to see which resources are available.</summary>
             ToolDefinition(
                 name='run_skill_script',
                 description="""\
-<summary>Execute a skill script with command-line arguments.
+<summary>Execute a script provided by a skill.
 
-Call load_skill first to understand the script's expected arguments,
-usage patterns, and example invocations. Running scripts without
-loading instructions first will likely fail.</summary>
+Do NOT guess or infer script names or arguments.
+Use load_skill first to get the script names and usage instructions.</summary>
 <returns>
-<description>The script's output (stdout and stderr combined).</description>
+<description>Script output including both stdout and stderr.</description>
 </returns>\
 """,
                 parameters_json_schema={
                     'additionalProperties': False,
                     'properties': {
                         'args': {
-                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
-                            'description': 'Optional list of command-line arguments (positional args, flags, values).',
+                            'description': """\
+Named arguments as a dictionary matching the script's parameter schema.
+Keys should match parameter names from the script's schema.\
+""",
                         },
                         'script_name': {
-                            'description': 'The script name (without .py extension).',
+                            'description': 'Exact script name as listed in load_skill output (without .py extension).',
                             'type': 'string',
                         },
-                        'skill_name': {'description': 'Name of the skill.', 'type': 'string'},
+                        'skill_name': {
+                            'description': 'Exact name of the skill (from list_skills or load_skill).',
+                            'type': 'string',
+                        },
                     },
                     'required': ['skill_name', 'script_name'],
                     'type': 'object',
@@ -653,7 +682,7 @@ def test_toolset_get_skill(sample_skills_dir: Path) -> None:
 
     skill = toolset.get_skill('skill-one')
     assert skill.name == 'skill-one'
-    assert skill.metadata.description == 'First test skill for basic operations'
+    assert skill.description == 'First test skill for basic operations'
 
 
 def test_toolset_get_skill_not_found(sample_skills_dir: Path) -> None:
@@ -675,9 +704,9 @@ async def test_list_skills_tool(sample_skills_dir: Path) -> None:
     assert 'skill-three' in toolset.skills
 
     # Verify descriptions
-    assert toolset.skills['skill-one'].metadata.description == 'First test skill for basic operations'
-    assert toolset.skills['skill-two'].metadata.description == 'Second test skill with resources'
-    assert toolset.skills['skill-three'].metadata.description == 'Third test skill with executable scripts'
+    assert toolset.skills['skill-one'].description == 'First test skill for basic operations'
+    assert toolset.skills['skill-two'].description == 'Second test skill with resources'
+    assert toolset.skills['skill-three'].description == 'Third test skill with executable scripts'
 
 
 async def test_load_skill_tool(sample_skills_dir: Path) -> None:
@@ -689,7 +718,7 @@ async def test_load_skill_tool(sample_skills_dir: Path) -> None:
     skill = toolset.get_skill('skill-one')
     assert skill is not None
     assert skill.name == 'skill-one'
-    assert 'First test skill for basic operations' in skill.metadata.description
+    assert 'First test skill for basic operations' in skill.description
     assert 'Use this skill for basic operations' in skill.content
 
 
@@ -773,7 +802,6 @@ async def test_run_skill_script_not_found(sample_skills_dir: Path) -> None:
 
 async def test_get_instructions_returns_system_prompt(sample_skills_dir: Path) -> None:
     """Test that get_instructions() returns the skills system prompt."""
-    from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import RunContext
     from pydantic_ai.usage import RunUsage
 
@@ -802,7 +830,6 @@ async def test_get_instructions_returns_system_prompt(sample_skills_dir: Path) -
 
 async def test_get_instructions_empty_toolset() -> None:
     """Test that get_instructions() returns None for empty toolset."""
-    from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import RunContext
     from pydantic_ai.usage import RunUsage
 
@@ -816,7 +843,6 @@ async def test_get_instructions_empty_toolset() -> None:
 
 async def test_get_instructions_with_custom_template(sample_skills_dir: Path) -> None:
     """Test get_instructions uses custom template when provided."""
-    from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import RunContext
     from pydantic_ai.usage import RunUsage
 
@@ -852,7 +878,6 @@ async def test_skills_instructions_injected_into_agent(sample_skills_dir: Path) 
     """Test that SkillsToolset instructions are automatically injected into agent runs."""
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelRequest
-    from pydantic_ai.models.test import TestModel
 
     toolset = SkillsToolset(directories=[sample_skills_dir])
     agent: Agent[None, str] = Agent(TestModel(), toolsets=[toolset])
@@ -870,164 +895,6 @@ async def test_skills_instructions_injected_into_agent(sample_skills_dir: Path) 
 # ==================== New Architecture Tests ====================
 
 
-async def test_skill_read_resource(sample_skills_dir: Path) -> None:
-    """Test reading a resource from a Skill."""
-    from pydantic_ai import RunContext
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.usage import RunUsage
-
-    skills = _discover_skills(sample_skills_dir)
-    skill_two = next(s for s in skills if s.name == 'skill-two')
-
-    # Read a resource
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    resource_content = await skill_two.read_resource(ctx, 'FORMS.md')
-
-    assert 'Forms' in resource_content
-    assert 'Form filling guide' in resource_content
-
-
-async def test_skill_run_script(sample_skills_dir: Path) -> None:
-    """Test running a script via a Skill."""
-    from pydantic_ai import RunContext
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.usage import RunUsage
-
-    skills = _discover_skills(sample_skills_dir)
-    skill_three = next(s for s in skills if s.name == 'skill-three')
-
-    # Run a script
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    output = await skill_three.run_script(ctx, 'hello', args=['World'])
-
-    assert 'Hello, World!' in output
-
-
-async def test_skill_run_script_with_custom_executor(sample_skills_dir: Path) -> None:
-    """Test custom executor with Skill."""
-    from pydantic_ai import RunContext
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.toolsets.skills import SkillScript
-    from pydantic_ai.usage import RunUsage
-
-    # Create a custom executor as a callable
-    def custom_executor(skill: Skill, script: SkillScript, args: list[str] | None = None) -> str:
-        return f'Custom execution of {script.name} from skill {skill.name}'
-
-    executor = CallableSkillScriptExecutor(custom_executor)
-    skills = _discover_skills(sample_skills_dir)
-    skill_three = next(s for s in skills if s.name == 'skill-three')
-
-    # Attach custom executor
-    skill_three.script_executor = executor
-
-    # Run a script - should use custom executor
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    output = await skill_three.run_script(ctx, 'hello', args=['Test'])
-
-    assert 'Custom execution of hello from skill skill-three' in output
-
-
-async def test_skill_run_script_with_custom_python(sample_skills_dir: Path) -> None:
-    """Test Skill with custom Python executable."""
-    import sys
-
-    from pydantic_ai import RunContext
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.usage import RunUsage
-
-    # Use current Python executable explicitly
-    executor = LocalSkillScriptExecutor(python_executable=sys.executable)
-    skills = _discover_skills(sample_skills_dir)
-    skill_three = next(s for s in skills if s.name == 'skill-three')
-
-    # Attach executor
-    skill_three.script_executor = executor
-
-    # Run a script
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    output = await skill_three.run_script(ctx, 'echo', args=['test', 'message'])
-
-    assert 'test message' in output
-
-
-async def test_skills_directory_with_callable_executor(sample_skills_dir: Path) -> None:
-    """Test SkillsDirectory with a callable script executor."""
-    from pydantic_ai.usage import RunUsage
-
-    # Track execution
-    executed_scripts: list[dict[str, Any]] = []
-
-    async def custom_executor(skill: Skill, script: SkillScript, args: list[str] | None = None) -> str:
-        """Custom async executor function."""
-        executed_scripts.append({'skill': skill.name, 'script': script.name, 'args': args})
-        return f'Custom execution of {script.name} with args {args}'
-
-    # Create SkillsDirectory with callable executor
-    skills_dir = SkillsDirectory(
-        path=sample_skills_dir,
-        script_executor=custom_executor,
-    )
-
-    # Load a skill with scripts
-    skill = skills_dir.load_skill(next(uri for uri in skills_dir.skills if 'skill-three' in uri))
-
-    # Run a script
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    output = await skill.run_script(ctx, 'echo', args=['hello'])
-
-    # Verify custom executor was called
-    assert len(executed_scripts) == 1
-    assert executed_scripts[0]['skill'] == 'skill-three'
-    assert executed_scripts[0]['script'] == 'echo'
-    assert executed_scripts[0]['args'] == ['hello']
-    assert 'Custom execution' in output
-
-
-async def test_skills_directory_with_sync_callable_executor(sample_skills_dir: Path) -> None:
-    """Test SkillsDirectory with a synchronous callable script executor."""
-    from pydantic_ai.usage import RunUsage
-
-    # Track execution
-    executed_scripts: list[dict[str, str]] = []
-
-    def sync_executor(skill: Skill, script: SkillScript, args: list[str] | None = None) -> str:
-        """Custom sync executor function."""
-        executed_scripts.append({'skill': skill.name, 'script': script.name})
-        return f'Sync execution of {script.name}'
-
-    # Create SkillsDirectory with sync callable executor
-    skills_dir = SkillsDirectory(
-        path=sample_skills_dir,
-        script_executor=sync_executor,
-    )
-
-    # Load a skill with scripts
-    skill = skills_dir.load_skill(next(uri for uri in skills_dir.skills if 'skill-three' in uri))
-
-    # Run a script
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    output = await skill.run_script(ctx, 'echo')
-
-    # Verify sync executor was called
-    assert len(executed_scripts) == 1
-    assert 'Sync execution' in output
-
-
-async def test_skills_directory_with_custom_timeout(sample_skills_dir: Path) -> None:
-    """Test SkillsDirectory with custom script executor timeout."""
-    # Create SkillsDirectory with custom executor that has timeout
-    executor = LocalSkillScriptExecutor(timeout=60)
-    skills_dir = SkillsDirectory(
-        path=sample_skills_dir,
-        script_executor=executor,
-    )
-
-    # Load a skill and verify it can execute scripts (timeout is configured in executor)
-    skill = skills_dir.load_skill(next(uri for uri in skills_dir.skills if 'skill-three' in uri))
-    assert skill is not None
-
-
 def test_skills_toolset_with_directories(sample_skills_dir: Path) -> None:
     """Test SkillsToolset with directories parameter."""
     from pydantic_ai.toolsets.skills import SkillsToolset
@@ -1043,20 +910,20 @@ def test_skills_toolset_with_directories(sample_skills_dir: Path) -> None:
 
 def test_skills_toolset_with_skills_list() -> None:
     """Test SkillsToolset with pre-loaded skills list."""
-    from pydantic_ai.toolsets.skills import LocalSkill, SkillsToolset
+    from pydantic_ai.toolsets.skills import SkillsToolset
 
     # Create custom skills
-    skill1 = LocalSkill(
+    skill1 = Skill(
         name='custom-skill-1',
-        uri='',
-        metadata=SkillMetadata(name='custom-skill-1', description='First custom skill'),
+        description='First custom skill',
         content='Custom skill content 1',
-    )
-    skill2 = LocalSkill(
-        name='custom-skill-2',
         uri='',
-        metadata=SkillMetadata(name='custom-skill-2', description='Second custom skill'),
+    )
+    skill2 = Skill(
+        name='custom-skill-2',
+        description='Second custom skill',
         content='Custom skill content 2',
+        uri='',
     )
 
     toolset = SkillsToolset(skills=[skill1, skill2])
@@ -1129,20 +996,20 @@ Another skill from a different source.
 
 def test_toolset_with_both_skills_and_directories(sample_skills_dir: Path) -> None:
     """Test toolset with both programmatic skills and directories."""
-    from pydantic_ai.toolsets.skills import LocalSkill, SkillMetadata, SkillsToolset
+    from pydantic_ai.toolsets.skills import SkillsToolset
 
     # Create programmatic skills
-    prog_skill1 = LocalSkill(
+    prog_skill1 = Skill(
         name='programmatic-skill-one',
-        uri='memory://prog1',
-        metadata=SkillMetadata(name='programmatic-skill-one', description='Programmatic skill 1'),
+        description='Programmatic skill 1',
         content='Programmatic instructions 1',
+        uri='memory://prog1',
     )
-    prog_skill2 = LocalSkill(
+    prog_skill2 = Skill(
         name='programmatic-skill-two',
-        uri='memory://prog2',
-        metadata=SkillMetadata(name='programmatic-skill-two', description='Programmatic skill 2'),
+        description='Programmatic skill 2',
         content='Programmatic instructions 2',
+        uri='memory://prog2',
     )
 
     toolset = SkillsToolset(skills=[prog_skill1, prog_skill2], directories=[sample_skills_dir])
@@ -1157,7 +1024,7 @@ def test_toolset_with_both_skills_and_directories(sample_skills_dir: Path) -> No
 @pytest.mark.filterwarnings('ignore:Duplicate skill.*:UserWarning')
 def test_toolset_with_skills_directory_instances(sample_skills_dir: Path, tmp_path: Path) -> None:
     """Test toolset with SkillsDirectory instances."""
-    from pydantic_ai.toolsets.skills import SkillsDirectory, SkillsToolset
+    from pydantic_ai.toolsets.skills import SkillsToolset
 
     # Create second directory
     second_dir = tmp_path / 'second'
@@ -1185,7 +1052,7 @@ Extra content.
 @pytest.mark.filterwarnings('ignore:Duplicate skill.*:UserWarning')
 def test_toolset_mixed_directory_types(sample_skills_dir: Path, tmp_path: Path) -> None:
     """Test toolset with mixed directory types (str, Path, SkillsDirectory)."""
-    from pydantic_ai.toolsets.skills import SkillsDirectory, SkillsToolset
+    from pydantic_ai.toolsets.skills import SkillsToolset
 
     # Create second directory
     second_dir = tmp_path / 'second'
@@ -1218,7 +1085,7 @@ Mixed content.
 @pytest.mark.filterwarnings('ignore:Duplicate skill.*:UserWarning')
 def test_toolset_combined_with_duplicate_override(tmp_path: Path) -> None:
     """Test that directory skills override programmatic skills with same name."""
-    from pydantic_ai.toolsets.skills import LocalSkill, SkillMetadata, SkillsToolset
+    from pydantic_ai.toolsets.skills import SkillsToolset
 
     # Create directory with skill
     skill_dir = tmp_path / 'skills'
@@ -1233,11 +1100,11 @@ Directory content.
 """)
 
     # Create programmatic skill with same name
-    prog_skill = LocalSkill(
+    prog_skill = Skill(
         name='override-skill',
-        uri='memory://override',
-        metadata=SkillMetadata(name='override-skill', description='Programmatic version'),
+        description='Programmatic version',
         content='Programmatic content',
+        uri='memory://override',
     )
 
     # Directory skills should override programmatic skills
@@ -1251,16 +1118,15 @@ Directory content.
 
 async def test_toolset_combined_mode_tools(sample_skills_dir: Path) -> None:
     """Test that tools work correctly with combined mode."""
-    from pydantic_ai.toolsets.skills import LocalSkill, SkillMetadata, SkillsToolset
+    from pydantic_ai.toolsets.skills import SkillsToolset
 
-    prog_skill = LocalSkill(
+    prog_skill = Skill(
         name='prog-test',
-        uri='memory://test',
-        metadata=SkillMetadata(name='prog-test', description='Test skill'),
+        description='Test skill',
         content='Test instructions',
+        uri='memory://test',
     )
 
-    from pydantic_ai.models.test import TestModel
     from pydantic_ai.usage import RunUsage
 
     toolset = SkillsToolset(skills=[prog_skill], directories=[sample_skills_dir])

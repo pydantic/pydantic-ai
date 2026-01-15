@@ -19,20 +19,34 @@ toolset = SkillsToolset(
     directories=["./skills", "./shared-skills"]
 )
 
-# Programmatic skills (must use LocalSkill or custom Skill subclass)
-from pydantic_ai.toolsets.skills import LocalSkill, SkillMetadata
+# Programmatic skills with decorators
+from pydantic_ai.toolsets.skills import Skill, SkillResource
+from pydantic_ai import RunContext
 
-custom_skill = LocalSkill(
+my_skill = Skill(
     name="my-skill",
-    uri="/path/to/custom",
-    metadata=SkillMetadata(name="my-skill", description="Custom skill"),
+    description="Custom skill",
     content="Instructions here",
+    resources=[
+        SkillResource(name="readme", content="Static readme")
+    ]
 )
-toolset = SkillsToolset(skills=[custom_skill])
+
+@my_skill.resource
+def get_config() -> str:
+    """Get configuration."""
+    return "Config data"
+
+@my_skill.script
+async def process(ctx: RunContext[MyDeps], data: str) -> str:
+    """Process data."""
+    return f"Processed: {data}"
+
+toolset = SkillsToolset(skills=[my_skill])
 
 # Combined mode: both programmatic and directory-based
 toolset = SkillsToolset(
-    skills=[custom_skill],
+    skills=[my_skill],
     directories=["./skills"]
 )
 
@@ -193,125 +207,146 @@ load_skill("arxiv-search")
 # - Available resources and scripts
 ```
 
-### 3. `read_skill_resource(skill_name, resource_name)`
+### 3. `read_skill_resource(skill_name, resource_name, args)`
 
-Reads additional resource files from a skill.
+Reads additional resources from a skill (files or callable resources).
 
 **Parameters**:
 
 - `skill_name` (str) - Name of the skill
-- `resource_name` (str) - Resource filename (e.g., "FORMS.md")
+- `resource_name` (str) - Resource name (e.g., "FORMS.md" or "get_schema")
+- `args` (dict[str, Any] | None, optional) - Named arguments for callable resources
 
-**Returns**: Content of the resource file
+**Returns**: Content of the resource (can be str, dict, or any type returned by the resource)
 
-**When to use**: When a skill references additional documentation or data files
+**When to use**: When a skill references additional documentation, data files, or dynamic resources
 
 **Example**:
 
 ```python
-# Agent reads a skill resource
+# File-based resource
 read_skill_resource("web-research", "FORMS.md")
 
-# Returns content of the FORMS.md file
+# Callable resource (no args)
+read_skill_resource("data-skill", "get_config")
+
+# Callable resource with args
+read_skill_resource("data-skill", "get_samples", args={"count": 10})
 ```
 
 ### 4. `run_skill_script(skill_name, script_name, args)`
 
-Executes a Python script from a skill.
+Executes a Python script from a skill (file-based or programmatic).
 
 **Parameters**:
 
 - `skill_name` (str) - Name of the skill
 - `script_name` (str) - Script name without .py extension
-- `args` (list[str] | None, optional) - Command-line arguments passed to the script
+- `args` (dict[str, Any] | None, optional) - Named arguments as dictionary matching the script's parameter schema
 
-**Returns**: Script output (stdout and stderr combined)
+**Returns**: Script output (can be str, dict, or any JSON-serializable type)
 
 **When to use**: When a skill needs to execute custom code
 
 **Example**:
 
 ```python
-# Agent executes a script
+# File-based script (subprocess execution with named arguments)
 run_skill_script(
     skill_name="arxiv-search",
     script_name="arxiv_search",
-    args=["machine learning", "--max-papers", "3"]
+    args={"query": "machine learning", "max-papers": 3}
 )
 
-# Returns script output with search results
+# Programmatic script (direct function call)
+run_skill_script(
+    skill_name="data-processor",
+    script_name="load_dataset",
+    args={"path": "data.csv"}
+)
 ```
+
+!!! note "Argument Format for File-Based Scripts"
+    For file-based scripts, arguments are passed as **named command-line arguments**.
+    Dictionary keys are used exactly as provided. For example:
+    ```python
+    args={"query": "test", "max-papers": 5}
+    ```
+    is converted to:
+    ```bash
+    python script.py --query "test" --max-papers 5
+    ```
+    
+    **Important:** All file-based scripts must use named arguments (argparse or similar).
+    Positional arguments are not supported.
 
 ## Skill Types
 
-The skills framework uses an abstract base class pattern:
+Skills can be created in two ways:
 
-- [`Skill`][pydantic_ai.toolsets.skills.Skill]: Abstract base class defining the interface for all skills. Subclasses must implement:
-  - `read_resource(ctx, resource_uri)`: Read a resource file from the skill
-  - `run_script(ctx, script_uri, args)`: Execute a script from the skill
-- [`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill]: Filesystem-based implementation that reads resources and runs scripts from local directories
+### File-Based Skills
 
-This design allows you to create custom skill implementations (e.g., for remote skills, database-backed skills, or skills with custom execution environments).
+Discovered from filesystem directories using [`SkillsDirectory`][pydantic_ai.toolsets.skills.SkillsDirectory]:
 
-### Skill URI Semantics
+- Resources are loaded from markdown files
+- Scripts are Python files executed via subprocess (with JSON stdin)
+- Automatically discovered from directory structure
 
-Every skill has a `uri` field that identifies its location:
+### Programmatic Skills
 
-- **For [`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill]**: Absolute filesystem path to skill directory
+Created using the [`Skill`][pydantic_ai.toolsets.skills.Skill] class:
 
-  ```python
-  skill.uri  # "/Users/you/project/skills/my-skill"
-  ```
+- Resources can be static strings or callable functions
+- Scripts are Python functions (sync or async)
+- Full access to `RunContext` and dependencies
 
-- **For custom skills**: Any identifier (URLs, database IDs, etc.)
+**Key differences:**
 
-  ```python
-  custom_skill.uri  # "https://api.example.com/skills/analyzer"
-  database_skill.uri  # "db://skills/12345"
-  ```
+| Feature | File-Based | Programmatic |
+|---------|------------|--------------|
+| Resource type | Files on disk | Static strings or callables |
+| Script type | Subprocess execution | Direct function calls |
+| Script arguments | Named CLI arguments (e.g., `--query value`) | Function parameters |
+| Dependencies | Not available | Full `RunContext` access |
+| Discovery | Automatic | Manual creation |
+| Execution | Slower (subprocess) | Faster (in-process) |
+
+**Example comparison:**
+
+```python
+# File-based skill
+# Script executed as: python arxiv_search.py --query "transformers" --max-papers 5
+toolset = SkillsToolset(directories=["./skills"])
+
+# Programmatic skill
+@my_skill.script
+async def arxiv_search(ctx: RunContext[MyDeps], query: str, max_papers: int = 10) -> str:
+    # Direct function call with dependency access
+    return await ctx.deps.api.search_arxiv(query, max_papers)
+
+toolset = SkillsToolset(skills=[my_skill])
+```
+
+### Skill URI
+
+Every skill has an optional `uri` field that identifies its location:
+
+- **For file-based skills**: Absolute filesystem path to skill directory
+- **For programmatic skills**: Optional identifier (URLs, database IDs, or None)
+
+```python
+# File-based skill
+file_skill.uri  # "/Users/you/project/skills/my-skill"
+
+# Programmatic skill (optional)
+prog_skill = Skill(name="processor", description="...", content="...", uri=None)
+```
 
 **The URI is used for:**
 
-- Script execution working directory (for [`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill])
 - Error messages and logging
-- [`SkillsDirectory.skills`][pydantic_ai.toolsets.skills.SkillsDirectory.skills] dictionary keys
-- Identifying skills programmatically
-
-!!! note
-    For [`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill], the URI is the resolved absolute path, not the original path provided to discovery.
-
-### Creating Custom Skill Implementations
-
-```python
-from pydantic_ai.toolsets.skills import Skill, SkillMetadata
-from pydantic_ai import RunContext
-
-class RemoteSkill(Skill):
-    """Skill implementation that fetches resources and runs scripts remotely."""
-
-    async def read_resource(self, ctx: RunContext, resource_uri: str) -> str:
-        # Implement remote resource fetching
-        response = await http_client.get(f"{self.uri}/resources/{resource_uri}")
-        return response.text
-
-    async def run_script(self, ctx: RunContext, script_uri: str, args: list[str] | None = None) -> str:
-        # Implement remote script execution
-        response = await http_client.post(
-            f"{self.uri}/scripts/{script_uri}",
-            json={"args": args}
-        )
-        return response.text
-
-# Use custom skill with toolset
-remote_skill = RemoteSkill(
-    name="remote-analyzer",
-    uri="https://api.example.com/skills/analyzer",
-    metadata=SkillMetadata(name="remote-analyzer", description="Remote data analysis"),
-    content="Instructions for remote analyzer...",
-)
-
-toolset = SkillsToolset(skills=[remote_skill])
-```
+- Skill identification in toolset
+- Working directory for file-based script execution
 
 ## Skill Discovery
 

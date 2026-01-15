@@ -16,26 +16,30 @@
         - load_skill
         - skills
 
-::: pydantic_ai.toolsets.skills.LocalSkill
+::: pydantic_ai.toolsets.skills.Skill
     options:
       members:
         - __init__
-        - read_resource
-        - run_script
+        - resource
+        - script
+
+::: pydantic_ai.toolsets.skills.SkillResource
+    options:
+      members:
+        - __init__
+        - load
+
+::: pydantic_ai.toolsets.skills.SkillScript
+    options:
+      members:
+        - __init__
+        - run
 
 ::: pydantic_ai.toolsets.skills.SkillScriptExecutor
 
 ::: pydantic_ai.toolsets.skills.LocalSkillScriptExecutor
 
 ::: pydantic_ai.toolsets.skills.CallableSkillScriptExecutor
-
-::: pydantic_ai.toolsets.skills.Skill
-
-::: pydantic_ai.toolsets.skills.SkillMetadata
-
-::: pydantic_ai.toolsets.skills.SkillResource
-
-::: pydantic_ai.toolsets.skills.SkillScript
 
 ::: pydantic_ai.toolsets.skills.SkillException
 

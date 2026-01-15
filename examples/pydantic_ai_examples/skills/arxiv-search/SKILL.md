@@ -21,20 +21,20 @@ Use this skill when you need to:
 
 ### arxiv_search
 
-The `arxiv_search` script accepts the following arguments:
+The `arxiv_search` script accepts the following named arguments:
 
-- First argument (required): Search query string (e.g., "neural networks protein structure", "single cell RNA-seq")
+- `--query` (required): Search query string (e.g., "neural networks protein structure", "single cell RNA-seq")
 - `--max-papers` (optional): Maximum number of papers to retrieve (default: 10)
 
 ### Usage Pattern
 
-Use the `run_skill_script` tool to execute the `arxiv_search` script. For example:
+Use the `run_skill_script` tool to execute the `arxiv_search` script. Pass arguments as a dictionary with named keys:
 
 ```python
 run_skill_script(
     skill_name="arxiv-search",
     script_name="arxiv_search",
-    args=["your search query", "--max-papers", "5"]
+    args={"query": "your search query", "max-papers": 5}
 )
 ```
 
@@ -44,7 +44,7 @@ Search for computational biology papers (default 10 results):
 run_skill_script(
     skill_name="arxiv-search",
     script_name="arxiv_search",
-    args=["protein folding prediction"]
+    args={"query": "protein folding prediction"}
 )
 ```
 
@@ -54,7 +54,7 @@ Search for machine learning papers with limited results:
 run_skill_script(
     skill_name="arxiv-search",
     script_name="arxiv_search",
-    args=["transformer attention mechanism", "--max-papers", "3"]
+    args={"query": "transformer attention mechanism", "max-papers": 3}
 )
 ```
 

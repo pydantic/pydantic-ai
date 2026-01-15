@@ -46,7 +46,12 @@ def query_arxiv(query: str, max_papers: int = 10) -> str:
 def main() -> None:
     """Main function to parse arguments and perform arXiv search."""
     parser = argparse.ArgumentParser(description='Search arXiv for research papers')
-    parser.add_argument('query', type=str, help='Search query string')
+    parser.add_argument(
+        '--query',
+        type=str,
+        required=True,
+        help='Search query string',
+    )
     parser.add_argument(
         '--max-papers',
         type=int,
