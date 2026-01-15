@@ -321,6 +321,40 @@ class TestCohere:
         with pytest.raises(ModelHTTPError, match='not found,'):
             await embedder.embed_query('Hello, world!')
 
+    async def test_query_with_cohere_truncate(self, co_api_key: str):
+        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!', settings={'cohere_truncate': 'END'})  # pyright: ignore[reportArgumentType]
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=4),
+                model_name='embed-v4.0',
+                timestamp=IsDatetime(),
+                provider_name='cohere',
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_query_with_truncate(self, co_api_key: str):
+        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!', settings={'truncate': True})
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=4),
+                model_name='embed-v4.0',
+                timestamp=IsDatetime(),
+                provider_name='cohere',
+                provider_response_id=IsStr(),
+            )
+        )
+
 
 @pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
 @pytest.mark.vcr
@@ -377,6 +411,22 @@ class TestVoyageAI:
         embedder = Embedder(model)
         with pytest.raises(ModelAPIError, match='not supported'):
             await embedder.embed_query('Hello, world!')
+
+    async def test_query_with_voyageai_truncation(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!', settings={'voyageai_truncation': True})  # pyright: ignore[reportArgumentType]
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=3),
+                model_name='voyage-3.5',
+                timestamp=IsDatetime(),
+                provider_name='voyageai',
+            )
+        )
 
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
