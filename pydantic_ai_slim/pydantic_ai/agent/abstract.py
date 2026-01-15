@@ -726,9 +726,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         agent = Agent('openai:gpt-4o')
 
         def main():
-            response = agent.run_stream_sync('What is the capital of the UK?')
-            print(response.get_output())
-            #> The capital of the UK is London.
+            with agent.run_stream_sync('What is the capital of the UK?') as response:
+                print(response.get_output())
+                #> The capital of the UK is London.
         ```
 
         Args:

@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from inline_snapshot import snapshot
-from logfire.testing import CaptureLogfire
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -440,6 +439,7 @@ async def test_streamed_text_stream():
         )
 
 
+@pytest.mark.filterwarnings('ignore:Using run_stream_sync.*:DeprecationWarning')
 def test_streamed_text_stream_sync():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 
@@ -3166,6 +3166,7 @@ async def test_run_stream_events():
     )
 
 
+@pytest.mark.filterwarnings('ignore:Using run_stream_sync.*:DeprecationWarning')
 def test_structured_response_sync_validation():
     async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.output_tools is not None
@@ -3276,6 +3277,44 @@ async def test_streamed_run_result_sync():
         )
 
 
+async def test_streamed_run_result_sync_context_manager_with_direct_result():
+    """Test that StreamedRunResultSync context manager works with a direct StreamedRunResult."""
+    m = TestModel(custom_output_text='Hello world')
+
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        output = await result.get_output()
+        assert output == snapshot('Hello world')
+        # Create sync wrapper with direct StreamedRunResult (not an async generator)
+        result_sync = StreamedRunResultSync(result)
+        # Use context manager pattern - this exercises the branch where _stream is not set
+        with result_sync:
+            assert result_sync.all_messages() == snapshot(
+                [
+                    ModelRequest(
+                        parts=[
+                            UserPromptPart(
+                                content='Hello',
+                                timestamp=IsNow(tz=timezone.utc),
+                            )
+                        ],
+                        timestamp=IsNow(tz=timezone.utc),
+                        run_id=IsStr(),
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='Hello world')],
+                        usage=RequestUsage(input_tokens=51, output_tokens=2),
+                        model_name='test',
+                        timestamp=IsNow(tz=timezone.utc),
+                        provider_name='test',
+                        run_id=IsStr(),
+                    ),
+                ]
+            )
+
+
+@pytest.mark.filterwarnings('ignore:Using run_stream_sync.*:DeprecationWarning')
 def test_stream_output_after_get_output_sync():
     m = TestModel()
 
@@ -3334,8 +3373,8 @@ def test_run_stream_sync_instrumentation(capfire: CaptureLogfire):
 
     agent = Agent(m, instrument=True)
 
-    result = agent.run_stream_sync('Hello')
-    output = [c for c in result.stream_output()]
+    with agent.run_stream_sync('Hello') as result:
+        output = [c for c in result.stream_output()]
     assert output == snapshot(['success (no tool calls)'])
 
     assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
@@ -3384,15 +3423,20 @@ def test_run_stream_sync_instrumentation(capfire: CaptureLogfire):
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 5000000000,
+                'end_time': 4000000000,
                 'attributes': {
                     'model_name': 'test',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
-                    'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
-                    'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}],
+                    'final_result': 'success (no tool calls)',
+                    'gen_ai.usage.input_tokens': 51,
+                    'gen_ai.usage.output_tokens': 4,
+                    'pydantic_ai.all_messages': [
+                        {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]},
+                    ],
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
@@ -3400,20 +3444,81 @@ def test_run_stream_sync_instrumentation(capfire: CaptureLogfire):
                             'final_result': {'type': 'object'},
                         },
                     },
-                    'logfire.level_num': 17,
                 },
-                'events': [
-                    {
-                        'name': 'exception',
-                        'timestamp': 4000000000,
-                        'attributes': {
-                            'exception.type': 'RuntimeError',
-                            'exception.message': 'Attempted to exit cancel scope in a different task than it was entered in',
-                            'exception.stacktrace': 'RuntimeError: Attempted to exit cancel scope in a different task than it was entered in',
-                            'exception.escaped': 'False',
-                        },
-                    }
-                ],
             },
         ]
     )
+
+
+def test_run_stream_sync_context_manager():
+    """Test that run_stream_sync context manager properly handles lifecycle.
+
+    This test exercises the thread-based streaming pattern that keeps the async
+    context manager lifecycle in a single run_until_complete() call.
+    """
+    m = TestModel()
+    agent = Agent(m)
+
+    chunks: list[str] = []
+    with agent.run_stream_sync('Hello') as result:
+        for chunk in result.stream_output():
+            chunks.append(chunk)
+
+    assert chunks == snapshot(['success (no tool calls)'])
+    # Verify we can still access data after exiting the context manager
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_run_stream_sync_context_manager_exception_in_stream():
+    """Test that exceptions during streaming are properly propagated.
+
+    This exercises the exception handling path in _run_async_stream and __enter__.
+    """
+    from pydantic_ai.models.function import DeltaToolCall
+
+    call_count = 0
+
+    async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ValueError('Stream initialization failed')
+        yield {0: DeltaToolCall(json_args='false')}  # pragma: no cover
+
+    agent = Agent(FunctionModel(stream_function=failing_stream), output_type=bool)
+
+    with pytest.raises(ValueError, match='Stream initialization failed'):
+        with agent.run_stream_sync('Hello'):
+            pass  # pragma: no cover
+
+
+def test_run_stream_sync_deprecation_warning_without_context_manager():
+    """Test that using run_stream_sync without context manager emits a deprecation warning."""
+    m = TestModel()
+    agent = Agent(m)
+
+    result = agent.run_stream_sync('Hello')
+    with pytest.warns(DeprecationWarning, match='Using run_stream_sync\\(\\) without the context manager pattern'):
+        # Any of the streaming methods should emit the warning
+        list(result.stream_output())

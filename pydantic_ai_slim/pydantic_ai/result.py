@@ -1,6 +1,9 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import inspect
+import threading
+import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -622,9 +625,39 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
 @dataclass(init=False)
 class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
-    """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods."""
+    """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods.
+
+    This class should be used as a context manager to ensure proper cleanup of resources
+    and correct OpenTelemetry instrumentation:
+
+    ```python
+    from pydantic_ai import Agent
+
+    agent = Agent('test')
+    with agent.run_stream_sync('Hello') as result:
+        for chunk in result.stream_output():
+            print(chunk)
+            #> success
+            #> success (no
+            #> success (no tool
+            #> success (no tool calls)
+    ```
+
+    When used as a context manager, the async streaming lifecycle runs in a background thread,
+    ensuring OpenTelemetry spans are properly closed with all attributes while still allowing
+    real-time streaming of chunks as they arrive.
+
+    Note: Using `run_stream_sync` without the context manager pattern will still work for
+    basic streaming, but OpenTelemetry spans may have incomplete attributes.
+    """
 
     _streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT] | None = None
+    _context_entered: bool = field(default=False, init=False)
+    # Thread-based streaming fields (used when context manager pattern is used)
+    _thread: threading.Thread | None = field(default=None, init=False)
+    _stream_ready: threading.Event = field(default_factory=threading.Event, init=False)
+    _stream_done: threading.Event = field(default_factory=threading.Event, init=False)
+    _exception: BaseException | None = field(default=None, init=False)
 
     def __init__(
         self,
@@ -635,6 +668,94 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
             self._streamed_run_result = streamed_run_result
         else:
             self._stream = streamed_run_result
+        self._context_entered = False
+        self._thread = None
+        self._stream_ready = threading.Event()
+        self._stream_done = threading.Event()
+        self._exception = None
+
+    def __enter__(self) -> StreamedRunResultSync[AgentDepsT, OutputDataT]:
+        """Enter the context manager, starting the async stream in a background thread.
+
+        When using the context manager pattern, the async context manager lifecycle
+        runs entirely in a background thread, ensuring proper OTel span handling.
+        Streaming still works normally - chunks are yielded as they arrive.
+        """
+        if self._streamed_run_result:
+            # Already have a direct StreamedRunResult, nothing to do
+            self._context_entered = True
+            return self
+
+        self._context_entered = True
+        # Start the background thread that will run the async lifecycle
+        self._thread = threading.Thread(target=self._run_async_stream, daemon=True)
+        self._thread.start()
+
+        # Wait for the stream to be ready
+        self._stream_ready.wait()
+
+        # Check if an exception occurred during initialization
+        if self._exception is not None:
+            raise self._exception
+
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        """Exit the context manager, waiting for the async stream to complete.
+
+        This ensures the async generator is properly exhausted in the background thread,
+        which triggers the cleanup of the underlying async context manager (including OTel spans).
+        """
+        if self._thread is not None:
+            # Signal that we're done consuming (in case iteration didn't complete)
+            self._stream_done.set()
+            # Wait for the background thread to complete
+            self._thread.join()
+
+        # Re-raise any exception from the background thread
+        if self._exception is not None and exc_type is None:
+            raise self._exception  # pragma: no cover
+
+    def _warn_if_not_context_manager(self) -> None:
+        """Emit a deprecation warning if streaming methods are called without using the context manager."""
+        if not self._context_entered and not self._streamed_run_result:
+            warnings.warn(
+                'Using run_stream_sync() without the context manager pattern is deprecated. '
+                'Use `with agent.run_stream_sync(...) as result:` instead for proper OpenTelemetry span handling.',
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
+    def _run_async_stream(self) -> None:
+        """Run the async stream lifecycle in a background thread.
+
+        This method runs the entire async context manager lifecycle in a single
+        run_until_complete() call, ensuring OTel context is properly maintained.
+        """
+
+        async def consume_stream() -> None:
+            try:
+                # Enter the async context manager by getting the result
+                result = await anext(self._stream)
+                self._streamed_run_result = result
+                # Signal that the stream is ready
+                self._stream_ready.set()
+
+                # Wait for the sync consumer to signal they're done
+                # We use a polling approach since we can't await a threading.Event
+                while not self._stream_done.is_set():
+                    await asyncio.sleep(0.01)
+            except BaseException as e:
+                self._exception = e
+                self._stream_ready.set()  # Signal ready even on error
+            finally:
+                # Exhaust the generator to trigger cleanup
+                try:
+                    await anext(self._stream)
+                except StopAsyncIteration:
+                    pass
+
+        _utils.get_event_loop().run_until_complete(consume_stream())
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of messages.
@@ -717,6 +838,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the response data.
         """
+        self._warn_if_not_context_manager()
         return self._async_iterator_to_sync(lambda result: result.stream_output(debounce_by=debounce_by))
 
     def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
@@ -732,6 +854,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
+        self._warn_if_not_context_manager()
         return self._async_iterator_to_sync(lambda result: result.stream_text(delta=delta, debounce_by=debounce_by))
 
     def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
@@ -745,10 +868,12 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the structured response message and whether that is the last message.
         """
+        self._warn_if_not_context_manager()
         return self._async_iterator_to_sync(lambda result: result.stream_responses(debounce_by=debounce_by))
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
+        self._warn_if_not_context_manager()
         return self._async_to_sync(lambda result: result.get_output())
 
     @asynccontextmanager
