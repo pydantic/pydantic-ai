@@ -61,7 +61,7 @@ failure_model = FunctionModel(failure_response)
 def test_init() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     assert fallback_model.model_name == snapshot('fallback:function:failure_response:,function:success_response:')
-    assert fallback_model.fully_qualified_model_name == snapshot(
+    assert fallback_model.model_id == snapshot(
         'fallback:function:function:failure_response:,function:function:success_response:'
     )
     assert fallback_model.system == 'fallback:function,function'

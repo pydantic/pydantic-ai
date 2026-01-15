@@ -135,7 +135,7 @@ async def test_llm_judge_serialization():
             return 'my-system'
 
     model = MyModel()
-    assert model.fully_qualified_model_name == 'my-system:my-model'
+    assert model.model_id == 'my-system:my-model'
 
     adapter = TypeAdapter(Evaluator)
 
