@@ -304,6 +304,23 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     vcr.register_matcher('method', method_matcher)
 
 
+def pytest_addoption(parser: Any) -> None:
+    parser.addoption(
+        '--xai-proto-json',
+        action='store_true',
+        default=False,
+        help='Include JSON representations in xAI proto cassette YAML files.',
+    )
+    # Back-compat alias:
+    parser.addoption(
+        '--xai-proto-debug-json',
+        action='store_true',
+        default=False,
+        dest='xai_proto_json',
+        help='Alias for `--xai-proto-json`.',
+    )
+
+
 @pytest.fixture(autouse=True)
 def mock_vcr_aiohttp_content(mocker: MockerFixture):
     try:
@@ -471,7 +488,18 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
 
     cassette_name = sanitize_filename(request.node.name, 240)
     cassette_path = Path(__file__).parent / 'models' / 'cassettes' / 'test_xai' / f'{cassette_name}.xai.yaml'
-    session = xai_proto_cassette_session(cassette_path)
+    record_mode: str | None
+    try:
+        # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
+        record_mode = cast(Any, request.config).getoption('record_mode')  # type: ignore[call-arg]
+    except Exception:  # pragma: no cover
+        record_mode = None
+    include_debug_json = bool(cast(Any, request.config).getoption('xai_proto_json'))  # type: ignore[call-arg]
+    session = xai_proto_cassette_session(
+        cassette_path,
+        record_mode=record_mode,
+        include_debug_json=include_debug_json,
+    )
     provider = XaiProvider(xai_client=cast(Any, session.client))
     try:
         yield provider

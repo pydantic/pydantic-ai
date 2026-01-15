@@ -15,7 +15,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from ..conftest import try_import
 
@@ -50,6 +50,62 @@ class XaiAsyncClientLike(Protocol):
 
     @property
     def files(self) -> Any: ...
+
+
+ProtoCassetteRecordMode = Literal['none', 'once', 'new_episodes', 'rewrite', 'all']
+
+
+def _truthy_env(name: str) -> bool:
+    v = __import__('os').getenv(name, '')
+    return v.lower() in {'1', 'true', 'yes'}
+
+
+def _normalize_record_mode(mode: str | None) -> ProtoCassetteRecordMode | None:
+    """Normalize pytest-recording/VCR-ish record modes to a small supported set.
+
+    Notes:
+    - VCR uses: `none`, `once`, `new_episodes`, `all`
+    - This repo frequently uses `rewrite` as a synonym for "overwrite cassette".
+    """
+    if mode is None:
+        return None
+    m = mode.strip().lower()
+    if m in {'none', 'once', 'new_episodes', 'rewrite', 'all'}:
+        return cast(ProtoCassetteRecordMode, m)
+    raise ValueError(f'Unknown record mode: {mode!r}')
+
+
+def _proto_cassette_plan(
+    *,
+    cassette_exists: bool,
+    record_mode: str | None,
+    env_record_flag: bool,
+) -> Literal['replay', 'record', 'hybrid', 'error_missing']:
+    """Decide replay vs record behavior for proto cassettes.
+
+    This is intentionally pure/side-effect-free so it can be unit tested without xai-sdk.
+    """
+    normalized = _normalize_record_mode(record_mode)
+
+    # Back-compat: previous behavior was a simple boolean env flag which meant "rewrite".
+    if normalized is None and env_record_flag:
+        normalized = 'rewrite'
+
+    # Default behavior (when neither pytest flag nor env var is set) is "replay only".
+    if normalized is None:
+        normalized = 'none'
+
+    if normalized == 'none':
+        return 'replay' if cassette_exists else 'error_missing'
+    if normalized == 'once':
+        return 'replay' if cassette_exists else 'record'
+    if normalized == 'new_episodes':
+        return 'hybrid' if cassette_exists else 'record'
+    if normalized in {'rewrite', 'all'}:
+        return 'record'
+
+    # This should be unreachable since `_normalize_record_mode` validates inputs.
+    raise AssertionError(f'Unhandled record mode: {normalized!r}')  # pragma: no cover
 
 
 @dataclass
@@ -147,7 +203,7 @@ class _CassetteChatInstance:
                 raise RuntimeError(
                     'xAI proto cassette is missing streaming data (`stream_chunks`).\n'
                     'Re-record this cassette with:\n'
-                    '  XAI_PROTO_CASSETTE_RECORD=1 XAI_API_KEY=... uv run pytest <test> -v'
+                    '  XAI_API_KEY=... uv run pytest --record-mode=rewrite <test> -v'
                 )
             try:
                 chunk_list = self._client.cassette.stream_chunks[self._client.stream_idx]
@@ -201,6 +257,108 @@ class XaiProtoCassetteClient:
 
 
 @dataclass
+class XaiProtoCassetteHybridClient:
+    """Replay from an existing cassette but record "new episodes" when the cassette runs out."""
+
+    _inner: AsyncClient
+    cassette: XaiSampleProtoCassette
+    include_debug_json: bool = False
+    sample_idx: int = 0
+    stream_idx: int = 0
+    dirty: bool = False
+
+    @property
+    def chat(self) -> Any:
+        return type('Chat', (), {'create': self._chat_create})
+
+    @property
+    def files(self) -> Any:
+        return type('Files', (), {'upload': self._inner.files.upload})
+
+    def _chat_create(self, *args: Any, **kwargs: Any) -> Any:
+        inner_chat = self._inner.chat.create(*args, **kwargs)
+        include_debug_json = self.include_debug_json
+
+        request_json: dict[str, Any] | None = None
+        if include_debug_json:
+            request_json = {
+                'args': _serialize_for_cassette(list(args)),
+                'kwargs': _serialize_for_cassette(kwargs),
+            }
+
+        client = self
+
+        class _HybridChatInstance:
+            async def sample(self) -> chat_types.Response:
+                # Replay if we have a recorded response at this index.
+                if client.sample_idx < len(client.cassette.responses):
+                    proto_bytes = client.cassette.responses[client.sample_idx]
+                    client.sample_idx += 1
+                    proto = chat_pb2.GetChatCompletionResponse()
+                    proto.ParseFromString(proto_bytes)
+                    return chat_types.Response(proto, index=None)
+
+                # Otherwise record a new episode.
+                client.cassette.sample_requests.append(inner_chat.proto.SerializeToString())
+                if request_json is not None:
+                    client.cassette.sample_requests_json.append(request_json)
+                response = await inner_chat.sample()
+                client.cassette.responses.append(response.proto.SerializeToString())
+                if include_debug_json:
+                    client.cassette.responses_json.append(
+                        MessageToDict(response.proto, preserving_proto_field_name=True)
+                    )
+                client.dirty = True
+                client.sample_idx += 1
+                return response
+
+            def stream(self) -> Any:
+                async def _aiter():
+                    # Replay if we have recorded chunks at this index.
+                    if client.stream_idx < len(client.cassette.stream_chunks):
+                        chunk_list = client.cassette.stream_chunks[client.stream_idx]
+                        client.stream_idx += 1
+
+                        aggregated = chat_types.Response(chat_pb2.GetChatCompletionResponse(), index=None)
+                        for chunk_bytes in chunk_list:
+                            chunk_proto = chat_pb2.GetChatCompletionChunk()
+                            chunk_proto.ParseFromString(chunk_bytes)
+                            aggregated.process_chunk(chunk_proto)
+                            yield aggregated, chat_types.Chunk(chunk_proto, index=None)
+                        return
+
+                    # Otherwise record a new streaming episode.
+                    chunks: list[bytes] = []
+                    chunks_json: list[dict[str, Any]] = []
+                    client.cassette.stream_requests.append(inner_chat.proto.SerializeToString())
+                    if request_json is not None:
+                        client.cassette.stream_requests_json.append(request_json)
+                    try:
+                        async for response, chunk in inner_chat.stream():
+                            chunks.append(chunk.proto.SerializeToString())
+                            if include_debug_json:
+                                chunks_json.append(
+                                    {
+                                        'chunk': MessageToDict(
+                                            chunk.proto,
+                                            preserving_proto_field_name=True,
+                                        )
+                                    }
+                                )
+                            yield response, chunk
+                    finally:
+                        client.cassette.stream_chunks.append(chunks)
+                        if include_debug_json:
+                            client.cassette.stream_chunks_json.append(chunks_json)
+                        client.dirty = True
+                        client.stream_idx += 1
+
+                return _aiter()
+
+        return _HybridChatInstance()
+
+
+@dataclass
 class XaiProtoRecorder:
     """Record `chat.sample()` responses as protobuf bytes.
 
@@ -212,6 +370,7 @@ class XaiProtoRecorder:
 
     _inner: AsyncClient
     cassette: XaiSampleProtoCassette = field(default_factory=lambda: XaiSampleProtoCassette(responses=[]))
+    include_debug_json: bool = False
 
     @property
     def client(self) -> Any:
@@ -231,8 +390,7 @@ class XaiProtoRecorder:
     def _chat_create(self, *args: Any, **kwargs: Any) -> Any:
         inner_chat = self._inner.chat.create(*args, **kwargs)
         recorder = self
-        os = __import__('os')
-        include_debug_json = os.getenv('XAI_PROTO_CASSETTE_DEBUG_JSON', '').lower() in {'1', 'true', 'yes'}
+        include_debug_json = recorder.include_debug_json
 
         request_json: dict[str, Any] | None = None
         if include_debug_json:
@@ -293,18 +451,24 @@ class XaiProtoCassetteSession:
 
     client: XaiAsyncClientLike
     cassette_path: Path
-    recorder: XaiProtoRecorder | None = None
+    cassette: XaiSampleProtoCassette | None = None
+    dirty_check: Any | None = None
 
     def dump_if_recording(self) -> None:
-        if self.recorder is not None:
-            self.recorder.dump(self.cassette_path)
+        if self.cassette is None:
+            return
+        if self.dirty_check is None or bool(self.dirty_check()):
+            self.cassette.dump(self.cassette_path)
 
 
-def xai_proto_cassette_session(cassette_path: Path) -> XaiProtoCassetteSession:
+def xai_proto_cassette_session(
+    cassette_path: Path,
+    record_mode: str | None = None,
+    include_debug_json: bool = False,
+) -> XaiProtoCassetteSession:
     """Create a cassette session (replay if cassette exists, otherwise record if enabled).
 
     Env vars:
-    - `XAI_PROTO_CASSETTE_RECORD=1`: hit the real backend (requires network + creds) and write cassette.
     - `XAI_API_KEY`: required in record mode.
     - `XAI_BASE_URL`: optional; passed to `AsyncClient` if supported (useful for gateways/proxies).
     """
@@ -312,19 +476,26 @@ def xai_proto_cassette_session(cassette_path: Path) -> XaiProtoCassetteSession:
     if not xai_sdk_available():  # pragma: no cover
         raise RuntimeError('xai-sdk is not installed')
 
-    record_mode = __import__('os').getenv('XAI_PROTO_CASSETTE_RECORD', '').lower() in {'1', 'true', 'yes'}
-    if cassette_path.exists() and not record_mode:
+    plan = _proto_cassette_plan(
+        cassette_exists=cassette_path.exists(),
+        record_mode=record_mode,
+        env_record_flag=_truthy_env('XAI_PROTO_CASSETTE_RECORD'),
+    )
+    if plan == 'replay':
+        cassette = XaiSampleProtoCassette.load(cassette_path)
         return XaiProtoCassetteSession(
-            client=cast(XaiAsyncClientLike, XaiProtoCassetteClient.from_path(cassette_path)),
+            client=cast(XaiAsyncClientLike, XaiProtoCassetteClient(cassette=cassette)),
             cassette_path=cassette_path,
+            cassette=None,
         )
 
-    if not record_mode:
+    if plan == 'error_missing':
         raise RuntimeError(
             'Missing xAI proto cassette.\n'
             f'Expected: {cassette_path}\n\n'
-            'To record it (requires xai-sdk + network + creds):\n'
-            '  XAI_PROTO_CASSETTE_RECORD=1 XAI_API_KEY=... [XAI_BASE_URL=...] uv run pytest <test> -v'
+            'To record it (requires xai-sdk + network + creds):\n\n'
+            'Example:\n'
+            '  XAI_API_KEY=... [XAI_BASE_URL=...] uv run pytest --record-mode=rewrite <test> -v'
         )
 
     os = __import__('os')
@@ -340,12 +511,23 @@ def xai_proto_cassette_session(cassette_path: Path) -> XaiProtoCassetteSession:
     except TypeError:
         real_client = AsyncClient(api_key=api_key)
 
-    recorder = XaiProtoRecorder(real_client)
-    return XaiProtoCassetteSession(
-        client=cast(XaiAsyncClientLike, recorder.client),
-        cassette_path=cassette_path,
-        recorder=recorder,
-    )
+    if plan == 'hybrid':
+        cassette = XaiSampleProtoCassette.load(cassette_path)
+        hybrid = XaiProtoCassetteHybridClient(real_client, cassette=cassette, include_debug_json=include_debug_json)
+        return XaiProtoCassetteSession(
+            client=cast(XaiAsyncClientLike, hybrid),
+            cassette_path=cassette_path,
+            cassette=cassette,
+            dirty_check=lambda: hybrid.dirty,
+        )
+    else:
+        # plan == 'record'
+        recorder = XaiProtoRecorder(real_client, include_debug_json=include_debug_json)
+        return XaiProtoCassetteSession(
+            client=cast(XaiAsyncClientLike, recorder.client),
+            cassette_path=cassette_path,
+            cassette=recorder.cassette,
+        )
 
 
 def xai_sdk_available() -> bool:
