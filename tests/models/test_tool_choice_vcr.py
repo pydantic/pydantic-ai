@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -159,7 +159,7 @@ class Case:
     For non-direct requests the type is `list[_MessageStructure]`.
     For direct requests the type is `list[str]` with part type names.
     """
-    tools: list[Callable[..., str]] = field(default_factory=lambda: [get_weather])
+    tools: list[Callable[..., str]]
     output_type: OutputSpec[Any] | None = None
     prompt: str = "What's the weather in Paris?"
     model_name: str | None = None
@@ -289,6 +289,7 @@ CASES = [
         id='openai-auto-uses-tool',
         provider='openai',
         tool_choice='auto',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('auto'),
     ),
@@ -296,6 +297,7 @@ CASES = [
         id='anthropic-auto-uses-tool',
         provider='anthropic',
         tool_choice='auto',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('auto'),
     ),
@@ -303,6 +305,7 @@ CASES = [
         id='groq-auto-uses-tool',
         provider='groq',
         tool_choice='auto',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('auto'),
     ),
@@ -310,6 +313,7 @@ CASES = [
         id='mistral-auto-uses-tool',
         provider='mistral',
         tool_choice='auto',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('auto'),
     ),
@@ -317,6 +321,7 @@ CASES = [
         id='google-auto-uses-tool',
         provider='google',
         tool_choice='auto',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('AUTO'),
     ),
@@ -324,6 +329,7 @@ CASES = [
         id='bedrock-auto-uses-tool',
         provider='bedrock',
         tool_choice='auto',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('auto'),
     ),
@@ -335,6 +341,7 @@ CASES = [
         id='huggingface-auto-uses-tool',
         provider='huggingface',
         tool_choice='auto',
+        tools=[get_weather],
         expected_message_structure=snapshot([]),
         expected_tool_choice_in_request=snapshot('auto'),
         skip_reason='Together backend 500s on tool continuation',
@@ -343,6 +350,7 @@ CASES = [
         id='openai_responses-auto-uses-tool',
         provider='openai_responses',
         tool_choice='auto',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ThinkingPart ,ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('auto'),
     ),
@@ -352,6 +360,7 @@ CASES = [
         id='openai-none-text-response',
         provider='openai',
         tool_choice='none',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('none'),
     ),
@@ -359,6 +368,7 @@ CASES = [
         id='anthropic-none-text-response',
         provider='anthropic',
         tool_choice='none',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('none'),
         prompt='Say hello',
@@ -367,6 +377,7 @@ CASES = [
         id='groq-none-text-response',
         provider='groq',
         tool_choice='none',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('none'),
     ),
@@ -374,6 +385,7 @@ CASES = [
         id='mistral-none-text-response',
         provider='mistral',
         tool_choice='none',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot(None),
     ),
@@ -381,6 +393,7 @@ CASES = [
         id='google-none-text-response',
         provider='google',
         tool_choice='none',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('NONE'),
     ),
@@ -388,6 +401,7 @@ CASES = [
         id='bedrock-none-text-response',
         provider='bedrock',
         tool_choice='none',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot(None),
     ),
@@ -395,6 +409,7 @@ CASES = [
         id='huggingface-none-text-response',
         provider='huggingface',
         tool_choice='none',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         expected_tool_choice_in_request=snapshot('none'),
     ),
@@ -402,6 +417,7 @@ CASES = [
         id='openai_responses-none-text-response',
         provider='openai_responses',
         tool_choice='none',
+        tools=[get_weather],
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ThinkingPart ,TextPart ])]),
         expected_tool_choice_in_request=snapshot('none'),
     ),
@@ -411,6 +427,7 @@ CASES = [
         id='openai-required-forces-tool',
         provider='openai',
         tool_choice='required',
+        tools=[get_weather],
         expected_message_structure=snapshot(['ToolCallPart']),
         expected_tool_choice_in_request=snapshot('required'),
         use_direct_request=True,
@@ -419,6 +436,7 @@ CASES = [
         id='anthropic-required-forces-tool',
         provider='anthropic',
         tool_choice='required',
+        tools=[get_weather],
         expected_message_structure=snapshot(['ToolCallPart']),
         expected_tool_choice_in_request=snapshot('any'),
         use_direct_request=True,
@@ -427,6 +445,7 @@ CASES = [
         id='groq-required-forces-tool',
         provider='groq',
         tool_choice='required',
+        tools=[get_weather],
         expected_message_structure=snapshot(['ToolCallPart']),
         expected_tool_choice_in_request=snapshot('required'),
         use_direct_request=True,
@@ -435,6 +454,7 @@ CASES = [
         id='mistral-required-forces-tool',
         provider='mistral',
         tool_choice='required',
+        tools=[get_weather],
         expected_message_structure=snapshot(['ToolCallPart']),
         expected_tool_choice_in_request=snapshot('required'),
         use_direct_request=True,
@@ -443,6 +463,7 @@ CASES = [
         id='google-required-forces-tool',
         provider='google',
         tool_choice='required',
+        tools=[get_weather],
         expected_message_structure=snapshot(['ToolCallPart']),
         expected_tool_choice_in_request=snapshot('ANY'),
         use_direct_request=True,
@@ -451,6 +472,7 @@ CASES = [
         id='bedrock-required-forces-tool',
         provider='bedrock',
         tool_choice='required',
+        tools=[get_weather],
         expected_message_structure=snapshot(['ToolCallPart']),
         expected_tool_choice_in_request=snapshot('any'),
         use_direct_request=True,
@@ -459,6 +481,7 @@ CASES = [
         id='huggingface-required-forces-tool',
         provider='huggingface',
         tool_choice='required',
+        tools=[get_weather],
         expected_message_structure=snapshot(['ToolCallPart']),
         expected_tool_choice_in_request=snapshot('required'),
         use_direct_request=True,
@@ -467,6 +490,7 @@ CASES = [
         id='openai_responses-required-forces-tool',
         provider='openai_responses',
         tool_choice='required',
+        tools=[get_weather],
         expected_message_structure=snapshot(['ThinkingPart','ToolCallPart']),
         expected_tool_choice_in_request=snapshot('required'),
         use_direct_request=True,
@@ -547,6 +571,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=CityInfo,
         prompt='Tell me about Paris',
+        tools=[get_weather],
     ),
     Case(
         id='anthropic-none-with-output',
@@ -555,6 +580,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=CityInfo,
         prompt='Tell me about Paris',
+        tools=[get_weather],
     ),
     Case(
         id='groq-none-with-output',
@@ -563,6 +589,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=CityInfo,
         prompt='Tell me about Paris',
+        tools=[get_weather],
     ),
     Case(
         id='mistral-none-with-output',
@@ -571,6 +598,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=CityInfo,
         prompt='Tell me about Paris',
+        tools=[get_weather],
     ),
     Case(
         id='google-none-with-output',
@@ -579,6 +607,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=CityInfo,
         prompt='Tell me about Paris',
+        tools=[get_weather],
     ),
     Case(
         id='bedrock-none-with-output',
@@ -587,6 +616,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=CityInfo,
         prompt='Tell me about Paris',
+        tools=[get_weather],
     ),
     Case(
         id='huggingface-none-with-output',
@@ -595,6 +625,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=CityInfo,
         prompt='Tell me about Paris',
+        tools=[get_weather],
     ),
     Case(
         id='openai_responses-none-with-output',
@@ -603,6 +634,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ThinkingPart ,ToolCallPart ]),_RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=CityInfo,
         prompt='Tell me about Paris',
+        tools=[get_weather],
     ),
 
     # === tool_choice='none' with text+structured output - triggers (tool_names, 'auto') branch ===
@@ -615,6 +647,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[TextPart ])]),
         output_type=(str, CityInfo),
         prompt='Tell me about Paris briefly',
+        tools=[get_weather],
     ),
     Case(
         id='anthropic-none-with-output-text-allowed',
@@ -623,6 +656,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]), _ResponseTrimmed (parts =[ToolCallPart ]), _RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=(str, CityInfo),
         prompt='Tell me about Paris briefly',
+        tools=[get_weather],
     ),
     Case(
         id='groq-none-with-output-text-allowed',
@@ -631,6 +665,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]), _ResponseTrimmed (parts =[ToolCallPart ]), _RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=(str, CityInfo),
         prompt='Tell me about Paris briefly',
+        tools=[get_weather],
     ),
     Case(
         id='mistral-none-with-output-text-allowed',
@@ -639,6 +674,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]), _ResponseTrimmed (parts =[ToolCallPart ]), _RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=(str, CityInfo),
         prompt='Tell me about Paris briefly',
+        tools=[get_weather],
     ),
     Case(
         id='google-none-with-output-text-allowed',
@@ -647,6 +683,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]), _ResponseTrimmed (parts =[ToolCallPart ]), _RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=(str, CityInfo),
         prompt='Tell me about Paris briefly',
+        tools=[get_weather],
     ),
     Case(
         id='bedrock-none-with-output-text-allowed',
@@ -655,6 +692,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]), _ResponseTrimmed (parts =[ToolCallPart ]), _RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=(str, CityInfo),
         prompt='Tell me about Paris briefly',
+        tools=[get_weather],
     ),
     Case(
         id='huggingface-none-with-output-text-allowed',
@@ -663,6 +701,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]), _ResponseTrimmed (parts =[ToolCallPart ]), _RequestTrimmed (parts =[ToolReturnPart ])]),
         output_type=(str, CityInfo),
         prompt='Tell me about Paris briefly',
+        tools=[get_weather],
     ),
     Case(
         id='openai_responses-none-with-output-text-allowed',
@@ -671,6 +710,7 @@ CASES = [
         expected_message_structure=snapshot([_RequestTrimmed (parts =[UserPromptPart ]),_ResponseTrimmed (parts =[ThinkingPart ,TextPart ])]),
         output_type=(str, CityInfo),
         prompt='Tell me about Paris briefly',
+        tools=[get_weather],
     ),
 
     # === ToolOrOutput - specific function tools + output tools ===
