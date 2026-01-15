@@ -2331,7 +2331,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                 BuiltinToolCallPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
-                    args={'code': 'print("hello")'},
+                    args={'snippet': 'print("hello")'},
                     tool_call_id='call_1',
                 ),
                 # BuiltinToolReturnPart for bedrock with empty provider_details (should be included)
@@ -2360,7 +2360,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                 BuiltinToolCallPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
-                    args='{"code": "10*5"}',
+                    args='{"snippet": "10*5"}',
                     tool_call_id='call_3',
                 ),
                 # BuiltinToolReturnPart for the bedrock provider with status (should be included)
@@ -2375,7 +2375,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                 BuiltinToolCallPart(
                     provider_name='bedrock',
                     tool_name='foo',
-                    args={'code': 'print("unknown")'},
+                    args={'snippet': 'print("unknown")'},
                     tool_call_id='call_4',
                 ),
                 # BuiltinToolReturnPart for the bedrock provider but unmapped tool (should NOT be included)
@@ -2385,13 +2385,6 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                     content=[{'text': 'success\n'}],
                     tool_call_id='call_4',
                     provider_details={'status': 'success'},
-                ),
-                # BuiltinToolCallPart (without 'code' key - just for coverage)
-                BuiltinToolCallPart(
-                    provider_name='bedrock',
-                    tool_name=CodeExecutionTool.kind,
-                    args={'foo': 'bar'},
-                    tool_call_id='call_5',
                 ),
             ]
         )
@@ -2442,14 +2435,6 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                             'status': 'success',
                         }
                     },
-                    {
-                        'toolUse': {
-                            'toolUseId': 'call_5',
-                            'name': 'nova_code_interpreter',
-                            'input': {'foo': 'bar'},
-                            'type': 'server_tool_use',
-                        }
-                    },
                 ],
             }
         ]
@@ -2480,14 +2465,14 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={'code': '1234 * 5678'},
-                        tool_call_id='tooluse_djfIsBHNsCnRhFK1G-4rvg',
+                        args={'snippet': '1234 * 5678'},
+                        tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
                         provider_name='bedrock',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
-                        tool_call_id='tooluse_djfIsBHNsCnRhFK1G-4rvg',
+                        tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
                         timestamp=IsDatetime(),
                         provider_name='bedrock',
                         provider_details={'status': 'success'},
@@ -2495,7 +2480,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                     ToolCallPart(
                         tool_name='final_result',
                         args={'result': 7006652.0},
-                        tool_call_id='tooluse_VNjsBcSNRuefzDDK9DMxKA',
+                        tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1002, output_tokens=59),
@@ -2512,7 +2497,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='tooluse_VNjsBcSNRuefzDDK9DMxKA',
+                        tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2536,14 +2521,14 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={'code': '7006652 * 2'},
-                        tool_call_id='tooluse_9pgstf4jPo_8JusDvZio2Q',
+                        args={'snippet': '7006652 * 2'},
+                        tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
                         provider_name='bedrock',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '14013304', 'stdErr': '', 'exitCode': 0, 'isError': False},
-                        tool_call_id='tooluse_9pgstf4jPo_8JusDvZio2Q',
+                        tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
                         timestamp=IsDatetime(),
                         provider_name='bedrock',
                         provider_details={'status': 'success'},
@@ -2551,7 +2536,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                     ToolCallPart(
                         tool_name='final_result',
                         args={'result': 14013304.0},
-                        tool_call_id='tooluse_n85DN7nVTKiS01DLJZFLdw',
+                        tool_call_id='tooluse_RyG7SphVTsuS_8GFmX9hIA',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1148, output_tokens=59),
@@ -2568,7 +2553,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='tooluse_n85DN7nVTKiS01DLJZFLdw',
+                        tool_call_id='tooluse_RyG7SphVTsuS_8GFmX9hIA',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2610,14 +2595,14 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args='{"code":"1234 * 5678"}',
-                        tool_call_id='tooluse_meozzlafg49RigQMHPKuRw',
+                        args='{"snippet":"1234 * 5678"}',
+                        tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                         provider_name='bedrock',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
-                        tool_call_id='tooluse_meozzlafg49RigQMHPKuRw',
+                        tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                         timestamp=IsDatetime(),
                         provider_name='bedrock',
                         provider_details={'status': 'success'},
@@ -2625,7 +2610,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"result":7006652.0}',
-                        tool_call_id='tooluse_rPfJhEImR7yCeIMFhWtbqQ',
+                        tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1002, output_tokens=59),
@@ -2642,7 +2627,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='tooluse_rPfJhEImR7yCeIMFhWtbqQ',
+                        tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2656,21 +2641,21 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             PartStartEvent(
                 index=0,
                 part=BuiltinToolCallPart(
-                    tool_name='code_execution', tool_call_id='tooluse_meozzlafg49RigQMHPKuRw', provider_name='bedrock'
+                    tool_name='code_execution', tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og', provider_name='bedrock'
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ToolCallPartDelta(
-                    args_delta='{"code":"1234 * 5678"}', tool_call_id='tooluse_meozzlafg49RigQMHPKuRw'
+                    args_delta='{"snippet":"1234 * 5678"}', tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og'
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args='{"code":"1234 * 5678"}',
-                    tool_call_id='tooluse_meozzlafg49RigQMHPKuRw',
+                    args='{"snippet":"1234 * 5678"}',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                     provider_name='bedrock',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -2680,7 +2665,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
-                    tool_call_id='tooluse_meozzlafg49RigQMHPKuRw',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                     timestamp=IsDatetime(),
                     provider_name='bedrock',
                     provider_details={'status': 'success'},
@@ -2689,27 +2674,27 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             PartStartEvent(
                 index=2,
-                part=ToolCallPart(tool_name='final_result', tool_call_id='tooluse_rPfJhEImR7yCeIMFhWtbqQ'),
+                part=ToolCallPart(tool_name='final_result', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'),
                 previous_part_kind='builtin-tool-return',
             ),
-            FinalResultEvent(tool_name='final_result', tool_call_id='tooluse_rPfJhEImR7yCeIMFhWtbqQ'),
+            FinalResultEvent(tool_name='final_result', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta='{"result":7006652.0}', tool_call_id='tooluse_rPfJhEImR7yCeIMFhWtbqQ'
+                    args_delta='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
                 ),
             ),
             PartEndEvent(
                 index=2,
                 part=ToolCallPart(
-                    tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_rPfJhEImR7yCeIMFhWtbqQ'
+                    tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args='{"code":"1234 * 5678"}',
-                    tool_call_id='tooluse_meozzlafg49RigQMHPKuRw',
+                    args='{"snippet":"1234 * 5678"}',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                     provider_name='bedrock',
                 )
             ),
@@ -2717,7 +2702,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
-                    tool_call_id='tooluse_meozzlafg49RigQMHPKuRw',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                     timestamp=IsDatetime(),
                     provider_name='bedrock',
                     provider_details={'status': 'success'},

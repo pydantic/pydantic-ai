@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import functools
-import re
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -415,7 +414,7 @@ class BedrockConverseModel(Model):
                                 BuiltinToolCallPart(
                                     provider_name=self.system,
                                     tool_name=CodeExecutionTool.kind,
-                                    args={'code': tool_use['input']['snippet']},
+                                    args=tool_use['input'],
                                     tool_call_id=tool_use['toolUseId'],
                                 )
                             )
@@ -429,16 +428,11 @@ class BedrockConverseModel(Model):
                         )
                 elif tool_result := item.get('toolResult'):
                     if tool_result.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
-                        # Assume Code Exe results only have a single json item
-                        # so we can convert to object form
-                        if tr_content := tool_result['content'] or None:  # pragma: no branch
-                            tr_content = tr_content[0].get('json')
-
                         items.append(
                             BuiltinToolReturnPart(
                                 provider_name=self.system,
                                 tool_name=CodeExecutionTool.kind,
-                                content=tr_content,
+                                content=tool_result['content'][0].get('json') if tool_result['content'] else None,
                                 tool_call_id=tool_result.get('toolUseId'),
                                 provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
                             )
@@ -696,14 +690,10 @@ class BedrockConverseModel(Model):
                     elif isinstance(item, BuiltinToolCallPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
-                                tu_input = item.args_as_dict()
-                                if 'code' in tu_input:
-                                    tu_input['snippet'] = tu_input.pop('code')
-
                                 server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
                                     'name': 'nova_code_interpreter',
-                                    'input': tu_input,
+                                    'input': item.args_as_dict(),
                                     'type': 'server_tool_use',
                                 }
                                 content.append({'toolUse': server_tool_use_block_param})
@@ -1066,9 +1056,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=index,
                             tool_name=tool_use.get('name'),
-                            args=re.sub(r'"snippet"', '"code"', tool_use.get('input'))
-                            if tool_use.get('input')
-                            else None,
+                            args=tool_use.get('input'),
                             tool_call_id=tool_ids[index],
                         )
                         if maybe_event:  # pragma: no branch
@@ -1079,10 +1067,10 @@ class BedrockStreamedResponse(StreamedResponse):
                         ) and return_part.tool_name == CodeExecutionTool.kind:  # pragma: no branch
                             # For now, only process `contentBlockDelta.toolResult` for Code Exe tool.
 
-                            if (tr_content := delta['toolResult']) and 'json' in tr_content[0]:  # pragma: no branch
+                            if tr_content := delta['toolResult']:  # pragma: no branch
                                 # Goal here is to convert to object form.
                                 # This assumes the first item is the relevant one.
-                                return_part.content = tr_content[0]['json']
+                                return_part.content = tr_content[0].get('json')
 
                             # Don't yield anything yet - we wait for content block end
 
