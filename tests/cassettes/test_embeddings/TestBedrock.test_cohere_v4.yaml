@@ -1,18 +1,18 @@
 interactions:
 - request:
-    body: '{"texts": ["Hello, world!"], "input_type": "search_query", "truncate": "NONE"}'
+    body: '{"texts": ["Hello, world!"], "input_type": "search_query"}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        YTQ0MjgxNGUtZTBlNS00YmUxLWE3ZTItZTE0N2EwOWUzZmI5
+        ZmM1NTU0NmYtOWZiOC00NDE0LTkzZWYtNWZmNzdjOTVhM2E1
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '78'
+      - '58'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -1565,7 +1565,7 @@ interactions:
           - 0.038085938
           - -0.024902344
           - 0.010009766
-      id: eb941dbb-b36b-45b0-acf7-0239ba2ce709
+      id: a6b18146-d6a1-4c3e-b0a9-74ee3594e8c3
       response_type: embeddings_by_type
       texts:
       - Hello, world!

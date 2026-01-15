@@ -1,14 +1,14 @@
 interactions:
 - request:
-    body: '{"taskType": "SINGLE_EMBEDDING", "singleEmbeddingParams": {"embeddingPurpose": "GENERIC_RETRIEVAL", "embeddingDimension":
-      1024, "text": {"truncationMode": "END", "value": "Hello, world!"}}}'
+    body: '{"taskType": "SINGLE_EMBEDDING", "singleEmbeddingParams": {"text": {"value": "Hello, world!", "truncationMode":
+      "END"}, "embeddingDimension": 1024, "embeddingPurpose": "GENERIC_RETRIEVAL"}}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        MzgxZjg4ZGQtMzY5MC00ZjVjLTkyOTgtMjZhZThlMzgxZTc3
+        YTZiMGEzZTMtMjdiNC00OTc0LThlMjItYjVkNzJkZTE3OTMw
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x

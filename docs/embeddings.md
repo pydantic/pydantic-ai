@@ -331,11 +331,15 @@ See the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/u
 
 #### Bedrock-Specific Settings
 
-Bedrock models support additional settings via [`BedrockEmbeddingSettings`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings]:
+
+Bedrock models support additional settings via [`BedrockEmbeddingSettings`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings]. All settings are optional — if not specified, model defaults are used.
 
 ```python {title="bedrock_settings.py" test="skip"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+# Use model defaults (recommended for most cases)
+embedder = Embedder('bedrock:amazon.titan-embed-text-v2:0')
 
 # Titan with normalization
 embedder = Embedder(
@@ -358,11 +362,33 @@ embedder = Embedder(
 embedder = Embedder(
     'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
     settings=BedrockEmbeddingSettings(
-        dimensions=1024,
         bedrock_embedding_purpose='TEXT_RETRIEVAL',  # Optimized for text retrieval
     ),
 )
 ```
+
+#### Custom Request Parameters
+
+You can pass arbitrary parameters to the model using `extra_body`. This is useful for model-specific features not covered by the standard settings:
+
+```python {title="bedrock_extra_body.py" test="skip"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+# Pass custom parameters directly to the API (deep merged with generated body)
+embedder = Embedder(
+    'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
+    settings=BedrockEmbeddingSettings(
+        extra_body={
+            'singleEmbeddingParams': {
+                'embeddingPurpose': 'CLUSTERING',
+            },
+        },
+    ),
+)
+```
+
+The `extra_body` dict is deep-merged with the generated request body, allowing you to override or add any parameters.
 
 #### Using a Custom Provider
 

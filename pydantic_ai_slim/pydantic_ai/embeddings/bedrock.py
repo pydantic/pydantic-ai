@@ -49,6 +49,28 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     All fields from [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] are supported,
     plus Bedrock-specific settings prefixed with `bedrock_`.
+
+    All settings are optional - if not specified, model defaults are used.
+    You can also use `extra_body` to pass arbitrary parameters to the model.
+
+    Example:
+        ```python
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+        # Use model defaults
+        settings = BedrockEmbeddingSettings()
+
+        # Customize specific settings
+        settings = BedrockEmbeddingSettings(
+            dimensions=512,
+            bedrock_normalize=True,
+        )
+
+        # Pass custom parameters via extra_body
+        settings = BedrockEmbeddingSettings(
+            extra_body={'customParam': 'value'},
+        )
+        ```
     """
 
     # ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -59,6 +81,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     """Whether to normalize the embedding vectors (Amazon Titan only).
 
     Normalized vectors can be used directly for similarity calculations.
+    If not specified, model default is used.
     """
 
     # ==================== Cohere Settings ====================
@@ -66,23 +89,25 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     bedrock_input_type: Literal['search_document', 'search_query', 'classification', 'clustering']
     """The Cohere-specific input type for the embedding (Cohere models only).
 
-    Overrides the standard `input_type` argument.
+    Overrides the automatic mapping from `input_type` ('query' -> 'search_query',
+    'document' -> 'search_document').
     """
 
-    bedrock_truncate: Literal['NONE', 'LEFT', 'RIGHT', 'END', 'START']
-    """The truncation strategy to use (Cohere and Nova models):
+    bedrock_truncate: Literal['NONE', 'START', 'END']
+    """The truncation strategy to use (Cohere and Nova models).
 
     - `'NONE'`: Raise an error if input exceeds max tokens.
-    - `'LEFT'` / `'START'`: Truncate the start of the input text.
-    - `'RIGHT'` / `'END'`: Truncate the end of the input text.
+    - `'START'`: Truncate the start of the input text.
+    - `'END'`: Truncate the end of the input text.
 
-    Defaults to `'END'` for Nova, `'NONE'` for Cohere.
+    For Cohere: optional (defaults to NONE).
+    For Nova: defaults to END.
     """
 
     bedrock_embedding_types: list[Literal['float', 'int8', 'uint8', 'binary', 'ubinary']]
     """The embedding types to return (Cohere models only).
 
-    Defaults to `['float']`.
+    If not specified, model default is used (typically `['float']`).
     """
 
     # ==================== Amazon Nova Settings ====================
@@ -100,8 +125,8 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     ]
     """The embedding purpose for Nova models.
 
-    - `'GENERIC_INDEX'` (default for documents): General-purpose indexing.
-    - `'GENERIC_RETRIEVAL'` (default for queries): General-purpose retrieval.
+    - `'GENERIC_INDEX'`: General-purpose indexing.
+    - `'GENERIC_RETRIEVAL'`: General-purpose retrieval.
     - `'TEXT_RETRIEVAL'`: Optimized for text retrieval tasks.
     - `'IMAGE_RETRIEVAL'`: Optimized for image retrieval tasks.
     - `'VIDEO_RETRIEVAL'`: Optimized for video retrieval tasks.
@@ -109,6 +134,8 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     - `'AUDIO_RETRIEVAL'`: Optimized for audio retrieval tasks.
     - `'CLASSIFICATION'`: Optimized for classification tasks.
     - `'CLUSTERING'`: Optimized for clustering tasks.
+
+    If not specified, model default is used.
     """
 
 
@@ -133,7 +160,6 @@ class BedrockEmbeddingHandler(ABC):
         input_type: EmbedInputType,
         model_name: str,
         provider_name: str,
-        provider_url: str,
         input_tokens: int,
     ) -> EmbeddingResult:
         """Parse the response from the embedding model.
@@ -144,7 +170,6 @@ class BedrockEmbeddingHandler(ABC):
             input_type: The type of input (document or query).
             model_name: The name of the model.
             provider_name: The name of the provider.
-            provider_url: The URL of the provider.
             input_tokens: The input token count from HTTP headers.
         """
         raise NotImplementedError
@@ -153,6 +178,62 @@ class BedrockEmbeddingHandler(ABC):
     def supports_batch(self) -> bool:
         """Whether the model supports batch embedding in a single request."""
         return False
+
+
+def _strip_regional_prefix(model_name: str) -> str:
+    """Remove regional prefix (e.g., 'us.', 'eu.') from model name if present."""
+    for prefix in BEDROCK_GEO_PREFIXES:
+        if model_name.startswith(f'{prefix}.'):
+            return model_name.removeprefix(f'{prefix}.')
+    return model_name
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge override into base, with override taking precedence.
+
+    Merge behavior:
+    - For nested dicts: recursively merges, preserving keys from both
+    - For non-dict values: override completely replaces base
+    - Keys in override not in base: added to result
+    - Keys in base not in override: preserved in result
+
+    Example:
+        base = {'a': 1, 'nested': {'x': 10, 'y': 20}}
+        override = {'b': 2, 'nested': {'y': 99}}
+        result = {'a': 1, 'b': 2, 'nested': {'x': 10, 'y': 99}}
+    """
+    result = base.copy()
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(cast(dict[str, Any], result[key]), cast(dict[str, Any], value))
+        else:
+            result[key] = value
+    return result
+
+
+def _apply_extra_body(body: dict[str, Any], settings: BedrockEmbeddingSettings) -> dict[str, Any]:
+    """Apply extra_body settings to the request body using deep merge.
+
+    This allows users to customize or override any part of the request body
+    via the `extra_body` setting. The merge uses the following precedence:
+
+    **Final precedence (highest to lowest):**
+    1. `extra_body` values (user overrides) - always wins
+    2. Handler-generated values (from settings like `dimensions`, `bedrock_normalize`)
+    3. Model defaults (applied by AWS Bedrock if field is omitted)
+
+    **Use cases:**
+    - Override handler defaults: `extra_body={'truncate': 'START'}`
+    - Add custom parameters: `extra_body={'customField': 'value'}`
+    - Override nested values: `extra_body={'singleEmbeddingParams': {'embeddingDimension': 256}}`
+
+    Note: The handler first builds the request body from settings, then `extra_body`
+    is deep-merged on top, so `extra_body` values take final precedence.
+    """
+    extra_body = settings.get('extra_body')
+    if extra_body and isinstance(extra_body, dict):
+        return _deep_merge(body, cast(dict[str, Any], extra_body))
+    return body
 
 
 class TitanEmbeddingHandler(BedrockEmbeddingHandler):
@@ -172,7 +253,7 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
         body: dict[str, Any] = {'inputText': texts[0]}
 
         # Optional: Set output dimensions (Titan v2 only)
-        # Titan v2 supports: 256, 384, 1024 (default)
+        # Titan v2 supports: 256, 384, 1024 (model default is 1024)
         if dimensions := settings.get('dimensions'):
             body['dimensions'] = dimensions
 
@@ -180,7 +261,7 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
         if (normalize := settings.get('bedrock_normalize')) is not None:
             body['normalize'] = normalize
 
-        return body
+        return _apply_extra_body(body, settings)
 
     def parse_response(
         self,
@@ -189,7 +270,6 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
         input_type: EmbedInputType,
         model_name: str,
         provider_name: str,
-        provider_url: str,
         input_tokens: int,
     ) -> EmbeddingResult:
         embedding = response_body['embedding']
@@ -230,22 +310,16 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
             'input_type': cohere_input_type,
         }
 
-        # Truncation strategy (default: NONE - raise error if input exceeds max tokens)
-        # Cohere accepts: NONE, LEFT, RIGHT
-        truncate = settings.get('bedrock_truncate', 'NONE')
-        # Normalize truncation values (START/END -> LEFT/RIGHT for Cohere)
-        if truncate == 'START':
-            truncate = 'LEFT'
-        elif truncate == 'END':
-            truncate = 'RIGHT'
-        body['truncate'] = truncate
+        # Optional: Truncation strategy (model default: NONE - raise error if input exceeds max tokens)
+        if truncate := settings.get('bedrock_truncate'):
+            body['truncate'] = truncate
 
-        # Optional: Specify embedding types to return (default: float)
+        # Optional: Specify embedding types to return (model default: float)
         # Cohere supports: float, int8, uint8, binary, ubinary
         if embedding_types := settings.get('bedrock_embedding_types'):
             body['embedding_types'] = embedding_types
 
-        return body
+        return _apply_extra_body(body, settings)
 
     def parse_response(
         self,
@@ -254,7 +328,6 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
         input_type: EmbedInputType,
         model_name: str,
         provider_name: str,
-        provider_url: str,
         input_tokens: int,
     ) -> EmbeddingResult:
         # Cohere returns embeddings in different formats based on embedding_types
@@ -304,36 +377,38 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
         # Nova uses a task-based format for embeddings
         # Only supports single text per request, caller must handle batching
 
-        # Get dimensions with meaningful default (1024 is a good balance of quality and size)
+        # Get truncation mode - Nova requires this field
+        # Nova accepts: START, END, NONE (default: END to avoid errors on long text)
+        truncate = settings.get('bedrock_truncate', 'END')
+
+        # Build text params - 'value' and 'truncationMode' are required by Nova
+        text_params: dict[str, Any] = {
+            'value': texts[0],
+            'truncationMode': truncate,
+        }
+
+        # Nova requires embeddingDimension (default: 1024)
         dimensions = settings.get('dimensions', 1024)
 
-        # Get embedding purpose with default based on input_type
+        # Nova requires embeddingPurpose - default based on input_type
         # - queries default to GENERIC_RETRIEVAL (optimized for search)
         # - documents default to GENERIC_INDEX (optimized for indexing)
         default_purpose = 'GENERIC_RETRIEVAL' if input_type == 'query' else 'GENERIC_INDEX'
         embedding_purpose = settings.get('bedrock_embedding_purpose', default_purpose)
 
-        # Get truncation mode with default to END (truncate end of text if too long)
-        truncate = settings.get('bedrock_truncate', 'END')
-        # Normalize truncation values for Nova (accepts START, END, NONE)
-        if truncate == 'LEFT':
-            truncate = 'START'
-        elif truncate == 'RIGHT':
-            truncate = 'END'
+        # Build singleEmbeddingParams - all fields are required by Nova
+        single_embedding_params: dict[str, Any] = {
+            'text': text_params,
+            'embeddingDimension': dimensions,
+            'embeddingPurpose': embedding_purpose,
+        }
 
         body: dict[str, Any] = {
             'taskType': 'SINGLE_EMBEDDING',
-            'singleEmbeddingParams': {
-                'embeddingPurpose': embedding_purpose,
-                'embeddingDimension': dimensions,
-                'text': {
-                    'truncationMode': truncate,
-                    'value': texts[0],
-                },
-            },
+            'singleEmbeddingParams': single_embedding_params,
         }
 
-        return body
+        return _apply_extra_body(body, settings)
 
     def parse_response(
         self,
@@ -342,7 +417,6 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
         input_type: EmbedInputType,
         model_name: str,
         provider_name: str,
-        provider_url: str,
         input_tokens: int,
     ) -> EmbeddingResult:
         # Nova returns embeddings in format: {"embeddings": [{"embeddingType": "TEXT", "embedding": [...]}]}
@@ -373,12 +447,7 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
 
 def _get_handler_for_model(model_name: str) -> BedrockEmbeddingHandler:
     """Get the appropriate handler for a Bedrock embedding model."""
-    # Remove regional prefix if present
-    normalized_name = model_name
-    for prefix in BEDROCK_GEO_PREFIXES:
-        if normalized_name.startswith(f'{prefix}.'):
-            normalized_name = normalized_name.removeprefix(f'{prefix}.')
-            break
+    normalized_name = _strip_regional_prefix(model_name)
 
     if normalized_name.startswith('amazon.titan-embed'):
         return TitanEmbeddingHandler()
@@ -514,7 +583,6 @@ class BedrockEmbeddingModel(EmbeddingModel):
             input_type,
             self.model_name,
             self.system,
-            self.base_url,
             input_tokens,
         )
 
@@ -538,7 +606,6 @@ class BedrockEmbeddingModel(EmbeddingModel):
                 input_type,
                 self.model_name,
                 self.system,
-                self.base_url,
                 input_tokens,
             )
             all_embeddings.extend(result.embeddings)
@@ -594,11 +661,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
     @staticmethod
     def _normalize_model_name(model_name: str) -> str:
         """Normalize model name by removing regional prefix and version suffix."""
-        # Remove regional prefix
-        for prefix in BEDROCK_GEO_PREFIXES:
-            if model_name.startswith(f'{prefix}.'):
-                model_name = model_name.removeprefix(f'{prefix}.')
-                break
+        model_name = _strip_regional_prefix(model_name)
 
         # Remove version suffix like :0
         version_match = re.match(r'(.+?)(?::\d+)?$', model_name)

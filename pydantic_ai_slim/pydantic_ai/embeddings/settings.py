@@ -40,6 +40,7 @@ class EmbeddingSettings(TypedDict, total=False):
 
     * OpenAI
     * Cohere
+    * Bedrock
     """
 
 
