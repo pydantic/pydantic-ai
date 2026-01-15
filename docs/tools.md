@@ -360,6 +360,99 @@ print(test_model.last_model_request_parameters.function_tools)
 _(This example is complete, it can be run "as is")_
 
 
+## Grammar-Constrained Tool Parameters {#grammar-constrained-tools}
+
+For tools that accept string parameters, you can constrain the input to match a specific pattern using grammar annotations. This is useful for:
+
+- SQL database tools that need valid SQL syntax
+- Code execution tools that need valid source code
+- Configuration generators that need specific formats
+- Any tool where the string parameter must conform to a grammar
+
+**Grammar constraints work with all models** through Pydantic validation. When the model's input doesn't match the grammar, the agent automatically retries with feedback about the validation error. For GPT-5 family models, native enforcement happens during generation.
+
+### Available Grammar Types
+
+Pydantic AI provides these grammar constraint types:
+
+- [`FreeformText`][pydantic_ai.tools.FreeformText]: Raw text without JSON wrapping (useful for code/SQL)
+- [`RegexGrammar`][pydantic_ai.tools.RegexGrammar]: Text constrained by a regular expression
+- [`LarkGrammar`][pydantic_ai.tools.LarkGrammar]: Text constrained by a [Lark](https://lark-parser.readthedocs.io/) grammar
+- `Annotated[str, Field(pattern=...)]`: Pydantic's native pattern constraint (converted to regex)
+
+### Basic Usage
+
+```python {noqa="F821"}
+from typing import Annotated
+
+from pydantic_ai import Agent, FreeformText
+
+agent = Agent('openai:gpt-5')
+
+@agent.tool_plain
+def execute_sql(query: Annotated[str, FreeformText()]) -> str:
+    """Execute an SQL query."""
+    return execute_query(query)
+```
+
+### Regex Constraints
+
+```python
+from typing import Annotated
+
+from pydantic_ai import Agent, RegexGrammar
+
+agent = Agent('openai:gpt-5')
+
+phone_pattern = r'\d{3}-\d{3}-\d{4}'
+
+@agent.tool_plain
+def lookup_phone(phone: Annotated[str, RegexGrammar(phone_pattern)]) -> str:
+    """Look up a phone number."""
+    return f'Found: {phone}'
+```
+
+### Lark Grammar Constraints
+
+For more complex syntax requirements, use a Lark grammar:
+
+```python {noqa="F821"}
+from typing import Annotated
+
+from pydantic_ai import Agent, LarkGrammar
+
+agent = Agent('openai:gpt-5')
+
+sql_grammar = r"""
+start: select_stmt
+select_stmt: "SELECT" select_list "FROM" table
+select_list: "*" | column ("," column)*
+table: "users" | "orders"
+column: "id" | "name" | "email"
+"""
+
+@agent.tool_plain
+def run_query(sql: Annotated[str, LarkGrammar(sql_grammar)]) -> str:
+    """Run a constrained SQL query."""
+    return execute_query(sql)
+```
+
+### How It Works
+
+Grammar constraints work with any model through two mechanisms:
+
+1. **Native support (GPT-5)**: Uses [OpenAI's freeform function calling](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#2-freeform-function-calling) with grammar enforcement at token generation time. This provides guaranteed compliance but does not support parallel tool calls. See [OpenAI model docs](models/openai.md#freeform-function-calling-and-grammar-constraints) for GPT-5-specific details.
+
+2. **Agent-side validation (all models)**: The grammar constraint is included in the tool description, and Pydantic validates the input. Invalid inputs trigger the agent's [retry mechanism](agents.md#reflection-and-self-correction).
+
+The grammar description is automatically added to the tool's JSON schema, helping models understand the expected format even without native support.
+
+See [Grammar-Constrained String Output](output.md#grammar-constrained-output) for using grammar constraints with `output_type`.
+
+!!! note
+    Lark grammar validation requires the `lark` package. Install it with `uv add lark` or `pip install lark`.
+
+
 ## See Also
 
 For more tool features and integrations, see:

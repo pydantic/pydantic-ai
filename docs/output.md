@@ -668,6 +668,106 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 """
 ```
 
+## Grammar-Constrained String Output {#grammar-constrained-output}
+
+When working with string outputs, you can constrain the format using grammar annotations. This ensures the model's output matches a specific pattern, which is useful for generating structured text like codes, identifiers, or domain-specific languages.
+
+**Grammar constraints work with all models** through Pydantic validation. When the model's output doesn't match the grammar, the agent automatically retries with feedback about the validation error. For GPT-5 family models, native enforcement happens during generation, guaranteeing valid output without retries.
+
+You can use:
+
+- [`RegexGrammar`][pydantic_ai.tools.RegexGrammar] - regex pattern constraints
+- [`LarkGrammar`][pydantic_ai.tools.LarkGrammar] - context-free grammar constraints
+- [`FreeformText`][pydantic_ai.tools.FreeformText] - unconstrained raw text (no JSON wrapping)
+- `Annotated[str, Field(pattern=...)]` - Pydantic's native pattern constraint (converted to regex)
+
+### Basic Usage with `output_type`
+
+Use [`Annotated`][typing.Annotated] to add grammar constraints to string output types:
+
+```python {title="grammar_output_basic.py"}
+from typing import Annotated
+
+from pydantic_ai import Agent
+from pydantic_ai.tools import RegexGrammar
+
+# Constrain output to a product code format
+agent = Agent(
+    'openai:gpt-5',
+    output_type=Annotated[str, RegexGrammar(r'[A-Z]{3}-\d{4}')],
+)
+
+result = agent.run_sync('Generate a product code for a laptop.')
+print(result.output)
+#> ABC-1234
+```
+
+### Using Freeform Text
+
+[`FreeformText`][pydantic_ai.tools.FreeformText] indicates the output should be raw text without JSON wrapping. On models that support it, this allows the model to generate unstructured text directly:
+
+```python {title="grammar_output_freeform.py"}
+from typing import Annotated
+
+from pydantic_ai import Agent
+from pydantic_ai.tools import FreeformText
+
+agent = Agent(
+    'openai:gpt-5',
+    output_type=Annotated[str, FreeformText()],
+)
+
+result = agent.run_sync('Write a haiku about programming.')
+print(result.output)
+"""
+Code flows like water
+Bugs hide in the shadows deep
+Debug brings the light
+"""
+```
+
+### Using Lark Grammar
+
+For more complex constraints, use [`LarkGrammar`][pydantic_ai.tools.LarkGrammar] to define a context-free grammar:
+
+```python {title="grammar_output_lark.py"}
+from typing import Annotated
+
+from pydantic_ai import Agent
+from pydantic_ai.tools import LarkGrammar
+
+# Define a grammar for simple arithmetic expressions
+ARITHMETIC_GRAMMAR = """
+start: expr
+expr: term (("+"|"-") term)*
+term: factor (("*"|"/") factor)*
+factor: NUMBER | "(" expr ")"
+NUMBER: /[0-9]+/
+"""
+
+agent = Agent(
+    'openai:gpt-5',
+    output_type=Annotated[str, LarkGrammar(ARITHMETIC_GRAMMAR)],
+)
+
+result = agent.run_sync('Generate a simple arithmetic expression that equals 42.')
+print(result.output)
+#> (6*7)
+```
+
+### Model Support {#model-support}
+
+| Model | Native Constraint Enforcement | Validation Enforcement |
+|-------|------------------------------|------------------------|
+| GPT-5 family | ✅ Yes | ✅ Yes |
+| Other models | ❌ No | ✅ Yes |
+
+For models without native support, the grammar constraint is enforced through Pydantic validation. If the model's output doesn't match the grammar, the agent will retry with feedback about the validation error.
+
+GPT-5 models use [OpenAI's freeform function calling](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#2-freeform-function-calling) with [context-free grammar constraints](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#3-contextfree-grammar-cfg). See [OpenAI model docs](models/openai.md#freeform-function-calling-and-grammar-constraints) for GPT-5-specific details and limitations.
+
+See [Grammar-Constrained Tool Parameters](tools.md#grammar-constrained-tools) for using grammar constraints with tool parameters.
+
 ## Streamed Results
 
 There two main challenges with streamed results:

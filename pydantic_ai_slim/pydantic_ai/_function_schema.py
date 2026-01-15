@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Concatenate, cast, get_args, get_origin
 
 from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -24,7 +24,7 @@ from ._run_context import RunContext
 from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
-    from .tools import DocstringFormat, ObjectJsonSchema
+    from .tools import DocstringFormat, ObjectJsonSchema, TextFormat
 
 
 __all__ = ('function_schema',)
@@ -44,6 +44,8 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list)
     var_positional_field: str | None = None
+    text_format: TextFormat | None = None
+    """Text format annotation extracted from a string parameter, if present."""
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -111,6 +113,8 @@ def function_schema(  # noqa: C901
     positional_fields: list[str] = []
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
+    text_format: TextFormat | None = None
+    text_format_param: str | None = None
 
     description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
 
@@ -147,6 +151,14 @@ def function_schema(  # noqa: C901
                 errors.append('RunContext annotations can only be used as the first argument')
                 continue
 
+            # Extract text format annotation if present
+            if extracted_format := extract_text_format(annotation):
+                if text_format is not None:
+                    errors.append('Only one parameter may have a TextFormat annotation')
+                else:
+                    text_format = extracted_format
+                    text_format_param = name
+
         field_name = p.name
         if p.kind == Parameter.VAR_KEYWORD:
             var_kwargs_schema = gen_schema.generate_schema(annotation)
@@ -163,6 +175,17 @@ def function_schema(  # noqa: C901
                 field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
+
+            # Enhance description for text_format parameter with grammar constraint info
+            if field_name == text_format_param and text_format is not None:
+                grammar_desc = text_format.get_description()
+                if grammar_desc is not None:
+                    if field_info.description:
+                        # Avoid double periods when combining descriptions
+                        base_desc = field_info.description.rstrip('.')
+                        field_info.description = f'{base_desc}. {grammar_desc}'
+                    else:
+                        field_info.description = grammar_desc
 
             fields[field_name] = td_schema = gen_schema._generate_td_field_schema(  # pyright: ignore[reportPrivateUsage]
                 field_name,
@@ -222,6 +245,7 @@ def function_schema(  # noqa: C901
         takes_ctx=takes_ctx,
         is_async=is_async_callable(function),
         function=function,
+        text_format=text_format,
     )
 
 
@@ -301,3 +325,49 @@ def _build_schema(
 def _is_call_ctx(annotation: Any) -> bool:
     """Return whether the annotation is the `RunContext` class, parameterized or not."""
     return annotation is RunContext or get_origin(annotation) is RunContext
+
+
+def extract_text_format(annotation: Any) -> TextFormat | None:
+    """Extract a TextFormat annotation from an Annotated type hint.
+
+    Supports both explicit TextFormat annotations (e.g., `Annotated[str, RegexGrammar(...)]`)
+    and Pydantic Field pattern constraints (e.g., `Annotated[str, Field(pattern=...)]`).
+
+    Args:
+        annotation: The type annotation to check.
+
+    Returns:
+        The TextFormat instance if found, None otherwise.
+    """
+    # Inline import to avoid circular dependency with tools.py
+    from pydantic.fields import FieldInfo
+
+    from .tools import RegexGrammar, TextFormat
+
+    if get_origin(annotation) is not Annotated:
+        return None
+
+    args = get_args(annotation)
+    if len(args) < 2:  # pragma: no cover
+        return None
+
+    # First arg is the base type, rest are metadata
+    base_type = args[0]
+    metadata = args[1:]
+
+    # Check if base type is str
+    if base_type is not str:
+        return None
+
+    # Look for TextFormat or Field(pattern=...) in metadata
+    for item in metadata:
+        if isinstance(item, TextFormat):
+            return item
+        # Support Pydantic Field(pattern=...) by converting to RegexGrammar
+        # The pattern is stored in FieldInfo.metadata as _PydanticGeneralMetadata
+        if isinstance(item, FieldInfo):
+            for meta in item.metadata:
+                if pattern := getattr(meta, 'pattern', None):
+                    return RegexGrammar(pattern)
+
+    return None

@@ -5,6 +5,7 @@
 
 from __future__ import annotations as _annotations
 
+import importlib.util
 import json
 import os
 from collections.abc import Callable
@@ -782,3 +783,64 @@ def test_model_settings_vllm_offline(vllm_model_offline: OutlinesModel) -> None:
     assert kwargs['priority'] == 1
     assert 'sampling_params' in kwargs
     assert 'temperature' in kwargs['sampling_params']
+
+
+async def test_grammar_regex_output_type(mock_async_model: OutlinesModel) -> None:
+    """Test that RegexGrammar output types are converted to outlines Regex constraints."""
+    from outlines.types.dsl import Regex
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.output import OutputObjectDefinition
+    from pydantic_ai.tools import RegexGrammar
+
+    output_object = OutputObjectDefinition(
+        json_schema={'type': 'string'},
+        text_format=RegexGrammar(r'\d{3}-\d{4}'),
+    )
+    params = ModelRequestParameters(output_object=output_object)
+
+    _, output_type, _ = await mock_async_model._build_generation_arguments([], None, params)  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(output_type, Regex)
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
+async def test_grammar_lark_output_type(mock_async_model: OutlinesModel) -> None:
+    """Test that LarkGrammar output types are converted to outlines CFG constraints."""
+    from outlines.types.dsl import CFG
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.output import OutputObjectDefinition
+    from pydantic_ai.tools import LarkGrammar
+
+    grammar = r"""
+    start: expr
+    expr: NUMBER
+    NUMBER: /\d+/
+    """
+    output_object = OutputObjectDefinition(
+        json_schema={'type': 'string'},
+        text_format=LarkGrammar(grammar),
+    )
+    params = ModelRequestParameters(output_object=output_object)
+
+    _, output_type, _ = await mock_async_model._build_generation_arguments([], None, params)  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(output_type, CFG)
+
+
+async def test_grammar_freeform_output_type(mock_async_model: OutlinesModel) -> None:
+    """Test that FreeformText output types result in no constraint (None)."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.output import OutputObjectDefinition
+    from pydantic_ai.tools import FreeformText
+
+    output_object = OutputObjectDefinition(
+        json_schema={'type': 'string'},
+        text_format=FreeformText(),
+    )
+    params = ModelRequestParameters(output_object=output_object)
+
+    _, output_type, _ = await mock_async_model._build_generation_arguments([], None, params)  # pyright: ignore[reportPrivateUsage]
+
+    assert output_type is None

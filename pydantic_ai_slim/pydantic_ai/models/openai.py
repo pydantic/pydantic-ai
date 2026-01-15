@@ -60,7 +60,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import FreeformText, LarkGrammar, RegexGrammar, ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
@@ -73,7 +73,7 @@ from . import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven, Omit, omit
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -100,6 +100,12 @@ try:
         WebSearchOptionsUserLocationApproximate,
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
+    from openai.types.responses.response_custom_tool_call_output_param import (
+        ResponseCustomToolCallOutputParam,
+    )
+    from openai.types.responses.response_custom_tool_call_param import (
+        ResponseCustomToolCallParam,
+    )
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.responses.response_reasoning_item_param import (
         Content as ReasoningContent,
@@ -108,6 +114,7 @@ try:
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+    from openai.types.shared_params.custom_tool_input_format import CustomToolInputFormat
 
     OMIT = omit
 except ImportError as _import_error:
@@ -1349,9 +1356,24 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
-            elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
-                # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
-                pass
+            elif isinstance(item, responses.ResponseCustomToolCall):
+                # Handle custom tool calls (freeform function calling).
+                # If the model calls a tool we don't recognize (e.g., server-side tool
+                # definitions), use 'input' as fallback argument name.
+                if item.name not in model_request_parameters.tool_defs:
+                    argument_name = 'input'
+                else:
+                    tool = model_request_parameters.tool_defs[item.name]
+                    # Fall back to 'input' if the tool doesn't have a single string argument
+                    argument_name = tool.single_string_argument_name or 'input'
+                items.append(
+                    ToolCallPart(
+                        item.name,
+                        {argument_name: item.input},
+                        tool_call_id=item.call_id,
+                        id=item.id,
+                    )
+                )
             elif isinstance(item, responses.response_output_item.LocalShellCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
                 pass
@@ -1572,7 +1594,16 @@ class OpenAIResponsesModel(Model):
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
+    def _get_parallel_tool_calling(
+        self, model_settings: OpenAIResponsesModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> bool | NotGiven:
+        if any(tool_definition.text_format for tool_definition in model_request_parameters.tool_defs.values()):
+            return False
+        return model_settings.get('parallel_tool_calls', NOT_GIVEN)
+
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[responses.FunctionToolParam | responses.CustomToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
@@ -1649,15 +1680,40 @@ class OpenAIResponsesModel(Model):
             tools.append({'type': 'image_generation'})
         return tools
 
-    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam | responses.CustomToolParam:
+        model_profile = OpenAIModelProfile.from_profile(self.profile)
+
+        # Use native freeform function calling if:
+        # 1. Tool has text_format annotation
+        # 2. Model supports freeform function calling
+        # 3. Tool takes a single string argument (required for custom tools)
+        # Otherwise, fall back to regular JSON function tools with agent-side Pydantic validation
+        if f.text_format and model_profile.openai_supports_freeform_function_calling and f.only_takes_string_argument:
+            # Handle different text format types
+            format: CustomToolInputFormat
+            if isinstance(f.text_format, FreeformText):
+                format = {'type': 'text'}
+            elif isinstance(f.text_format, RegexGrammar):
+                format = {'type': 'grammar', 'syntax': 'regex', 'definition': f.text_format.pattern}
+            elif isinstance(f.text_format, LarkGrammar):
+                format = {'type': 'grammar', 'syntax': 'lark', 'definition': f.text_format.definition}
+            else:
+                assert_never(f.text_format)
+
+            tool_param: responses.CustomToolParam = {
+                'name': f.name,
+                'type': 'custom',
+                'description': f.description or '',
+                'format': format,
+            }
+            return tool_param
+
         return {
             'name': f.name,
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            'strict': bool(
-                f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
-            ),
+            'strict': bool(f.strict and model_profile.openai_supports_strict_tool_definition),
         }
 
     def _get_previous_response_id_and_new_messages(
@@ -1702,6 +1758,14 @@ class OpenAIResponsesModel(Model):
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
         )
 
+        # Collect custom tool call_ids from ToolCallParts (custom tools have id starting with 'ctc_')
+        custom_tool_call_ids: set[str] = set()
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                for part in message.parts:
+                    if isinstance(part, ToolCallPart) and part.id and part.id.startswith('ctc_'):
+                        custom_tool_call_ids.add(part.tool_call_id)
+
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -1712,13 +1776,22 @@ class OpenAIResponsesModel(Model):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
-                        call_id, _ = _split_combined_tool_call_id(call_id)
-                        item = FunctionCallOutput(
-                            type='function_call_output',
-                            call_id=call_id,
-                            output=part.model_response_str(),
-                        )
-                        openai_messages.append(item)
+                        if call_id in custom_tool_call_ids:
+                            openai_messages.append(
+                                ResponseCustomToolCallOutputParam(
+                                    type='custom_tool_call_output',
+                                    call_id=call_id,
+                                    output=part.model_response_str(),
+                                )
+                            )
+                        else:
+                            openai_messages.append(
+                                FunctionCallOutput(
+                                    type='function_call_output',
+                                    call_id=call_id,
+                                    output=part.model_response_str(),
+                                )
+                            )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             openai_messages.append(
@@ -1726,13 +1799,22 @@ class OpenAIResponsesModel(Model):
                             )
                         else:
                             call_id = _guard_tool_call_id(t=part)
-                            call_id, _ = _split_combined_tool_call_id(call_id)
-                            item = FunctionCallOutput(
-                                type='function_call_output',
-                                call_id=call_id,
-                                output=part.model_response(),
-                            )
-                            openai_messages.append(item)
+                            if call_id in custom_tool_call_ids:
+                                openai_messages.append(
+                                    ResponseCustomToolCallOutputParam(
+                                        type='custom_tool_call_output',
+                                        call_id=call_id,
+                                        output=part.model_response(),
+                                    )
+                                )
+                            else:
+                                openai_messages.append(
+                                    FunctionCallOutput(
+                                        type='function_call_output',
+                                        call_id=call_id,
+                                        output=part.model_response(),
+                                    )
+                                )
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
@@ -1768,20 +1850,32 @@ class OpenAIResponsesModel(Model):
                             )
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
-                        call_id, id = _split_combined_tool_call_id(call_id)
-                        id = id or item.id
+                        id = item.id
 
-                        param = responses.ResponseFunctionToolCallParam(
-                            name=item.tool_name,
-                            arguments=item.args_as_json_str(),
-                            call_id=call_id,
-                            type='function_call',
-                        )
-                        if profile.openai_responses_requires_function_call_status_none:
-                            param['status'] = None  # type: ignore[reportGeneralTypeIssues]
-                        if id and send_item_ids:  # pragma: no branch
-                            param['id'] = id
-                        openai_messages.append(param)
+                        # Custom tool calls have item ID starting with 'ctc_'
+                        if id and id.startswith('ctc_'):
+                            # Custom tool call
+                            custom_param = ResponseCustomToolCallParam(
+                                name=item.tool_name,
+                                input=item.args_as_json_str(),
+                                call_id=call_id,
+                                type='custom_tool_call',
+                            )
+                            if send_item_ids:  # pragma: no branch
+                                custom_param['id'] = id
+                            openai_messages.append(custom_param)
+                        else:
+                            param = responses.ResponseFunctionToolCallParam(
+                                name=item.tool_name,
+                                arguments=item.args_as_json_str(),
+                                call_id=call_id,
+                                type='function_call',
+                            )
+                            if profile.openai_responses_requires_function_call_status_none:
+                                param['status'] = None  # type: ignore[reportGeneralTypeIssues]
+                            if id and send_item_ids:  # pragma: no branch
+                                param['id'] = id
+                            openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
                         if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             if (
@@ -2205,6 +2299,15 @@ class OpenAIStreamedResponse(StreamedResponse):
 
 
 @dataclass
+class _CustomToolCallInfo:
+    """Metadata for a custom tool call being streamed."""
+
+    name: str
+    call_id: str
+    id: str | None
+
+
+@dataclass
 class OpenAIResponsesStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI Responses API."""
 
@@ -2212,6 +2315,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _provider_name: str
     _provider_url: str
+    _custom_tool_calls: dict[str, _CustomToolCallInfo] = field(default_factory=dict)
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
 
@@ -2255,6 +2359,29 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
                 pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseCustomToolCallInputDeltaEvent):
+                pass  # We handle the complete input in ResponseCustomToolCallInputDoneEvent
+
+            elif isinstance(chunk, responses.ResponseCustomToolCallInputDoneEvent):
+                # Emit the complete custom tool call using stored metadata
+                tool_info = self._custom_tool_calls.get(chunk.item_id)
+                if tool_info is not None:  # pragma: no branch
+                    # Determine the argument name from tool definition
+                    if tool_info.name not in self.model_request_parameters.tool_defs:  # pragma: no cover
+                        argument_name = 'input'
+                    else:
+                        tool = self.model_request_parameters.tool_defs[tool_info.name]
+                        tool_argument_name = tool.single_string_argument_name
+                        argument_name = tool_argument_name if tool_argument_name is not None else 'input'
+
+                    yield self._parts_manager.handle_tool_call_part(
+                        vendor_part_id=tool_info.id,
+                        tool_name=tool_info.name,
+                        args={argument_name: chunk.input},
+                        tool_call_id=tool_info.call_id,
+                        id=tool_info.id,
+                    )
 
             elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                 self._usage += self._map_usage(chunk.response)
@@ -2327,6 +2454,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                     call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                elif isinstance(chunk.item, responses.ResponseCustomToolCall):
+                    # Store metadata for later when we receive the input done event
+                    # Use id as key, falling back to call_id if id is None
+                    key = chunk.item.id or chunk.item.call_id
+                    self._custom_tool_calls[key] = _CustomToolCallInfo(
+                        name=chunk.item.name,
+                        call_id=chunk.item.call_id,
+                        id=chunk.item.id,
+                    )
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -2660,16 +2796,6 @@ def _map_provider_details(
         provider_details['finish_reason'] = raw_finish_reason
 
     return provider_details or None
-
-
-def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
-    # When reasoning, the Responses API requires the `ResponseFunctionToolCall` to be returned with both the `call_id` and `id` fields.
-    # Before our `ToolCallPart` gained the `id` field alongside `tool_call_id` field, we combined the two fields into a single string stored on `tool_call_id`.
-    if '|' in combined_id:
-        call_id, id = combined_id.split('|', 1)
-        return call_id, id
-    else:
-        return combined_id, None
 
 
 def _map_code_interpreter_tool_call(

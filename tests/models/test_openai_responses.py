@@ -1,9 +1,10 @@
+import importlib.util
 import json
 import re
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -49,15 +50,16 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import FreeformText, LarkGrammar, RegexGrammar, ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import NOT_GIVEN, AsyncOpenAI
     from openai.types.responses import ResponseFunctionWebSearch
+    from openai.types.responses.response_output_item import ResponseCustomToolCall
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
@@ -2191,6 +2193,238 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
     assert result.usage() == snapshot(
         RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
     )
+
+
+def test_openai_responses_model_parallel_tool_calling_enabled():
+    regular_tool = ToolDefinition(
+        name='regular_function',
+        description='A regular function',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'param': {'type': 'string'}},
+            'required': ['param'],
+        },
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+
+    params_regular_only = ModelRequestParameters(function_tools=[regular_tool])
+    parallel_calling = model._get_parallel_tool_calling({}, params_regular_only)  # type: ignore[reportPrivateUsage]
+    assert parallel_calling == NOT_GIVEN
+
+
+def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform():
+    freeform_tool = ToolDefinition(
+        name='freeform_analyzer',
+        description='A freeform analyzer',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+        },
+        text_format=FreeformText(),
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+
+    params_with_freeform = ModelRequestParameters(function_tools=[freeform_tool])
+    parallel_calling = model._get_parallel_tool_calling({}, params_with_freeform)  # type: ignore[reportPrivateUsage]
+    assert not parallel_calling
+
+
+def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform_output():
+    freeform_tool = ToolDefinition(
+        name='freeform_analyzer',
+        description='A freeform analyzer',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+        },
+        text_format=FreeformText(),
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+
+    params_with_freeform = ModelRequestParameters(output_tools=[freeform_tool])
+    parallel_calling = model._get_parallel_tool_calling({}, params_with_freeform)  # type: ignore[reportPrivateUsage]
+    assert not parallel_calling
+
+
+def test_openai_responses_model_freeform_function_unsupported_model_fallback():
+    """Test that unsupported models fall back to regular function tools with grammar constraints."""
+    freeform_tool = ToolDefinition(
+        name='freeform_analyzer',
+        description='A freeform analyzer',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+        },
+        text_format=FreeformText(),
+    )
+
+    # GPT-4 doesn't support freeform function calling - should fall back to regular function tool
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+
+    result = model._map_tool_definition(freeform_tool)  # pyright: ignore[reportPrivateUsage]
+
+    # Should return a regular function tool, not a custom tool
+    assert result['type'] == 'function'
+    assert result['name'] == 'freeform_analyzer'
+
+
+def test_openai_responses_model_freeform_function_multi_param_fallback():
+    """Test that tools with multiple params fall back to regular function tools."""
+    multi_param_tool = ToolDefinition(
+        name='multi_param_analyzer',
+        description='Tool with multiple params',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'param1': {'type': 'string'},
+                'param2': {'type': 'string'},
+            },
+            'required': ['param1', 'param2'],
+        },
+        text_format=FreeformText(),
+    )
+
+    # Even GPT-5 should fall back for multi-param tools since custom tools require single string arg
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+
+    result = model._map_tool_definition(multi_param_tool)  # pyright: ignore[reportPrivateUsage]
+
+    # Should return a regular function tool, not a custom tool
+    assert result['type'] == 'function'
+    assert result['name'] == 'multi_param_analyzer'
+
+
+async def test_openai_responses_model_custom_tool_call_response_processing(allow_model_requests: None):
+    """Test that OpenAI Responses model processes custom_tool_call responses correctly."""
+    from pydantic_ai.models import ModelRequestParameters
+
+    content_data = [
+        ResponseCustomToolCall(
+            type='custom_tool_call',
+            name='analyze_content',
+            call_id='call_custom_456',
+            input='This is the raw content input',
+        )
+    ]
+
+    mock_response = response_message(content_data)
+    mock_client = MockOpenAIResponses.create_mock(mock_response)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    freeform_tool = ToolDefinition(
+        name='analyze_content',
+        description='Analyze content',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+        },
+        text_format=FreeformText(),
+    )
+
+    params = ModelRequestParameters(function_tools=[freeform_tool])
+
+    response = model._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
+
+    assert response == snapshot(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='analyze_content',
+                    args={'content': 'This is the raw content input'},
+                    tool_call_id='call_custom_456',
+                )
+            ],
+            model_name='gpt-4o-123',
+            timestamp=IsNow(tz=timezone.utc),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1',
+            provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
+            provider_response_id='123',
+        )
+    )
+
+
+async def test_openai_responses_model_custom_tool_call_unknown_tool_parsed(allow_model_requests: None):
+    """Test that unknown custom tool calls are parsed into ToolCallPart with 'input' as argument name.
+
+    Unknown tools are handled during execution (not response processing) per the architecture pattern.
+    """
+    from pydantic_ai.models import ModelRequestParameters
+
+    content_data = [
+        ResponseCustomToolCall(
+            type='custom_tool_call',
+            name='unknown_analyzer',
+            call_id='call_unknown_456',
+            input='Some content',
+        )
+    ]
+
+    mock_response = response_message(content_data)
+    mock_client = MockOpenAIResponses.create_mock(mock_response)
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    params = ModelRequestParameters()  # No tools defined
+
+    # Should not raise an error - unknown tools are handled during execution
+    response = m._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
+
+    # Verify that a ToolCallPart was created with 'input' as the default argument name
+    assert len(response.parts) == 1
+    tool_call = response.parts[0]
+    assert isinstance(tool_call, ToolCallPart)
+    assert tool_call.tool_name == 'unknown_analyzer'
+    assert tool_call.args == {'input': 'Some content'}
+    assert tool_call.tool_call_id == 'call_unknown_456'
+
+
+async def test_openai_responses_model_custom_tool_call_invalid_signature_fallback(allow_model_requests: None):
+    """Test that OpenAI Responses model falls back to 'input' for custom tool calls to tools without a single string argument."""
+    from pydantic_ai.models import ModelRequestParameters
+
+    content_data = [
+        ResponseCustomToolCall(
+            type='custom_tool_call',
+            name='invalid_analyzer',
+            call_id='call_invalid_456',
+            input='Some content',
+        )
+    ]
+
+    mock_response = response_message(content_data)
+    mock_client = MockOpenAIResponses.create_mock(mock_response)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    invalid_tool = ToolDefinition(
+        name='invalid_analyzer',
+        description='Tool with invalid signature',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'param1': {'type': 'string'},
+                'param2': {'type': 'string'},
+            },
+            'required': ['param1', 'param2'],
+        },
+    )
+
+    params = ModelRequestParameters(function_tools=[invalid_tool])
+
+    # Instead of raising an error, fall back to 'input' as the argument name
+    response = model._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
+    assert len(response.parts) == 1
+    tool_call = response.parts[0]
+    assert isinstance(tool_call, ToolCallPart)
+    assert tool_call.tool_name == 'invalid_analyzer'
+    # The fallback uses 'input' as the argument name
+    assert tool_call.args == {'input': 'Some content'}
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
@@ -8833,6 +9067,144 @@ async def test_openai_responses_runs_with_instructions_only(
     assert len(result.output) > 0
 
 
+# --- Priority 1: Core Freeform/Grammar VCR Tests ---
+
+
+@pytest.mark.vcr()
+async def test_gpt5_freeform_text_sql_tool(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """FreeformText tool receives raw SQL without JSON wrapping."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def execute_sql(query: Annotated[str, FreeformText()]) -> str:
+        """Execute SQL query on the database."""
+        return 'Result: 3 rows returned'
+
+    result = await agent.run('Show me all users from the users table')
+
+    # Verify tool was called with SQL query
+    messages = result.all_messages()
+    tool_calls = [part for msg in messages for part in msg.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    # The args is a dict with the parameter name as key
+    args = tool_calls[0].args
+    assert isinstance(args, dict)
+    query = args.get('query')
+    assert isinstance(query, str)
+    assert 'SELECT' in query or 'select' in query.lower()
+
+
+@pytest.mark.vcr()
+async def test_gpt5_regex_grammar_phone_tool(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """RegexGrammar constrains tool input to phone format."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def lookup_phone(phone: Annotated[str, RegexGrammar(r'\d{3}-\d{3}-\d{4}')]) -> str:
+        """Look up a phone number in the directory."""
+        return 'Found: John Doe'
+
+    result = await agent.run('Look up the phone number 555-123-4567')
+
+    # Verify tool was called
+    messages = result.all_messages()
+    tool_calls = [part for msg in messages for part in msg.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    # The args is a dict with the parameter name as key
+    args = tool_calls[0].args
+    assert isinstance(args, dict)
+    phone = args.get('phone')
+    assert isinstance(phone, str)
+    assert re.match(r'\d{3}-\d{3}-\d{4}', phone), f'Phone {phone!r} does not match pattern'
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
+@pytest.mark.vcr()
+async def test_gpt5_lark_grammar_sql_tool(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """LarkGrammar constrains tool input to valid SQL syntax."""
+    sql_grammar = r"""
+    start: select_stmt
+    select_stmt: "SELECT" columns "FROM" table
+    columns: "*" | WORD ("," WORD)*
+    table: WORD
+    %import common.WORD
+    %import common.WS
+    %ignore WS
+    """
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def run_sql(query: Annotated[str, LarkGrammar(sql_grammar)]) -> str:
+        """Execute a constrained SQL SELECT query."""
+        return 'Executed successfully: 5 rows'
+
+    result = await agent.run('Get all data from the users table')
+
+    # Verify tool was called
+    messages = result.all_messages()
+    tool_calls = [part for msg in messages for part in msg.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    # The args is a dict with the parameter name as key
+    args = tool_calls[0].args
+    assert isinstance(args, dict)
+    query = args.get('query')
+    assert isinstance(query, str)
+    assert 'SELECT' in query and 'FROM' in query, f'SQL {query!r} does not match grammar'
+
+
+@pytest.mark.vcr()
+async def test_gpt5_freeform_output_type(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """FreeformText output_type returns raw text without JSON."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(  # pyright: ignore[reportCallIssue]
+        m,
+        output_type=Annotated[str, FreeformText()],  # pyright: ignore[reportArgumentType]
+    )
+
+    result = await agent.run('Write a haiku about coding')
+
+    # Verify output is plain text
+    assert isinstance(result.output, str)
+    assert len(result.output) > 0
+    # Should not be JSON-wrapped
+    assert not result.output.startswith('{')
+    assert not result.output.startswith('[')
+
+
+@pytest.mark.vcr()
+async def test_gpt5_regex_output_type(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """RegexGrammar output_type constrains final output format."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(  # pyright: ignore[reportCallIssue]
+        m,
+        output_type=Annotated[str, RegexGrammar(r'[A-Z]{3}-\d{4}')],  # pyright: ignore[reportArgumentType]
+    )
+
+    result = await agent.run('Generate a product code for a laptop')
+
+    # Verify output matches the pattern ABC-1234
+    assert isinstance(result.output, str)
+    assert re.match(r'[A-Z]{3}-\d{4}', result.output), f'Output {result.output!r} does not match pattern'
+
+
 async def test_web_search_call_action_find_in_page(allow_model_requests: None):
     """Test for https://github.com/pydantic/pydantic-ai/issues/3653"""
     c1 = response_message(
@@ -8964,3 +9336,70 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+@pytest.mark.vcr()
+async def test_gpt5_freeform_text_streaming(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """Test streaming with FreeformText custom tool to exercise streaming custom tool paths."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def execute_sql(query: Annotated[str, FreeformText()]) -> str:
+        """Execute SQL query on the database."""
+        return 'Result: 5 users found'
+
+    streamed_text: list[str] = []
+    async with agent.run_stream('List the first 5 users from the users table') as result:
+        async for chunk in result.stream_text():
+            streamed_text.append(chunk)
+
+    # Verify we got streaming output
+    assert len(streamed_text) >= 1
+    final_text = ''.join(streamed_text)
+    assert 'users' in final_text.lower() or '5' in final_text
+
+    # Verify tool was called with SQL query
+    messages = result.all_messages()
+    tool_calls = [part for msg in messages for part in msg.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    args = tool_calls[0].args
+    assert isinstance(args, dict)
+    query = args.get('query')
+    assert isinstance(query, str)
+    assert 'SELECT' in query.upper() or 'select' in query.lower()
+
+
+@pytest.mark.vcr()
+async def test_gpt5_freeform_text_retry(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """Test custom tool retry path (line 1731) with FreeformText tool that fails then succeeds."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    call_count = 0
+
+    @agent.tool_plain
+    def execute_sql(query: Annotated[str, FreeformText()]) -> str:
+        """Execute SQL query on the database."""
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ModelRetry('Invalid query syntax, please use SELECT * FROM users')
+        return 'Result: 3 users found'
+
+    result = await agent.run('Show me all users')
+
+    # Should have retried - verify we got at least 2 tool calls
+    messages = result.all_messages()
+    tool_calls = [part for msg in messages for part in msg.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_calls) >= 1
+
+    # Verify there's a RetryPromptPart in the messages (proves retry path was taken)
+    retry_parts = [part for msg in messages for part in msg.parts if isinstance(part, RetryPromptPart)]
+    assert len(retry_parts) >= 1

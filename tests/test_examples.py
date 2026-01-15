@@ -551,6 +551,17 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
     'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
     'What is the first sentence on https://ai.pydantic.dev?': 'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
+    'Generate a product code for a laptop.': ToolCallPart(
+        tool_name='final_result', args={'response': 'ABC-1234'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'Write a haiku about programming.': ToolCallPart(
+        tool_name='final_result',
+        args={'response': 'Code flows like water\nBugs hide in the shadows deep\nDebug brings the light'},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
+    'Generate a simple arithmetic expression that equals 42.': ToolCallPart(
+        tool_name='final_result', args={'response': '(6*7)'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     'Create a record with name "test" and value 42': ToolCallPart(
         tool_name='final_result',
         args={'name': 'test', 'value': 42},

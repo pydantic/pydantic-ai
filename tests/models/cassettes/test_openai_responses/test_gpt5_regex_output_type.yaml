@@ -1,0 +1,121 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '364'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Generate a product code for a laptop
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: required
+      tools:
+      - description: The final response which ends this conversation
+        format:
+          definition: '[A-Z]{3}-\d{4}'
+          syntax: regex
+          type: grammar
+        name: final_result
+        type: custom
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '4866'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1767313426
+      created_at: 1767313422
+      error: null
+      id: resp_049d87f5854bacde006957100dff588192b8e624c9669834c4
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpVxASf8XKRaP8UiZR0s-qimGJJHIAJp9eW7UmIPhb5spmBMwpz_CRAGoi8qY_fQB_9fN6REv5XNRF12y8OsI1P8ef5O10Lne-oj7twTb4KmWUs9nscWizgCqbVokP_o2wke3EShqCEphrFdmzpPeHmEefoYljyYE4OhQqA5aImxqbS--o2s0iEAmnNA-CIY95ein3UfwQfQRf5oH2ZxlWgHC4VqmE6LmxmpD1YbIbDPCkvKRDDrYYA-d4Wo-UqNxbvoXqJutntOPi6KJQPvMdjNxDPK-muNy_rG42dV2mcCCi5iVvH96I3nj7ohw9xsfUTOKxGRE5UuKAy_31CaYYAGVFeexpP02Q1Oilf8BqJk0A34KmnC23rxeqvF79rwZEp2wTNS0kr6pyZr5-YQ-wZXJjJtSHaOLhydqpnxipSCnXbU4peA8j6uqZkXOBp1zhXiS9PgjxG0TtTX_8DBo3QbYU-EUUR1qBKFww4TttEtcnBR7Gzn8o7SClRQZaJeTz1nvYP57KNpxm-CfKxKXCQ2MpcdpDoc5-vxJDPpCqwaeY0ckHzEBBhQdusye2v_kf9gflual4dUZYa08wyAoTX8jxmmpKzCgV-If-X1YyXC3u9VR4q48EK8oMIHVTy7szFAUZQ4iDpDH8Im4RUv3TQvz4TYT1FjCFH3s1UgIAy3rjBOunqCJFOS3TxajiipHWANf_wfj9qc4Sar-JxjQbg8093pn3nMGDHxoXM_ssj7ieG6MDFV70zn1rVIecnVkN1Ay4RbEGGZq7QEPfV5ciODTHRFpe2aEfkHlr154RxzYFG2rT8gZ7i9a-HIQN-UxdqHO_U01TDU02BmyU5KoP1IDnLKzcbaEv1p2qkH7oKfjxaQ8w8uPFfLmqb1DVQaLcBsZeoZz0dHSevo2q-JTDh9xk_jy_dLCPL09W6Wjp2TcAN5lXmTQssXNCWgmo2SnM8cM3hvBlZ257Djt7LJlcQqrjP42oCiB1j5GinuM_tiRccOD_gnZ1xw2_wz8yd53KOykJqiKlihVYVHoZYinbvCGH4gpPyxDewio-FQwuwNgDwepffrm7ST0NvhyJdz4HfZMzhQbz6W3RX2eq-zBOjRjGGvma5qPP1lhPbgj3pVkbC-vfRSGo7IJGg1keyhJU26DPpjnHYYUhAmDBqZHA5qa0lb0-cNzwhSHkfcI1NzAa233wHktaU0g9Ly7ItP1zpht6t3Uh4kmiJDdDzWiosUNtglEja20ML-nS2JjhycoyOA_oVMzlmJfaIa2EyDcBGK-v4l5me8_Hk7MCEyULoFqkriz-oRXoj4TgVq7XtHSjmt37henca9B_B5eC0ym8DTkOZOIpicu1_tONckieNtERhi3kEXYwh_dJ2h_ShjvmMKyJEx0GRIgWsZP5nAyO25WghhQe9EnnBBvZ88JBsxL5QrEmACdBwd_Db129oAi2KL5VLYOwo_Kif6uIlx45xwko__FHfFlucY50S_RumuOrjLSLUglhZZAtBRXvbJgh3xT99GhFNmhl1T0UiOcfz-G9L783l2Kl-ybP0Z0mv9RVjQ6r_oDP4IL-E8_UrExI0C9Uq4qi4kywIi9ppRkbUg24PU2Bcsr2vrPTeNvjixrMIZuaVhIcL1lRYKkvbcNKSAkJEhsYWmWIJcgS2mSu9yPpUtOUClD4AOxTx_ogIJfIJOLKyPnapzwSHGXrnGN3jTP9OlX_03WK_RmBoeC42-HIM7rtFZOmsil5hw7BOBgaS5HP-Gus2VU2Z037wDRcmfT7PC_zSPF9ndjXB69P2FamIv57pkUlIWIKof17UxkYboLqU0nCOUcLjYvwGMn2BIUSpukxn-ISTegh3J5oeI8aYUGCm3YELBJXowagw_vvYOeWp6RxfRwRpYumpugnae5WKOwpjCo7Awx4Csuk_XCzXyjzWNNeGCt4tE5L7MEO52lAFcB1h9Uvf-HZZ2qUvAThOfyVMw4CfqMeMeuCsVuN1bshGppS2ONv35Zvd2vCxNmCaZ1QydCyRuJSFCMk0-dR5o9WgZTdbnrX7sZ0NbBeG9he8gUZuQP7-84sz2iwgP-eIou5FGuw9pfpDoEZQdtXKD32OPVmJuPVWy-JDGqzLSSuDg-c59MZILMtzFCeJ8b7ws2zhnL64LHSEKaYxmlcmDK4nxPIW7_X-3pn8e4grswVMLqGxBPK7MM-wtmThmR7gEK6Oq8X2iFofPNgBzq7bdYXGrnWwoC3jfxQXNVOHAC3g3CpRYivSew93Crbted12eo9vrRpKHHMxovBxzIiXbNlADnRE5t3NHE2CeHu3sn7MyNwR8FF70Rhow46JGt-CWy7v1j_L6x5rY7JDPP8trBiB5g1QfQrpfWj4HeQ3ZhCTlL_yQgm3i2Pl76JWSs31DqMboB2kGE1GI3R4AQDwsgiFnPxO755BBB-dxICm5iPgMYVxo6Ts41-XZuib2ZKSwIhiP7t9aCyuzR1TCfWy7tWTnd0ZfnesXtvcgEku2F0q5cDEqqXvjE9_3qaElqzQggUXgYw-gqygarAfz-1f3H9gpfxY1VGQhOiuLRuJqgv7uu7JDWZwDB_D7uoP2dMDHPW9umQr5pfQwVXNRUc0Un1OBvqytdayykg_MWyW3q-GTWEtYq8aCLF84ZyYd0fmg7RY1nTnTvoy95pkDA790f31RMEVZL0QooBq3YsFgt_xee5GCFMJetWU0l4ddQ4SA1tqFpVwiuyvuXz3EIu2injsaixGruqUrfXKV41pPr-hatGyBPwACjXPY8Pha0K9QSzcPQsnrFEugDG4zLypd4VfI25QDwqRbokw1xQoNX70CeESWT_wg7AhCXz4lb8YlfaqhndK9aQxmS6fyssjTSy4cK1txJeYAE3D1whFBa15R6jzRQRJOm9mPBCTKggjiAvgSUwBRuCYxtTmG9I65z9gcUqJGlt1Za2X9ertX_uf7rjd-NC0EsYbL71foS67XMof_Rc63BbYBnvHQ3I9iH8pKaBDGZOWOp3zeRYFRfDGQM7A1Tm1xlD7iMMW8Jfu9v98KR_jTSW0SrKYyAWvpBivS1XBYfYJeLmR1MptSd2u0o186Nuo00tGUvudqwkIj9Abwec2G88w8OHNlgVfM61rAnh4XR_fkfZmQ71677jbQocVLMUVbJxomcYeP26V7n1kDr6vE9UmYd0ZQWctTLvyCd3uFkQlriqtHruS1RbhCPWT-C0ZYVVubzHk3O1Z0Tcc3j-nTP828mH6UeZMInahMRUtcx-dqJ4UyvVpUHfQp4fv5mHmio9ZZz7awXZb7eIbNzENGGDGJcQ9Bd7594d_xHoGi0523NfgMgLHMuv9JpmUxkWwXg9UYp4aw==
+        id: rs_049d87f5854bacde006957100f1694819297d3c0d501a67f8e
+        summary: []
+        type: reasoning
+      - call_id: call_Lx6MkakyUAl0bOsYeGG21o47
+        id: ctc_049d87f5854bacde0069571012802881928d1e00971e58b702
+        input: LPT-4826
+        name: final_result
+        status: completed
+        type: custom_tool_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: The final response which ends this conversation
+        format:
+          definition: '[A-Z]{3}-\d{4}'
+          syntax: regex
+          type: grammar
+        name: final_result
+        type: custom
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 107
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 404
+        output_tokens_details:
+          reasoning_tokens: 384
+        total_tokens: 511
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
