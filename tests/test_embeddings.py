@@ -40,6 +40,10 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.embeddings.cohere import CohereEmbeddingModel, LatestCohereEmbeddingModelNames
     from pydantic_ai.providers.cohere import CohereProvider
 
+with try_import() as bedrock_imports_successful:
+    from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+    from pydantic_ai.providers.bedrock import BedrockProvider
+
 with try_import() as sentence_transformers_imports_successful:
     from sentence_transformers import SentenceTransformer
 
@@ -316,6 +320,137 @@ class TestCohere:
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='not found,'):
             await embedder.embed_query('Hello, world!')
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+@pytest.mark.vcr
+class TestBedrock:
+    async def test_infer_model(self):
+        model = infer_embedding_model('bedrock:amazon.titan-embed-text-v2:0')
+        assert isinstance(model, BedrockEmbeddingModel)
+        assert model.model_name == 'amazon.titan-embed-text-v2:0'
+        assert model.system == 'bedrock'
+
+    async def test_amazon_titan_embed_text_v2_query(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=IsInt()),
+                model_name='amazon.titan-embed-text-v2:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+            )
+        )
+
+    async def test_amazon_titan_embed_text_v2_documents(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
+                inputs=['hello', 'world'],
+                input_type='document',
+                usage=RequestUsage(input_tokens=IsInt()),
+                model_name='amazon.titan-embed-text-v2:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+            )
+        )
+
+    async def test_cohere_embed_english_v3_query(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=IsInt()),
+                model_name='cohere.embed-english-v3',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_embed_english_v3_documents(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
+                inputs=['hello', 'world'],
+                input_type='document',
+                usage=RequestUsage(input_tokens=IsInt()),
+                model_name='cohere.embed-english-v3',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_embed_v4_query(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=IsInt()),
+                model_name='cohere.embed-v4:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_amazon_titan_embed_text_v2_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(8192)
+
+    async def test_cohere_embed_english_v3_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(512)
+
+    async def test_amazon_nova_2_multimodal_embeddings_v1_query(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=IsInt()),
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+            )
+        )
+
+    async def test_amazon_nova_2_multimodal_embeddings_v1_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(8192)
+
+    async def test_unsupported_model_error(self, bedrock_provider: BedrockProvider):
+        with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
+            BedrockEmbeddingModel('unsupported.model', provider=bedrock_provider)
 
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
