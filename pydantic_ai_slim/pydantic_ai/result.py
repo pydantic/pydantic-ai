@@ -1,7 +1,9 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import inspect
 import threading
+import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -44,13 +46,6 @@ __all__ = (
 
 T = TypeVar('T')
 """An invariant TypeVar."""
-
-
-async def _wait_briefly() -> None:
-    """Brief async sleep to allow polling without blocking."""
-    import asyncio
-
-    await asyncio.sleep(0.01)
 
 
 @dataclass(kw_only=True)
@@ -686,7 +681,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         runs entirely in a background thread, ensuring proper OTel span handling.
         Streaming still works normally - chunks are yielded as they arrive.
         """
-        if not hasattr(self, '_stream'):
+        if self._streamed_run_result:
             # Already have a direct StreamedRunResult, nothing to do
             self._context_entered = True
             return self
@@ -721,6 +716,16 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         if self._exception is not None and exc_type is None:
             raise self._exception  # pragma: no cover
 
+    def _warn_if_not_context_manager(self) -> None:
+        """Emit a deprecation warning if streaming methods are called without using the context manager."""
+        if not self._context_entered and not self._streamed_run_result:
+            warnings.warn(
+                'Using run_stream_sync() without the context manager pattern is deprecated. '
+                'Use `with agent.run_stream_sync(...) as result:` instead for proper OpenTelemetry span handling.',
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
     def _run_async_stream(self) -> None:
         """Run the async stream lifecycle in a background thread.
 
@@ -739,7 +744,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 # Wait for the sync consumer to signal they're done
                 # We use a polling approach since we can't await a threading.Event
                 while not self._stream_done.is_set():
-                    await _wait_briefly()
+                    await asyncio.sleep(0.01)
             except BaseException as e:
                 self._exception = e
                 self._stream_ready.set()  # Signal ready even on error
@@ -833,6 +838,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the response data.
         """
+        self._warn_if_not_context_manager()
         return self._async_iterator_to_sync(lambda result: result.stream_output(debounce_by=debounce_by))
 
     def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
@@ -848,6 +854,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
+        self._warn_if_not_context_manager()
         return self._async_iterator_to_sync(lambda result: result.stream_text(delta=delta, debounce_by=debounce_by))
 
     def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
@@ -861,10 +868,12 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the structured response message and whether that is the last message.
         """
+        self._warn_if_not_context_manager()
         return self._async_iterator_to_sync(lambda result: result.stream_responses(debounce_by=debounce_by))
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
+        self._warn_if_not_context_manager()
         return self._async_to_sync(lambda result: result.get_output())
 
     @asynccontextmanager

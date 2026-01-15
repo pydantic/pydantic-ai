@@ -439,6 +439,7 @@ async def test_streamed_text_stream():
         )
 
 
+@pytest.mark.filterwarnings('ignore:Using run_stream_sync.*:DeprecationWarning')
 def test_streamed_text_stream_sync():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 
@@ -3165,6 +3166,7 @@ async def test_run_stream_events():
     )
 
 
+@pytest.mark.filterwarnings('ignore:Using run_stream_sync.*:DeprecationWarning')
 def test_structured_response_sync_validation():
     async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.output_tools is not None
@@ -3312,6 +3314,7 @@ async def test_streamed_run_result_sync_context_manager_with_direct_result():
             )
 
 
+@pytest.mark.filterwarnings('ignore:Using run_stream_sync.*:DeprecationWarning')
 def test_stream_output_after_get_output_sync():
     m = TestModel()
 
@@ -3508,3 +3511,14 @@ def test_run_stream_sync_context_manager_exception_in_stream():
     with pytest.raises(ValueError, match='Stream initialization failed'):
         with agent.run_stream_sync('Hello'):
             pass  # pragma: no cover
+
+
+def test_run_stream_sync_deprecation_warning_without_context_manager():
+    """Test that using run_stream_sync without context manager emits a deprecation warning."""
+    m = TestModel()
+    agent = Agent(m)
+
+    result = agent.run_stream_sync('Hello')
+    with pytest.warns(DeprecationWarning, match='Using run_stream_sync\\(\\) without the context manager pattern'):
+        # Any of the streaming methods should emit the warning
+        list(result.stream_output())
