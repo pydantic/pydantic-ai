@@ -147,8 +147,7 @@ class FallbackModel(Model):
                     self._add_handler(item)
                 else:
                     raise TypeError(
-                        f'fallback_on items must be exception types or callables, '
-                        f'got {type(item).__name__}'
+                        f'fallback_on items must be exception types or callables, got {type(item).__name__}'
                     )
             # Warn if empty sequence was provided
             if not self._exception_handlers and not self._response_handlers:
@@ -306,9 +305,7 @@ def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> Exce
     return handler
 
 
-def _raise_fallback_exception_group(
-    exceptions: list[Exception], rejected_responses: list[ModelResponse]
-) -> NoReturn:
+def _raise_fallback_exception_group(exceptions: list[Exception], rejected_responses: list[ModelResponse]) -> NoReturn:
     """Raise a FallbackExceptionGroup combining exceptions and response rejections.
 
     Args:
@@ -317,9 +314,7 @@ def _raise_fallback_exception_group(
     """
     all_errors: list[Exception] = list(exceptions)
     if rejected_responses:
-        all_errors.append(
-            RuntimeError(f'{len(rejected_responses)} model response(s) rejected by fallback_on handler')
-        )
+        all_errors.append(RuntimeError(f'{len(rejected_responses)} model response(s) rejected by fallback_on handler'))
 
     if all_errors:
         raise FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
