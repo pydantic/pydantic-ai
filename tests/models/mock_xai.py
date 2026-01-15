@@ -450,7 +450,7 @@ def _create_builtin_tool_response(
     initial_status: chat_pb2.ToolCallStatus | None = None,
 ) -> chat_types.Response:
     """Create a Response with builtin tool outputs (shared helper)."""
-    if initial_status is None:  # pragma: no cover
+    if initial_status is None:
         initial_status = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
     in_progress_output = chat_pb2.CompletionOutput(
         index=0,
