@@ -13,7 +13,38 @@ You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.Mode
 
 Some [OpenAI-compatible model providers](models/openai.md#openai-compatible-models) might also support native thinking parts that are not delimited by tags. Instead, they are sent and received as separate, custom fields in the API. Typically, if you are calling the model via the `<provider>:<model>` shorthand, Pydantic AI handles it for you. Nonetheless, you can still configure the fields with [`openai_chat_thinking_field`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_thinking_field].
 
-If your provider recommends to send back these custom fields not changed, for caching or interleaved thinking benefits, you can also achieve this with [`openai_chat_send_back_thinking_parts`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_send_back_thinking_parts].
+### Sending thinking content back to models
+
+By default, Pydantic AI uses **auto-detection** to determine how to send thinking content back to the model in subsequent requests. The [`openai_chat_send_back_thinking_parts`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_send_back_thinking_parts] setting controls this behavior:
+
+- **`'auto'` (default)**: Automatically detects the format to use based on how the thinking was received:
+  - If thinking came from a custom field (like `reasoning` or `reasoning_content`) from the same provider, it's sent back in that same field
+  - If thinking came from tags in content (like `<think>...</think>`), it's sent back using tags
+  - This ensures thinking is sent back in the format the model/provider expects, which is important for caching and optimal performance
+
+- **`'tags'`**: Always send thinking content wrapped in tags (e.g., `<think>...</think>`) within the message content field
+
+- **`'field'`**: Always send thinking content in a separate custom field (requires [`openai_chat_thinking_field`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_thinking_field] to be set)
+
+- **`False`**: Don't send thinking content back at all
+
+Most users should use the default `'auto'` mode.
+
+```python {title="custom_thinking_config.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles.openai import OpenAIModelProfile
+
+# Example: Force thinking to be sent in tags even if it was received in a field
+model = OpenAIChatModel(
+    'deepseek-reasoner',
+    profile=OpenAIModelProfile(
+        openai_chat_thinking_field='reasoning_content',
+        openai_chat_send_back_thinking_parts='tags',  # Override auto-detection
+    ),
+)
+agent = Agent(model)
+```
 
 ### OpenAI Responses
 
