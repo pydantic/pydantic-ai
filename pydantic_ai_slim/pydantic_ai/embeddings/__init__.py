@@ -77,20 +77,13 @@ def infer_embedding_model(
     except ValueError as e:
         raise ValueError('You must provide a provider prefix when specifying an embedding model name') from e
 
+    provider = provider_factory(provider_name)
+
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider
 
         model_kind = normalize_gateway_provider(model_kind)
-
-    # Handle models that don't need a provider first
-    if model_kind == 'sentence-transformers':
-        from .sentence_transformers import SentenceTransformerEmbeddingModel
-
-        return SentenceTransformerEmbeddingModel(model_name)
-
-    # For provider-based models, infer the provider
-    provider = provider_factory(provider_name)
 
     if model_kind in (
         'openai',
@@ -106,6 +99,10 @@ def infer_embedding_model(
         from .cohere import CohereEmbeddingModel
 
         return CohereEmbeddingModel(model_name, provider=provider)
+    elif model_kind == 'sentence-transformers':
+        from .sentence_transformers import SentenceTransformerEmbeddingModel
+
+        return SentenceTransformerEmbeddingModel(model_name)
     elif model_kind == 'voyageai':
         from .voyageai import VoyageAIEmbeddingModel
 
