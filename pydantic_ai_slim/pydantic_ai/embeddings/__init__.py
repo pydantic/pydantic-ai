@@ -92,6 +92,10 @@ def infer_embedding_model(
         from .cohere import CohereEmbeddingModel
 
         return CohereEmbeddingModel(model_name, provider=provider)
+    elif model_kind == 'bedrock':
+        from .bedrock import BedrockEmbeddingModel
+
+        return BedrockEmbeddingModel(model_name, provider=provider)
     elif model_kind == 'sentence-transformers':
         from .sentence_transformers import SentenceTransformerEmbeddingModel
 
