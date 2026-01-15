@@ -41,7 +41,7 @@ from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun, AgentRunResult
-from ..settings import ModelSettings, ModelSettingsPrepareFunc, merge_model_settings
+from ..settings import ModelSettings, ModelSettingsInput, merge_model_settings
 from ..tools import (
     AgentDepsT,
     BuiltinToolFunc,
@@ -129,8 +129,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
     """
 
-    model_settings: ModelSettings | None
-    """Optional model request settings to use for this agents's runs, by default.
+    model_settings: ModelSettingsInput[AgentDepsT]
+    """Optional model request settings to use for this agent's runs, by default.
+
+    Can be a static [`ModelSettings`][pydantic_ai.settings.ModelSettings] dict or a callable that
+    receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings dynamically.
 
     Note, if `model_settings` is provided by `run`, `run_sync`, or `run_stream`, those settings will
     be merged with this value, with the runtime argument taking priority.
@@ -158,7 +161,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _user_toolsets: list[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
-    _prepare_model_settings: ModelSettingsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
     _tool_timeout: float | None = dataclasses.field(repr=False)
@@ -180,7 +182,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -188,7 +190,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_model_settings: ModelSettingsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -210,7 +211,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -218,7 +219,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_model_settings: ModelSettingsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -238,7 +238,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -246,7 +246,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_model_settings: ModelSettingsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -275,6 +274,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
+                Can be a static [`ModelSettings`][pydantic_ai.settings.ModelSettings] dict or a callable that receives
+                [`RunContext`][pydantic_ai.tools.RunContext] and returns settings dynamically.
+                See [`ModelSettingsFunc`][pydantic_ai.settings.ModelSettingsFunc] for the callable signature.
             retries: The default number of retries to allow for tool calls and output validation, before raising an error.
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
@@ -289,10 +291,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             prepare_output_tools: Custom function to prepare the tool definition of all output tools for each step.
                 This is useful if you want to customize the definition of multiple output tools or you want to register
                 a subset of output tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
-            prepare_model_settings: Custom async function to dynamically modify model settings before each model request.
-                Receives the [`RunContext`][pydantic_ai.tools.RunContext] and current settings, returns modified settings
-                or None to keep unchanged. Useful for controlling `tool_choice` based on `run_step` or message history.
-                See [`ModelSettingsPrepareFunc`][pydantic_ai.settings.ModelSettingsPrepareFunc].
             toolsets: Toolsets to register with the agent, including MCP servers and functions which take a run context
                 and return a toolset. See [`ToolsetFunc`][pydantic_ai.toolsets.ToolsetFunc] for more information.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
@@ -368,7 +366,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
-        self._prepare_model_settings = prepare_model_settings
 
         self._output_toolset = self._output_schema.toolset
         if self._output_toolset:
@@ -472,7 +469,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -492,7 +489,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -512,7 +509,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -682,7 +679,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
-            prepare_model_settings=self._prepare_model_settings,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](

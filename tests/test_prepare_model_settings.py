@@ -1,4 +1,4 @@
-"""Tests for the prepare_model_settings hook."""
+"""Tests for dynamic model_settings with callable support."""
 
 from __future__ import annotations
 
@@ -8,39 +8,39 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
 
-class TestPrepareModelSettingsBasic:
-    """Basic tests for prepare_model_settings hook."""
+class TestDynamicModelSettingsBasic:
+    """Basic tests for callable model_settings."""
 
-    async def test_hook_called_on_each_step(self):
-        """Verify hook is called on each run step with correct run_step values."""
+    async def test_callable_called_on_each_step(self):
+        """Verify callable is called on each run step with correct run_step values."""
         call_log: list[int] = []
 
-        async def log_calls(ctx: RunContext[None], settings: ModelSettings | None) -> ModelSettings | None:
+        async def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
             call_log.append(ctx.run_step)
-            return None
+            return {}
 
         agent = Agent(
             TestModel(custom_output_text='done'),
-            prepare_model_settings=log_calls,
+            model_settings=dynamic_settings,
         )
 
         await agent.run('test')
         assert call_log == [1]
 
-    async def test_hook_called_multiple_times_with_tools(self):
-        """Verify hook is called on each step when tools are used."""
+    async def test_callable_called_multiple_times_with_tools(self):
+        """Verify callable is called on each step when tools are used."""
         call_log: list[int] = []
 
-        async def log_calls(ctx: RunContext[None], settings: ModelSettings | None) -> ModelSettings | None:
+        async def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
             call_log.append(ctx.run_step)
-            return None
+            return {}
 
         agent = Agent(
             TestModel(
                 custom_output_text='final answer',
                 seed=0,
             ),
-            prepare_model_settings=log_calls,
+            model_settings=dynamic_settings,
         )
 
         @agent.tool_plain
@@ -53,61 +53,55 @@ class TestPrepareModelSettingsBasic:
         assert len(call_log) >= 1
         assert call_log[0] == 1
 
-    async def test_none_return_keeps_settings_unchanged(self):
-        """Verify returning None keeps original settings."""
-        original_settings: ModelSettings = {'temperature': 0.5}
-
-        async def return_none(ctx: RunContext[None], settings: ModelSettings | None) -> ModelSettings | None:
-            assert settings == original_settings
-            return None
+    async def test_static_settings_still_work(self):
+        """Verify static dict settings work as before."""
+        settings: ModelSettings = {'temperature': 0.5}
 
         agent = Agent(
             TestModel(custom_output_text='done'),
-            model_settings=original_settings,
-            prepare_model_settings=return_none,
+            model_settings=settings,
         )
 
-        await agent.run('test')
+        result = await agent.run('test')
+        assert result.output == 'done'
 
-    async def test_settings_return_overrides_settings(self):
-        """Verify returning new settings overrides the original."""
-        received_settings: list[ModelSettings | None] = []
+    async def test_callable_returns_settings(self):
+        """Verify callable can return different settings per step."""
+        settings_returned: list[ModelSettings] = []
 
-        async def override_settings(ctx: RunContext[None], settings: ModelSettings | None) -> ModelSettings | None:
-            received_settings.append(settings)
-            return {'temperature': 0.9, 'max_tokens': 100}
+        async def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
+            s: ModelSettings = {'temperature': 0.5 + ctx.run_step * 0.1}
+            settings_returned.append(s)
+            return s
 
         agent = Agent(
             TestModel(custom_output_text='done'),
-            model_settings={'temperature': 0.5},
-            prepare_model_settings=override_settings,
+            model_settings=dynamic_settings,
         )
 
         await agent.run('test')
-        # Hook received the original settings
-        assert received_settings[0] == {'temperature': 0.5}
+        assert settings_returned == [{'temperature': 0.6}]
 
-    async def test_hook_receives_message_history(self):
-        """Verify hook receives message history via ctx.messages."""
+    async def test_callable_receives_message_history(self):
+        """Verify callable receives message history via ctx.messages."""
         message_counts: list[int] = []
 
-        async def check_messages(ctx: RunContext[None], settings: ModelSettings | None) -> ModelSettings | None:
+        async def check_messages(ctx: RunContext[None]) -> ModelSettings:
             message_counts.append(len(ctx.messages))
-            return None
+            return {}
 
         agent = Agent(
             TestModel(custom_output_text='done'),
-            prepare_model_settings=check_messages,
+            model_settings=check_messages,
         )
 
-        # First run - should have initial user message
         await agent.run('first message')
         assert len(message_counts) == 1
         # Message history includes the current request
         assert message_counts[0] >= 1
 
-    async def test_no_hook_works_normally(self):
-        """Verify agent works normally when no hook is provided."""
+    async def test_no_settings_works_normally(self):
+        """Verify agent works normally when no settings are provided."""
         agent = Agent(
             TestModel(custom_output_text='done'),
         )
@@ -115,23 +109,41 @@ class TestPrepareModelSettingsBasic:
         result = await agent.run('test')
         assert result.output == 'done'
 
+    async def test_sync_callable_works(self):
+        """Verify sync callable works (not async)."""
+        call_log: list[int] = []
 
-class TestPrepareModelSettingsWithToolChoice:
-    """Tests for prepare_model_settings with tool_choice."""
+        def sync_settings(ctx: RunContext[None]) -> ModelSettings:
+            call_log.append(ctx.run_step)
+            return {'temperature': 0.7}
+
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            model_settings=sync_settings,
+        )
+
+        await agent.run('test')
+        assert call_log == [1]
+
+
+class TestDynamicModelSettingsWithToolChoice:
+    """Tests for callable model_settings with tool_choice."""
 
     async def test_force_tool_on_first_step(self):
-        """Verify hook can force tool_choice on first step only."""
-        settings_by_step: dict[int, ModelSettings | None] = {}
+        """Verify callable can force tool_choice on first step only."""
+        settings_by_step: dict[int, ModelSettings] = {}
 
-        async def force_first_tool(ctx: RunContext[None], settings: ModelSettings | None) -> ModelSettings | None:
-            settings_by_step[ctx.run_step] = None if ctx.run_step > 1 else {'tool_choice': 'required'}
+        async def force_first_tool(ctx: RunContext[None]) -> ModelSettings:
             if ctx.run_step == 1:
-                return {'tool_choice': 'required'}
-            return None
+                settings: ModelSettings = {'tool_choice': 'required'}
+            else:
+                settings = {}
+            settings_by_step[ctx.run_step] = settings
+            return settings
 
         agent = Agent(
             TestModel(custom_output_text='final'),
-            prepare_model_settings=force_first_tool,
+            model_settings=force_first_tool,
         )
 
         @agent.tool_plain
@@ -140,15 +152,14 @@ class TestPrepareModelSettingsWithToolChoice:
             return f'found: {query}'
 
         await agent.run('test')
-        # Verify hook was called
+        # Verify callable was called
         assert 1 in settings_by_step
+        assert settings_by_step[1] == {'tool_choice': 'required'}
 
     async def test_conditional_tool_choice_based_on_history(self):
-        """Verify hook can check message history to decide tool_choice."""
+        """Verify callable can check message history to decide tool_choice."""
 
-        async def require_tool_if_no_results(
-            ctx: RunContext[None], settings: ModelSettings | None
-        ) -> ModelSettings | None:
+        async def require_tool_if_no_results(ctx: RunContext[None]) -> ModelSettings:
             # Check if we have any tool results in history
             has_tool_results = any(
                 isinstance(msg, ModelResponse) and any(isinstance(part, ToolReturnPart) for part in msg.parts)
@@ -156,11 +167,11 @@ class TestPrepareModelSettingsWithToolChoice:
             )
             if not has_tool_results:
                 return {'tool_choice': 'required'}
-            return None
+            return {}
 
         agent = Agent(
             TestModel(custom_output_text='done'),
-            prepare_model_settings=require_tool_if_no_results,
+            model_settings=require_tool_if_no_results,
         )
 
         @agent.tool_plain
@@ -171,20 +182,20 @@ class TestPrepareModelSettingsWithToolChoice:
         await agent.run('test')
 
 
-class TestPrepareModelSettingsStreaming:
-    """Tests for prepare_model_settings with streaming."""
+class TestDynamicModelSettingsStreaming:
+    """Tests for callable model_settings with streaming."""
 
-    async def test_hook_works_with_streaming(self):
-        """Verify hook is called when using run_stream."""
+    async def test_callable_works_with_streaming(self):
+        """Verify callable is called when using run_stream."""
         call_log: list[int] = []
 
-        async def log_calls(ctx: RunContext[None], settings: ModelSettings | None) -> ModelSettings | None:
+        async def log_calls(ctx: RunContext[None]) -> ModelSettings:
             call_log.append(ctx.run_step)
-            return None
+            return {}
 
         agent = Agent(
             TestModel(custom_output_text='streamed output'),
-            prepare_model_settings=log_calls,
+            model_settings=log_calls,
         )
 
         async with agent.run_stream('test') as result:
@@ -194,22 +205,88 @@ class TestPrepareModelSettingsStreaming:
         assert call_log == [1]
 
 
-class TestPrepareModelSettingsWithDeps:
-    """Tests for prepare_model_settings with dependencies."""
+class TestDynamicModelSettingsWithDeps:
+    """Tests for callable model_settings with dependencies."""
 
-    async def test_hook_receives_deps(self):
-        """Verify hook can access user dependencies."""
+    async def test_callable_receives_deps(self):
+        """Verify callable can access user dependencies."""
         received_deps: list[dict[str, str]] = []
 
-        async def check_deps(ctx: RunContext[dict[str, str]], settings: ModelSettings | None) -> ModelSettings | None:
+        async def check_deps(ctx: RunContext[dict[str, str]]) -> ModelSettings:
             received_deps.append(ctx.deps)
-            return None
+            return {}
 
         agent = Agent(
             TestModel(custom_output_text='done'),
             deps_type=dict[str, str],
-            prepare_model_settings=check_deps,
+            model_settings=check_deps,
         )
 
         await agent.run('test', deps={'key': 'value'})
         assert received_deps == [{'key': 'value'}]
+
+
+class TestModelSettingsMerge:
+    """Tests for model_settings merge behavior with callables."""
+
+    async def test_run_static_overrides_agent_callable(self):
+        """Verify run static settings override agent callable."""
+        agent_call_count = 0
+
+        async def agent_settings(ctx: RunContext[None]) -> ModelSettings:
+            nonlocal agent_call_count
+            agent_call_count += 1
+            return {'temperature': 0.5}
+
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            model_settings=agent_settings,
+        )
+
+        # Run with static settings should override agent callable
+        run_settings: ModelSettings = {'temperature': 0.9}
+        await agent.run('test', model_settings=run_settings)
+        # Agent callable should not be called when run provides static settings
+        assert agent_call_count == 0
+
+    async def test_run_callable_overrides_agent_static(self):
+        """Verify run callable overrides agent static settings."""
+        run_call_count = 0
+
+        async def run_settings(ctx: RunContext[None]) -> ModelSettings:
+            nonlocal run_call_count
+            run_call_count += 1
+            return {'temperature': 0.9}
+
+        agent_settings: ModelSettings = {'temperature': 0.5}
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            model_settings=agent_settings,
+        )
+
+        await agent.run('test', model_settings=run_settings)
+        assert run_call_count == 1
+
+    async def test_run_callable_overrides_agent_callable(self):
+        """Verify run callable overrides agent callable."""
+        agent_call_count = 0
+        run_call_count = 0
+
+        async def agent_settings(ctx: RunContext[None]) -> ModelSettings:
+            nonlocal agent_call_count
+            agent_call_count += 1
+            return {'temperature': 0.5}
+
+        async def run_settings(ctx: RunContext[None]) -> ModelSettings:
+            nonlocal run_call_count
+            run_call_count += 1
+            return {'temperature': 0.9}
+
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            model_settings=agent_settings,
+        )
+
+        await agent.run('test', model_settings=run_settings)
+        assert agent_call_count == 0
+        assert run_call_count == 1

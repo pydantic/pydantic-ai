@@ -102,7 +102,7 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
-from .settings import ModelSettings, ModelSettingsPrepareFunc
+from .settings import ModelSettings, ModelSettingsFunc
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets import (
     AbstractToolset,
@@ -246,7 +246,7 @@ __all__ = (
     'format_as_xml',
     # settings
     'ModelSettings',
-    'ModelSettingsPrepareFunc',
+    'ModelSettingsFunc',
     # usage
     'RunUsage',
     'RequestUsage',

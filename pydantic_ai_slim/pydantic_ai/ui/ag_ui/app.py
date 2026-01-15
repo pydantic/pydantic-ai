@@ -14,7 +14,7 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettingsInput
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -49,7 +49,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
         infer_name: bool = True,

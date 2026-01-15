@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar, overload
 
 from httpx import Timeout
 from typing_extensions import TypedDict
@@ -232,45 +232,77 @@ class ModelSettings(TypedDict, total=False):
     """
 
 
-ModelSettingsPrepareFunc: TypeAlias = Callable[
-    ['RunContext[AgentDepsT]', ModelSettings | None],
-    Awaitable[ModelSettings | None],
+ModelSettingsFunc: TypeAlias = Callable[
+    ['RunContext[AgentDepsT]'],
+    ModelSettings | Awaitable[ModelSettings],
 ]
-"""A function that prepares model settings before each model request.
+"""A function that returns model settings dynamically based on run context.
 
-This hook is called before every request to the model, allowing dynamic control
-over settings like `tool_choice` based on the current step or message history.
+This allows dynamic control over settings like `tool_choice` based on
+the current step or message history.
 
 Example:
     ```python
-    from pydantic_ai import RunContext
+    from pydantic_ai import Agent, RunContext
     from pydantic_ai.settings import ModelSettings
 
 
-    async def require_tool_first(
-        ctx: RunContext, settings: ModelSettings | None
-    ) -> ModelSettings | None:
+    async def require_tool_first(ctx: RunContext) -> ModelSettings:
+        \"\"\"Force tool use on first request only.\"\"\"
         if ctx.run_step == 1:
-            return {'tool_choice': ['search']}
-        return None
+            return {'tool_choice': 'required'}
+        return {}
+
+
+    agent = Agent('openai:gpt-4o', model_settings=require_tool_first)
     ```
 
 Args:
     ctx: The run context with access to run_step, messages, deps, etc.
-    settings: The currently merged model settings (model + agent + run).
 
 Returns:
-    Modified ModelSettings to use, or None to keep settings unchanged.
+    ModelSettings to use for this request.
 """
 
+ModelSettingsInput: TypeAlias = 'ModelSettings | ModelSettingsFunc[AgentDepsT] | None'
+"""Type for model_settings parameter: static dict, callable, or None."""
 
-def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
+
+@overload
+def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None: ...
+
+
+@overload
+def merge_model_settings(
+    base: ModelSettingsInput[AgentDepsT], overrides: ModelSettingsInput[AgentDepsT]
+) -> ModelSettingsInput[AgentDepsT]: ...
+
+
+def merge_model_settings(
+    base: ModelSettingsInput[AgentDepsT], overrides: ModelSettingsInput[AgentDepsT]
+) -> ModelSettingsInput[AgentDepsT]:
     """Merge two sets of model settings, preferring the overrides.
 
     A common use case is: merge_model_settings(<agent settings>, <run settings>)
+
+    When callables are involved:
+    - If overrides is a callable, it fully replaces base
+    - If base is a callable and overrides is None, base callable is used
+    - If base is a callable and overrides is static, overrides wins (explicit override)
+    - If both are static dicts, they are merged with overrides taking precedence
     """
-    # Note: we may want merge recursively if/when we add non-primitive values
-    if base and overrides:
-        return base | overrides
-    else:
-        return base or overrides
+    # If overrides is provided (callable or static), it takes precedence
+    if overrides is not None:
+        # If overrides is callable, use it directly (no merge)
+        if callable(overrides):
+            return overrides
+        # If overrides is static dict
+        if callable(base):
+            # Static overrides callable - user explicitly provided settings
+            return overrides
+        # Both static - merge
+        if base:
+            return base | overrides
+        return overrides
+    # No overrides - use base as-is (callable or static)
+    return base

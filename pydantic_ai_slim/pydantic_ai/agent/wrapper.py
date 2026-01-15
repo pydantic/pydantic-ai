@@ -14,7 +14,7 @@ from .._json_schema import JsonSchema
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
-from ..settings import ModelSettings
+from ..settings import ModelSettingsInput
 from ..tools import (
     AgentDepsT,
     BuiltinToolFunc,
@@ -83,7 +83,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -103,7 +103,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -123,7 +123,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: ModelSettingsInput[AgentDepsT] = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
