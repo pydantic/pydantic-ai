@@ -39,6 +39,14 @@ for available models and their capabilities.
 VoyageAIEmbeddingModelName = str | LatestVoyageAIEmbeddingModelNames
 """Possible VoyageAI embedding model names."""
 
+VoyageAIEmbedInputType = Literal['query', 'document'] | None
+"""VoyageAI embedding input types.
+
+- `'query'`: For search queries; prepends retrieval-optimized prefix.
+- `'document'`: For documents; prepends document retrieval prefix.
+- `None`: Direct embedding without any prefix.
+"""
+
 
 class VoyageAIEmbeddingSettings(EmbeddingSettings, total=False):
     """Settings used for a VoyageAI embedding model request.
@@ -53,6 +61,13 @@ class VoyageAIEmbeddingSettings(EmbeddingSettings, total=False):
     """Whether to truncate inputs that exceed the model's context length.
 
     Defaults to False. If True, inputs that are too long will be truncated.
+    """
+
+    voyageai_input_type: VoyageAIEmbedInputType
+    """The VoyageAI-specific input type for the embedding.
+
+    Overrides the standard `input_type` argument. Options include:
+    `'query'`, `'document'`, or `None` for direct embedding without prefix.
     """
 
 
@@ -139,7 +154,9 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(VoyageAIEmbeddingSettings, settings)
 
-        voyageai_input_type = 'document' if input_type == 'document' else 'query'
+        voyageai_input_type: VoyageAIEmbedInputType = settings.get(
+            'voyageai_input_type', 'document' if input_type == 'document' else 'query'
+        )
 
         # Determine truncation: voyageai_truncation takes precedence over truncate
         if 'voyageai_truncation' in settings:
