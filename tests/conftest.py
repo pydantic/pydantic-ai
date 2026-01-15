@@ -369,6 +369,14 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
     original_cached_func.cache_clear()
 
 
+try:
+    from huggingface_hub.inference._providers._common import (
+        _fetch_inference_provider_mapping as _hf_provider_mapping_func,  # pyright: ignore[reportPrivateUsage]
+    )
+except (ImportError, AttributeError):
+    _hf_provider_mapping_func = None
+
+
 @pytest.fixture(autouse=True)
 def clear_huggingface_provider_cache():
     """Clear HuggingFace SDK's LRU cache after each test.
@@ -380,14 +388,8 @@ def clear_huggingface_provider_cache():
     """
     yield
 
-    try:
-        from huggingface_hub.inference._providers._common import (
-            _fetch_inference_provider_mapping,  # pyright: ignore[reportPrivateUsage]
-        )
-
-        _fetch_inference_provider_mapping.cache_clear()
-    except (ImportError, AttributeError):
-        pass
+    if _hf_provider_mapping_func is not None:
+        _hf_provider_mapping_func.cache_clear()
 
 
 @pytest.fixture(scope='session')
