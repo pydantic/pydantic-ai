@@ -1,0 +1,228 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '367'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      image_config: {}
+      messages:
+      - content: Use get_color tool to get a color.
+        role: user
+      modalities:
+      - text
+      - image
+      model: openai/gpt-5-image-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get a color name.
+          name: get_color
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '3680'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          reasoning: |-
+            **Using the color tool**
+
+            The user wants to use the get_color tool, which is part of the functions namespace. I need to call this tool directly. The developer guidelines say I can just use functions.get_color without any parameters. So, I'll go ahead and make that call. After I receive the result, I'll respond to the user with the color. I'll remember to keep my response clear and concise. Let's get going!
+          reasoning_details:
+          - format: openai-responses-v1
+            index: 0
+            summary: |-
+              **Using the color tool**
+
+              The user wants to use the get_color tool, which is part of the functions namespace. I need to call this tool directly. The developer guidelines say I can just use functions.get_color without any parameters. So, I'll go ahead and make that call. After I receive the result, I'll respond to the user with the color. I'll remember to keep my response clear and concise. Let's get going!
+            type: reasoning.summary
+          - data: gAAAAABpaWMfVEPoNPW9IMhJZFEmZCqCNJhYUoQtIvHuMbYXOI_YB8C-gxPgOZw3SPvTxnPW7WlHzeQYYkOF1HMvIiQyhpQXljTrnK_oS53B78ZHP6qolrTlZiTuwRb6lokbFjyuZyyoL2b8wEuhTHX99RKopXzncCPk9CtBBZDwlXKOBeWh1IOO3wrL_s1AEAZ3d4pkpoR2yjKJP3Jvaoc9-ACIel5ywOUQabpM4-fFBbSZh2eL9xdDuwEbrPkSBgjNirtrrW8DWfSCkxOYxjRWssE_H05HAiRZHjQPthx1o5TOnCIMiSoj5_S3ZewwRJsUT0bqb8fgO-Ht_qMjiQ6IsP3W5GV049gpYNeweLXTEoxxWIvoaLNmHm1sA7ynVGFG0xafefqk3D6ad4XZb05xBK3I3kzb1Qds7OLUfoLFrztW_TFlY3YheShN-bn9JXDdQIMBYL2Kovt4-j2U6fdU9nzHdk3p7AmWf6dMuAUlvB1O2o6sZKkIO6On7TporhMEZFflFg9Nz3ohCw0M2mSEdFzm4SUtp1bxFVS7wYGBBZRIRXZOhgOYHHw0I0lEf30IdQCWrJcC8a4gTph7cN60y03Q6phD2ZjGx5sC4RvBM1Qo-7W9XgwxjAYWimdzK_kBLmnXR-oGuHSSSPSDhJmOyclLfaljXNpM1zOb20BiDSJF3ppU45NOQrtkB5lKj9psTgYa93uQsGUm30HG3W-aauXn0yHQgESNTr1UugmHpyg1YrXOSlSnPYAgL3CzL2URutMBSK9hgcKuiJC7Zr0sLgIKgNQbInob63dBe6R17KRw1349g7eMouEF0MJCYFv-4jHCDRLNdulQPnbsHeSbbpkwOviPfBig2Ydpb66rTKdlJNmEbcUpZvs9KiCe3zbRwTa1ePmj75xlGpbjwk__C2lGjJiueR4Tj6mUqVhrLNZPxeJ-9zt6cCTDJWxWesnT3Uxobq6IPvrOBuRco6jBLm5-BqsP7SS-2EiI6m_LCyicmn2ftF0Rc2R87J5TO7nyMMr_rhkZM3CA_cOsZS0st14vF06YhL6fEG3B3HPetPwMvjMlogu63hiDDeNNxBl3TktUqm24VMcKnK8R1oUe587yQRTMg9pWvp-ZK87n7moDTC5Wb26G22rl3CxkZFP27wvLObaFwJSqSGbIKfKzQEI8yW848IyQGAnFH-wxi5ezhA-nITs0y8LHjJ1KtvKPYy-_aQkM7ncatK2DsRH74gZ3XmnxfSIYYKB-9MsgpSUWwMYwY42Tc7Wyi1GU6eupAB3UyMcr9hBm9V_DfbZdfAMVLdgvB23oa1H3f9TNHBt5W1k5j1gO-0BMpqcstXoPn84tb3e5Yrp9HBjiyS6fwg_yYKym4K6k2B7mhDEbrQFO9ePsO3sfHSJyEhJUQ1EIfrikAWwSjo5IsoC_FxHkLyh2tUYPZX9rmkeSsSfw2aBjnN25xla01jCfKNhO3ABHXxhNtVvIekcGLcRkGCb5focBL0iMLnLzQqYtxWKdMmGXWnkBrvTn-H5VCP60mrisFFxwRHdmcQMpsjRRW3fk-CBN6fa3OUelxkGE5hM7O1wwnPd3eFMUfI90S35dNMYogeIc-VTPL9hSy7lIyuuAhhMHabXdIYVHBV1KHKmmFwADTsCbgJIu3D21RuJZwNFKR_s5JWpG
+            format: openai-responses-v1
+            id: rs_05f5e52af5c2bdcb016969631b68648195b7a80962f5bf9f14
+            index: 0
+            type: reasoning.encrypted
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_color
+            id: call_HWAt8NUDHnW5TSUN1ztrL7lK
+            index: 0
+            type: function
+        native_finish_reason: completed
+      created: 1768514330
+      id: gen-1768514330-EagYo8KanQPLlwLM11tY
+      model: openai/gpt-5-image-mini
+      object: chat.completion
+      provider: OpenAI
+      usage:
+        completion_tokens: 80
+        completion_tokens_details:
+          image_tokens: 0
+          reasoning_tokens: 64
+        cost: 0.001125
+        cost_details:
+          upstream_inference_completions_cost: 0.00016
+          upstream_inference_cost: 0.001125
+          upstream_inference_prompt_cost: 0.000965
+        is_byok: false
+        prompt_tokens: 386
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 466
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2957'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      image_config: {}
+      messages:
+      - content: Use get_color tool to get a color.
+        role: user
+      - content: null
+        reasoning_details:
+        - format: openai-responses-v1
+          id: null
+          index: 0
+          summary: |-
+            **Using the color tool**
+
+            The user wants to use the get_color tool, which is part of the functions namespace. I need to call this tool directly. The developer guidelines say I can just use functions.get_color without any parameters. So, I'll go ahead and make that call. After I receive the result, I'll respond to the user with the color. I'll remember to keep my response clear and concise. Let's get going!
+          type: reasoning.summary
+        - data: gAAAAABpaWMfVEPoNPW9IMhJZFEmZCqCNJhYUoQtIvHuMbYXOI_YB8C-gxPgOZw3SPvTxnPW7WlHzeQYYkOF1HMvIiQyhpQXljTrnK_oS53B78ZHP6qolrTlZiTuwRb6lokbFjyuZyyoL2b8wEuhTHX99RKopXzncCPk9CtBBZDwlXKOBeWh1IOO3wrL_s1AEAZ3d4pkpoR2yjKJP3Jvaoc9-ACIel5ywOUQabpM4-fFBbSZh2eL9xdDuwEbrPkSBgjNirtrrW8DWfSCkxOYxjRWssE_H05HAiRZHjQPthx1o5TOnCIMiSoj5_S3ZewwRJsUT0bqb8fgO-Ht_qMjiQ6IsP3W5GV049gpYNeweLXTEoxxWIvoaLNmHm1sA7ynVGFG0xafefqk3D6ad4XZb05xBK3I3kzb1Qds7OLUfoLFrztW_TFlY3YheShN-bn9JXDdQIMBYL2Kovt4-j2U6fdU9nzHdk3p7AmWf6dMuAUlvB1O2o6sZKkIO6On7TporhMEZFflFg9Nz3ohCw0M2mSEdFzm4SUtp1bxFVS7wYGBBZRIRXZOhgOYHHw0I0lEf30IdQCWrJcC8a4gTph7cN60y03Q6phD2ZjGx5sC4RvBM1Qo-7W9XgwxjAYWimdzK_kBLmnXR-oGuHSSSPSDhJmOyclLfaljXNpM1zOb20BiDSJF3ppU45NOQrtkB5lKj9psTgYa93uQsGUm30HG3W-aauXn0yHQgESNTr1UugmHpyg1YrXOSlSnPYAgL3CzL2URutMBSK9hgcKuiJC7Zr0sLgIKgNQbInob63dBe6R17KRw1349g7eMouEF0MJCYFv-4jHCDRLNdulQPnbsHeSbbpkwOviPfBig2Ydpb66rTKdlJNmEbcUpZvs9KiCe3zbRwTa1ePmj75xlGpbjwk__C2lGjJiueR4Tj6mUqVhrLNZPxeJ-9zt6cCTDJWxWesnT3Uxobq6IPvrOBuRco6jBLm5-BqsP7SS-2EiI6m_LCyicmn2ftF0Rc2R87J5TO7nyMMr_rhkZM3CA_cOsZS0st14vF06YhL6fEG3B3HPetPwMvjMlogu63hiDDeNNxBl3TktUqm24VMcKnK8R1oUe587yQRTMg9pWvp-ZK87n7moDTC5Wb26G22rl3CxkZFP27wvLObaFwJSqSGbIKfKzQEI8yW848IyQGAnFH-wxi5ezhA-nITs0y8LHjJ1KtvKPYy-_aQkM7ncatK2DsRH74gZ3XmnxfSIYYKB-9MsgpSUWwMYwY42Tc7Wyi1GU6eupAB3UyMcr9hBm9V_DfbZdfAMVLdgvB23oa1H3f9TNHBt5W1k5j1gO-0BMpqcstXoPn84tb3e5Yrp9HBjiyS6fwg_yYKym4K6k2B7mhDEbrQFO9ePsO3sfHSJyEhJUQ1EIfrikAWwSjo5IsoC_FxHkLyh2tUYPZX9rmkeSsSfw2aBjnN25xla01jCfKNhO3ABHXxhNtVvIekcGLcRkGCb5focBL0iMLnLzQqYtxWKdMmGXWnkBrvTn-H5VCP60mrisFFxwRHdmcQMpsjRRW3fk-CBN6fa3OUelxkGE5hM7O1wwnPd3eFMUfI90S35dNMYogeIc-VTPL9hSy7lIyuuAhhMHabXdIYVHBV1KHKmmFwADTsCbgJIu3D21RuJZwNFKR_s5JWpG
+          format: openai-responses-v1
+          id: rs_05f5e52af5c2bdcb016969631b68648195b7a80962f5bf9f14
+          index: 0
+          type: reasoning.encrypted
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_color
+          id: call_HWAt8NUDHnW5TSUN1ztrL7lK
+          type: function
+      - content: orange
+        role: tool
+        tool_call_id: call_HWAt8NUDHnW5TSUN1ztrL7lK
+      modalities:
+      - text
+      - image
+      model: openai/gpt-5-image-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get a color name.
+          name: get_color
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '708'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: 'The color is: orange.'
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: completed
+      created: 1768514335
+      id: gen-1768514335-KvrsUkr1eAtDhykyVtEc
+      model: openai/gpt-5-image-mini
+      object: chat.completion
+      provider: OpenAI
+      usage:
+        completion_tokens: 10
+        completion_tokens_details:
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0.001345
+        cost_details:
+          upstream_inference_completions_cost: 2.0e-05
+          upstream_inference_cost: 0.001345
+          upstream_inference_prompt_cost: 0.001325
+        is_byok: false
+        prompt_tokens: 530
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 540
+    status:
+      code: 200
+      message: OK
+version: 1

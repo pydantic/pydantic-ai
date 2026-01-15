@@ -10,6 +10,7 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     BinaryImage,
+    FilePart,
     ImageGenerationTool,
     ModelHTTPError,
     ModelMessage,
@@ -23,6 +24,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDefinition,
     UnexpectedModelBehavior,
+    UserError,
 )
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
@@ -727,3 +729,73 @@ async def test_openrouter_image_and_text_output(allow_model_requests: None, open
     assert result.response.files == snapshot(
         [BinaryImage(data=IsBytes(), media_type='image/png', _identifier='976e9d')]
     )
+
+
+async def test_openrouter_image_message_history_string_content(
+    allow_model_requests: None, openrouter_api_key: str
+) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash-image', provider=provider)
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+
+    # First interaction: generate an image (creates text + image, triggers line 641)
+    result = await agent.run('Generate a simple cat image.')
+
+    # Second interaction: use message history containing the image
+    # This ensures line 641 is exercised when mapping the previous response
+    message_history = result.all_messages()
+    result_2 = await agent.run('What was in that image?', message_history=message_history)
+
+    assert isinstance(result_2.output, str)
+    assert len(result.response.files) > 0  # Verify first response had an image
+
+
+async def test_openrouter_image_with_tool_call_content_list(openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash-image-preview', provider=provider)
+
+    # Create a response with both a tool call and an image
+    # This simulates a scenario where the model called a tool AND generated an image
+    response = ModelResponse(
+        parts=[
+            TextPart(content='Using the tool and generating an image.'),
+            ToolCallPart(tool_name='get_data', args='{}', tool_call_id='call_123'),
+            FilePart(content=BinaryImage(data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR', media_type='image/png')),
+        ]
+    )
+
+    # Testing the private _map_messages method directly because it's difficult to reliably
+    # trigger a model response with text + tool calls + image in a single response through
+    # the public API.
+    mapped = await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+
+    assert len(mapped) == 1
+    message = mapped[0]
+    assert message['role'] == 'assistant'
+    # Content should be a list with both text and image
+    content = message.get('content')
+    assert isinstance(content, list)
+    assert len(content) >= 2
+    # Should have text content and image_url
+    has_text = any(item.get('type') == 'text' for item in content)
+    has_image = any('image_url' in item for item in content)
+    assert has_text
+    assert has_image
+    # Should also have tool_calls
+    tool_calls = message.get('tool_calls')
+    assert tool_calls is not None
+    tool_calls_list = list(tool_calls)
+    assert len(tool_calls_list) == 1
+    assert tool_calls_list[0]['id'] == 'call_123'
+
+
+async def test_openrouter_invalid_media_type_error(openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash-image-preview', provider=provider)
+
+    # Create a response with an unsupported media type (not png/jpeg/webp/gif)
+    response = ModelResponse(parts=[FilePart(content=BinaryContent(data=b'test data', media_type='video/mp4'))])
+
+    # This should raise UserError when trying to map messages
+    with pytest.raises(UserError, match='Invalid media type: video/mp4'):
+        await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
