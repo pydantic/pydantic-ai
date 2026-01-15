@@ -5,7 +5,7 @@ Agent Skills within the Pydantic AI ecosystem. Agent Skills are modular collecti
 of instructions, scripts, tools, and resources that enable AI agents to progressively
 discover, load, and execute specialized capabilities for domain-specific tasks.
 
-See [skills documentation](../skills.md) for more information.
+See [skills documentation](../skills/overview.md) for more information.
 
 Key components:
 - [`SkillsToolset`][pydantic_ai.toolsets.skills.SkillsToolset]: Main toolset for integrating skills with agents

@@ -35,8 +35,6 @@
         - __init__
         - run
 
-::: pydantic_ai.toolsets.skills.SkillScriptExecutor
-
 ::: pydantic_ai.toolsets.skills.LocalSkillScriptExecutor
 
 ::: pydantic_ai.toolsets.skills.CallableSkillScriptExecutor
