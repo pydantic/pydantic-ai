@@ -1,6 +1,5 @@
 .DEFAULT_GOAL := all
 
-# Cache buster: Force CI to reload test files
 .PHONY: .uv
 .uv: ## Check that uv is installed
 	@uv --version || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
