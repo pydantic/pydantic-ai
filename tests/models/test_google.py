@@ -3949,7 +3949,9 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     }
 
 
-async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_vertexai_image_generation(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
     agent = Agent(model, output_type=BinaryImage)
@@ -4786,6 +4788,53 @@ async def test_uploaded_file_mapping_with_media_type():
 
     assert len(content) == 1
     assert content[0] == {'file_data': {'file_uri': file_uri, 'mime_type': 'application/pdf'}}
+
+
+async def test_uploaded_file_wrong_provider(allow_model_requests: None):
+    """Test that UploadedFile with wrong provider raises an error in GoogleModel."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with GoogleModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+
+
+async def test_uploaded_file_with_vendor_metadata():
+    """Test that UploadedFile with vendor_metadata includes video_metadata."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/video123'
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(
+            content=[
+                UploadedFile(
+                    file_id=file_uri,
+                    provider_name='google-gla',
+                    media_type='video/mp4',
+                    vendor_metadata={'start_offset': '10s', 'end_offset': '30s'},
+                )
+            ]
+        )
+    )
+
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': file_uri, 'mime_type': 'video/mp4'},
+        'video_metadata': {'start_offset': '10s', 'end_offset': '30s'},
+    }
+
+
+async def test_youtube_video_url_without_vendor_metadata():
+    """Test that YouTube VideoUrl without vendor_metadata doesn't include video_metadata."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    video = VideoUrl(url='https://youtu.be/dQw4w9WgXcQ', media_type='video/mp4')  # No vendor_metadata
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    # Should NOT have 'video_metadata' key when vendor_metadata is None
+    assert 'video_metadata' not in content[0]
+    assert content[0] == {'file_data': {'file_uri': 'https://youtu.be/dQw4w9WgXcQ', 'mime_type': 'video/mp4'}}
 
 
 # =============================================================================

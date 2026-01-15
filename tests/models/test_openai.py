@@ -1536,6 +1536,39 @@ async def test_uploaded_file_responses_model(allow_model_requests: None) -> None
     )
 
 
+async def test_uploaded_file_wrong_provider_chat(allow_model_requests: None) -> None:
+    """Test that UploadedFile with wrong provider raises an error in OpenAIChatModel."""
+    c = completion_message(
+        ChatCompletionMessage(content='Should not reach here.', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+
+
+async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None) -> None:
+    """Test that UploadedFile with wrong provider raises an error in OpenAIResponsesModel."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    output_item = ResponseOutputMessage(
+        id='msg_123',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Should not reach here.', type='output_text', annotations=[])],
+    )
+    r = response_message([output_item])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
