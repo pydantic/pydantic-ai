@@ -17,7 +17,6 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-import os
 from datetime import timezone
 from typing import Any
 
@@ -2209,39 +2208,35 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
 
 
 async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test xAI's MCP server tool with Linear (non-streaming, recorded via proto cassette)."""
-    # NOTE: Recording requires a real Linear token so xAI can call the MCP server.
-    # Replay mode uses the recorded proto cassette, so the token isn't required there.
-    linear_access_token = os.getenv('LINEAR_ACCESS_TOKEN') or 'mock-token'
-
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
         builtin_tools=[
             MCPServerTool(
-                id='linear',
-                url='https://mcp.linear.app/mcp',
-                description='MCP server for Linear the project management tool.',
-                authorization_token=linear_access_token or 'mock-token',
-                allowed_tools=['list_issues'],
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
+                description='DeepWiki MCP server',
+                allowed_tools=['ask_question'],
+                headers={'custom-header-key': 'custom-header-value'},
             ),
         ],
         model_settings=XaiModelSettings(
-            xai_include_encrypted_content=False,
-            xai_include_mcp_output=False,
+            xai_include_encrypted_content=True,
+            xai_include_mcp_output=True,
         ),
     )
 
-    prompt = 'What whas the identifier of my last issue opened?'
-    result = await agent.run(prompt)
-    assert result.output == snapshot('The identifier of your last opened issue is **PAPI-955**.')
+    result = await agent.run('Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short')
+    assert result.output == snapshot(
+        "Pydantic AI (`pydantic/pydantic-ai`) is a Python framework for building production-grade LLM applications. It emphasizes type safety, structured outputs, dependency injection, and observability, with model-agnostic support for 20+ providers. Key features include graph-based agent execution, evaluation tools, and integrations like OpenTelemetry. It's structured as a monorepo with core packages for agents, graphs, and evals."
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='What whas the identifier of my last issue opened?',
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2251,20 +2246,87 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:linear',
-                        args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
-                        tool_call_id=IsStr(),
+                    ThinkingPart(
+                        content='',
+                        signature='qynidRAxOaQsb+Ua8ZIc6a4NGi7li4jd5tydyFKRweot7PB3gCiCK+H7zOKTxzjx4wfm4WvEHqLitpSmEYdZAbr1hzf3WIRmWH+uKlG4/XwhwDnFeRDjjBOcmAhTR1oDF/Vv7mr73ReEvl6XQHESgBiGxphQIRazfskTGs3iP931RHi8k7hrGbTchOJs5NI/20sNX0VtoeL7AEuXXilr9L1ASCseS9x5jL4y7efI6XMRg9Xo2JRPpxlMv4u/JfxJHqr/ku5WgShUsNkIim0/SC2PrEL9/QxyQBxkUZBFyOU0fP3uPCcAYfXvtg10NPF6GtgzIBE04eNc5NpijSMHVX7nQDqntohSk7lHHJfN2qGMXmkh7y3CZywaWwewm3XzfgbEKy0Y1MvAG+2L1v5QXo6yh9MyuaIQdueijxiiTKkkgL8GilsbEhds/tXX7nc2hPS/ieO/S/1PBkFLSedKqVkM9omu2F1mg7fnGnSfU2iUn1JJd5pgDdBoguoB6o8KpCK91dpk9+J1MlghjFqqUvlVPqEbiYT6DX8mCs0a317cs+CSFOJvaM8VKNwK1WSIvt7P3iUmmbds3tc55Y8',
                         provider_name='xai',
                     ),
-                    TextPart(content='The identifier of your last opened issue is **PAPI-955**.'),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args={
+                            'repoName': 'pydantic/pydantic-ai',
+                            'question': 'What is this repository about? Provide a short summary.',
+                        },
+                        tool_call_id='call_05345625',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content="""\
+This repository, `pydantic/pydantic-ai`, is a Python agent framework designed for building production-grade applications with Large Language Models (LLMs) . It emphasizes type safety, structured outputs, dependency injection, and observability, providing a model-agnostic interface for over 20 LLM providers . The framework also includes comprehensive evaluation and testing infrastructure .
+
+## Core Purpose and Features
+
+The primary purpose of Pydantic AI is to simplify the development of reliable AI applications by offering a robust framework that integrates type-safety and an intuitive developer experience . It aims to provide a unified approach to interacting with various LLM providers and managing complex agent workflows .
+
+Key features include:
+*   **Type-Safe Agents**: Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and dependency injection .
+*   **Model-Agnostic Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers .
+*   **Structured Outputs**: Automatic Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs .
+*   **Comprehensive Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring, and cost tracking .
+*   **Production-Ready Tooling**: This includes an evaluation framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI .
+*   **Graph Execution**: The `pydantic_graph.Graph` module provides a graph-based state machine for orchestrating agent execution, using nodes like `UserPromptNode`, `ModelRequestNode`, and `CallToolsNode` .
+
+## Framework Architecture
+
+The framework is structured as a UV workspace monorepo, containing several packages .
+
+### Core Packages
+*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools .
+*   `pydantic-ai`: A meta-package that includes all optional extras .
+
+### Supporting Packages
+*   `pydantic-graph`: Provides the graph execution engine with `Graph` and `BaseNode` .
+*   `pydantic-evals`: An evaluation framework for datasets and evaluators .
+*   `examples`: Contains example applications .
+*   `clai`: Provides a CLI interface .
+
+## Agent Execution Flow
+
+The `Agent` class serves as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types:
+*   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .
+*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .
+*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+The `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .
+
+## Notes
+The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, including development commands and an overview of core components and design patterns . The `mkdocs.yml` file defines the structure and content of the project's documentation, including navigation, plugins, and watch directories for various packages . The `docs/install.md` file details how to install the `pydantic-ai` package and its optional components, including a "slim" installation option for specific model dependencies .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repository-about_10565715-352a-4a8a-9260-3ed39b0b3226
+""",
+                        tool_call_id='call_05345625',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature='wC3KzkkKI+h4XnEAMmhFmyo5/g5h92L7Fm8/k+8EGw5G43jR0Fyqe9F2dY4sENFmqNSKLE43qLRUBm6YWivVT+5SDNU05wjSl4qasTOJMvdzLg+u/sjancAduWZvmOfXuqXOuq8kUw0LeQ5HG0AA8OL6m+kBpHe0yrs3/E7bUxKC6RmeGG3OMV5bEOwIS8iYERmO3U2IGen3G6EG8E/5RYgJA9vZRSN6p3lkMA/rhT+cxOf0dBh0ZykMj/Xz+Q7dzmkM1kDyzuArtUkxCfEZhklaEiXj6ojEpLzHAk+9NgkZTdsgzyZe1Vz8mSmElCs78m4HBbq1FYCU5/J9kvaXPwugM5JyanLMcIuJAloDpyMX9LA8Wt8QZzYM+IAGvPuTy/+q+FNZq/jrmJatmu6zrx3W1fZKK5DsFcAV7voj6bhhcF5anMOHR8gobunGswr7cxnT56t8VdvIphwnOEyRN+kA5tWqwlsNBtoPnIreb80+KuPAMPHujf1JvvDTcSCmcflSesg6MH6GjeFIvGzm5j8d4u4xIPDzQQH8pzL9R/H6NOiC3wUMMMV5HgpnTCmb3QaoQpfHHe2ZoS99KEp3IP6S2tYxoA2KtBBsTUfCpAel7kH5VVv0TgaLGP1lXCWT1ayTX3WqtvWpzIod',
+                        provider_name='xai',
+                    ),
+                    TextPart(
+                        content="Pydantic AI (`pydantic/pydantic-ai`) is a Python framework for building production-grade LLM applications. It emphasizes type safety, structured outputs, dependency injection, and observability, with model-agnostic support for 20+ providers. Key features include graph-based agent execution, evaluation tools, and integrations like OpenTelemetry. It's structured as a monorepo with core packages for agents, graphs, and evals."
+                    ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2093,
-                    output_tokens=64,
-                    details={'cache_read_tokens': 1005, 'server_side_tools_mcp_server': 1},
+                    input_tokens=1844,
+                    output_tokens=140,
+                    details={'reasoning_tokens': 202, 'cache_read_tokens': 771, 'server_side_tools_mcp_server': 1},
                 ),
-                model_name='grok-4-fast-non-reasoning',
+                model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id=IsStr(),
@@ -2276,31 +2338,29 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
 
 
 async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test xAI's MCP server tool with Linear using streaming (recorded via proto cassette)."""
-    linear_access_token = os.getenv('LINEAR_ACCESS_TOKEN') or 'mock-token'
-
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
         builtin_tools=[
             MCPServerTool(
-                id='linear',
-                url='https://mcp.linear.app/mcp',
-                description='MCP server for Linear the project management tool.',
-                authorization_token=linear_access_token,
-                allowed_tools=['list_issues'],
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
+                description='DeepWiki MCP server',
+                allowed_tools=['ask_question'],
+                headers={'custom-header-key': 'custom-header-value'},
             ),
         ],
         model_settings=XaiModelSettings(
-            xai_include_encrypted_content=False,
-            xai_include_mcp_output=False,
+            xai_include_encrypted_content=True,
+            xai_include_mcp_output=True,
         ),
     )
 
     event_parts: list[Any] = []
-    prompt = 'What whas the identifier of my last issue opened?'
-    async with agent.iter(prompt) as agent_run:
+    async with agent.iter(
+        user_prompt='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
+    ) as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
@@ -2308,12 +2368,17 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                         event_parts.append(event)
 
     assert agent_run.result is not None
-    assert agent_run.result.output == snapshot('PAPI-955')
+    assert agent_run.result.output == snapshot(
+        "Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
+    )
     assert agent_run.result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='What whas the identifier of my last issue opened?', timestamp=IsDatetime())
+                    UserPromptPart(
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
+                        timestamp=IsDatetime(),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
@@ -2321,27 +2386,61 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
             ),
             ModelResponse(
                 parts=[
+                    ThinkingPart(
+                        content='',
+                        signature='nAARcuG1WrrOihjyhaPpVRYnz2tyTOiZ4uCSybvcYy0gk2HXRvtRj5InGSI5zGKbv7Wq6ht2scPbFguvb/a+fCQlHqs7EojklFK7VQdd61WS92PUXQ0c/poPXRYSgK5oUlgl79LF/Iji1wjyYSNuC5O8AwCpNsIG0l+WGVa1uVXg2S/hzGQgJed0Gx9wRksxVhf/uTCPaUnaPBgaVvqJKx3slXdTxeqCPNqRIBbJQQON16f040d3JmVtX5fNk2xUjYDrrz5+djSalxk7kItObuta+KgStN3sk9RuTerKW31nYP1OA1G9/+Sg3txT8GggUrV8MmW6LkLg9YuKjjBlzOBRID45LLuw2g5w7nd+8TvA1B2I7ChInwMDSHI+ztt6mtREoSqSpKCTfqkndS3qvfL3G+NAcA4GvRji8BjFGdyF4kPY44qnVDHh+1xh/xc8sp6t1+qNS6MsttXR4A/owsMJNk/Zx0eBgCxe7jcCy44xg2j8g/IqIgNa9qgRYptO/4GbxakdEQ',
+                        provider_name='xai',
+                    ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:linear',
-                        args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
-                        tool_call_id=IsStr(),
+                        tool_name='mcp_server:deepwiki',
+                        args={
+                            'repoName': 'pydantic/pydantic-ai',
+                            'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                        },
+                        tool_call_id='call_50266835',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:linear',
-                        content=None,
-                        tool_call_id=IsStr(),
+                        tool_name='mcp_server:deepwiki',
+                        content="""\
+This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
+
+## Purpose
+The primary purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework . It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic .
+
+## Main Features
+The `pydantic-ai` repository offers several core features:
+*   **Agent System**: The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks . Agents can be configured with generic types for dependency injection and output validation, ensuring type safety throughout the application .
+*   **Model Integration**: The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace . Each model integration follows a consistent settings pattern with provider-specific prefixes .
+*   **Graph-based Execution**: Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine .
+*   **Tool System**: Function tools enable models to perform actions and retrieve additional information . Tools can be registered using decorators like `@agent.tool` or `@agent.tool_plain` .
+*   **Output Handling**: The framework supports various output types, including `TextOutput`, `ToolOutput`, `NativeOutput`, and `PromptedOutput` .
+*   **Durable Execution**: Pydantic AI integrates with durable execution systems like DBOS and Temporal, allowing agents to maintain state and resume execution after failures or restarts .
+*   **Multi-Agent Patterns and Integrations**: The repository supports multi-agent applications and various integrations, including Pydantic Evals, Pydantic Graph, Logfire, Agent-User Interaction (AG-UI), Agent2Agent (A2A), and Clai .
+
+## Notes
+The repository is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools) . The documentation is built using MkDocs  and includes API references and examples .
+
+Wiki pages you might want to explore:
+- [OpenAI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.2)
+- [Google Gemini and Vertex AI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.4)
+
+View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
+""",
+                        tool_call_id='call_50266835',
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(content='PAPI-955'),
+                    TextPart(
+                        content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
+                    ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2093,
-                    output_tokens=54,
-                    details={'cache_read_tokens': 1005, 'server_side_tools_mcp_server': 1},
+                    input_tokens=1783,
+                    output_tokens=141,
+                    details={'reasoning_tokens': 262, 'cache_read_tokens': 853, 'server_side_tools_mcp_server': 1},
                 ),
-                model_name='grok-4-fast-non-reasoning',
+                model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_url='https://api.x.ai/v1',
@@ -2353,55 +2452,208 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
     )
     assert event_parts == snapshot(
         [
-            PartStartEvent(
-                index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:linear',
-                    args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                ),
-            ),
+            PartStartEvent(index=0, part=ThinkingPart(content='', provider_name='xai')),
             PartEndEvent(
                 index=0,
+                part=ThinkingPart(
+                    content='',
+                    signature='eCdVeTLLYaF7HG9GmhBKf6p76gkTy50E+FwuV07Q38ygY210aSxYB4SrWRxFQv9FmHfIGTl8z3lXpLbLMLSNMjBhnCZd6Xg7EivOKgBeQqxuZpOtvduu18UKq+Jq/P3Ug6l5lOxJhrhRvVIT51iFEhfzF+y9aeZLGXJ5S/mA9rJSydrjjpZb9S+5515cC/KQrEoa9fdkFNC5zUlVkY0JZ6MHQcHADmUIqXWzIXH3Ia+awbAIL5IyLOBvec9Yk0D91XSNgTLvRWz7pVeyIqeF//GqcvkfdVurkLjZaNivhdO+D9k/p70oq7D/b1PgaIHB0suenDK9Sxt04F+e+r/vyBF+55ZTPotDxmLpkRbtcTTmyzW6vO/PgP7rJNoi3F8hIgbi0quPGI+zMF6UW3Mw090nrEXWCyOXQlvt3q+7iG5sq0E7cQdkArO9xVqU6qn1mxvC+6mzqwbhJ/jGqrOJ8GwvODnHIE2+5VoUPG4qV4hW01fIdHYcXRhSpRoBKC1EXKkVqTorHRNoV0a6AE+6Rwoil/KOZ+u6rHanj5qw71ANJ/Qffi/RQxjWmKD8P/hwR+UaK/PAEHKlz1qc4YCTNq3T1i+ZIwiRPJ1xcpmkhksyh6+Mn1rIDdpJPD/pbPgJ1tQ/crCdE8X5nzZWJgL9KlTC7C4CIxDlOSEniwZVqYBaSHtFsBAssrJq4QN1mQwwKxkmnpcm1Q7aCVky/0OaaLv8TziwalE2EefIwSU6W2KPpW2RTAT5fdKqTfH1RfUdUb3ZjVEu9508//mrUg3siddU8EBWLoX5JN64hL7kzrYSsqXWv8M5SeKOHPHWvmV6BrE5oPOS+btri+kXQeSXtP0S/y/1fl2mbh8feZD5crE5ChZ86Pq/dhaNEp8jx7415l+tw81r+FvHXr56JXNru1sFu64GZRv067dpluFd48FhgOENdW/iek7TSMqNAUEDH43wiGnxgB4HeXSzPE9EOe8iQeZyyICGUZHmym8jaQkNjdZaf7w0R8nnN5iqz2pAF5AjlHKpWAiTebt+j+hDrlhuzPXIqKoULcc5xEcLrWzdH6qGvK83hOUQUljRQHowIcV7Xv/QsiicJudIRzemkIs',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:linear',
-                    args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
-                    tool_call_id=IsStr(),
+                    tool_name='mcp_server:deepwiki',
+                    args={
+                        'repoName': 'pydantic/pydantic-ai',
+                        'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                    },
+                    tool_call_id='call_50266835',
+                    provider_name='xai',
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    args={
+                        'repoName': 'pydantic/pydantic-ai',
+                        'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                    },
+                    tool_call_id='call_50266835',
                     provider_name='xai',
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=1,
+                index=2,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:linear',
-                    content=None,
-                    tool_call_id=IsStr(),
+                    tool_name='mcp_server:deepwiki',
+                    content="""\
+This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
+
+## Purpose
+The primary purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework . It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic .
+
+## Main Features
+The `pydantic-ai` repository offers several core features:
+*   **Agent System**: The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks . Agents can be configured with generic types for dependency injection and output validation, ensuring type safety throughout the application .
+*   **Model Integration**: The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace . Each model integration follows a consistent settings pattern with provider-specific prefixes .
+*   **Graph-based Execution**: Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine .
+*   **Tool System**: Function tools enable models to perform actions and retrieve additional information . Tools can be registered using decorators like `@agent.tool` or `@agent.tool_plain` .
+*   **Output Handling**: The framework supports various output types, including `TextOutput`, `ToolOutput`, `NativeOutput`, and `PromptedOutput` .
+*   **Durable Execution**: Pydantic AI integrates with durable execution systems like DBOS and Temporal, allowing agents to maintain state and resume execution after failures or restarts .
+*   **Multi-Agent Patterns and Integrations**: The repository supports multi-agent applications and various integrations, including Pydantic Evals, Pydantic Graph, Logfire, Agent-User Interaction (AG-UI), Agent2Agent (A2A), and Clai .
+
+## Notes
+The repository is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools) . The documentation is built using MkDocs  and includes API references and examples .
+
+Wiki pages you might want to explore:
+- [OpenAI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.2)
+- [Google Gemini and Vertex AI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.4)
+
+View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
+""",
+                    tool_call_id='call_50266835',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=3, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='API')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='955')),
-            PartEndEvent(index=2, part=TextPart(content='PAPI-955')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='yd')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='antic')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='/p')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='yd')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='antic')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-ai')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gen')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='AI')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Agent')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Framework')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' built')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' on')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' P')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='yd')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='antic')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' creating')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' type')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-safe')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gener')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ative')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' AI')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' applications')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' It')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' un')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ifies')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' interactions')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' LL')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='Ms')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' from')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' providers')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' like')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Open')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='AI')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Anthrop')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ic')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Google')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' others')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=';')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' supports')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' agent')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' orchestration')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' graph')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-based')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' execution')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' tools')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' durable')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' workflows')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' multi')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-agent')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' patterns')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=" It's")),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' mon')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ore')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='po')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' core')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' packages')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' slim')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' graphs')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' ev')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='als')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=3,
+                part=TextPart(
+                    content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
+                ),
+            ),
+            BuiltinToolCallEvent(
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:linear',
-                    args={'limit': 1, 'orderBy': 'createdAt', 'assignee': 'me'},
-                    tool_call_id=IsStr(),
+                    tool_name='mcp_server:deepwiki',
+                    args={
+                        'repoName': 'pydantic/pydantic-ai',
+                        'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                    },
+                    tool_call_id='call_50266835',
                     provider_name='xai',
                 )
             ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+            BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:linear',
-                    content=None,
-                    tool_call_id=IsStr(),
+                    tool_name='mcp_server:deepwiki',
+                    content="""\
+This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
+
+## Purpose
+The primary purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework . It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic .
+
+## Main Features
+The `pydantic-ai` repository offers several core features:
+*   **Agent System**: The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks . Agents can be configured with generic types for dependency injection and output validation, ensuring type safety throughout the application .
+*   **Model Integration**: The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace . Each model integration follows a consistent settings pattern with provider-specific prefixes .
+*   **Graph-based Execution**: Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine .
+*   **Tool System**: Function tools enable models to perform actions and retrieve additional information . Tools can be registered using decorators like `@agent.tool` or `@agent.tool_plain` .
+*   **Output Handling**: The framework supports various output types, including `TextOutput`, `ToolOutput`, `NativeOutput`, and `PromptedOutput` .
+*   **Durable Execution**: Pydantic AI integrates with durable execution systems like DBOS and Temporal, allowing agents to maintain state and resume execution after failures or restarts .
+*   **Multi-Agent Patterns and Integrations**: The repository supports multi-agent applications and various integrations, including Pydantic Evals, Pydantic Graph, Logfire, Agent-User Interaction (AG-UI), Agent2Agent (A2A), and Clai .
+
+## Notes
+The repository is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools) . The documentation is built using MkDocs  and includes API references and examples .
+
+Wiki pages you might want to explore:
+- [OpenAI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.2)
+- [Google Gemini and Vertex AI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.4)
+
+View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
+""",
+                    tool_call_id='call_50266835',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 )
