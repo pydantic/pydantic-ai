@@ -53,6 +53,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -1130,6 +1131,19 @@ class OpenAIChatModel(Model):
                         )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name != 'openai':
+                        raise UserError(
+                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with OpenAIChatModel. '
+                            f'Expected provider_name to be "openai".'
+                        )
+                    content.append(
+                        File(
+                            file=FileFile(file_id=item.file_id),
+                            type='file',
+                        )
+                    )
                 elif isinstance(item, CachePoint):
                     # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
                     pass
@@ -2032,6 +2046,19 @@ class OpenAIResponsesModel(Model):
                         )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name != 'openai':
+                        raise UserError(
+                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with OpenAIResponsesModel. '
+                            f'Expected provider_name to be "openai".'
+                        )
+                    content.append(
+                        responses.ResponseInputFileParam(
+                            type='input_file',
+                            file_id=item.file_id,
+                        )
+                    )
                 elif isinstance(item, CachePoint):
                     # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
                     pass

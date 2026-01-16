@@ -42,6 +42,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -83,6 +84,7 @@ try:
         BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
+        BetaFileDocumentSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
         BetaJSONOutputFormatParam,
@@ -1072,7 +1074,7 @@ class AnthropicModel(Model):
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
-    async def _map_user_prompt(
+    async def _map_user_prompt(  # noqa: C901
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
@@ -1112,6 +1114,17 @@ class AnthropicModel(Model):
                         )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name not in ('anthropic', 'anthropic-bedrock'):
+                        raise UserError(
+                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with AnthropicModel. '
+                            f'Expected provider_name to be "anthropic" or "anthropic-bedrock".'
+                        )
+                    yield BetaRequestDocumentBlockParam(
+                        source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                        type='document',
+                    )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
