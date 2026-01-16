@@ -890,17 +890,15 @@ Running `pyright` would identify the same issues.
 
 ## System Prompts
 
-System prompts might seem simple at first glance since they're just strings (or sequences of strings that are concatenated), but crafting the right system prompt is key to getting the model to behave as you want.
+System prompts are strings (or sequences of strings) that guide model behavior. Crafting the right system prompt is key to getting the model to behave as you want.
 
-!!! tip
-    For most use cases, you should use `instructions` instead of "system prompts".
+!!! warning "Behavior with `message_history`"
+    When you provide `message_history`, the current agent's `system_prompt` is **not added** to the request.
+    System prompts already in the history remain, but the current agent's are skipped (to avoid duplication).
 
-    If you know what you are doing though and want to preserve system prompt messages in the message history sent to the
-    LLM in subsequent completions requests, you can achieve this using the `system_prompt` argument/decorator.
+    For most use cases, use [`instructions`](#instructions) instead — they're always included regardless of message history.
 
-    See the section below on [Instructions](#instructions) for more information.
-
-Generally, system prompts fall into two categories:
+System prompts fall into two categories:
 
 1. **Static system prompts**: These are known when writing the code and can be defined via the `system_prompt` parameter of the [`Agent` constructor][pydantic_ai.agent.Agent.__init__].
 2. **Dynamic system prompts**: These depend in some way on context that isn't known until runtime, and should be defined via functions decorated with [`@agent.system_prompt`][pydantic_ai.agent.Agent.system_prompt].
@@ -945,16 +943,14 @@ _(This example is complete, it can be run "as is")_
 
 ## Instructions
 
-Instructions are similar to system prompts. The main difference is that when an explicit `message_history` is provided
-in a call to `Agent.run` and similar methods, _instructions_ from any existing messages in the history are not included
-in the request to the model — only the instructions of the _current_ agent are included.
+Instructions guide model behavior like system prompts, but handle `message_history` differently:
 
-You should use:
+| Feature | With `message_history` |
+|---------|------------------------|
+| `system_prompt` | Current agent's prompts are **skipped** (history's prompts remain) |
+| `instructions` | Current agent's instructions are **always included** (history's are ignored) |
 
-- `instructions` when you want your request to the model to only include system prompts for the _current_ agent
-- `system_prompt` when you want your request to the model to _retain_ the system prompts used in previous requests (possibly made using other agents)
-
-In general, we recommend using `instructions` instead of `system_prompt` unless you have a specific reason to use `system_prompt`.
+Use `instructions` by default. Use `system_prompt` only when you need prompts to accumulate across multiple agents or runs in a conversation.
 
 Instructions, like system prompts, can be specified at different times:
 
