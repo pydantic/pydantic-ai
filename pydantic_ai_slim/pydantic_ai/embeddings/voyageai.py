@@ -42,12 +42,12 @@ for available models and their capabilities.
 VoyageAIEmbeddingModelName = str | LatestVoyageAIEmbeddingModelNames
 """Possible VoyageAI embedding model names."""
 
-VoyageAIEmbedInputType = Literal['query', 'document'] | None
+VoyageAIEmbedInputType = Literal['query', 'document', 'none']
 """VoyageAI embedding input types.
 
 - `'query'`: For search queries; prepends retrieval-optimized prefix.
 - `'document'`: For documents; prepends document retrieval prefix.
-- `None`: Direct embedding without any prefix.
+- `'none'`: Direct embedding without any prefix.
 """
 
 
@@ -64,7 +64,7 @@ class VoyageAIEmbeddingSettings(EmbeddingSettings, total=False):
     """The VoyageAI-specific input type for the embedding.
 
     Overrides the standard `input_type` argument. Options include:
-    `'query'`, `'document'`, or `None` for direct embedding without prefix.
+    `'query'`, `'document'`, or `'none'` for direct embedding without prefix.
     """
 
 
@@ -157,12 +157,14 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
         voyageai_input_type: VoyageAIEmbedInputType = settings.get(
             'voyageai_input_type', 'document' if input_type == 'document' else 'query'
         )
+        # Convert 'none' string to None for the API
+        api_input_type = None if voyageai_input_type == 'none' else voyageai_input_type
 
         try:
             response = await self._provider.client.embed(
                 texts=list(inputs),
                 model=self.model_name,
-                input_type=voyageai_input_type,
+                input_type=api_input_type,
                 truncation=settings.get('truncate', False),
                 output_dimension=settings.get('dimensions'),
             )

@@ -456,7 +456,7 @@ class TestVoyageAI:
     async def test_query_with_voyageai_input_type(self, voyage_api_key: str):
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
-        result = await embedder.embed_query('Hello, world!', settings={'voyageai_input_type': None})  # pyright: ignore[reportArgumentType]
+        result = await embedder.embed_query('Hello, world!', settings={'voyageai_input_type': 'none'})  # pyright: ignore[reportArgumentType]
         assert result == snapshot(
             EmbeddingResult(
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
