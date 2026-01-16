@@ -1216,22 +1216,20 @@ async def test_thinking_end_event_with_all_metadata() -> None:
 
     events = [e async for e in event_stream.handle_thinking_end(part, followed_by_thinking=False)]
 
-    assert events == snapshot(
-        [
-            {
-                'type': 'THINKING_END',
-                'raw_event': {
-                    'pydantic_ai': {
-                        'id': 'thinking-123',
-                        'signature': 'sig_xyz',
-                        'provider_name': 'anthropic',
-                        'provider_details': {'model': 'claude-sonnet-4-5'},
-                    }
-                },
-                'encryptedContent': 'sig_xyz',
-            }
-        ]
-    )
+    # Can't use snapshot here: inline_snapshot can't access pydantic extra fields via getattr
+    assert len(events) == 1
+    event = events[0]
+    assert event.type.value == 'THINKING_END'
+    assert event.raw_event == {
+        'pydantic_ai': {
+            'id': 'thinking-123',
+            'signature': 'sig_xyz',
+            'provider_name': 'anthropic',
+            'provider_details': {'model': 'claude-sonnet-4-5'},
+        }
+    }
+    assert event.__pydantic_extra__ is not None
+    assert event.__pydantic_extra__['encryptedContent'] == 'sig_xyz'
 
 
 def test_activity_message_other_types_ignored() -> None:
