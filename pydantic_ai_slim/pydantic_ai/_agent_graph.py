@@ -1092,7 +1092,6 @@ def _handle_tool_calls_parts(
             calls_to_run.append(call)
 
 
-async def _call_tools(
 async def _call_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
