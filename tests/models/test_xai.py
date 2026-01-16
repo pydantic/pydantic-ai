@@ -1737,7 +1737,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     content="The current weather in San Francisco is clear with a temperature of 8°C. Today's high is expected to reach 16°C, and the low is 10°C."
                 ),
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
@@ -2614,7 +2614,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                     content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
                 ),
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     args={
@@ -2625,7 +2625,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                     provider_name='xai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='mcp_server:deepwiki',
                     content="""\
