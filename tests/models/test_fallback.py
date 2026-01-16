@@ -710,7 +710,7 @@ async def test_fallback_model_structured_output():
     def prompted_output_func(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal enabled_model
         if enabled_model != 'prompted':
-            raise ModelHTTPError(status_code=500, model_name='prompted-model', body=None)  # pragma: no cover
+            raise ModelHTTPError(status_code=500, model_name='prompted-model', body=None)  # pragma: lax no cover
 
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
@@ -1114,10 +1114,10 @@ async def test_web_fetch_scenario() -> None:
     def web_fetch_failed(response: ModelResponse) -> bool:
         for call, result in response.builtin_tool_calls:
             if call.tool_name != 'web_fetch':
-                continue  # pragma: no cover
+                continue  # pragma: lax no cover
             content = result.content
             if not isinstance(content, dict):
-                continue  # pragma: no cover
+                continue  # pragma: lax no cover
             content_dict = cast(dict[str, Any], content)
             status = content_dict.get('url_retrieval_status', '')
             if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':  # pragma: no branch
@@ -1242,7 +1242,7 @@ def test_fallback_on_mixed_list() -> None:
         fallback_model_impl,
         fallback_on=[CustomError, custom_exception_handler, reject_bad_response],
     )
-    agent = Agent(model=fallback)  # pragma: no cover
+    agent = Agent(model=fallback)  # pragma: lax no cover
 
     # Should fallback because response contains 'bad'
     result = agent.run_sync('hello')
@@ -1336,7 +1336,7 @@ def test_response_handler_only_exception_propagates() -> None:
 
 def test_is_response_handler_no_params() -> None:
     """Test that handlers with no parameters are treated as exception handlers."""
-    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]  # noqa: I001  # pragma: no cover
+    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]  # noqa: I001  # pragma: lax no cover
 
     # A callable with no parameters
     def no_params() -> bool:
@@ -1355,7 +1355,7 @@ def test_is_response_handler_builtin() -> None:
 
 def test_is_exception_types_tuple_with_non_exception() -> None:
     """Test that tuples with non-exception types return False."""
-    from pydantic_ai.models.fallback import _is_exception_types_tuple  # pyright: ignore[reportPrivateUsage]  # noqa: I001  # pragma: no cover
+    from pydantic_ai.models.fallback import _is_exception_types_tuple  # pyright: ignore[reportPrivateUsage]  # noqa: I001  # pragma: lax no cover
 
     # Tuple with non-exception type
     assert _is_exception_types_tuple((ValueError, str)) is False
@@ -1406,7 +1406,7 @@ def test_empty_fallback_on_list_warning() -> None:
             fallback_model_impl,
             fallback_on=[],
         )
-        assert len(w) == 1  # pragma: no cover
+        assert len(w) == 1  # pragma: lax no cover
         assert issubclass(w[0].category, UserWarning)
         assert 'empty fallback_on list' in str(w[0].message)
 
