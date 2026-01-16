@@ -2519,29 +2519,39 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
 .)
 2. Look\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='right-left in countries')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='right-left in countries', provider_name='anthropic')
+            ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' where cars drive on the right;'),
+                delta=ThinkingPartDelta(content_delta=' where cars drive on the right;', provider_name='anthropic'),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)', provider_name='anthropic')
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
                     content_delta="""\
 
 3. Wait for\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear'),
+                delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear', provider_name='anthropic'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -2549,12 +2559,13 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  gap in traffic
 4\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if'),
+                delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if', provider_name='anthropic'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -2562,7 +2573,8 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  possible
 5. Cross at\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
@@ -2571,7 +2583,8 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  a steady pace without running
 6. Continue\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
@@ -2580,12 +2593,13 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  watching for traffic while crossing
 7\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where'),
+                delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where', provider_name='anthropic'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -2594,25 +2608,31 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
  available
 
 I'll also mention\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' some additional safety tips and considerations for'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' different situations (busy streets, streets'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).'),
+                delta=ThinkingPartDelta(
+                    content_delta=' some additional safety tips and considerations for', provider_name='anthropic'
+                ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC'
+                    content_delta=' different situations (busy streets, streets', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC',
+                    provider_name='anthropic',
                 ),
             ),
             PartEndEvent(
@@ -3549,29 +3569,41 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='The user is asking about the weather'),
+                delta=ThinkingPartDelta(
+                    content_delta='The user is asking about the weather', provider_name='anthropic'
+                ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' in San Francisco today. This is clearly a request'),
+                delta=ThinkingPartDelta(
+                    content_delta=' in San Francisco today. This is clearly a request', provider_name='anthropic'
+                ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' for current, real-time information'),
+                delta=ThinkingPartDelta(content_delta=' for current, real-time information', provider_name='anthropic'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' that changes daily, so I should use'),
+                delta=ThinkingPartDelta(
+                    content_delta=' that changes daily, so I should use', provider_name='anthropic'
+                ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' web search to get up-to-date weather'),
+                delta=ThinkingPartDelta(
+                    content_delta=' web search to get up-to-date weather', provider_name='anthropic'
+                ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' information. According to the guidelines, today'),
+                delta=ThinkingPartDelta(
+                    content_delta=' information. According to the guidelines, today', provider_name='anthropic'
+                ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s date is September 16, ")),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta="'s date is September 16, ", provider_name='anthropic')
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -3579,22 +3611,28 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 2025.
 
 I should search for current\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' weather in San Francisco. I\'ll include "'),
+                delta=ThinkingPartDelta(
+                    content_delta=' weather in San Francisco. I\'ll include "', provider_name='anthropic'
+                ),
             ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta='today" in the search query to get the most current'),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' information.')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ=='
+                    content_delta='today" in the search query to get the most current', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' information.', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
+                    provider_name='anthropic',
                 ),
             ),
             PartEndEvent(
@@ -4630,26 +4668,35 @@ async def test_anthropic_web_fetch_tool_stream(
     )
     assert event_parts == snapshot(
         [
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' from the URL https')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' from the URL https', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch'),
+                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch', provider_name='anthropic'),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' get the content from')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' get the content from', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE='
+                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
+                    provider_name='anthropic',
                 ),
             ),
             PartStartEvent(
@@ -5936,11 +5983,13 @@ Here's how it breaks down following the order of operations:
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate'),
+                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate', provider_name='anthropic'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' a mathematical expression: 65465-6544 *'),
+                delta=ThinkingPartDelta(
+                    content_delta=' a mathematical expression: 65465-6544 *', provider_name='anthropic'
+                ),
             ),
             PartDeltaEvent(
                 index=0,
@@ -5949,18 +5998,20 @@ Here's how it breaks down following the order of operations:
  65464-6+1.02255
 
 This\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of'
+                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of',
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).'),
+                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).', provider_name='anthropic'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -5969,10 +6020,13 @@ This\
  Let me break this down:
 
 65\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255', provider_name='anthropic')
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -5981,24 +6035,28 @@ This\
 
 Following order of operations:
 1. First, multiplication:\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
                     content_delta="""\
 
 2. Then left to right for\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465'),
+                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465', provider_name='anthropic'),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)', provider_name='anthropic')
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -6006,25 +6064,31 @@ Following order of operations:
  - 6 + 1.02255
 
 This\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' is a computational task that requires precise'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' calculations, so I should use the code_execution'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.'),
+                delta=ThinkingPartDelta(
+                    content_delta=' is a computational task that requires precise', provider_name='anthropic'
+                ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ=='
+                    content_delta=' calculations, so I should use the code_execution', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                    provider_name='anthropic',
                 ),
             ),
             PartEndEvent(
