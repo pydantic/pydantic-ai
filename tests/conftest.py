@@ -308,7 +308,7 @@ def pytest_addoption(parser: Any) -> None:
     parser.addoption(
         '--xai-proto-include-json',
         action='store_true',
-        default=False,
+        default=True,
         dest='xai_proto_include_json',
         help='Include JSON representations in xAI proto cassette YAML files.',
     )

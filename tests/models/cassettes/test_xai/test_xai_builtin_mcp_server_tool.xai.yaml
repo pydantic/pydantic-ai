@@ -1,14 +1,14 @@
 version: 1
 responses:
 - !!binary |
-  CiRhYWVlNjZiMC1jMDQzLWExY2YtMWU5YS1jZjEwZDhjNGNmMGUSZAgEGmAQAhpcCg1jYWxsXzQ1
-  NjkzNzI1EAYYAVJHChJsaW5lYXIubGlzdF9pc3N1ZXMSMXsibGltaXQiOjEsIm9yZGVyQnkiOiJj
+  CiQzYzgzYjg5Yy1kNjRjLWExYTEtOGYyYy1hOWRkZWI3NDNjYWESZAgEGmAQAhpcCg1jYWxsXzE5
+  MzMxOTQzEAYYAVJHChJsaW5lYXIubGlzdF9pc3N1ZXMSMXsibGltaXQiOjEsIm9yZGVyQnkiOiJj
   cmVhdGVkQXQiLCJhc3NpZ25lZSI6Im1lIn0SQwgDEAIaPQo5VGhlIGlkZW50aWZpZXIgb2YgeW91
-  ciBsYXN0IG9wZW5lZCBpc3N1ZSBpcyAqKlBBUEktOTU1KiouEAIqDAiFtqDLBhCYuJHqATIZZ3Jv
-  ay00LWZhc3Qtbm9uLXJlYXNvbmluZzoNZnBfNDYxNmU3NjQxM0oWCEAQsRAY8RAgsRA47wdKAQdY
-  7Ki3AVqjARABOgIIAUKaATqXAQoGbGluZWFyEjJNQ1Agc2VydmVyIGZvciBMaW5lYXIgdGhlIHBy
-  b2plY3QgbWFuYWdlbWVudCB0b29sLhoaaHR0cHM6Ly9tY3AubGluZWFyLmFwcC9tY3AiC2xpc3Rf
-  aXNzdWVzKjBsaW5fYXBpX2s4SEh4MXlpVmdvQ2p2NXJBTHdIczFuRTFXOU1zZkdCRFlyNUlUSEQ=
+  ciBsYXN0IG9wZW5lZCBpc3N1ZSBpcyAqKlBBUEktOTU1KiouEAIqCwjR36nLBhDhhqs7Mhlncm9r
+  LTQtZmFzdC1ub24tcmVhc29uaW5nOg1mcF80NjE2ZTc2NDEzShYIQBCtEBjtECCtEDjtB0oBB1jk
+  gbcBWqMBEAE6AggBQpoBOpcBCgZsaW5lYXISMk1DUCBzZXJ2ZXIgZm9yIExpbmVhciB0aGUgcHJv
+  amVjdCBtYW5hZ2VtZW50IHRvb2wuGhpodHRwczovL21jcC5saW5lYXIuYXBwL21jcCILbGlzdF9p
+  c3N1ZXMqMGxpbl9hcGlfazhISHgxeWlWZ29DanY1ckFMd0hzMW5FMVc5TXNmR0JEWXI1SVRIRA==
 sample_requests:
 - !!binary |
   CiIKHgocWW91IGFyZSBhIGhlbHBmdWwgYXNzaXN0YW50LhADCjcKMwoxV2hhdCB3aGFzIHRoZSBp
@@ -16,3 +16,67 @@ sample_requests:
   c29uaW5nigGaATqXAQoGbGluZWFyEjJNQ1Agc2VydmVyIGZvciBMaW5lYXIgdGhlIHByb2plY3Qg
   bWFuYWdlbWVudCB0b29sLhoaaHR0cHM6Ly9tY3AubGluZWFyLmFwcC9tY3AiC2xpc3RfaXNzdWVz
   KjBsaW5fYXBpX2s4SEh4MXlpVmdvQ2p2NXJBTHdIczFuRTFXOU1zZkdCRFlyNUlUSESSAQIIAQ==
+sample_requests_json:
+- args: []
+  kwargs:
+    model: grok-4-fast-non-reasoning
+    messages:
+    - content:
+      - text: You are a helpful assistant.
+      role: ROLE_SYSTEM
+    - content:
+      - text: What whas the identifier of my last issue opened?
+      role: ROLE_USER
+    tools:
+    - mcp:
+        server_label: linear
+        server_description: MCP server for Linear the project management tool.
+        server_url: https://mcp.linear.app/mcp
+        allowed_tool_names:
+        - list_issues
+        authorization: lin_api_k8HHx1yiVgoCjv5rALwHs1nE1W9MsfGBDYr5ITHD
+    tool_choice: auto
+    response_format: null
+    use_encrypted_content: false
+    include: []
+responses_json:
+- id: 3c83b89c-d64c-a1a1-8f2c-a9ddeb743caa
+  outputs:
+  - finish_reason: REASON_TOOL_CALLS
+    message:
+      role: ROLE_ASSISTANT
+      tool_calls:
+      - id: call_19331943
+        type: TOOL_CALL_TYPE_MCP_TOOL
+        status: TOOL_CALL_STATUS_COMPLETED
+        function:
+          name: linear.list_issues
+          arguments: '{"limit":1,"orderBy":"createdAt","assignee":"me"}'
+  - finish_reason: REASON_STOP
+    index: 2
+    message:
+      content: The identifier of your last opened issue is **PAPI-955**.
+      role: ROLE_ASSISTANT
+  created: '2026-01-16T17:05:21.124437345Z'
+  model: grok-4-fast-non-reasoning
+  system_fingerprint: fp_4616e76413
+  usage:
+    completion_tokens: 64
+    prompt_tokens: 2093
+    total_tokens: 2157
+    prompt_text_tokens: 2093
+    cached_prompt_text_tokens: 1005
+    server_side_tools_used:
+    - SERVER_SIDE_TOOL_MCP
+  settings:
+    parallel_tool_calls: true
+    tool_choice:
+      mode: TOOL_MODE_AUTO
+    tools:
+    - mcp:
+        server_label: linear
+        server_description: MCP server for Linear the project management tool.
+        server_url: https://mcp.linear.app/mcp
+        allowed_tool_names:
+        - list_issues
+        authorization: lin_api_k8HHx1yiVgoCjv5rALwHs1nE1W9MsfGBDYr5ITHD

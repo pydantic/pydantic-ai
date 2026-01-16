@@ -1,78 +1,38 @@
 version: 1
 stream_chunks:
 - - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISYApeEAIaWgoNY2FsbF85ODYx
-    MTkwNRAGUkcKEmxpbmVhci5saXN0X2lzc3VlcxIxeyJsaW1pdCI6MSwib3JkZXJCeSI6ImNyZWF0
-    ZWRBdCIsImFzc2lnbmVlIjoibWUifRoMCIm2oMsGEInq8/oCIhlncm9rLTQtZmFzdC1ub24tcmVh
-    c29uaW5nKg1mcF80NjE2ZTc2NDEzMhIIMhCTBhjFBiCTBjiqAVjo4V8=
+    CiQ3YmJhNWYyYy0wMjI0LTJmOGItYzEzNC1kYWJjMjYyY2Y3YmYSYApeEAIaWgoNY2FsbF82MjQw
+    OTE4MRAGUkcKEmxpbmVhci5saXN0X2lzc3VlcxIxeyJsaW1pdCI6MSwib3JkZXJCeSI6ImNyZWF0
+    ZWRBdCIsImFzc2lnbmVlIjoibWUifRoMCNXfqcsGEI3R96IDIhlncm9rLTQtZmFzdC1ub24tcmVh
+    c29uaW5nKg1mcF80NjE2ZTc2NDEzMhIIMhCRBhjDBiCRBjiqAVjIwl8=
   - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISBgoCEAIYBBoMCIm2oMsGEP6C
-    woUDIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhIIMhCTBhjFBiCT
-    BjiqAVjo4V8=
+    CiQ3YmJhNWYyYy0wMjI0LTJmOGItYzEzNC1kYWJjMjYyY2Y3YmYSBgoCEAIYBBoMCNXfqcsGEMzj
+    o6sDIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhIIMhCRBhjDBiCR
+    BjiqAVjIwl8=
   - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISZApgEAUaXAoNY2FsbF85ODYx
-    MTkwNRAGGAFSRwoSbGluZWFyLmxpc3RfaXNzdWVzEjF7ImxpbWl0IjoxLCJvcmRlckJ5IjoiY3Jl
-    YXRlZEF0IiwiYXNzaWduZWUiOiJtZSJ9IAEyBFjo4V8=
+    CiQ3YmJhNWYyYy0wMjI0LTJmOGItYzEzNC1kYWJjMjYyY2Y3YmYSZApgEAUaXAoNY2FsbF82MjQw
+    OTE4MRAGGAFSRwoSbGluZWFyLmxpc3RfaXNzdWVzEjF7ImxpbWl0IjoxLCJvcmRlckJ5IjoiY3Jl
+    YXRlZEF0IiwiYXNzaWduZWUiOiJtZSJ9IAEyBFjIwl8=
   - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCwoHCgNUaGUQAiACGgwIj7ag
-    ywYQ2s2gxQIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwgzELEQ
-    GOQQILEQOO8HWIStswE=
+    CiQ3YmJhNWYyYy0wMjI0LTJmOGItYzEzNC1kYWJjMjYyY2Y3YmYSCQoFCgFQEAIgAhoMCNffqcsG
+    EI/AsKoBIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhMIMxCtEBjg
+    ECCtEDjtB1j8hbMB
   - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISEwoPCgsgaWRlbnRpZmllchAC
-    IAIaDAiPtqDLBhCpt7DRAiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQx
-    MzITCDQQsRAY5RAgsRA47wdYjNSzAQ==
+    CiQ3YmJhNWYyYy0wMjI0LTJmOGItYzEzNC1kYWJjMjYyY2Y3YmYSCwoHCgNBUEkQAiACGgwI19+p
+    ywYQibvt5gEiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwg0EK0Q
+    GOEQIK0QOO0HWIStswE=
   - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCwoHCgMgb2YQAiACGgwIj7ag
-    ywYQycmx0QIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwg1ELEQ
-    GOYQILEQOO8HWJT7swE=
+    CiQ3YmJhNWYyYy0wMjI0LTJmOGItYzEzNC1kYWJjMjYyY2Y3YmYSCQoFCgEtEAIgAhoMCNffqcsG
+    EIum7uYBIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhMINRCtEBji
+    ECCtEDjtB1iM1LMB
   - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISDQoJCgUgeW91chACIAIaDAiP
-    tqDLBhDdhbLRAiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzITCDYQ
-    sRAY5xAgsRA47wdYnKK0AQ==
+    CiQ3YmJhNWYyYy0wMjI0LTJmOGItYzEzNC1kYWJjMjYyY2Y3YmYSCwoHCgM5NTUQAiACGgwI19+p
+    ywYQ7cju5gEiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwg2EK0Q
+    GOMQIK0QOO0HWJT7swE=
   - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISDQoJCgUgbGFzdBACIAIaDAiP
-    tqDLBhDhtbLRAiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzITCDcQ
-    sRAY6BAgsRA47wdYpMm0AQ==
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISDwoLCgcgb3BlbmVkEAIgAhoM
-    CI+2oMsGELrxstECIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhMI
-    OBCxEBjpECCxEDjvB1is8LQB
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISDgoKCgYgaXNzdWUQAiACGgwI
-    j7agywYQ2J3i3AIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwg5
-    ELEQGOoQILEQOO8HWLSXtQE=
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCwoHCgMgaXMQAiACGgwIj7ag
-    ywYQw/3i3AIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwg6ELEQ
-    GOsQILEQOO8HWLy+tQE=
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCwoHCgMgKioQAiACGgwIj7ag
-    ywYQ+arj3AIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwg7ELEQ
-    GOwQILEQOO8HWMTltQE=
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCQoFCgFQEAIgAhoMCI+2oMsG
-    EMTQ49wCIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhMIPBCxEBjt
-    ECCxEDjvB1jMjLYB
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCwoHCgNBUEkQAiACGgwIj7ag
-    ywYQlJP45wIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwg9ELEQ
-    GO4QILEQOO8HWNSztgE=
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCQoFCgEtEAIgAhoMCI+2oMsG
-    EMSF+ecCIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhMIPhCxEBjv
-    ECCxEDjvB1jc2rYB
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCwoHCgM5NTUQAiACGgwIj7ag
-    ywYQyqn55wIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwg/ELEQ
-    GPAQILEQOO8HWOSBtwE=
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCwoHCgMqKi4QAiACGgwIj7ag
-    ywYQm8r55wIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEwhAELEQ
-    GPEQILEQOO8HWOyotwE=
-  - !!binary |
-    CiQwMjI0NGRhMS1hZjNkLTk1NzUtNWExYy1mYjVkNDY0NTZhNjISCAoCEAIYAyACGgwIj7agywYQ
-    3Kb65wIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFghAELEQGPEQ
-    ILEQOO8HSgEHWOyotwE=
+    CiQ3YmJhNWYyYy0wMjI0LTJmOGItYzEzNC1kYWJjMjYyY2Y3YmYSCAoCEAIYAyACGgwI19+pywYQ
+    sajv5gEiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFgg2EK0QGOMQ
+    IK0QOO0HSgEHWJT7swE=
 stream_requests:
 - !!binary |
   CiIKHgocWW91IGFyZSBhIGhlbHBmdWwgYXNzaXN0YW50LhADCjcKMwoxV2hhdCB3aGFzIHRoZSBp
@@ -80,3 +40,158 @@ stream_requests:
   c29uaW5nigGaATqXAQoGbGluZWFyEjJNQ1Agc2VydmVyIGZvciBMaW5lYXIgdGhlIHByb2plY3Qg
   bWFuYWdlbWVudCB0b29sLhoaaHR0cHM6Ly9tY3AubGluZWFyLmFwcC9tY3AiC2xpc3RfaXNzdWVz
   KjBsaW5fYXBpX2s4SEh4MXlpVmdvQ2p2NXJBTHdIczFuRTFXOU1zZkdCRFlyNUlUSESSAQIIAQ==
+stream_requests_json:
+- args: []
+  kwargs:
+    model: grok-4-fast-non-reasoning
+    messages:
+    - content:
+      - text: You are a helpful assistant.
+      role: ROLE_SYSTEM
+    - content:
+      - text: What whas the identifier of my last issue opened?
+      role: ROLE_USER
+    tools:
+    - mcp:
+        server_label: linear
+        server_description: MCP server for Linear the project management tool.
+        server_url: https://mcp.linear.app/mcp
+        allowed_tool_names:
+        - list_issues
+        authorization: lin_api_k8HHx1yiVgoCjv5rALwHs1nE1W9MsfGBDYr5ITHD
+    tool_choice: auto
+    response_format: null
+    use_encrypted_content: false
+    include: []
+stream_chunks_json:
+- - chunk:
+      id: 7bba5f2c-0224-2f8b-c134-dabc262cf7bf
+      outputs:
+      - delta:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_62409181
+            type: TOOL_CALL_TYPE_MCP_TOOL
+            function:
+              name: linear.list_issues
+              arguments: '{"limit":1,"orderBy":"createdAt","assignee":"me"}'
+      created: '2026-01-16T17:05:25.878569613Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 50
+        prompt_tokens: 785
+        total_tokens: 835
+        prompt_text_tokens: 785
+        cached_prompt_text_tokens: 170
+  - chunk:
+      id: 7bba5f2c-0224-2f8b-c134-dabc262cf7bf
+      outputs:
+      - delta:
+          role: ROLE_ASSISTANT
+        finish_reason: REASON_TOOL_CALLS
+      created: '2026-01-16T17:05:25.896070092Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 50
+        prompt_tokens: 785
+        total_tokens: 835
+        prompt_text_tokens: 785
+        cached_prompt_text_tokens: 170
+  - chunk:
+      id: 7bba5f2c-0224-2f8b-c134-dabc262cf7bf
+      outputs:
+      - delta:
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call_62409181
+            type: TOOL_CALL_TYPE_MCP_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: linear.list_issues
+              arguments: '{"limit":1,"orderBy":"createdAt","assignee":"me"}'
+        index: 1
+      usage: {}
+  - chunk:
+      id: 7bba5f2c-0224-2f8b-c134-dabc262cf7bf
+      outputs:
+      - delta:
+          content: P
+          role: ROLE_ASSISTANT
+        index: 2
+      created: '2026-01-16T17:05:27.357310479Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 51
+        prompt_tokens: 2093
+        total_tokens: 2144
+        prompt_text_tokens: 2093
+        cached_prompt_text_tokens: 1005
+  - chunk:
+      id: 7bba5f2c-0224-2f8b-c134-dabc262cf7bf
+      outputs:
+      - delta:
+          content: API
+          role: ROLE_ASSISTANT
+        index: 2
+      created: '2026-01-16T17:05:27.484138377Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 52
+        prompt_tokens: 2093
+        total_tokens: 2145
+        prompt_text_tokens: 2093
+        cached_prompt_text_tokens: 1005
+  - chunk:
+      id: 7bba5f2c-0224-2f8b-c134-dabc262cf7bf
+      outputs:
+      - delta:
+          content: '-'
+          role: ROLE_ASSISTANT
+        index: 2
+      created: '2026-01-16T17:05:27.484152075Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 53
+        prompt_tokens: 2093
+        total_tokens: 2146
+        prompt_text_tokens: 2093
+        cached_prompt_text_tokens: 1005
+  - chunk:
+      id: 7bba5f2c-0224-2f8b-c134-dabc262cf7bf
+      outputs:
+      - delta:
+          content: '955'
+          role: ROLE_ASSISTANT
+        index: 2
+      created: '2026-01-16T17:05:27.484156525Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 54
+        prompt_tokens: 2093
+        total_tokens: 2147
+        prompt_text_tokens: 2093
+        cached_prompt_text_tokens: 1005
+  - chunk:
+      id: 7bba5f2c-0224-2f8b-c134-dabc262cf7bf
+      outputs:
+      - delta:
+          role: ROLE_ASSISTANT
+        finish_reason: REASON_STOP
+        index: 2
+      created: '2026-01-16T17:05:27.484168753Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 54
+        prompt_tokens: 2093
+        total_tokens: 2147
+        prompt_text_tokens: 2093
+        cached_prompt_text_tokens: 1005
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_MCP

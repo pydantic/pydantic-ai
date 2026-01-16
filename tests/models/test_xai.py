@@ -393,7 +393,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=439, output_tokens=16, details={'cache_read_tokens': 158}),
+                usage=RequestUsage(input_tokens=439, output_tokens=16, details={'cache_read_tokens': 314}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -453,7 +453,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                     ToolCallPart(tool_name='get_location', args='{"loc_name":"London"}', tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=351, output_tokens=53, details={'reasoning_tokens': 255, 'cache_read_tokens': 148}
+                    input_tokens=351, output_tokens=53, details={'reasoning_tokens': 223, 'cache_read_tokens': 148}
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -467,7 +467,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                     RetryPromptPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
-                        tool_call_id='call_36212417',
+                        tool_call_id='call_56494531',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
@@ -483,15 +483,11 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="""\
-London is the capital city of England and the United Kingdom, located in southeastern England on the River Thames. Its approximate geographic coordinates are 51° N latitude and 0° W longitude (often more precisely given as 51.5074° N, 0.1278° W).
-
-"Lodon" appears to be a misspelling or variant of "London," as no distinct location by that name is widely recognized. If you meant something else by "Lodon," please provide more details!\
-"""
+                        content='Lodon appears to be a misspelling or non-standard variant of "London," which doesn\'t correspond to a known location based on available data. London (the capital of England and the United Kingdom) is located at approximately 51° N latitude and 0° W longitude, in southeastern England along the River Thames.'
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=702, output_tokens=100, details={'reasoning_tokens': 122, 'cache_read_tokens': 633}
+                    input_tokens=670, output_tokens=63, details={'reasoning_tokens': 83, 'cache_read_tokens': 601}
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -505,9 +501,9 @@ London is the capital city of England and the United Kingdom, located in southea
     assert result.usage() == snapshot(
         RunUsage(
             requests=2,
-            input_tokens=1053,
-            details={'reasoning_tokens': 377, 'cache_read_tokens': 781},
-            output_tokens=153,
+            input_tokens=1021,
+            details={'reasoning_tokens': 306, 'cache_read_tokens': 749},
+            output_tokens=116,
             tool_calls=1,
         )
     )
@@ -865,8 +861,12 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Paris')],
-                usage=RequestUsage(input_tokens=181, output_tokens=1, details={'cache_read_tokens': 167}),
+                parts=[
+                    TextPart(
+                        content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
+                    )
+                ],
+                usage=RequestUsage(input_tokens=181, output_tokens=27, details={'cache_read_tokens': 162}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -898,10 +898,10 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="Paris is the capital of France. It's the largest city in the country and serves as its political, economic, and cultural center."
+                        content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, output_tokens=26, details={'cache_read_tokens': 180}),
+                usage=RequestUsage(input_tokens=181, output_tokens=27, details={'cache_read_tokens': 180}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1021,7 +1021,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 158}),
+                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 314}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1092,7 +1092,7 @@ async def test_xai_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 158}),
+                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 314}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1141,7 +1141,7 @@ async def test_xai_image_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What fruit is in the image? Keep it short and concise.', image_content])
-    assert result.output == snapshot('Kiwi')
+    assert result.output == snapshot('Kiwi.')
 
 
 async def test_xai_image_input(allow_model_requests: None):
@@ -1481,8 +1481,31 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                     ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'What day of the week is January 1, 2026?'},
-                        tool_call_id=IsStr(),
+                        args={'query': 'what day of the week is January 1, 2026', 'num_results': 1},
+                        tool_call_id='call_86645084',
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature='Q6enYseda6glbObZ3kvu0ucqotfntHKDrZnZuM1dQ6JDVj8MSTv7u2FOYklYuZ4VOHeNDd8Ae1jjuFyPwR/KZPa8diO4ABTsZk+0oqnETR+Ky4xcdYjM80wMos0N958JEuGVyJUt439iFclhgaH4rMbegHFx2a+17RevvMJsJJ19XtvBGcQlYURkXAGIzJrWlNEKUG4sW1xwUdDmY0HuKlzNW/e8JFFcJ1HTcaLjbfxzJnnbYEQDNq9urClr1W0aHpJWNlVz/1UDsiRxp+49+kCSGJqa+SscNnmaUpWB11dNJU3lxu2Agv1TEHhvrRf4LCTuMih2w8OXiZ05VKBGUxY9HNAJBeaoTCp0erDUGzCQ/lqMw4+i5US1/j7mkI/zEQsEJAmvupfC1O7HwU78vICVurQnU1y+yBQWqSm0hMqp1Zmnmh9VyNuzUKqZm5m4bMOp7cCPM6XtOXljP6Cy6eWXLp5lsI4djA',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=None,
+                        tool_call_id='call_86645084',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature='hRHeKXB8bdRZl9r6b6TVRxc7naVa1qspWfYh393FYN1THpUVetMFyIT3xEskg07JU22Q45QlWr+773ohtRarMMIOfMar2bIFWDI+gHtXOcT7bWhKyX09tOP/k06WpFG9exgdo5wgOaQw79+SG9UiOwnVwCxb/ZfcqWSiuPnM96KJ1IHq9TAx2RgCpyLhY3V4d+t0G+YRUFI/6p6vP1cL++uDSztPMk5pRH1sMj1bfhRQKstsKXAASXiuqolVuxYWZ79wzQVhDKEptEggscKh/Ek3rq/SGowJ6xfVxqy0jxMnldGJsy4z2zrSrDLz8jfjKqzGpgSPaXZtxLIBs9qaBUbc9V3KzJYJqYmcVUQQXt+tSEF9tiImSUc8O6Aszfq6I/CuIdS/ZpVhsW0sAnUzyQQf7vonBVl62pGoYFSycMSP',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'what day of the week is January 1, 2026'},
+                        tool_call_id='call_82508960',
                         provider_name='xai',
                     ),
                     ThinkingPart(
@@ -1505,9 +1528,9 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                     TextPart(content='**Thursday**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2308,
-                    output_tokens=40,
-                    details={'reasoning_tokens': 250, 'cache_read_tokens': 1531, 'server_side_tools_web_search': 1},
+                    input_tokens=4789,
+                    output_tokens=91,
+                    details={'reasoning_tokens': 469, 'cache_read_tokens': 2958, 'server_side_tools_web_search': 2},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -1560,8 +1583,8 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'San Francisco weather today Celsius', 'num_results': 5},
-                        tool_call_id=IsStr(),
+                        args={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
+                        tool_call_id='call_42747457',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
@@ -1573,33 +1596,9 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                        tool_call_id='call_45816005',
-                        provider_name='xai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='web_search',
-                        content=None,
-                        tool_call_id='call_45816005',
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={'query': 'San Francisco current weather temperature Celsius', 'num_results': 3},
-                        tool_call_id=IsStr(),
-                        provider_name='xai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='web_search',
-                        content=None,
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
+                        args={
+                            'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1'
+                        },
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
@@ -1611,13 +1610,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         provider_name='xai',
                     ),
                     TextPart(
-                        content="The current temperature in San Francisco is approximately 14°C, with sunny conditions. Today's expected high is around 15–17°C and low around 9–10°C. (Data from recent updates around 8–9 AM PST; weather can vary slightly by exact location.)"
+                        content="The current weather in San Francisco is clear with a temperature of 8°C. Today's high is expected to reach 16°C, and the low is 10°C."
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=10224,
-                    output_tokens=308,
-                    details={'cache_read_tokens': 5285, 'server_side_tools_web_search': 4},
+                    input_tokens=4542,
+                    output_tokens=170,
+                    details={'cache_read_tokens': 2804, 'server_side_tools_web_search': 2},
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -1637,7 +1636,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 index=0,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'San Francisco weather today Celsius', 'num_results': 5},
+                    args={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
                     tool_call_id=IsStr(),
                     provider_name='xai',
                 ),
@@ -1646,7 +1645,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 index=0,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'San Francisco weather today Celsius', 'num_results': 5},
+                    args={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
                     tool_call_id=IsStr(),
                     provider_name='xai',
                 ),
@@ -1667,7 +1666,9 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
+                    args={
+                        'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1'
+                    },
                     tool_call_id=IsStr(),
                     provider_name='xai',
                 ),
@@ -1677,7 +1678,9 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
+                    args={
+                        'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1'
+                    },
                     tool_call_id=IsStr(),
                     provider_name='xai',
                 ),
@@ -1694,136 +1697,52 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(
-                index=4,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'San Francisco current weather temperature Celsius', 'num_results': 3},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                ),
-                previous_part_kind='builtin-tool-return',
-            ),
-            PartEndEvent(
-                index=4,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'San Francisco current weather temperature Celsius', 'num_results': 3},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                ),
-                next_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=5,
-                part=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(
-                index=6,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                ),
-                previous_part_kind='builtin-tool-return',
-            ),
-            PartEndEvent(
-                index=6,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                ),
-                next_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=7,
-                part=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(index=8, part=TextPart(content='The'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=4, part=TextPart(content='The'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' current')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' temperature')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' San')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' Francisco')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' approximately')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='14')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' sunny')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' conditions')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=" Today's")),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' expected')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' high')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' around')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='15')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='–')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='17')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' low')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' around')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='9')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='–')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='10')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='Data')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' from')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' recent')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' updates')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' around')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='8')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='–')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='9')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' AM')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' PST')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=';')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' weather')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' can')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' vary')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' slightly')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' by')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' exact')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' location')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='.)')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' current')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' weather')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' San')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Francisco')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' clear')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' temperature')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='8')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=" Today's")),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' high')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' expected')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' reach')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='16')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' low')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='10')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(
-                index=8,
+                index=4,
                 part=TextPart(
-                    content="The current temperature in San Francisco is approximately 14°C, with sunny conditions. Today's expected high is around 15–17°C and low around 9–10°C. (Data from recent updates around 8–9 AM PST; weather can vary slightly by exact location.)"
+                    content="The current weather in San Francisco is clear with a temperature of 8°C. Today's high is expected to reach 16°C, and the low is 10°C."
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+            BuiltinToolCallEvent(
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'San Francisco weather today Celsius', 'num_results': 5},
-                    tool_call_id=IsStr(),
+                    args={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
+                    tool_call_id='call_42747457',
                     provider_name='xai',
                 )
             ),
@@ -1839,41 +1758,9 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'San Francisco current weather temperature Celsius', 'num_results': 3},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
+                    args={
+                        'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1'
+                    },
                     tool_call_id=IsStr(),
                     provider_name='xai',
                 )
@@ -1956,9 +1843,9 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                     TextPart(content='-428330955.97745'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1891,
+                    input_tokens=1853,
                     output_tokens=52,
-                    details={'reasoning_tokens': 171, 'cache_read_tokens': 1169, 'server_side_tools_code_execution': 1},
+                    details={'reasoning_tokens': 144, 'cache_read_tokens': 1311, 'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2024,7 +1911,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                 usage=RequestUsage(
                     input_tokens=1718,
                     output_tokens=31,
-                    details={'cache_read_tokens': 1013, 'server_side_tools_code_execution': 1},
+                    details={'cache_read_tokens': 1037, 'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2171,7 +2058,7 @@ Return just the final number with no other text.\
                     input_tokens=11140,
                     output_tokens=68,
                     details={
-                        'cache_read_tokens': 6324,
+                        'cache_read_tokens': 6347,
                         'server_side_tools_web_search': 1,
                         'server_side_tools_code_execution': 1,
                     },
@@ -2219,7 +2106,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
 
     result = await agent.run('I am thinking of a city, can you tell me about a famours landmark in this city?')
     assert result.output == snapshot(
-        "One of Chicago's most iconic landmarks is the Willis Tower (formerly known as the Sears Tower). Completed in 1973, it's the third-tallest building in the Western Hemisphere at 1,450 feet (including its antennas). It's famous for its Skydeck observation platform on the 103rd floor, offering panoramic views of the city and Lake Michigan, and for its unique bundled-tube architectural design by architect Bruce Graham. If you're visiting, it's a must-see for architecture enthusiasts!"
+        "One of the most famous landmarks in Chicago is **Cloud Gate**, often nicknamed \"The Bean.\" It's a massive, reflective stainless steel sculpture in Millennium Park, designed by artist Anish Kapoor and unveiled in 2006. The 110-ton, bean-shaped installation mirrors the city's skyline, Lake Michigan, and visitors, creating surreal and interactive photo opportunities. It's become an iconic symbol of Chicago, drawing millions of visitors annually for its playful design and free public access. If that's not the city you had in mind, feel free to give me a hint!"
     )
 
     # Verify custom tool was actually called
@@ -2249,7 +2136,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                     ToolCallPart(tool_name='guess_city', args='{}', tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=743, output_tokens=15, details={'reasoning_tokens': 137, 'cache_read_tokens': 170}
+                    input_tokens=743, output_tokens=15, details={'reasoning_tokens': 483, 'cache_read_tokens': 170}
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2302,13 +2189,13 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                         provider_name='xai',
                     ),
                     TextPart(
-                        content="One of Chicago's most iconic landmarks is the Willis Tower (formerly known as the Sears Tower). Completed in 1973, it's the third-tallest building in the Western Hemisphere at 1,450 feet (including its antennas). It's famous for its Skydeck observation platform on the 103rd floor, offering panoramic views of the city and Lake Michigan, and for its unique bundled-tube architectural design by architect Bruce Graham. If you're visiting, it's a must-see for architecture enthusiasts!"
+                        content="One of the most famous landmarks in Chicago is **Cloud Gate**, often nicknamed \"The Bean.\" It's a massive, reflective stainless steel sculpture in Millennium Park, designed by artist Anish Kapoor and unveiled in 2006. The 110-ton, bean-shaped installation mirrors the city's skyline, Lake Michigan, and visitors, creating surreal and interactive photo opportunities. It's become an iconic symbol of Chicago, drawing millions of visitors annually for its playful design and free public access. If that's not the city you had in mind, feel free to give me a hint!"
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2281,
-                    output_tokens=137,
-                    details={'reasoning_tokens': 143, 'cache_read_tokens': 1160, 'server_side_tools_web_search': 1},
+                    input_tokens=2973,
+                    output_tokens=150,
+                    details={'reasoning_tokens': 168, 'cache_read_tokens': 1506, 'server_side_tools_web_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2373,9 +2260,9 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
                     TextPart(content='The identifier of your last opened issue is **PAPI-955**.'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2097,
+                    input_tokens=2093,
                     output_tokens=64,
-                    details={'cache_read_tokens': 1007, 'server_side_tools_mcp_server': 1},
+                    details={'cache_read_tokens': 1005, 'server_side_tools_mcp_server': 1},
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2421,7 +2308,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                         event_parts.append(event)
 
     assert agent_run.result is not None
-    assert agent_run.result.output == snapshot('The identifier of your last opened issue is **PAPI-955**.')
+    assert agent_run.result.output == snapshot('PAPI-955')
     assert agent_run.result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -2447,12 +2334,12 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(content='The identifier of your last opened issue is **PAPI-955**.'),
+                    TextPart(content='PAPI-955'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2097,
-                    output_tokens=64,
-                    details={'cache_read_tokens': 1007, 'server_side_tools_mcp_server': 1},
+                    input_tokens=2093,
+                    output_tokens=54,
+                    details={'cache_read_tokens': 1005, 'server_side_tools_mcp_server': 1},
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2496,22 +2383,12 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content='The'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=2, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' identifier')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' your')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' last')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' opened')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' issue')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' **')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='P')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='API')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='-')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='955')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='**.')),
-            PartEndEvent(index=2, part=TextPart(content='The identifier of your last opened issue is **PAPI-955**.')),
+            PartEndEvent(index=2, part=TextPart(content='PAPI-955')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:linear',
@@ -2763,7 +2640,7 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=165, output_tokens=40, details={'reasoning_tokens': 147, 'cache_read_tokens': 151}
+                    input_tokens=165, output_tokens=40, details={'reasoning_tokens': 121, 'cache_read_tokens': 151}
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
