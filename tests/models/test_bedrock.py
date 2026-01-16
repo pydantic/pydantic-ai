@@ -1584,12 +1584,13 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ly and ask')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' how I can help')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' them today.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr())),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='bedrock')),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
                     content='The user has greeted me with a simple "Hello". I should respond in a friendly and welcoming manner. This is a straightforward greeting, so I\'ll respond warmly and ask how I can help them today.',
                     signature='Eu0CCkgIBxABGAIqQJDccbDQkr81n7QjZ0Fi43umSvw0YvnGkMPEpaGAa2btYHyWw06KhwckvsnKzpKcxiRJT35meoG4/pdrTUiy2UISDPDaEWfOl3+HlRVsCxoMzfiqBp252RMvpmEyIjCbQ97Ac9Epkr5mgxeu1vGtJg+fDWIg0UnpMM8NYknhhvJmsXpYrfquwGL1ZnlBslUq0gHtbAAPwlWPmiQXU7gDQCDW9IdMVyw42b4f5MrAlpWkPWOJc9H+yYv0TpP/jY72SD1opqwkWnBgkzbi7A2jPmEFzIMQSO1KDXha5ADqQ3cLYMmVdNTSH9wlM7G7/JJ2/cqowqkwD6/q1AnYzcPte9iC67fY1LYN0NMCOSABFojP1rmkv9YBEulx5Y6eQpeVXBQiIqcGoCmWSumpGBskS1KxGerUmzUB0JmJnTENv4x3fSGSUSEPqMiz6Ebao8sVkb1wCWuZEXWJGtiQLMIm1o471iEYAQ==',
+                    provider_name='bedrock',
                 ),
                 next_part_kind='text',
             ),
@@ -1620,6 +1621,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                     ThinkingPart(
                         content='The user has greeted me with a simple "Hello". I should respond in a friendly and welcoming manner. This is a straightforward greeting, so I\'ll respond warmly and ask how I can help them today.',
                         signature=IsStr(),
+                        provider_name='bedrock',
                     ),
                     TextPart(content="Hello! It's nice to meet you. How can I help you today?"),
                 ],
