@@ -1286,7 +1286,7 @@ async def test_run_stream_thinking_with_signature():
             {
                 'type': 'reasoning-end',
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'signature': 'sig_abc123', 'provider_name': 'function'}},
+                'providerMetadata': {'pydantic_ai': {'signature': 'sig_abc123'}},
             },
             {'type': 'text-start', 'id': IsStr()},
             {'type': 'text-delta', 'delta': 'Here is my answer.', 'id': IsStr()},
