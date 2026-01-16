@@ -3257,6 +3257,41 @@ def test_agent_tool_timeout_passed_to_toolset():
     assert agent._function_toolset.timeout == 30.0
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize('is_stream', [True, False])
+async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
+    """Test that tools are cancelled when agent is cancelled."""
+    import asyncio
+
+    agent = Agent(TestModel())
+    is_called = asyncio.Event()
+    is_cancelled = asyncio.Event()
+
+    @agent.tool_plain
+    async def tool() -> None:
+        is_called.set()
+
+        try:
+            await asyncio.sleep(1.0)
+
+        except asyncio.CancelledError:
+            is_cancelled.set()
+            raise
+
+    async def run_agent() -> None:
+        if not is_stream:
+            await agent.run('call tool')
+
+        else:
+            async for _ in agent.run_stream_events('call tool'):
+                pass
+
+    task = asyncio.create_task(run_agent())
+    await asyncio.wait_for(is_called.wait(), timeout=1.0)
+    task.cancel()
+    await asyncio.wait_for(is_cancelled.wait(), timeout=1.0)
+
+
 def test_tool_approved_with_metadata():
     """Test that DeferredToolResults.metadata is passed to RunContext.tool_call_metadata."""
     received_metadata: list[Any] = []

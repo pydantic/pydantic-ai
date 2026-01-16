@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Models and Supported Providers"
-description: "Explore supported LLM providers in Pydantic AI. Configure OpenAI, Anthropic, Gemini, and more using a unified, type-safe interface for GenAI models."
----
 # Model Providers
 
 Pydantic AI is model-agnostic and has built-in support for multiple model providers:
@@ -34,6 +30,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Ollama](openai.md#ollama)
 - [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
 - [Perplexity](openai.md#perplexity)
+- [SambaNova](openai.md#sambanova)
 - [Together AI](openai.md#together-ai)
 - [Vercel AI Gateway](openai.md#vercel-ai-gateway)
 

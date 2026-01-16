@@ -1,7 +1,3 @@
----
-title: "Pydantic Graph: AI Graph Framework for Python"
-description: "Build complex agentic workflows with Pydantic Graph. A type-safe framework for creating stateful, graph-based AI applications and multi-step logic."
----
 # Graphs
 
 !!! danger "Don't use a nail gun unless you need a nail gun"

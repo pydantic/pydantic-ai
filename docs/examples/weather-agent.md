@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Weather Agent: Multi-Agent Example"
-description: Learn how to build a weather agent with tool integration. Example shows how to fetch live data and format it into a structured user response.
----
 Example of Pydantic AI with multiple tools which the LLM needs to call in turn to answer a question.
 
 Demonstrates:
