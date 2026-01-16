@@ -37,7 +37,11 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
-    from pydantic_ai.embeddings.cohere import CohereEmbeddingModel, LatestCohereEmbeddingModelNames
+    from pydantic_ai.embeddings.cohere import (
+        CohereEmbeddingModel,
+        CohereEmbeddingSettings,
+        LatestCohereEmbeddingModelNames,
+    )
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as google_imports_successful:
@@ -50,7 +54,11 @@ with try_import() as google_imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as voyageai_imports_successful:
-    from pydantic_ai.embeddings.voyageai import LatestVoyageAIEmbeddingModelNames, VoyageAIEmbeddingModel
+    from pydantic_ai.embeddings.voyageai import (
+        LatestVoyageAIEmbeddingModelNames,
+        VoyageAIEmbeddingModel,
+        VoyageAIEmbeddingSettings,
+    )
     from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as sentence_transformers_imports_successful:
@@ -333,7 +341,8 @@ class TestCohere:
     async def test_query_with_cohere_truncate(self, co_api_key: str):
         model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
         embedder = Embedder(model)
-        result = await embedder.embed_query('Hello, world!', settings={'cohere_truncate': 'END'})  # pyright: ignore[reportArgumentType]
+        settings: CohereEmbeddingSettings = {'cohere_truncate': 'END'}
+        result = await embedder.embed_query('Hello, world!', settings=settings)
         assert result == snapshot(
             EmbeddingResult(
                 embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
@@ -456,7 +465,8 @@ class TestVoyageAI:
     async def test_query_with_voyageai_input_type(self, voyage_api_key: str):
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
-        result = await embedder.embed_query('Hello, world!', settings={'voyageai_input_type': 'none'})  # pyright: ignore[reportArgumentType]
+        settings: VoyageAIEmbeddingSettings = {'voyageai_input_type': 'none'}
+        result = await embedder.embed_query('Hello, world!', settings=settings)
         assert result == snapshot(
             EmbeddingResult(
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
