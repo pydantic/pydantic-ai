@@ -5490,53 +5490,12 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         ]
     )
 
-    # ToolReturn + Retry + UserPrompt
+    # ToolReturn + Retry + UserPrompts
     messages = [
         ModelRequest(
             parts=[
-                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
-                RetryPromptPart(content='Please retry'),
-                UserPromptPart(content="What's 2 + 2?"),
-            ]
-        )
-    ]
-
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-
-    assert contents == snapshot(
-        [
-            {
-                'role': 'user',
-                'parts': [
-                    {
-                        'function_response': {
-                            'name': 'final_result',
-                            'response': {'return_value': 'Final result processed.'},
-                            'id': 'test_id',
-                        }
-                    }
-                ],
-            },
-            {
-                'role': 'user',
-                'parts': [
-                    {
-                        'text': 'Validation feedback:\nPlease retry\n\nFix the errors and try again.',
-                    },
-                    {
-                        'text': "What's 2 + 2?",
-                    },
-                ],
-            },
-        ]
-    )
-
-    # ToolReturn + Retry + Multiple UserPrompts
-    messages = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
-                RetryPromptPart(content='Please retry'),
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id_1'),
+                RetryPromptPart(content='Tool error occurred', tool_name='another_tool', tool_call_id='test_id_2'),
                 UserPromptPart(content="What's 2 + 2?"),
                 UserPromptPart(content="What's 3 + 3?"),
             ]
@@ -5554,17 +5513,21 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                         'function_response': {
                             'name': 'final_result',
                             'response': {'return_value': 'Final result processed.'},
-                            'id': 'test_id',
+                            'id': 'test_id_1',
                         }
-                    }
+                    },
+                    {
+                        'function_response': {
+                            'name': 'another_tool',
+                            'response': {'error': 'Tool error occurred\n\nFix the errors and try again.'},
+                            'id': 'test_id_2',
+                        }
+                    },
                 ],
             },
             {
                 'role': 'user',
                 'parts': [
-                    {
-                        'text': 'Validation feedback:\nPlease retry\n\nFix the errors and try again.',
-                    },
                     {
                         'text': "What's 2 + 2?",
                     },
