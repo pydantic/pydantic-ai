@@ -1056,6 +1056,46 @@ class URLCitation:
 
 
 @dataclass(repr=False)
+class ContainerFileCitation:
+    """A citation for a container file used to generate a model response.
+
+    Used by OpenAI's Responses API via `container_file_citation` annotations.
+    """
+
+    container_id: str
+    """The ID of the container."""
+
+    file_id: str
+    """The ID of the cited file."""
+
+    filename: str
+    """The filename of the cited file."""
+
+    _: KW_ONLY
+
+    start_index: int
+    """Where the citation starts in the text (0-based, inclusive)."""
+
+    end_index: int
+    """Where the citation ends in the text (0-based, exclusive)."""
+
+    def __post_init__(self) -> None:
+        """Check that citation indices are valid."""
+        if self.start_index < 0:
+            raise ValueError(
+                f'start_index must be non-negative, got {self.start_index}'
+            )
+        if self.end_index < 0:
+            raise ValueError(f'end_index must be non-negative, got {self.end_index}')
+        if self.start_index > self.end_index:
+            raise ValueError(
+                f'start_index ({self.start_index}) must be <= end_index ({self.end_index})'
+            )
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class ToolResultCitation:
     """A citation from a tool result, used by Anthropic.
 
@@ -1103,18 +1143,24 @@ class GroundingCitation:
     def __post_init__(self) -> None:
         """Make sure at least one metadata field is set."""
         if self.grounding_metadata is None and self.citation_metadata is None:
-            raise ValueError('At least one of grounding_metadata or citation_metadata must be provided')
+            raise ValueError(
+                'At least one of grounding_metadata or citation_metadata must be provided'
+            )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-Citation: TypeAlias = URLCitation | ToolResultCitation | GroundingCitation
+Citation: TypeAlias = URLCitation | ContainerFileCitation | ToolResultCitation | GroundingCitation
 """All possible citation types from different providers.
 
 Covers:
 - OpenAI (URLCitation)
+- OpenAI (ContainerFileCitation)
 - Anthropic (ToolResultCitation)
 - Google (GroundingCitation)
+
+Note: long-term we may unify these into a single, discriminated citation model (e.g. a `source` field for
+URL/File/ToolResult) so providers can share a common shape; see #3885.
 """
 
 
@@ -1135,9 +1181,13 @@ class TextPart:
 
     Can come from different providers:
     - OpenAI: URL citations with character indices
+    - OpenAI: Container file citations with character indices
     - Anthropic: Tool result citations
     - Google: Grounding and citation metadata
     """
+
+    provider_details: dict[str, Any] | None = None
+    """Optional provider-specific details for this part."""
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1518,6 +1568,17 @@ class ModelResponse:
                             ),
                             **(
                                 {
+                                    'container_id': citation.container_id,
+                                    'file_id': citation.file_id,
+                                    'filename': citation.filename,
+                                    'start_index': citation.start_index,
+                                    'end_index': citation.end_index,
+                                }
+                                if isinstance(citation, ContainerFileCitation)
+                                else {}
+                            ),
+                            **(
+                                {
                                     'grounding_metadata': citation.grounding_metadata,
                                     'citation_metadata': citation.citation_metadata,
                                 }
@@ -1579,6 +1640,17 @@ class ModelResponse:
                                     'citation_data': citation.citation_data,
                                 }
                                 if isinstance(citation, ToolResultCitation)
+                                else {}
+                            ),
+                            **(
+                                {
+                                    'container_id': citation.container_id,
+                                    'file_id': citation.file_id,
+                                    'filename': citation.filename,
+                                    'start_index': citation.start_index,
+                                    'end_index': citation.end_index,
+                                }
+                                if isinstance(citation, ContainerFileCitation)
                                 else {}
                             ),
                             **(

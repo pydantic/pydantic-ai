@@ -28,6 +28,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    ContainerFileCitation,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -1164,7 +1165,7 @@ class OpenAIChatModel(Model):
                             File(
                                 file=FileFile(
                                     file_data=downloaded_item['data'],
-                                    filename=f'filename.{downloaded_item["data_type"]}',
+                                    filename=f"filename.{downloaded_item['data_type']}",
                                 ),
                                 type='file',
                             )
@@ -1202,7 +1203,7 @@ class OpenAIChatModel(Model):
 
 
 @deprecated(
-    '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
+    "`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which "
     "uses OpenAI's newer Responses API. Use that unless you're using an OpenAI Chat Completions-compatible API, or "
     "require a feature that the Responses API doesn't support yet like audio."
 )
@@ -1319,6 +1320,89 @@ class OpenAIResponsesModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
+
+        def _parse_responses_output_text_annotations(
+            text: str, annotations: list[Any] | None
+        ) -> list[URLCitation | ContainerFileCitation]:
+            citations: list[URLCitation | ContainerFileCitation] = []
+            if not annotations:
+                return citations
+
+            for annotation in annotations:
+                try:
+                    annotation_type = getattr(annotation, 'type', None)
+                    if annotation_type not in (
+                        'url_citation',
+                        'container_file_citation',
+                    ):
+                        continue
+
+                    if annotation_type == 'url_citation':
+                        url_source = (
+                            getattr(annotation, 'url_citation', None) or annotation
+                        )
+                        url = getattr(url_source, 'url', None)
+                        if not isinstance(url, str) or not url:
+                            continue
+                        title = getattr(url_source, 'title', None)
+                        if title == '':
+                            title = None
+                        start_index = getattr(url_source, 'start_index', None)
+                        end_index = getattr(url_source, 'end_index', None)
+                        if not isinstance(start_index, int) or not isinstance(
+                            end_index, int
+                        ):
+                            continue
+                        if start_index < 0 or end_index < 0 or start_index > end_index:
+                            continue
+                        if end_index > len(text):
+                            continue
+                        citations.append(
+                            URLCitation(
+                                url=url,
+                                title=title,
+                                start_index=start_index,
+                                end_index=end_index,
+                            )
+                        )
+                    else:
+                        file_source = (
+                            getattr(annotation, 'container_file_citation', None)
+                            or annotation
+                        )
+                        container_id = getattr(file_source, 'container_id', None)
+                        file_id = getattr(file_source, 'file_id', None)
+                        filename = getattr(file_source, 'filename', None)
+                        start_index = getattr(file_source, 'start_index', None)
+                        end_index = getattr(file_source, 'end_index', None)
+                        if not isinstance(container_id, str) or not container_id:
+                            continue
+                        if not isinstance(file_id, str) or not file_id:
+                            continue
+                        if not isinstance(filename, str):
+                            continue
+                        if not isinstance(start_index, int) or not isinstance(
+                            end_index, int
+                        ):
+                            continue
+                        if start_index < 0 or end_index < 0 or start_index > end_index:
+                            continue
+                        if end_index > len(text):
+                            continue
+                        citations.append(
+                            ContainerFileCitation(
+                                container_id=container_id,
+                                file_id=file_id,
+                                filename=filename,
+                                start_index=start_index,
+                                end_index=end_index,
+                            )
+                        )
+                except (AttributeError, ValueError, TypeError):
+                    continue
+
+            return citations
+
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
@@ -1357,7 +1441,15 @@ class OpenAIResponsesModel(Model):
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
-                        items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
+                        citations = _parse_responses_output_text_annotations(content.text, content.annotations)
+                        items.append(
+                            TextPart(
+                                content.text,
+                                id=item.id,
+                                citations=citations or None,
+                                provider_details=part_provider_details,
+                            )
+                        )
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(
@@ -2033,7 +2125,7 @@ class OpenAIResponsesModel(Model):
                         responses.ResponseInputFileParam(
                             type='input_file',
                             file_data=downloaded_item['data'],
-                            filename=f'filename.{downloaded_item["data_type"]}',
+                            filename=f"filename.{downloaded_item['data_type']}",
                         )
                     )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
@@ -2184,20 +2276,131 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str = ''
+    _provider_timestamp: datetime | None = None
+
+    _pending_citations: dict[str, list[URLCitation | ContainerFileCitation]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+
+    @staticmethod
+    def _parse_responses_output_text_annotations(
+        text: str, annotations: list[Any] | None
+    ) -> list[URLCitation | ContainerFileCitation]:
+        citations: list[URLCitation | ContainerFileCitation] = []
+        if not annotations:
+            return citations
+
+        for annotation in annotations:
+            print(annotation)
+            try:
+                annotation_type = getattr(annotation, 'type', None)
+                if annotation_type not in ('url_citation', 'container_file_citation'):
+                    continue
+
+                if annotation_type == 'url_citation':
+                    url_source = getattr(annotation, 'url_citation', None) or annotation
+                    url = getattr(url_source, 'url', None)
+                    if not isinstance(url, str) or not url:
+                        continue
+                    title = getattr(url_source, 'title', None)
+                    if title == '':
+                        title = None
+                    start_index = getattr(url_source, 'start_index', None)
+                    end_index = getattr(url_source, 'end_index', None)
+                    if not isinstance(start_index, int) or not isinstance(
+                        end_index, int
+                    ):
+                        continue
+                    if start_index < 0 or end_index < 0 or start_index > end_index:
+                        continue
+                    if end_index > len(text):
+                        continue
+                    citations.append(
+                        URLCitation(
+                            url=url,
+                            title=title,
+                            start_index=start_index,
+                            end_index=end_index,
+                        )
+                    )
+                else:
+                    file_source = (
+                        getattr(annotation, 'container_file_citation', None)
+                        or annotation
+                    )
+                    container_id = getattr(file_source, 'container_id', None)
+                    file_id = getattr(file_source, 'file_id', None)
+                    filename = getattr(file_source, 'filename', None)
+                    start_index = getattr(file_source, 'start_index', None)
+                    end_index = getattr(file_source, 'end_index', None)
+                    if not isinstance(container_id, str) or not container_id:
+                        continue
+                    if not isinstance(file_id, str) or not file_id:
+                        continue
+                    if not isinstance(filename, str):
+                        continue
+                    if not isinstance(start_index, int) or not isinstance(
+                        end_index, int
+                    ):
+                        continue
+                    if start_index < 0 or end_index < 0 or start_index > end_index:
+                        continue
+                    if end_index > len(text):
+                        continue
+                    citations.append(
+                        ContainerFileCitation(
+                            container_id=container_id,
+                            file_id=file_id,
+                            filename=filename,
+                            start_index=start_index,
+                            end_index=end_index,
+                        )
+                    )
+            except (AttributeError, ValueError, TypeError):
+                continue
+
+        return citations
+
+    def _attach_citations_to_text_part(
+        self, item_id: str, citations: list[URLCitation | ContainerFileCitation]
+    ) -> bool:
+        part_index = self._parts_manager._vendor_id_to_part_index.get(item_id)
+        if part_index is None:
+            return False
+
+        existing_part = self._parts_manager._parts[part_index]
+        if not isinstance(existing_part, TextPart):
+            return False
+
+        existing_citations = existing_part.citations or []
+        merged: list[URLCitation | ContainerFileCitation] = list(existing_citations)
+        changed = False
+        for citation in citations:
+            if citation not in merged:
+                merged.append(citation)
+                changed = True
+
+        if changed:
+            self._parts_manager._parts[part_index] = replace(
+                existing_part, citations=merged
+            )
+
+        return True
 
     def _parse_responses_annotation(
         self, event: responses.ResponseOutputTextAnnotationAddedEvent
-    ) -> URLCitation | None:
+    ) -> URLCitation | ContainerFileCitation | None:
         """Extract a citation from a Responses API annotation event.
 
-        Takes the annotation event and converts it to a URLCitation. Returns
-        None if the annotation is invalid or not a url_citation type.
+        Takes the annotation event and converts it to a supported citation.
+        Returns None if the annotation is invalid or is an unsupported type.
 
         Args:
             event: The annotation event from the Responses API.
 
         Returns:
-            A URLCitation if valid, None otherwise.
+            A citation if valid, None otherwise.
         """
         try:
             annotation = event.annotation
@@ -2205,48 +2408,97 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if not hasattr(annotation, 'type'):
                 return None
 
-            if annotation.type != 'url_citation':
-                return None
+            if annotation.type == 'url_citation':
+                if (
+                    not hasattr(annotation, 'url_citation')
+                    or annotation.url_citation is None
+                ):
+                    return None
 
-            if not hasattr(annotation, 'url_citation') or annotation.url_citation is None:
-                return None
+                url_citation = annotation.url_citation
 
-            url_citation = annotation.url_citation
+                if (
+                    not hasattr(url_citation, 'url')
+                    or not hasattr(url_citation, 'start_index')
+                    or not hasattr(url_citation, 'end_index')
+                ):
+                    return None
 
-            if (
-                not hasattr(url_citation, 'url')
-                or not hasattr(url_citation, 'start_index')
-                or not hasattr(url_citation, 'end_index')
-            ):
-                return None
+                url = url_citation.url
+                if not isinstance(url, str) or not url:
+                    return None
 
-            url = url_citation.url
-            if not isinstance(url, str) or not url:
-                return None
+                title = getattr(url_citation, 'title', None)
+                if title == '':
+                    title = None
 
-            title = getattr(url_citation, 'title', None)
-            if title == '':
-                title = None
+                start_index = url_citation.start_index
+                end_index = url_citation.end_index
 
-            start_index = url_citation.start_index
-            end_index = url_citation.end_index
+                if not isinstance(start_index, int) or not isinstance(end_index, int):
+                    return None
 
-            if not isinstance(start_index, int) or not isinstance(end_index, int):
-                return None
+                if start_index < 0 or end_index < 0:
+                    return None
+                if start_index > end_index:
+                    return None
 
-            if start_index < 0 or end_index < 0:
-                return None
-            if start_index > end_index:
-                return None
+                # Can't validate against content length here since we might still be streaming
+                return URLCitation(
+                    url=url,
+                    title=title,
+                    start_index=start_index,
+                    end_index=end_index,
+                )
 
-            # Can't validate against content length here since we might still be streaming
-            citation = URLCitation(
-                url=url,
-                title=title,
-                start_index=start_index,
-                end_index=end_index,
-            )
-            return citation
+            if annotation.type == 'container_file_citation':
+                if (
+                    not hasattr(annotation, 'container_file_citation')
+                    or annotation.container_file_citation is None
+                ):
+                    return None
+
+                file_citation = annotation.container_file_citation
+                required = (
+                    'container_id',
+                    'file_id',
+                    'filename',
+                    'start_index',
+                    'end_index',
+                )
+                if not all(hasattr(file_citation, name) for name in required):
+                    return None
+
+                container_id = file_citation.container_id
+                file_id = file_citation.file_id
+                filename = file_citation.filename
+                start_index = file_citation.start_index
+                end_index = file_citation.end_index
+
+                if not isinstance(container_id, str) or not container_id:
+                    return None
+                if not isinstance(file_id, str) or not file_id:
+                    return None
+                if not isinstance(filename, str):
+                    return None
+                if not isinstance(start_index, int) or not isinstance(end_index, int):
+                    return None
+
+                if start_index < 0 or end_index < 0:
+                    return None
+                if start_index > end_index:
+                    return None
+
+                # Can't validate against content length here since we might still be streaming
+                return ContainerFileCitation(
+                    container_id=container_id,
+                    file_id=file_id,
+                    filename=filename,
+                    start_index=start_index,
+                    end_index=end_index,
+                )
+
+            return None
         except (AttributeError, ValueError, TypeError):
             return None
 
@@ -2261,7 +2513,31 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
                 if raw_finish_reason:  # pragma: no branch
                     self.provider_details = {'finish_reason': raw_finish_reason}
-                    self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+                    self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(
+                        raw_finish_reason
+                    )
+
+                # Backfill citations from the completed response in case:
+                # - the provider does not emit `ResponseOutputTextAnnotationAddedEvent`s, or
+                # - annotation events arrive before text parts have been created.
+                for output_item in chunk.response.output:
+                    if not isinstance(output_item, responses.ResponseOutputMessage):
+                        continue
+
+                    item_citations: list[URLCitation | ContainerFileCitation] = []
+                    for content in output_item.content:
+                        print(content)
+                        if isinstance(content, responses.ResponseOutputText):
+                            item_citations.extend(
+                                self._parse_responses_output_text_annotations(
+                                    content.text, content.annotations
+                                )
+                            )
+
+                    if item_citations:
+                        self._attach_citations_to_text_part(
+                            output_item.id, item_citations
+                        )
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
@@ -2443,24 +2719,24 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 # Parse annotation and attach citation to the corresponding TextPart
                 citation = self._parse_responses_annotation(chunk)
                 if citation is not None:
-                    # Find the TextPart using item_id as vendor_part_id
-                    part_index = self._parts_manager._vendor_id_to_part_index.get(chunk.item_id)
-                    if part_index is not None:
-                        existing_part = self._parts_manager._parts[part_index]
-                        if isinstance(existing_part, TextPart):
-                            # Update the TextPart with the new citation
-                            existing_citations = existing_part.citations or []
-                            # Check if citation already exists (avoid duplicates)
-                            if citation not in existing_citations:
-                                updated_citations = existing_citations + [citation]
-                                updated_part = replace(existing_part, citations=updated_citations)
-                                self._parts_manager._parts[part_index] = updated_part
+                    # Attach immediately if the TextPart exists, otherwise cache it until the part is created.
+                    if not self._attach_citations_to_text_part(
+                        chunk.item_id, [citation]
+                    ):
+                        pending = self._pending_citations.setdefault(chunk.item_id, [])
+                        if citation not in pending:
+                            pending.append(citation)
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(
                     vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
                 ):
                     yield event
+
+                if pending := self._pending_citations.pop(chunk.item_id, None):
+                    if not self._attach_citations_to_text_part(chunk.item_id, pending):
+                        # If we still can't attach (e.g. part not started yet), keep them pending.
+                        self._pending_citations[chunk.item_id] = pending
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
                 pass  # there's nothing we need to do here

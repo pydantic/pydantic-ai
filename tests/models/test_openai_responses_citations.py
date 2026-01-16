@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest  # pyright: ignore[reportMissingImports]
 
-from pydantic_ai import TextPart, URLCitation
+from pydantic_ai import ContainerFileCitation, TextPart, URLCitation
 
 from ..conftest import try_import
 
@@ -277,6 +277,72 @@ def test_parse_responses_annotation_malformed():
     assert citation is None  # Malformed annotation should be skipped gracefully
 
 
+def test_parse_responses_annotation_container_file_citation_single():
+    """Test parsing a container_file_citation annotation."""
+    streamed_response = _create_streamed_response()
+
+    class MockContainerFileCitation:
+        container_id = 'cntr_123'
+        file_id = 'file_abc'
+        filename = 'message_history.md'
+        start_index = 0
+        end_index = 5
+
+    class MockAnnotation:
+        type = 'container_file_citation'
+        container_file_citation = MockContainerFileCitation()
+
+    annotation = MockAnnotation()
+    event = ResponseOutputTextAnnotationAddedEvent(
+        annotation=annotation,  # type: ignore
+        annotation_index=0,
+        content_index=0,
+        item_id='item-1',
+        output_index=0,
+        sequence_number=1,
+        type='response.output_text.annotation.added',
+    )
+
+    citation = streamed_response._parse_responses_annotation(event)
+    assert citation is not None
+    assert isinstance(citation, ContainerFileCitation)
+    assert citation.container_id == 'cntr_123'
+    assert citation.file_id == 'file_abc'
+    assert citation.filename == 'message_history.md'
+    assert citation.start_index == 0
+    assert citation.end_index == 5
+
+
+def test_parse_responses_annotation_container_file_citation_invalid_indices():
+    """Test parsing container_file_citation with invalid indices (should return None)."""
+    streamed_response = _create_streamed_response()
+
+    class MockContainerFileCitation:
+        container_id = 'cntr_123'
+        file_id = 'file_abc'
+        filename = 'message_history.md'
+        start_index = 10
+        end_index = 5
+
+    class MockAnnotation:
+        type = 'container_file_citation'
+        container_file_citation = MockContainerFileCitation()
+
+    annotation = MockAnnotation()
+    event = ResponseOutputTextAnnotationAddedEvent(
+        annotation=annotation,  # type: ignore
+        annotation_index=0,
+        content_index=0,
+        item_id='item-1',
+        output_index=0,
+        sequence_number=1,
+        type='response.output_text.annotation.added',
+    )
+
+    citation = streamed_response._parse_responses_annotation(event)
+    assert citation is None
+
+
 # Integration tests for streaming with citations
 
 
@@ -401,7 +467,7 @@ async def test_stream_with_single_annotation(allow_model_requests: None):
         # streamed_response is the StreamedResponse object
         # Consume all events so citations are processed
         async for _event in streamed_response:
-            pass
+            _ = _event
 
     # Get the final response which should have citations attached
     final_response = streamed_response.get()
@@ -425,6 +491,372 @@ async def test_stream_with_single_annotation(allow_model_requests: None):
     assert len(text_part_with_citations.citations) == 1
     assert text_part_with_citations.citations[0].url == 'https://example.com'
     assert text_part_with_citations.citations[0].title == 'Example Site'
+
+
+@pytest.mark.anyio
+async def test_stream_annotation_before_text_delta_is_not_dropped(allow_model_requests: None):
+    """Streaming should keep citations even if annotation events arrive before text deltas."""
+    from openai.types.responses import (
+        ResponseCompletedEvent,
+        ResponseCreatedEvent,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+    )
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+
+    from .mock_openai import MockOpenAIResponses, response_message
+
+    class MockURLCitation:
+        url = 'https://example.com'
+        title = 'Example Site'
+        start_index = 0
+        end_index = 5
+
+    class MockAnnotation:
+        type = 'url_citation'
+        url_citation = MockURLCitation()
+
+    stream_events = [
+        ResponseCreatedEvent(
+            response=response_message(
+                [
+                    ResponseOutputMessage(
+                        id='item-1',
+                        content=cast(list[Content], [ResponseOutputText(text='', type='output_text', annotations=[])]),
+                        role='assistant',
+                        status='in_progress',
+                        type='message',
+                    )
+                ],
+            ),
+            sequence_number=0,
+            type='response.created',
+        ),
+        ResponseOutputTextAnnotationAddedEvent(
+            annotation=MockAnnotation(),  # type: ignore
+            annotation_index=0,
+            content_index=0,
+            item_id='item-1',
+            output_index=0,
+            sequence_number=1,
+            type='response.output_text.annotation.added',
+        ),
+        ResponseTextDeltaEvent(
+            item_id='item-1',
+            delta='Hello world!',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            sequence_number=2,
+            type='response.output_text.delta',
+        ),
+        ResponseTextDoneEvent(
+            item_id='item-1',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            text='Hello world!',
+            sequence_number=3,
+            type='response.output_text.done',
+        ),
+        ResponseCompletedEvent(
+            response=response_message(
+                [
+                    ResponseOutputMessage(
+                        id='item-1',
+                        content=cast(
+                            list[Content], [ResponseOutputText(text='Hello world!', type='output_text', annotations=[])]
+                        ),
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ],
+                usage=ResponseUsage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    total_tokens=15,
+                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                ),
+            ),
+            sequence_number=4,
+            type='response.completed',
+        ),
+    ]
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream_events)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages = [ModelRequest(parts=[UserPromptPart(content='Test')])]
+    async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
+        async for _event in streamed_response:
+            _ = _event
+
+    final_response = streamed_response.get()
+    text_parts = [p for p in final_response.parts if isinstance(p, TextPart)]
+    assert len(text_parts) == 1
+    assert text_parts[0].citations is not None
+    assert len(text_parts[0].citations) == 1
+    assert isinstance(text_parts[0].citations[0], URLCitation)
+    assert text_parts[0].citations[0].url == 'https://example.com'
+
+
+@pytest.mark.anyio
+async def test_stream_completed_event_backfills_container_file_citations(allow_model_requests: None):
+    """Streaming should backfill citations from ResponseCompletedEvent annotations if needed."""
+    from openai.types.responses import (
+        ResponseCompletedEvent,
+        ResponseCreatedEvent,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+    )
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+
+    from .mock_openai import MockOpenAIResponses, response_message
+
+    stream_events = [
+        ResponseCreatedEvent(
+            response=response_message(
+                [
+                    ResponseOutputMessage(
+                        id='item-1',
+                        content=cast(list[Content], [ResponseOutputText(text='', type='output_text', annotations=[])]),
+                        role='assistant',
+                        status='in_progress',
+                        type='message',
+                    )
+                ],
+            ),
+            sequence_number=0,
+            type='response.created',
+        ),
+        ResponseTextDeltaEvent(
+            item_id='item-1',
+            delta='Hello world!',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            sequence_number=1,
+            type='response.output_text.delta',
+        ),
+        ResponseTextDoneEvent(
+            item_id='item-1',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            text='Hello world!',
+            sequence_number=2,
+            type='response.output_text.done',
+        ),
+        ResponseCompletedEvent(
+            response=response_message(
+                [
+                    ResponseOutputMessage(
+                        id='item-1',
+                        content=cast(
+                            list[Content],
+                            [
+                                ResponseOutputText(
+                                    text='Hello world!',
+                                    type='output_text',
+                                    annotations=[
+                                        {
+                                            'type': 'container_file_citation',
+                                            'container_file_citation': {
+                                                'container_id': 'cntr_123',
+                                                'file_id': 'file_abc',
+                                                'filename': 'message_history.md',
+                                                'start_index': 0,
+                                                'end_index': 5,
+                                            },
+                                        }
+                                    ],
+                                )
+                            ],
+                        ),
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ],
+                usage=ResponseUsage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    total_tokens=15,
+                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                ),
+            ),
+            sequence_number=3,
+            type='response.completed',
+        ),
+    ]
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream_events)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages = [ModelRequest(parts=[UserPromptPart(content='Test')])]
+    async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
+        async for _event in streamed_response:
+            _ = _event
+
+    final_response = streamed_response.get()
+    text_parts = [p for p in final_response.parts if isinstance(p, TextPart)]
+    assert len(text_parts) == 1
+    assert text_parts[0].citations is not None
+    assert len(text_parts[0].citations) == 1
+    assert isinstance(text_parts[0].citations[0], ContainerFileCitation)
+    assert text_parts[0].citations[0].container_id == 'cntr_123'
+    assert text_parts[0].citations[0].file_id == 'file_abc'
+
+
+@pytest.mark.anyio
+async def test_stream_with_container_file_annotation(allow_model_requests: None):
+    """Test streaming with a container_file_citation annotation event."""
+    from openai.types.responses import (
+        ResponseCompletedEvent,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+    )
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
+
+    from .mock_openai import MockOpenAIResponses, response_message
+
+    class MockContainerFileCitation:
+        container_id = 'cntr_123'
+        file_id = 'file_abc'
+        filename = 'message_history.md'
+        start_index = 0
+        end_index = 5
+
+    class MockAnnotation:
+        type = 'container_file_citation'
+        container_file_citation = MockContainerFileCitation()
+
+    annotation = MockAnnotation()
+
+    from openai.types.responses import ResponseCreatedEvent
+
+    stream_events = [
+        ResponseCreatedEvent(
+            response=response_message(
+                [
+                    ResponseOutputMessage(
+                        id='item-1',
+                        content=cast(list[Content], [ResponseOutputText(text='', type='output_text', annotations=[])]),
+                        role='assistant',
+                        status='in_progress',
+                        type='message',
+                    )
+                ],
+            ),
+            sequence_number=0,
+            type='response.created',
+        ),
+        ResponseTextDeltaEvent(
+            item_id='item-1',
+            delta='Hello',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            sequence_number=1,
+            type='response.output_text.delta',
+        ),
+        ResponseOutputTextAnnotationAddedEvent(
+            annotation=annotation,  # type: ignore
+            annotation_index=0,
+            content_index=0,
+            item_id='item-1',
+            output_index=0,
+            sequence_number=2,
+            type='response.output_text.annotation.added',
+        ),
+        ResponseTextDeltaEvent(
+            item_id='item-1',
+            delta=' world!',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            sequence_number=3,
+            type='response.output_text.delta',
+        ),
+        ResponseTextDoneEvent(
+            item_id='item-1',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            text='Hello world!',
+            sequence_number=4,
+            type='response.output_text.done',
+        ),
+        ResponseCompletedEvent(
+            response=response_message(
+                [
+                    ResponseOutputMessage(
+                        id='item-1',
+                        content=cast(
+                            list[Content], [ResponseOutputText(text='Hello world!', type='output_text', annotations=[])]
+                        ),
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ],
+                usage=ResponseUsage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    total_tokens=15,
+                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                ),
+            ),
+            sequence_number=5,
+            type='response.completed',
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream_events)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+
+    messages = [ModelRequest(parts=[UserPromptPart(content='Test')])]
+    async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
+        async for _event in streamed_response:
+                _ = _event
+
+    final_response = streamed_response.get()
+    text_part_with_citations = None
+    for part in final_response.parts:
+        if isinstance(part, TextPart) and part.citations:
+            text_part_with_citations = part
+            break
+
+    assert text_part_with_citations is not None
+    assert text_part_with_citations.citations is not None
+    assert len(text_part_with_citations.citations) == 1
+    citation = text_part_with_citations.citations[0]
+    assert isinstance(citation, ContainerFileCitation)
+    assert citation.container_id == 'cntr_123'
+    assert citation.file_id == 'file_abc'
+    assert citation.filename == 'message_history.md'
 
 
 @pytest.mark.anyio
@@ -559,7 +991,7 @@ async def test_stream_with_multiple_annotations(allow_model_requests: None):
     async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
         # Consume all events so citations are processed
         async for _event in streamed_response:
-            pass
+                _ = _event
 
     # Get the final response which should have citations attached
     final_response = streamed_response.get()
@@ -827,3 +1259,66 @@ async def test_stream_invalid_annotation_skipped(allow_model_requests: None):
     text_part = parts[-1]
     # Citations should be None or empty (invalid annotation was skipped)
     assert text_part.citations is None or len(text_part.citations) == 0
+
+
+@pytest.mark.anyio
+async def test_non_stream_response_includes_container_file_citation(allow_model_requests: None):
+    """Non-stream Responses should attach container_file_citation annotations to TextPart.citations."""
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+
+    from .mock_openai import MockOpenAIResponses, response_message
+
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='item-1',
+                content=cast(
+                    list[Content],
+                    [
+                        ResponseOutputText(
+                            text='Hello world!',
+                            type='output_text',
+                            annotations=[
+                                {
+                                    'type': 'container_file_citation',
+                                    'container_file_citation': {
+                                        'container_id': 'cntr_123',
+                                        'file_id': 'file_abc',
+                                        'filename': 'message_history.md',
+                                        'start_index': 0,
+                                        'end_index': 5,
+                                    },
+                                }
+                            ],
+                        )
+                    ],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ],
+        usage=ResponseUsage(
+            input_tokens=10,
+            output_tokens=5,
+            total_tokens=15,
+            input_tokens_details=InputTokensDetails(cached_tokens=0),
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        ),
+    )
+
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages = [ModelRequest(parts=[UserPromptPart(content='Test')])]
+    result = await model.request(messages, None, ModelRequestParameters())
+
+    text_parts = [p for p in result.parts if isinstance(p, TextPart)]
+    assert len(text_parts) == 1
+    assert text_parts[0].citations is not None
+    assert len(text_parts[0].citations) == 1
+    assert isinstance(text_parts[0].citations[0], ContainerFileCitation)

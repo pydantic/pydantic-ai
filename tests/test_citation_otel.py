@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from pydantic_ai import GroundingCitation, TextPart, ToolResultCitation, URLCitation, usage
+from pydantic_ai import ContainerFileCitation, GroundingCitation, TextPart, ToolResultCitation, URLCitation, usage
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
@@ -140,3 +140,55 @@ def test_otel_message_parts_without_citations():
     assert len(parts) == 1
     assert parts[0]['type'] == 'text'
     assert 'citations' not in parts[0] or parts[0].get('citations') is None
+
+
+def test_otel_events_include_container_file_citation():
+    """ContainerFileCitation is included in OTEL events."""
+    citation = ContainerFileCitation(
+        container_id='cntr_123',
+        file_id='file_abc',
+        filename='message_history.md',
+        start_index=0,
+        end_index=5,
+    )
+    text_part = TextPart(content='Hello', citations=[citation])
+    response = ModelResponse(
+        parts=[text_part],
+        model_name='test',
+        usage=usage.RequestUsage(input_tokens=10, output_tokens=5),
+    )
+
+    settings = InstrumentationSettings(include_content=True)
+    events = response.otel_events(settings)
+
+    assert len(events) == 1
+    content = events[0].body['content']
+    assert isinstance(content, list)
+    assert content[0]['citations'][0]['type'] == 'ContainerFileCitation'
+    assert content[0]['citations'][0]['container_id'] == 'cntr_123'
+    assert content[0]['citations'][0]['file_id'] == 'file_abc'
+    assert content[0]['citations'][0]['filename'] == 'message_history.md'
+
+
+def test_otel_message_parts_include_container_file_citation():
+    """ContainerFileCitation is included in OTEL message parts."""
+    citation = ContainerFileCitation(
+        container_id='cntr_123',
+        file_id='file_abc',
+        filename='message_history.md',
+        start_index=0,
+        end_index=5,
+    )
+    text_part = TextPart(content='Hello', citations=[citation])
+    response = ModelResponse(
+        parts=[text_part],
+        model_name='test',
+        usage=usage.RequestUsage(input_tokens=10, output_tokens=5),
+    )
+
+    settings = InstrumentationSettings(include_content=True)
+    parts = response.otel_message_parts(settings)
+
+    assert len(parts) == 1
+    assert parts[0]['type'] == 'text'
+    assert parts[0]['citations'][0]['type'] == 'ContainerFileCitation'  # type: ignore[typeddict-item]
