@@ -112,7 +112,11 @@ class TemporalModel(WrapperModel):
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
-            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+            run_context = (
+                self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+                if params.serialized_run_context is not None
+                else None
+            )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             return await model_for_request.request(
                 params.messages,
@@ -184,12 +188,8 @@ class TemporalModel(WrapperModel):
 
         model_id = self._current_model_id()
         run_context = get_current_run_context()
-        if run_context is None:  # pragma: no cover
-            raise UserError(
-                'A Temporal model cannot be used with `pydantic_ai.direct.model_request()` as it requires a `run_context`. Use `agent.run()` instead.'
-            )
-        serialized_run_context = self.run_context_type.serialize_run_context(run_context)
-        deps = run_context.deps
+        serialized_run_context = self.run_context_type.serialize_run_context(run_context) if run_context else None
+        deps = run_context.deps if run_context else None
 
         model_name = model_id or f'{self.system}:{self.model_name}'
         activity_config: ActivityConfig = {'summary': f'request model: {model_name}', **self.activity_config}
