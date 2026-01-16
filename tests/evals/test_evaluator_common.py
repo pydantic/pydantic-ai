@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -8,6 +9,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
+from typing_extensions import TypedDict
 
 from pydantic_ai.settings import ModelSettings
 
@@ -139,6 +141,63 @@ async def test_contains_basemodel():
 
     # Test model value mismatch
     assert evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
+
+
+async def test_contains_dataclass():
+    """Test Contains evaluator with dataclasses."""
+
+    @dataclass
+    class MockDataClass:
+        key: str | None = None
+        extra: str | None = None
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test dataclass containment
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test dataclass key missing
+    assert evaluator.evaluate(MockContext(output=MockDataClass(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
+    )
+
+    # Test dataclass value mismatch
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
+
+
+async def test_contains_typed_dict():
+    """Test Contains evaluator with TypedDict."""
+
+    class MockTypedDict(TypedDict, total=False):
+        key: str
+        extra: str
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test TypedDict containment
+    assert evaluator.evaluate(MockContext(output=MockTypedDict(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test TypedDict key missing
+    assert evaluator.evaluate(MockContext(output=MockTypedDict(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
+    )
+
+    # Test TypedDict value mismatch
+    assert evaluator.evaluate(MockContext(output=MockTypedDict(key='different'))) == snapshot(
         EvaluationReason(
             value=False,
             reason="Output has different value for key 'key': 'different' != 'value'",
