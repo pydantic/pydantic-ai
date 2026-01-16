@@ -245,12 +245,12 @@ In addition to exception-based fallback, you can also trigger fallback based on 
 
 The `fallback_on` parameter accepts:
 
-- A tuple of exception types: `(ModelAPIError, RateLimitError)`
+- A tuple of exception types: `(ModelAPIError, ModelHTTPError)`
 - An exception handler: `lambda exc: isinstance(exc, MyError)`
 - A response handler: `def check(r: ModelResponse) -> bool`
 - A list mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
 
-Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as `ModelResponse`, it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
+Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
 #### Finish Reason Example
 
@@ -314,7 +314,7 @@ Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelRespon
 
 You can combine exception types, exception handlers, and response handlers in a single list:
 
-```python {title="fallback_on_mixed.py" test="skip" lint="skip"}
+```python {title="fallback_on_mixed.py" test="skip" lint="skip" requires="fallback_on_response.py"}
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.fallback import FallbackModel
 
