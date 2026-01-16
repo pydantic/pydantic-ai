@@ -1336,7 +1336,9 @@ def test_response_handler_only_exception_propagates() -> None:
 
 def test_is_response_handler_no_params() -> None:
     """Test that handlers with no parameters are treated as exception handlers."""
-    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]  # pragma: lax no cover
+    from pydantic_ai.models.fallback import (
+        _is_response_handler,  # pyright: ignore[reportPrivateUsage]  # pragma: lax no cover
+    )
 
     # A callable with no parameters
     def no_params() -> bool:
