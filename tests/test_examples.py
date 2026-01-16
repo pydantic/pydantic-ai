@@ -589,7 +589,7 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
         elif m.tool_name == 'get_document' and _has_multimodal_content(m, DocumentUrl):
             return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
-    if isinstance(m, UserPromptPart):
+    elif isinstance(m, UserPromptPart):
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
@@ -777,7 +777,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name' and isinstance(m.content, str):
         if 'Anne' in m.content:
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
@@ -837,7 +837,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast' and isinstance(m.content, str):
         return ModelResponse(parts=[TextPart(m.content)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
@@ -938,7 +938,7 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in m.content:
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and isinstance(m.content, str) and 'README.md.bak' in m.content:
         return ModelResponse(
             parts=[
                 TextPart(

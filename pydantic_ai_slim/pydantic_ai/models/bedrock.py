@@ -648,7 +648,7 @@ class BedrockConverseModel(Model):
                         tool_result_content: list[Any] = []
 
                         # Add data content (text or JSON based on profile)
-                        if part.content_excluding_files is not None:
+                        if part.content_excluding_files:
                             if profile.bedrock_tool_result_format == 'text':
                                 tool_result_content.append({'text': part.model_response_str()})
                             else:
@@ -657,7 +657,7 @@ class BedrockConverseModel(Model):
                         # Add multimodal files - only images are native in toolResult
                         # Documents/videos must be siblings in the outer content array
                         sibling_content: list[ContentBlockUnionTypeDef] = []
-                        for file in part.multimodal_content:
+                        for file in part.files:
                             file_block = await self._map_file_to_content_block(file, document_count)
                             if file_block is not None:  # pragma: no branch
                                 if 'image' in file_block:

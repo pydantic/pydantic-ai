@@ -703,7 +703,7 @@ class GoogleModel(Model):
         ]
 
         # Add multimodal files as separate parts
-        for file in part.multimodal_content:
+        for file in part.files:
             file_part = await self._map_file_to_part(file)
             result.append(file_part)
 

@@ -728,7 +728,7 @@ class AnthropicModel(Model):
                             tool_result_content.append(BetaTextBlockParam(text=data_str, type='text'))
 
                         # Handle multimodal files - images go in tool_result, others go to separate user message
-                        for file in request_part.multimodal_content:
+                        for file in request_part.files:
                             if isinstance(file, BinaryContent):
                                 if file.media_type.startswith('image/'):
                                     tool_result_content.append(self._map_binary_data(file.data, file.media_type))

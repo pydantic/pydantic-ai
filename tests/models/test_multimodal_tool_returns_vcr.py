@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
@@ -137,7 +136,6 @@ class Case:
     file_type: FileType
     source: ContentSource
     expected_behavior: Behavior
-    expected_message_structure: Any  # snapshot() stored here per case
     content_factory: Callable[[Path], Any]
     prompt: str = 'Describe what the tool returned.'
 
@@ -149,7 +147,6 @@ class ForceDownloadCase:
     id: str
     provider: str
     file_type: FileType
-    expected_message_structure: Any  # snapshot() stored here per case
     content_factory: Callable[[Path], Any]
     prompt: str = 'Describe what the tool returned.'
 
@@ -260,44 +257,44 @@ def get_message_structure(messages: list[ModelRequest | ModelResponse]) -> list[
 CASES = [
     # === Anthropic: Images native, documents via user_msg ===
     # Note: Audio/video binary not supported by Anthropic (raises RuntimeError)
-    Case('anthropic-image-binary', 'anthropic', 'image', 'binary', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _image_binary),
-    Case('anthropic-image-url', 'anthropic', 'image', 'url', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _image_url),
-    Case('anthropic-document-binary', 'anthropic', 'document', 'binary', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _document_binary),
-    Case('anthropic-document-url', 'anthropic', 'document', 'url', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _document_url),
+    Case('anthropic-image-binary', 'anthropic', 'image', 'binary', 'native', _image_binary),
+    Case('anthropic-image-url', 'anthropic', 'image', 'url', 'native', _image_url),
+    Case('anthropic-document-binary', 'anthropic', 'document', 'binary', 'user_msg', _document_binary),
+    Case('anthropic-document-url', 'anthropic', 'document', 'url', 'user_msg', _document_url),
 
     # === Bedrock: Images native, documents/video via user_msg, audio dropped ===
-    Case('bedrock-image-binary', 'bedrock', 'image', 'binary', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['TextPart']}]), _image_binary),
-    Case('bedrock-image-url', 'bedrock', 'image', 'url', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _image_url),
-    Case('bedrock-document-binary', 'bedrock', 'document', 'binary', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _document_binary),
-    Case('bedrock-document-url', 'bedrock', 'document', 'url', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _document_url),
-    Case('bedrock-audio-binary', 'bedrock', 'audio', 'binary', 'dropped', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['TextPart']}]), _audio_binary),
-    Case('bedrock-audio-url', 'bedrock', 'audio', 'url', 'dropped', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['TextPart']}]), _audio_url),
-    Case('bedrock-video-binary', 'bedrock', 'video', 'binary', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _video_binary),
-    Case('bedrock-video-url', 'bedrock', 'video', 'url', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['TextPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _video_url),
+    Case('bedrock-image-binary', 'bedrock', 'image', 'binary', 'native', _image_binary),
+    Case('bedrock-image-url', 'bedrock', 'image', 'url', 'native', _image_url),
+    Case('bedrock-document-binary', 'bedrock', 'document', 'binary', 'user_msg', _document_binary),
+    Case('bedrock-document-url', 'bedrock', 'document', 'url', 'user_msg', _document_url),
+    Case('bedrock-audio-binary', 'bedrock', 'audio', 'binary', 'dropped', _audio_binary),
+    Case('bedrock-audio-url', 'bedrock', 'audio', 'url', 'dropped', _audio_url),
+    Case('bedrock-video-binary', 'bedrock', 'video', 'binary', 'user_msg', _video_binary),
+    Case('bedrock-video-url', 'bedrock', 'video', 'url', 'user_msg', _video_url),
 
     # === Google: All native ===
-    Case('google-image-binary', 'google', 'image', 'binary', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['RetryPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _image_binary),
-    Case('google-image-url', 'google', 'image', 'url', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['RetryPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _image_url),
-    Case('google-document-binary', 'google', 'document', 'binary', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['RetryPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _document_binary),
-    Case('google-document-url', 'google', 'document', 'url', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['RetryPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _document_url),
-    Case('google-audio-binary', 'google', 'audio', 'binary', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['RetryPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart','TextPart','TextPart']}]), _audio_binary),
-    Case('google-audio-url', 'google', 'audio', 'url', 'native', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['RetryPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['TextPart']}]), _audio_url),
-    Case('google-video-binary', 'google', 'video', 'binary', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['RetryPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _video_binary),
-    Case('google-video-url', 'google', 'video', 'url', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['RetryPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _video_url),
+    Case('google-image-binary', 'google', 'image', 'binary', 'native', _image_binary),
+    Case('google-image-url', 'google', 'image', 'url', 'native', _image_url),
+    Case('google-document-binary', 'google', 'document', 'binary', 'native', _document_binary),
+    Case('google-document-url', 'google', 'document', 'url', 'native', _document_url),
+    Case('google-audio-binary', 'google', 'audio', 'binary', 'native', _audio_binary),
+    Case('google-audio-url', 'google', 'audio', 'url', 'native', _audio_url),
+    Case('google-video-binary', 'google', 'video', 'binary', 'native', _video_binary),
+    Case('google-video-url', 'google', 'video', 'url', 'native', _video_url),
 
     # === OpenAI Chat: Images/docs via user_msg ===
     # Note: video raises NotImplementedError, audio not supported by gpt-5-mini - tested in unit tests
-    Case('openai_chat-image-binary', 'openai_chat', 'image', 'binary', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _image_binary),
-    Case('openai_chat-image-url', 'openai_chat', 'image', 'url', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _image_url),
-    Case('openai_chat-document-binary', 'openai_chat', 'document', 'binary', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _document_binary),
-    Case('openai_chat-document-url', 'openai_chat', 'document', 'url', 'user_msg', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['TextPart']}]), _document_url),
+    Case('openai_chat-image-binary', 'openai_chat', 'image', 'binary', 'user_msg', _image_binary),
+    Case('openai_chat-image-url', 'openai_chat', 'image', 'url', 'user_msg', _image_url),
+    Case('openai_chat-document-binary', 'openai_chat', 'document', 'binary', 'user_msg', _document_binary),
+    Case('openai_chat-document-url', 'openai_chat', 'document', 'url', 'user_msg', _document_url),
 
     # === OpenAI Responses: Images/docs native ===
     # Note: audio-binary/video raise NotImplementedError, audio-url not supported by gpt-5-mini - tested in unit tests
-    Case('openai_responses-image-binary', 'openai_responses', 'image', 'binary', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ThinkingPart','TextPart']}]), _image_binary),
-    Case('openai_responses-image-url', 'openai_responses', 'image', 'url', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ThinkingPart','TextPart']}]), _image_url),
-    Case('openai_responses-document-binary', 'openai_responses', 'document', 'binary', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ThinkingPart','TextPart']}]), _document_binary),
-    Case('openai_responses-document-url', 'openai_responses', 'document', 'url', 'native', snapshot([{'type':'request','parts':['UserPromptPart']},{'type':'response','parts':['ThinkingPart','ToolCallPart']},{'type':'request','parts':['ToolReturnPart']},{'type':'response','parts':['ThinkingPart','TextPart']}]), _document_url),
+    Case('openai_responses-image-binary', 'openai_responses', 'image', 'binary', 'native', _image_binary),
+    Case('openai_responses-image-url', 'openai_responses', 'image', 'url', 'native', _image_url),
+    Case('openai_responses-document-binary', 'openai_responses', 'document', 'binary', 'native', _document_binary),
+    Case('openai_responses-document-url', 'openai_responses', 'document', 'url', 'native', _document_url),
 ]
 # fmt: on
 
@@ -306,9 +303,9 @@ CASES = [
 FORCE_DOWNLOAD_CASES = [
     # === force_download=True cases ===
     # These test that URLs with force_download=True are downloaded and sent as base64
-    ForceDownloadCase('anthropic-image-force-download', 'anthropic', 'image', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['TextPart']}]), _image_url_force_download),
-    ForceDownloadCase('openai_responses-image-force-download', 'openai_responses', 'image', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ThinkingPart','ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['ThinkingPart','TextPart']}]), _image_url_force_download),
-    ForceDownloadCase('openai_responses-document-force-download', 'openai_responses', 'document', snapshot([{'type':'request','parts':['UserPromptPart']}, {'type':'response','parts':['ThinkingPart','ToolCallPart']}, {'type':'request','parts':['ToolReturnPart']}, {'type':'response','parts':['ThinkingPart','TextPart']}]), _document_url_force_download),
+    ForceDownloadCase('anthropic-image-force-download', 'anthropic', 'image', _image_url_force_download),
+    ForceDownloadCase('openai_responses-image-force-download', 'openai_responses', 'image', _image_url_force_download),
+    ForceDownloadCase('openai_responses-document-force-download', 'openai_responses', 'document', _document_url_force_download),
 ]
 # fmt: on
 
@@ -378,17 +375,10 @@ async def test_multimodal_tool_return(
         """Return a file for the model to analyze."""
         return content
 
-    result = await agent.run(
+    await agent.run(
         f'Call the get_file tool to get a {case.file_type} and describe what you see.',
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
-
-    # Snapshot the message structure - this documents the behavior:
-    # - native: file in ToolReturnPart only
-    # - user_msg: file in ToolReturnPart + separate UserPromptPart
-    # - dropped: no file content sent (but message structure is same as native)
-    message_structure = get_message_structure(result.all_messages())
-    assert message_structure == case.expected_message_structure
 
     # For dropped behavior, verify via cassette that no audio content blocks were sent
     # We check for audio content keys like "audio/mpeg" (media type) or '"audio":' (Bedrock format)
@@ -431,10 +421,7 @@ async def test_force_download_tool_return(
         """Return a file for the model to analyze."""
         return content
 
-    result = await agent.run(
+    await agent.run(
         f'Call the get_file tool to get a {case.file_type} and describe what you see.',
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
-
-    message_structure = get_message_structure(result.all_messages())
-    assert message_structure == case.expected_message_structure

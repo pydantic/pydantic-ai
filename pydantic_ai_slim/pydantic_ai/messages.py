@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, get_args, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -803,7 +803,7 @@ class BaseToolReturnPart:
     tool_name: str
     """The name of the "tool" was called."""
 
-    content: Any
+    content: MultiModalContent | list[MultiModalContent | Any] | Any
     """The return value."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
@@ -820,75 +820,73 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    @property
-    def multimodal_content(self) -> list[MultiModalContent]:
-        """The multimodal file parts from content.
+    def _split_content(self) -> tuple[list[Any], list[MultiModalContent]]:
+        """Split content into non-file and file parts.
 
-        Returns only MultiModalContent objects (ImageUrl, AudioUrl, DocumentUrl, VideoUrl,
-        BinaryContent), filtering out any text/json parts.
+        Returns a tuple of (non_files, files) to ensure both `files` and
+        `content_excluding_files` stay in sync when content structure changes.
+        """
+        multimodal_types = get_args(MultiModalContent)
+        if isinstance(self.content, multimodal_types):
+            return [], [cast(MultiModalContent, self.content)]
+        elif isinstance(self.content, list):
+            non_files: list[Any] = []
+            files: list[MultiModalContent] = []
+            for p in self.content:  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                if isinstance(p, multimodal_types):
+                    files.append(p)  # pyright: ignore[reportUnknownArgumentType]
+                else:
+                    non_files.append(p)
+            return non_files, files
+        return [self.content], []
+
+    @property
+    def files(self) -> list[MultiModalContent]:
+        """The multimodal file parts from `content`.
+
+        Returns only `MultiModalContent` objects (`ImageUrl`, `AudioUrl`, `DocumentUrl`,
+        `VideoUrl`, `BinaryContent`), filtering out any text/json parts.
 
         This allows model implementations to handle files separately from data, sending
         files natively where supported or as separate user messages when needed.
         """
-        if isinstance(self.content, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)):
-            return [self.content]
-        elif isinstance(self.content, list):
-            files: list[MultiModalContent] = [
-                p
-                for p in self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-                if isinstance(p, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent))
-            ]
-            return files
-        return []
+        return self._split_content()[1]
 
     @property
-    def content_excluding_files(self) -> Any:
-        """The text/json data from content, excluding multimodal files.
+    def content_excluding_files(self) -> list[Any]:
+        """The text/json data from `content`, excluding multimodal files.
 
-        Returns the data portion of the content with files filtered out:
-        - For a simple string/dict/primitive: returns as-is
-        - For a list: returns list with files removed (preserves list structure)
-        - For a single file: returns None
-
-        Model implementations should use this alongside `multimodal_content` to properly
+        Returns the data portion of the content with files filtered out as a list.
+        Model implementations should use this alongside `files` to properly
         separate data from media content.
         """
-        if isinstance(self.content, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)):
-            return None
-        elif isinstance(self.content, list):
-            data_parts: list[Any] = [
-                p
-                for p in self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-                if not isinstance(p, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent))
-            ]
-            if len(data_parts) == 0:
-                return None
-            return data_parts
-        return self.content
+        return self._split_content()[0]
 
     def model_response_str(self) -> str:
         """Return a string representation of the data content for the model.
 
-        This excludes multimodal files - use `multimodal_content` to get those separately.
+        This excludes multimodal files - use `files` to get those separately.
         """
         data = self.content_excluding_files
-        if data is None:
+        if not data:
             return ''
-        elif isinstance(data, str):
-            return data
+        elif len(data) == 1 and isinstance(data[0], str):
+            return data[0]
         else:
             return tool_return_ta.dump_json(data).decode()
 
     def model_response_object(self) -> dict[str, Any]:
         """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
 
-        This excludes multimodal files - use `multimodal_content` to get those separately.
+        This excludes multimodal files - use `files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
         """
         data = self.content_excluding_files
-        if data is None:
+        if not data:
             return {}
-        json_content = tool_return_ta.dump_python(data, mode='json')
+        # Unwrap single-item list for cleaner serialization
+        value = data[0] if len(data) == 1 else data
+        json_content = tool_return_ta.dump_python(value, mode='json')
         if isinstance(json_content, dict):
             return cast(dict[str, Any], json_content)
         else:
@@ -898,7 +896,7 @@ class BaseToolReturnPart:
         return LogRecord(
             attributes={'event.name': 'gen_ai.tool.message'},
             body={
-                **({'content': self.content} if settings.include_content else {}),
+                **({'content': cast(Any, self.content)} if settings.include_content else {}),
                 'role': 'tool',
                 'id': self.tool_call_id,
                 'name': self.tool_name,

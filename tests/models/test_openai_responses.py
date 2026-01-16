@@ -9851,7 +9851,7 @@ async def test_openai_responses_model_file_search_tool_with_results(
                         ),
                         BuiltinToolReturnPart(
                             tool_name='file_search',
-                            content={
+                            content={  # pyright: ignore[reportUnknownArgumentType]
                                 'status': 'completed',
                                 'results': [
                                     {

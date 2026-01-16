@@ -1097,7 +1097,7 @@ class OpenAIChatModel(Model):
                     content=part.model_response_str(),
                 )
                 # Send multimodal files as separate user message (API limitation)
-                if files := part.multimodal_content:
+                if files := part.files:
                     user_prompt = UserPromptPart(content=files)
                     yield await self._map_user_prompt(user_prompt)
             elif isinstance(part, RetryPromptPart):
@@ -2134,7 +2134,7 @@ class OpenAIResponsesModel(Model):
         part: ToolReturnPart,
     ) -> str | list[ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam]:
         """Map a ToolReturnPart to OpenAI Responses API output format, supporting multimodal content."""
-        if not part.multimodal_content:
+        if not part.files:
             return part.model_response_str()
 
         output: list[
@@ -2147,7 +2147,7 @@ class OpenAIResponsesModel(Model):
             output.append(ResponseInputTextContentParam(type='input_text', text=data_str))
 
         # Add multimodal files
-        for file in part.multimodal_content:
+        for file in part.files:
             if isinstance(file, BinaryContent):
                 if file.is_image:
                     detail: Literal['auto', 'low', 'high'] = 'auto'
