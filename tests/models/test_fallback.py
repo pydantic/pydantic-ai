@@ -1224,7 +1224,7 @@ def test_fallback_on_mixed_list() -> None:
     class CustomError(Exception):
         pass
 
-    def custom_exception_handler(exc: Exception) -> bool:
+    def custom_exception_handler(exc: Exception) -> bool:  # pragma: no cover
         return isinstance(exc, ModelHTTPError) and exc.status_code == 503
 
     def reject_bad_response(response: ModelResponse) -> bool:
@@ -1242,7 +1242,7 @@ def test_fallback_on_mixed_list() -> None:
         fallback_model_impl,
         fallback_on=[CustomError, custom_exception_handler, reject_bad_response],
     )
-    agent = Agent(model=fallback)  # pragma: lax no cover
+    agent = Agent(model=fallback)
 
     # Should fallback because response contains 'bad'
     result = agent.run_sync('hello')
@@ -1318,7 +1318,7 @@ def test_response_handler_only_exception_propagates() -> None:
     propagate to the caller.
     """
 
-    def response_check(response: ModelResponse) -> bool:
+    def response_check(response: ModelResponse) -> bool:  # pragma: no cover
         return False  # Never reject based on response
 
     # Auto-detected as response handler via type hint - only a response handler, no exception handling
@@ -1336,12 +1336,10 @@ def test_response_handler_only_exception_propagates() -> None:
 
 def test_is_response_handler_no_params() -> None:
     """Test that handlers with no parameters are treated as exception handlers."""
-    from pydantic_ai.models.fallback import (  # pragma: lax no cover
-        _is_response_handler,  # pyright: ignore[reportPrivateUsage]  # pragma: lax no cover
-    )  # pragma: lax no cover
+    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
 
-    # A callable with no parameters
-    def no_params() -> bool:
+    # A callable with no parameters - never called, only inspected for type hints
+    def no_params() -> bool:  # pragma: no cover
         return True
 
     assert _is_response_handler(no_params) is False
@@ -1357,9 +1355,7 @@ def test_is_response_handler_builtin() -> None:
 
 def test_is_exception_types_tuple_with_non_exception() -> None:
     """Test that tuples with non-exception types return False."""
-    from pydantic_ai.models.fallback import (  # pragma: lax no cover
-        _is_exception_types_tuple,  # pyright: ignore[reportPrivateUsage]  # pragma: lax no cover
-    )  # pragma: lax no cover
+    from pydantic_ai.models.fallback import _is_exception_types_tuple  # pyright: ignore[reportPrivateUsage]
 
     # Tuple with non-exception type
     assert _is_exception_types_tuple((ValueError, str)) is False
@@ -1391,8 +1387,8 @@ def test_forward_reference_type_hint() -> None:
     from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
 
     # With `from __future__ import annotations`, this annotation is a forward ref
-    # that gets resolved by get_type_hints()
-    def handler_with_forward_ref(response: ModelResponse) -> bool:
+    # that gets resolved by get_type_hints() - never called, only inspected
+    def handler_with_forward_ref(response: ModelResponse) -> bool:  # pragma: no cover
         return False
 
     # Should be detected as response handler after get_type_hints() resolves the forward ref
@@ -1410,7 +1406,7 @@ def test_empty_fallback_on_list_warning() -> None:
             fallback_model_impl,
             fallback_on=[],
         )
-        assert len(w) == 1  # pragma: lax no cover
+        assert len(w) == 1
         assert issubclass(w[0].category, UserWarning)
         assert 'empty fallback_on list' in str(w[0].message)
 
