@@ -5238,7 +5238,6 @@ def test_google_thought_signature_on_thinking_part():
     assert old_google_response == new_google_response
 
     # Test that thought_signature is used when item.provider_name matches even if ModelResponse.provider_name doesn't
-    # This happens when responses from other providers contain parts that originated from Google
     response_with_item_provider_name = _content_model_response(
         ModelResponse(
             parts=[
