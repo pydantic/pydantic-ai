@@ -117,13 +117,15 @@ class OpenAIModelProfile(ModelProfile):
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
+    # default reasoning_effort='medium'
     is_gpt_5 = model_name.startswith('gpt-5')
+
+    # always reasoning
     is_o_series = model_name.startswith('o')
 
     is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2'))
 
-    # GPT-5.1+ models support reasoning_effort='none' (the default), which allows sampling params.
-    # o-series, GPT-5, GPT-5-pro always have reasoning enabled.
+    # GPT-5.1+ models use reasoning_effort='none' by default, which allows sampling params.
     thinking_always_enabled = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name and not is_gpt_5_1_plus)
 
     # Check if the model supports web search (only specific search-preview models)
@@ -135,7 +137,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
 
     # For models that always have reasoning on (o-series, GPT-5), sampling params are unsupported.
-    # For GPT-5.1+ models, sampling params support depends on reasoning_effort setting (handled in model layer).
+    # For GPT-5.1+ models, sampling params support depends on reasoning_effort setting (handled by `_warn_about_dropped_sampling_params`).
     if thinking_always_enabled:
         openai_unsupported_model_settings = tuple(sp for sp in SAMPLING_PARAMS)
     else:

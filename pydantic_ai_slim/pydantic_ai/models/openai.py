@@ -263,6 +263,29 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
+def _warn_about_dropped_sampling_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
+    """Warn when sampling params will be dropped due to reasoning being enabled.
+
+    For models that support reasoning_effort='none' (GPT-5.1+), sampling params are only
+    supported when reasoning is off. This warns users when their params will be ignored.
+    """
+    reasoning_effort = model_settings.get('openai_reasoning_effort', 'none')
+    if not profile.openai_supports_sampling_with_reasoning_off or reasoning_effort == 'none':
+        return
+
+    if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
+        warnings.warn(
+            f'Sampling parameters {dropped} are not supported when reasoning is enabled. '
+            'These settings will be ignored.',
+            UserWarning,
+        )
+
+    # we would drop them later in the `openai_unsupported_model_settings` loop
+    # but it's clearer to do it here
+    for k in SAMPLING_PARAMS:
+        model_settings.pop(k, None)
+
+
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
@@ -634,21 +657,10 @@ class OpenAIChatModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        _warn_about_dropped_sampling_params(profile, model_settings)
+
         for setting in profile.openai_unsupported_model_settings:
             model_settings.pop(setting, None)
-
-        # For models that support reasoning_effort='none' (GPT-5.1+), filter sampling params when reasoning is enabled
-        if profile.openai_supports_sampling_with_reasoning_off:
-            reasoning_effort = model_settings.get('openai_reasoning_effort', 'none')
-            if reasoning_effort != 'none':
-                if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
-                    warnings.warn(
-                        f'Sampling parameters {dropped} are not supported when reasoning is enabled. '
-                        'These settings will be ignored.',
-                        UserWarning,
-                    )
-                for k in SAMPLING_PARAMS:
-                    model_settings.pop(k, None)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -1494,21 +1506,10 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
+        _warn_about_dropped_sampling_params(profile, model_settings)
+
         for setting in profile.openai_unsupported_model_settings:
             model_settings.pop(setting, None)
-
-        # For models that support reasoning_effort='none' (GPT-5.1+), filter sampling params when reasoning is enabled
-        if profile.openai_supports_sampling_with_reasoning_off:
-            reasoning_effort = model_settings.get('openai_reasoning_effort')
-            if reasoning_effort is not None and reasoning_effort != 'none':
-                if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
-                    warnings.warn(
-                        f'Sampling parameters {dropped} are not supported when reasoning is enabled. '
-                        'These settings will be ignored.',
-                        UserWarning,
-                    )
-                for k in SAMPLING_PARAMS:
-                    model_settings.pop(k, None)
 
         include: list[responses.ResponseIncludable] = []
         if profile.openai_supports_encrypted_reasoning_content:
