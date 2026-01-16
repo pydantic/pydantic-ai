@@ -1218,7 +1218,7 @@ def test_fallback_on_single_exception_handler() -> None:
     assert result.output == 'success'
 
 
-def test_fallback_on_mixed_list() -> None:
+def test_fallback_on_mixed_list() -> None:  # pragma: lax no cover
     """Test fallback_on with a mixed list of exception types, exception handlers, and response handlers."""
 
     class CustomError(Exception):
@@ -1242,7 +1242,7 @@ def test_fallback_on_mixed_list() -> None:
         fallback_model_impl,
         fallback_on=[CustomError, custom_exception_handler, reject_bad_response],
     )
-    agent = Agent(model=fallback)  # pragma: lax no cover
+    agent = Agent(model=fallback)
 
     # Should fallback because response contains 'bad'
     result = agent.run_sync('hello')
@@ -1334,10 +1334,10 @@ def test_response_handler_only_exception_propagates() -> None:
         agent.run_sync('hello')
 
 
-def test_is_response_handler_no_params() -> None:
+def test_is_response_handler_no_params() -> None:  # pragma: lax no cover
     """Test that handlers with no parameters are treated as exception handlers."""
     from pydantic_ai.models.fallback import (
-        _is_response_handler,  # pyright: ignore[reportPrivateUsage]  # pragma: lax no cover
+        _is_response_handler,  # pyright: ignore[reportPrivateUsage]
     )
 
     # A callable with no parameters
@@ -1355,14 +1355,14 @@ def test_is_response_handler_builtin() -> None:
     assert _is_response_handler(int) is False
 
 
-def test_is_exception_types_tuple_with_non_exception() -> None:
+def test_is_exception_types_tuple_with_non_exception() -> None:  # pragma: lax no cover
     """Test that tuples with non-exception types return False."""
     from pydantic_ai.models.fallback import (
-        _is_exception_types_tuple,  # pyright: ignore[reportPrivateUsage]  # pragma: lax no cover
+        _is_exception_types_tuple,  # pyright: ignore[reportPrivateUsage]
     )
 
     # Tuple with non-exception type
-    assert _is_exception_types_tuple((ValueError, str)) is False  # pragma: lax no cover
+    assert _is_exception_types_tuple((ValueError, str)) is False
     assert _is_exception_types_tuple((int, float)) is False
     # Valid exception tuple
     assert _is_exception_types_tuple((ValueError, TypeError)) is True
@@ -1399,9 +1399,9 @@ def test_forward_reference_type_hint() -> None:
     assert _is_response_handler(handler_with_forward_ref) is True
 
 
-def test_empty_fallback_on_list_warning() -> None:
+def test_empty_fallback_on_list_warning() -> None:  # pragma: lax no cover
     """Test that empty fallback_on list produces a warning."""
-    import warnings  # pragma: lax no cover
+    import warnings
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
@@ -1410,7 +1410,6 @@ def test_empty_fallback_on_list_warning() -> None:
             fallback_model_impl,
             fallback_on=[],
         )
-        # pragma: lax no cover
         assert len(w) == 1
         assert issubclass(w[0].category, UserWarning)
         assert 'empty fallback_on list' in str(w[0].message)
