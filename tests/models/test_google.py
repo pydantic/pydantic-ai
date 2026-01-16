@@ -5449,11 +5449,6 @@ async def test_google_stream_safety_filter(
 async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
     """Test that ToolReturnPart and UserPromptPart are split into separate content objects.
 
-    When a ModelRequest contains both a ToolReturnPart and a UserPromptPart,
-    they must be in separate content objects to work around a Gemini bug
-    where content objects containing functionResponse parts are treated
-    as role=model even when role=user is explicitly specified.
-
     TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
     """
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
