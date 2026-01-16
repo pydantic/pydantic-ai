@@ -125,53 +125,20 @@ async def test_contains_basemodel():
         key: str | None = None
         extra: str | None = None
 
-    dict_evaluator = Contains(value={'key': 'value'})
+    evaluator = Contains(value={'key': 'value'})
 
     # Test model containment
-    assert dict_evaluator.evaluate(MockContext(output=MockModel(key='value', extra='data'))) == snapshot(
+    assert evaluator.evaluate(MockContext(output=MockModel(key='value', extra='data'))) == snapshot(
         EvaluationReason(value=True)
     )
 
     # Test model key missing
-    assert dict_evaluator.evaluate(MockContext(output=MockModel(extra='data'))) == snapshot(
+    assert evaluator.evaluate(MockContext(output=MockModel(extra='data'))) == snapshot(
         EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
     )
 
     # Test model value mismatch
-    assert dict_evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
-        EvaluationReason(
-            value=False,
-            reason="Output has different value for key 'key': 'different' != 'value'",
-        )
-    )
-
-    basemodel_evaluator = Contains(value=MockModel(key='value', extra='data'))
-
-    # Test model containment
-    assert basemodel_evaluator.evaluate(MockContext(output={'key': 'value', 'extra': 'data'})) == snapshot(
-        EvaluationReason(value=True)
-    )
-
-    # Test model key missing
-    assert basemodel_evaluator.evaluate(MockContext(output={'different': 'value'})) == snapshot(
-        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
-    )
-
-    # Test model value mismatch
-    assert basemodel_evaluator.evaluate(MockContext(output={'key': 'different'})) == snapshot(
-        EvaluationReason(
-            value=False,
-            reason="Output has different value for key 'key': 'different' != 'value'",
-        )
-    )
-
-    # Test with both output and value as BaseModel
-    assert basemodel_evaluator.evaluate(MockContext(output=MockModel(key='value', extra='data'))) == snapshot(
-        EvaluationReason(value=True)
-    )
-
-    # Test with both output and value as BaseModel with mismatch
-    assert basemodel_evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
+    assert evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
         EvaluationReason(
             value=False,
             reason="Output has different value for key 'key': 'different' != 'value'",

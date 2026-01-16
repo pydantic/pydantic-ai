@@ -67,8 +67,6 @@ class Contains(Evaluator[object, object, object]):
     For strings, checks if expected_output is a substring of output.
     For lists/tuples, checks if expected_output is in output.
     For dicts, checks if all key-value pairs in expected_output are in output.
-    If either `output` or `value` is a Pydantic `BaseModel`, it is converted to a dict via
-      `model_dump(exclude_unset=True)` and compared using the dict logic above.
 
     Note: case_sensitive only applies when both the value and output are strings.
     """
@@ -105,12 +103,10 @@ class Contains(Evaluator[object, object, object]):
             if isinstance(ctx.output, dict) or isinstance(ctx.output, BaseModel):
                 output = ctx.output if isinstance(ctx.output, dict) else ctx.output.model_dump(exclude_unset=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
-                if isinstance(self.value, dict) or isinstance(self.value, BaseModel):
-                    value = self.value if isinstance(self.value, dict) else self.value.model_dump(exclude_unset=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-
+                if isinstance(self.value, dict):
                     # Cast to Any to avoid type checking issues
                     output_dict = cast(dict[Any, Any], output)
-                    expected_dict = cast(dict[Any, Any], value)
+                    expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
                     for k in expected_dict:
                         if k not in output_dict:
                             k_trunc = _truncated_repr(k, max_length=30)
