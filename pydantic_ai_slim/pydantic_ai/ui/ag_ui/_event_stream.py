@@ -10,6 +10,7 @@ import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Final
+from uuid import uuid4
 
 from ..._utils import now_utc
 from ...messages import (
@@ -31,6 +32,7 @@ from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 
 try:
     from ag_ui.core import (
+        ActivitySnapshotEvent,
         BaseEvent,
         EventType,
         RunAgentInput,
@@ -171,15 +173,23 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             self._thinking_text = False
 
         if not followed_by_thinking:
-            _args = ['id', 'signature', 'provider_name', 'provider_details']
-            pydantic_ai_meta: dict[str, Any] = {
-                arg: getattr(part, arg) for arg in _args if getattr(part, arg) is not None
-            }
+            yield ThinkingEndEvent(type=EventType.THINKING_END)
 
-            yield ThinkingEndEvent(
-                type=EventType.THINKING_END,
-                raw_event={'pydantic_ai': pydantic_ai_meta} if pydantic_ai_meta else None,
-                encryptedContent=part.signature,  # pyright: ignore[reportCallIssue]
+            # Emit ActivitySnapshotEvent to preserve thinking metadata for round-trip.
+            # Frontends receive this and send it back as ActivityMessage, which _adapter.py
+            # converts back to ThinkingPart. This preserves signature/id needed by providers
+            # like Anthropic for extended thinking.
+            # See: https://docs.ag-ui.com/concepts/events#activity-events
+            content: dict[str, Any] = {'content': part.content}
+            for field in ('id', 'signature', 'provider_name', 'provider_details'):
+                value = getattr(part, field)
+                if value is not None:
+                    content[field] = value
+
+            yield ActivitySnapshotEvent(
+                activity_type='pydantic_ai_thinking',
+                message_id=part.id or f'thinking-{uuid4().hex[:8]}',
+                content=content,
             )
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:

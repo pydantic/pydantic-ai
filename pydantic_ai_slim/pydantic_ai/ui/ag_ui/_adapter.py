@@ -232,6 +232,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
 
                 case ActivityMessage() as activity_msg:
+                    # Round-trip from ActivitySnapshotEvent emitted by _event_stream.py.
+                    # See: https://docs.ag-ui.com/concepts/messages#activitymessage
                     if activity_msg.activity_type != 'pydantic_ai_thinking':
                         continue
                     content = activity_msg.content

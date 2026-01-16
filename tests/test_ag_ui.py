@@ -63,6 +63,7 @@ from .conftest import IsDatetime, IsInt, IsSameStr, try_import
 with try_import() as imports_successful:
     from ag_ui.core import (
         ActivityMessage,
+        ActivitySnapshotEvent,
         AssistantMessage,
         BaseEvent,
         BinaryInputContent,
@@ -75,6 +76,7 @@ with try_import() as imports_successful:
         StateSnapshotEvent,
         SystemMessage,
         TextInputContent,
+        ThinkingEndEvent,
         Tool,
         ToolCall,
         ToolMessage,
@@ -1062,6 +1064,14 @@ async def test_thinking() -> None:
             {'type': 'THINKING_START', 'timestamp': IsInt()},
             {'type': 'THINKING_END', 'timestamp': IsInt()},
             {
+                'type': 'ACTIVITY_SNAPSHOT',
+                'timestamp': IsInt(),
+                'activityType': 'pydantic_ai_thinking',
+                'messageId': IsStr(),
+                'content': {'content': ''},
+                'replace': True,
+            },
+            {
                 'type': 'TEXT_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': (message_id := IsSameStr()),
@@ -1101,6 +1111,14 @@ async def test_thinking() -> None:
             {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
             {'type': 'THINKING_END', 'timestamp': IsInt()},
             {
+                'type': 'ACTIVITY_SNAPSHOT',
+                'timestamp': IsInt(),
+                'activityType': 'pydantic_ai_thinking',
+                'messageId': IsStr(),
+                'content': {'content': 'Thinking about the universe'},
+                'replace': True,
+            },
+            {
                 'type': 'RUN_FINISHED',
                 'timestamp': IsInt(),
                 'threadId': thread_id,
@@ -1111,7 +1129,7 @@ async def test_thinking() -> None:
 
 
 async def test_thinking_with_signature() -> None:
-    """Test that ThinkingEndEvent includes metadata (signature, provider_name, etc)."""
+    """Test that ActivitySnapshotEvent is emitted after ThinkingEndEvent with metadata."""
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -1139,11 +1157,18 @@ async def test_thinking_with_signature() -> None:
             {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
             {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'Thinking deeply'},
             {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
             {
-                'type': 'THINKING_END',
+                'type': 'ACTIVITY_SNAPSHOT',
                 'timestamp': IsInt(),
-                'rawEvent': {'pydantic_ai': {'signature': 'sig_abc123', 'provider_name': 'function'}},
-                'encryptedContent': 'sig_abc123',
+                'activityType': 'pydantic_ai_thinking',
+                'messageId': IsStr(),
+                'content': {
+                    'content': 'Thinking deeply',
+                    'signature': 'sig_abc123',
+                    'provider_name': 'function',
+                },
+                'replace': True,
             },
             {
                 'type': 'TEXT_MESSAGE_START',
@@ -1202,7 +1227,7 @@ def test_activity_message_thinking_roundtrip() -> None:
 
 
 async def test_thinking_end_event_with_all_metadata() -> None:
-    """Test that ThinkingEndEvent includes all metadata fields (id, signature, provider_name, provider_details)."""
+    """Test that ActivitySnapshotEvent includes all metadata fields (id, signature, provider_name, provider_details)."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
     event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE)
 
@@ -1216,20 +1241,22 @@ async def test_thinking_end_event_with_all_metadata() -> None:
 
     events = [e async for e in event_stream.handle_thinking_end(part, followed_by_thinking=False)]
 
-    # Can't use snapshot here: inline_snapshot can't access pydantic extra fields via getattr
-    assert len(events) == 1
-    event = events[0]
-    assert event.type.value == 'THINKING_END'
-    assert event.raw_event == {
-        'pydantic_ai': {
-            'id': 'thinking-123',
-            'signature': 'sig_xyz',
-            'provider_name': 'anthropic',
-            'provider_details': {'model': 'claude-sonnet-4-5'},
-        }
-    }
-    assert event.__pydantic_extra__ is not None
-    assert event.__pydantic_extra__['encryptedContent'] == 'sig_xyz'
+    assert events == snapshot(
+        [
+            ThinkingEndEvent(),
+            ActivitySnapshotEvent(
+                message_id='thinking-123',
+                activity_type='pydantic_ai_thinking',
+                content={
+                    'content': 'Thinking content',
+                    'id': 'thinking-123',
+                    'signature': 'sig_xyz',
+                    'provider_name': 'anthropic',
+                    'provider_details': {'model': 'claude-sonnet-4-5'},
+                },
+            ),
+        ]
+    )
 
 
 def test_activity_message_other_types_ignored() -> None:
