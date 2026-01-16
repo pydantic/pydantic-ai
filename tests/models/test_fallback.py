@@ -1242,7 +1242,7 @@ def test_fallback_on_mixed_list() -> None:
         fallback_model_impl,
         fallback_on=[CustomError, custom_exception_handler, reject_bad_response],
     )
-    agent = Agent(model=fallback)
+    agent = Agent(model=fallback)  # pragma: no cover
 
     # Should fallback because response contains 'bad'
     result = agent.run_sync('hello')
@@ -1357,7 +1357,7 @@ def test_is_response_handler_builtin() -> None:
 
 def test_is_exception_types_tuple_with_non_exception() -> None:
     """Test that tuples with non-exception types return False."""
-    from pydantic_ai.models.fallback import (
+    from pydantic_ai.models.fallback import (  # pragma: no cover
         _is_exception_types_tuple,  # pyright: ignore[reportPrivateUsage]
     )
 
