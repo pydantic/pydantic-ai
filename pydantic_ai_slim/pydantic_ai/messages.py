@@ -1149,6 +1149,7 @@ class GroundingCitation:
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
+
 Citation: TypeAlias = URLCitation | ContainerFileCitation | ToolResultCitation | GroundingCitation
 """All possible citation types from different providers.
 
@@ -1367,12 +1368,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    TextPart
-    | ToolCallPart
-    | BuiltinToolCallPart
-    | BuiltinToolReturnPart
-    | ThinkingPart
-    | FilePart,
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -1414,18 +1410,14 @@ class ModelResponse:
     provider_details: Annotated[
         dict[str, Any] | None,
         # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
-        pydantic.Field(
-            validation_alias=pydantic.AliasChoices('provider_details', 'vendor_details')
-        ),
+        pydantic.Field(validation_alias=pydantic.AliasChoices('provider_details', 'vendor_details')),
     ] = None
     """Additional data returned by the provider that can't be mapped to standard fields."""
 
     provider_response_id: Annotated[
         str | None,
         # `vendor_id` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
-        pydantic.Field(
-            validation_alias=pydantic.AliasChoices('provider_response_id', 'vendor_id')
-        ),
+        pydantic.Field(validation_alias=pydantic.AliasChoices('provider_response_id', 'vendor_id')),
     ] = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
@@ -1460,9 +1452,7 @@ class ModelResponse:
     @property
     def thinking(self) -> str | None:
         """Get the thinking in the response."""
-        thinking_parts = [
-            part.content for part in self.parts if isinstance(part, ThinkingPart)
-        ]
+        thinking_parts = [part.content for part in self.parts if isinstance(part, ThinkingPart)]
         if not thinking_parts:
             return None
         return '\n\n'.join(thinking_parts)
@@ -1483,18 +1473,12 @@ class ModelResponse:
         return [part for part in self.parts if isinstance(part, ToolCallPart)]
 
     @property
-    def builtin_tool_calls(
-        self,
-    ) -> list[tuple[BuiltinToolCallPart, BuiltinToolReturnPart]]:
+    def builtin_tool_calls(self) -> list[tuple[BuiltinToolCallPart, BuiltinToolReturnPart]]:
         """Get the builtin tool calls and results in the response."""
         calls = [part for part in self.parts if isinstance(part, BuiltinToolCallPart)]
         if not calls:
             return []
-        returns_by_id = {
-            part.tool_call_id: part
-            for part in self.parts
-            if isinstance(part, BuiltinToolReturnPart)
-        }
+        returns_by_id = {part.tool_call_id: part for part in self.parts if isinstance(part, BuiltinToolReturnPart)}
         return [
             (call_part, returns_by_id[call_part.tool_call_id])
             for call_part in calls
@@ -1535,9 +1519,7 @@ class ModelResponse:
 
         def new_event_body():
             new_body: dict[str, Any] = {'role': 'assistant'}
-            ev = LogRecord(
-                attributes={'event.name': 'gen_ai.assistant.message'}, body=new_body
-            )
+            ev = LogRecord(attributes={'event.name': 'gen_ai.assistant.message'}, body=new_body)
             result.append(ev)
             return new_body
 
@@ -1550,11 +1532,7 @@ class ModelResponse:
                         'type': 'function',
                         'function': {
                             'name': part.tool_name,
-                            **(
-                                {'arguments': part.args}
-                                if settings.include_content
-                                else {}
-                            ),
+                            **({'arguments': part.args} if settings.include_content else {}),
                         },
                     }
                 )
@@ -1617,13 +1595,8 @@ class ModelResponse:
                         'kind': 'binary',
                         'media_type': part.content.media_type,
                         **(
-                            {
-                                'binary_content': base64.b64encode(
-                                    part.content.data
-                                ).decode()
-                            }
-                            if settings.include_content
-                            and settings.include_binary_content
+                            {'binary_content': base64.b64encode(part.content.data).decode()}
+                            if settings.include_content and settings.include_binary_content
                             else {}
                         ),
                     }
@@ -1637,9 +1610,7 @@ class ModelResponse:
 
         return result
 
-    def otel_message_parts(
-        self, settings: InstrumentationSettings
-    ) -> list[_otel_messages.MessagePart]:
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
@@ -1698,26 +1669,16 @@ class ModelResponse:
                 parts.append(
                     _otel_messages.ThinkingPart(
                         type='thinking',
-                        **(
-                            {'content': part.content}
-                            if settings.include_content
-                            else {}
-                        ),
+                        **({'content': part.content} if settings.include_content else {}),
                     )
                 )
             elif isinstance(part, FilePart):
-                converted_part = _otel_messages.BinaryDataPart(
-                    type='binary', media_type=part.content.media_type
-                )
+                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.content.media_type)
                 if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = base64.b64encode(
-                        part.content.data
-                    ).decode()
+                    converted_part['content'] = base64.b64encode(part.content.data).decode()
                 parts.append(converted_part)
             elif isinstance(part, BaseToolCallPart):
-                call_part = _otel_messages.ToolCallPart(
-                    type='tool_call', id=part.tool_call_id, name=part.tool_name
-                )
+                call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
                 if settings.include_content and part.args is not None:
@@ -1726,10 +1687,7 @@ class ModelResponse:
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args
                     else:
-                        call_part['arguments'] = {
-                            k: InstrumentedModel.serialize_any(v)
-                            for k, v in part.args.items()
-                        }
+                        call_part['arguments'] = {k: InstrumentedModel.serialize_any(v) for k, v in part.args.items()}
 
                 parts.append(call_part)
             elif isinstance(part, BuiltinToolReturnPart):
@@ -1739,14 +1697,10 @@ class ModelResponse:
                     name=part.tool_name,
                     builtin=True,
                 )
-                if (
-                    settings.include_content and part.content is not None
-                ):  # pragma: no branch
+                if settings.include_content and part.content is not None:  # pragma: no branch
                     from .models.instrumented import InstrumentedModel
 
-                    return_part['result'] = InstrumentedModel.serialize_any(
-                        part.content
-                    )
+                    return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)
         return parts
@@ -1762,9 +1716,7 @@ class ModelResponse:
         return self.provider_response_id
 
     @property
-    @deprecated(
-        '`provider_request_id` is deprecated, use `provider_response_id` instead'
-    )
+    @deprecated('`provider_request_id` is deprecated, use `provider_response_id` instead')
     def provider_request_id(self) -> str | None:
         return self.provider_response_id
 
@@ -1775,10 +1727,7 @@ ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('k
 """Any message sent to or returned by a model."""
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
-    list[ModelMessage],
-    config=pydantic.ConfigDict(
-        defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'
-    ),
+    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 
@@ -1813,17 +1762,11 @@ class TextPartDelta:
             ValueError: If `part` is not a `TextPart`.
         """
         if not isinstance(part, TextPart):
-            raise ValueError(
-                'Cannot apply TextPartDeltas to non-TextParts'
-            )  # pragma: no cover
+            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
         return replace(
             part,
             content=part.content + self.content_delta,
-            provider_details={
-                **(part.provider_details or {}),
-                **(self.provider_details or {}),
-            }
-            or None,
+            provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
         )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -1863,13 +1806,9 @@ class ThinkingPartDelta:
     def apply(self, part: ModelResponsePart) -> ThinkingPart: ...
 
     @overload
-    def apply(
-        self, part: ModelResponsePart | ThinkingPartDelta
-    ) -> ThinkingPart | ThinkingPartDelta: ...
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta: ...
 
-    def apply(
-        self, part: ModelResponsePart | ThinkingPartDelta
-    ) -> ThinkingPart | ThinkingPartDelta:
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta:
         """Apply this thinking delta to an existing `ThinkingPart`.
 
         Args:
@@ -1882,31 +1821,16 @@ class ThinkingPartDelta:
             ValueError: If `part` is not a `ThinkingPart`.
         """
         if isinstance(part, ThinkingPart):
-            new_content = (
-                part.content + self.content_delta
-                if self.content_delta
-                else part.content
-            )
-            new_signature = (
-                self.signature_delta
-                if self.signature_delta is not None
-                else part.signature
-            )
-            new_provider_name = (
-                self.provider_name
-                if self.provider_name is not None
-                else part.provider_name
-            )
+            new_content = part.content + self.content_delta if self.content_delta else part.content
+            new_signature = self.signature_delta if self.signature_delta is not None else part.signature
+            new_provider_name = self.provider_name if self.provider_name is not None else part.provider_name
             # Resolve callable provider_details if needed
             resolved_details = (
                 self.provider_details(part.provider_details)
                 if callable(self.provider_details)
                 else self.provider_details
             )
-            new_provider_details = {
-                **(part.provider_details or {}),
-                **(resolved_details or {}),
-            } or None
+            new_provider_details = {**(part.provider_details or {}), **(resolved_details or {})} or None
             return replace(
                 part,
                 content=new_content,
@@ -1916,13 +1840,9 @@ class ThinkingPartDelta:
             )
         elif isinstance(part, ThinkingPartDelta):
             if self.content_delta is None and self.signature_delta is None:
-                raise ValueError(
-                    'Cannot apply ThinkingPartDelta with no content or signature'
-                )
+                raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
             if self.content_delta is not None:
-                part = replace(
-                    part, content_delta=(part.content_delta or '') + self.content_delta
-                )
+                part = replace(part, content_delta=(part.content_delta or '') + self.content_delta)
             if self.signature_delta is not None:
                 part = replace(part, signature_delta=self.signature_delta)
             if self.provider_name is not None:
@@ -1938,9 +1858,7 @@ class ThinkingPartDelta:
 
                         part = replace(part, provider_details=chained_both)
                     else:
-                        part = replace(
-                            part, provider_details=self.provider_details
-                        )  # pragma: no cover
+                        part = replace(part, provider_details=self.provider_details)  # pragma: no cover
                 elif callable(part.provider_details):
                     existing_fn = part.provider_details
                     new_dict = self.provider_details
@@ -1950,14 +1868,8 @@ class ThinkingPartDelta:
 
                     part = replace(part, provider_details=chained_dict)
                 else:
-                    existing = (
-                        part.provider_details
-                        if isinstance(part.provider_details, dict)
-                        else {}
-                    )
-                    part = replace(
-                        part, provider_details={**existing, **self.provider_details}
-                    )
+                    existing = part.provider_details if isinstance(part.provider_details, dict) else {}
+                    part = replace(part, provider_details={**existing, **self.provider_details})
             return part
         raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
@@ -2043,15 +1955,11 @@ class ToolCallPartDelta:
             f'Can only apply ToolCallPartDeltas to ToolCallParts, BuiltinToolCallParts, or ToolCallPartDeltas, not {part}'
         )
 
-    def _apply_to_delta(
-        self, delta: ToolCallPartDelta
-    ) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta:
+    def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta:
         """Internal helper to apply this delta to another delta."""
         if self.tool_name_delta:
             # Append incremental text to the existing tool_name_delta
-            updated_tool_name_delta = (
-                delta.tool_name_delta or ''
-            ) + self.tool_name_delta
+            updated_tool_name_delta = (delta.tool_name_delta or '') + self.tool_name_delta
             delta = replace(delta, tool_name_delta=updated_tool_name_delta)
 
         if isinstance(self.args_delta, str):
@@ -2073,10 +1981,7 @@ class ToolCallPartDelta:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
         if self.provider_details:
-            merged_provider_details = {
-                **(delta.provider_details or {}),
-                **self.provider_details,
-            }
+            merged_provider_details = {**(delta.provider_details or {}), **self.provider_details}
             delta = replace(delta, provider_details=merged_provider_details)
 
         # If we now have enough data to create a full ToolCallPart, do so
@@ -2090,9 +1995,7 @@ class ToolCallPartDelta:
 
         return delta
 
-    def _apply_to_part(
-        self, part: ToolCallPart | BuiltinToolCallPart
-    ) -> ToolCallPart | BuiltinToolCallPart:
+    def _apply_to_part(self, part: ToolCallPart | BuiltinToolCallPart) -> ToolCallPart | BuiltinToolCallPart:
         """Internal helper to apply this delta directly to a `ToolCallPart` or `BuiltinToolCallPart`."""
         if self.tool_name_delta:
             # Append incremental text to the existing tool_name
@@ -2101,16 +2004,12 @@ class ToolCallPartDelta:
 
         if isinstance(self.args_delta, str):
             if isinstance(part.args, dict):
-                raise UnexpectedModelBehavior(
-                    f'Cannot apply JSON deltas to non-JSON tool arguments ({part=}, {self=})'
-                )
+                raise UnexpectedModelBehavior(f'Cannot apply JSON deltas to non-JSON tool arguments ({part=}, {self=})')
             updated_json = (part.args or '') + self.args_delta
             part = replace(part, args=updated_json)
         elif isinstance(self.args_delta, dict):
             if isinstance(part.args, str):
-                raise UnexpectedModelBehavior(
-                    f'Cannot apply dict deltas to non-dict tool arguments ({part=}, {self=})'
-                )
+                raise UnexpectedModelBehavior(f'Cannot apply dict deltas to non-dict tool arguments ({part=}, {self=})')
             updated_dict = {**(part.args or {}), **self.args_delta}
             part = replace(part, args=updated_dict)
 
@@ -2118,10 +2017,7 @@ class ToolCallPartDelta:
             part = replace(part, tool_call_id=self.tool_call_id)
 
         if self.provider_details:
-            merged_provider_details = {
-                **(part.provider_details or {}),
-                **self.provider_details,
-            }
+            merged_provider_details = {**(part.provider_details or {}), **self.provider_details}
             part = replace(part, provider_details=merged_provider_details)
 
         return part
@@ -2130,8 +2026,7 @@ class ToolCallPartDelta:
 
 
 ModelResponsePartDelta = Annotated[
-    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta,
-    pydantic.Discriminator('part_delta_kind'),
+    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta, pydantic.Discriminator('part_delta_kind')
 ]
 """A partial update (delta) for any model response part."""
 
@@ -2151,15 +2046,7 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal[
-            'text',
-            'thinking',
-            'tool-call',
-            'builtin-tool-call',
-            'builtin-tool-return',
-            'file',
-        ]
-        | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
     ) = None
     """The kind of the previous part, if any.
 
@@ -2199,15 +2086,7 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal[
-            'text',
-            'thinking',
-            'tool-call',
-            'builtin-tool-call',
-            'builtin-tool-return',
-            'file',
-        ]
-        | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
     ) = None
     """The kind of the next part, if any.
 
@@ -2235,8 +2114,7 @@ class FinalResultEvent:
 
 
 ModelResponseStreamEvent = Annotated[
-    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent,
-    pydantic.Discriminator('event_kind'),
+    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
 ]
 """An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
 
@@ -2331,7 +2209,5 @@ HandleResponseEvent = Annotated[
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[
-    ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')
-]
+AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""

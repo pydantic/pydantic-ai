@@ -19,13 +19,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import (
-    CodeExecutionTool,
-    ImageAspectRatio,
-    ImageGenerationTool,
-    MCPServerTool,
-    WebSearchTool,
-)
+from ..builtin_tools import CodeExecutionTool, ImageAspectRatio, ImageGenerationTool, MCPServerTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
@@ -60,25 +54,10 @@ from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    download_item,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
-    from openai import (
-        NOT_GIVEN,
-        APIConnectionError,
-        APIStatusError,
-        AsyncOpenAI,
-        AsyncStream,
-        Omit,
-        omit,
-    )
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -91,32 +70,20 @@ try:
         chat_completion_token_logprob,
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
-    from openai.types.chat.chat_completion_content_part_input_audio_param import (
-        InputAudio,
-    )
+    from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
-    from openai.types.chat.chat_completion_message_custom_tool_call import (
-        ChatCompletionMessageCustomToolCall,
-    )
-    from openai.types.chat.chat_completion_message_function_tool_call import (
-        ChatCompletionMessageFunctionToolCall,
-    )
+    from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
     from openai.types.chat.chat_completion_message_function_tool_call_param import (
         ChatCompletionMessageFunctionToolCallParam,
     )
-    from openai.types.chat.chat_completion_prediction_content_param import (
-        ChatCompletionPredictionContentParam,
-    )
+    from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
     from openai.types.chat.completion_create_params import (
         WebSearchOptions,
         WebSearchOptionsUserLocation,
         WebSearchOptionsUserLocationApproximate,
     )
-    from openai.types.responses import (
-        ComputerToolParam,
-        FileSearchToolParam,
-        WebSearchToolParam,
-    )
+    from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.responses.response_reasoning_item_param import (
         Content as ReasoningContent,
@@ -156,17 +123,14 @@ Using this more broad type for the model name instead of the ChatModel definitio
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 """
 
-MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = (
-    'x-openai-connector'
-)
+MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
 """
 Prefix for OpenAI connector IDs. OpenAI supports either a URL or a connector ID when passing MCP configuration to a model,
 by using that prefix like `x-openai-connector:<connector-id>` in a URL, you can pass a connector ID to a model.
 """
 
 _CHAT_FINISH_REASON_MAP: dict[
-    Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'],
-    FinishReason,
+    Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'], FinishReason
 ] = {
     'stop': 'stop',
     'length': 'length',
@@ -175,9 +139,7 @@ _CHAT_FINISH_REASON_MAP: dict[
     'function_call': 'tool_call',
 }
 
-_RESPONSES_FINISH_REASON_MAP: dict[
-    Literal['max_output_tokens', 'content_filter'] | ResponseStatus, FinishReason
-] = {
+_RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'] | ResponseStatus, FinishReason] = {
     'max_output_tokens': 'length',
     'content_filter': 'content_filter',
     'completed': 'stop',
@@ -185,9 +147,7 @@ _RESPONSES_FINISH_REASON_MAP: dict[
     'failed': 'error',
 }
 
-_OPENAI_ASPECT_RATIO_TO_SIZE: dict[
-    ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']
-] = {
+_OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
     '1:1': '1024x1024',
     '2:3': '1024x1536',
     '3:2': '1536x1024',
@@ -283,9 +243,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    openai_builtin_tools: Sequence[
-        FileSearchToolParam | WebSearchToolParam | ComputerToolParam
-    ]
+    openai_builtin_tools: Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]
     """The provided OpenAI built-in tools to use.
 
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
@@ -476,18 +434,14 @@ class OpenAIChatModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(
-                'gateway/openai' if provider == 'gateway' else provider
-            )
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
         if system_prompt_role is not None:
-            self.profile = OpenAIModelProfile(
-                openai_system_prompt_role=system_prompt_role
-            ).update(self.profile)
+            self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
 
     @property
     def base_url(self) -> str:
@@ -520,10 +474,7 @@ class OpenAIChatModel(Model):
             model_request_parameters,
         )
         response = await self._completions_create(
-            messages,
-            False,
-            cast(OpenAIChatModelSettings, model_settings or {}),
-            model_request_parameters,
+            messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
         return model_response
@@ -542,15 +493,10 @@ class OpenAIChatModel(Model):
             model_request_parameters,
         )
         response = await self._completions_create(
-            messages,
-            True,
-            cast(OpenAIChatModelSettings, model_settings or {}),
-            model_request_parameters,
+            messages, True, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(
-                response, model_request_parameters
-            )
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     @overload
     async def _completions_create(
@@ -584,9 +530,7 @@ class OpenAIChatModel(Model):
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif (
             not model_request_parameters.allow_text_output
-            and OpenAIModelProfile.from_profile(
-                self.profile
-            ).openai_supports_tool_choice_required
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
         ):
             tool_choice = 'required'
         else:
@@ -600,14 +544,11 @@ class OpenAIChatModel(Model):
             assert output_object is not None
             response_format = self._map_json_schema(output_object)
         elif (
-            model_request_parameters.output_mode == 'prompted'
-            and self.profile.supports_json_object_output
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        unsupported_model_settings = OpenAIModelProfile.from_profile(
-            self.profile
-        ).openai_unsupported_model_settings
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
 
@@ -640,22 +581,16 @@ class OpenAIChatModel(Model):
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=model_settings.get(
-                    'openai_prompt_cache_retention', OMIT
-                ),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code, model_name=self.model_name, body=e.body
-                ) from e
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
 
-    def _parse_openai_annotations(
-        self, message: chat.ChatCompletionMessage, content: str | None
-    ) -> list[URLCitation]:
+    def _parse_openai_annotations(self, message: chat.ChatCompletionMessage, content: str | None) -> list[URLCitation]:
         """Extract citations from OpenAI's annotation format.
 
         Pulls out url_citation annotations from the message and converts them
@@ -737,19 +672,13 @@ class OpenAIChatModel(Model):
             response.created = int(timestamp.timestamp())
 
         # Workaround for local Ollama which sometimes returns a `None` finish reason.
-        if (
-            response.choices
-            and (choice := response.choices[0])
-            and choice.finish_reason is None
-        ):  # pyright: ignore[reportUnnecessaryComparison]
+        if response.choices and (choice := response.choices[0]) and choice.finish_reason is None:  # pyright: ignore[reportUnnecessaryComparison]
             choice.finish_reason = 'stop'
 
         try:
             response = self._validate_completion(response)
         except ValidationError as e:
-            raise UnexpectedModelBehavior(
-                f'Invalid response from {self.system} chat completions endpoint: {e}'
-            ) from e
+            raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
@@ -757,23 +686,13 @@ class OpenAIChatModel(Model):
         # The `reasoning_content` field is only present in DeepSeek models.
         # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
-            items.append(
-                ThinkingPart(
-                    id='reasoning_content',
-                    content=reasoning_content,
-                    provider_name=self.system,
-                )
-            )
+            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
 
         # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
         if reasoning := getattr(choice.message, 'reasoning', None):
-            items.append(
-                ThinkingPart(
-                    id='reasoning', content=reasoning, provider_name=self.system
-                )
-            )
+            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
 
         # NOTE: We don't currently handle OpenRouter `reasoning_details`:
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
@@ -790,23 +709,18 @@ class OpenAIChatModel(Model):
                     'bytes': lp.bytes,
                     'logprob': lp.logprob,
                     'top_logprobs': [
-                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob}
-                        for tlp in lp.top_logprobs
+                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
                     ],
                 }
                 for lp in choice.logprobs.content
             ]
 
         # Parse annotations from the message (if any)
-        citations = self._parse_openai_annotations(
-            choice.message, choice.message.content
-        )
+        citations = self._parse_openai_annotations(choice.message, choice.message.content)
 
         if choice.message.content is not None:
             # Split content into TextParts and ThinkingParts
-            content_parts = split_content_into_text_and_thinking(
-                choice.message.content, self.profile.thinking_tags
-            )
+            content_parts = split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
 
             # Collect TextParts and calculate their offsets in the original content
             # Citations are based on the original content string (choice.message.content),
@@ -843,9 +757,7 @@ class OpenAIChatModel(Model):
                     # and advance past it (including the tags)
                     tag_start = original_content.find(start_tag, current_pos)
                     if tag_start >= 0:
-                        tag_end = original_content.find(
-                            end_tag, tag_start + len(start_tag)
-                        )
+                        tag_end = original_content.find(end_tag, tag_start + len(start_tag))
                         if tag_end >= 0:
                             # Advance past the entire thinking tag (including both tags)
                             current_pos = tag_end + len(end_tag)
@@ -859,9 +771,7 @@ class OpenAIChatModel(Model):
                 # Group citations by TextPart index
                 citations_by_part: dict[int, list[URLCitation]] = {}
                 for citation in citations:
-                    part_index = map_citation_to_text_part(
-                        citation, text_parts, content_offsets
-                    )
+                    part_index = map_citation_to_text_part(citation, text_parts, content_offsets)
                     if part_index is not None:
                         if part_index not in citations_by_part:
                             citations_by_part[part_index] = []
@@ -872,29 +782,19 @@ class OpenAIChatModel(Model):
                 for i, part in enumerate(content_parts):
                     if isinstance(part, TextPart):
                         if text_part_index in citations_by_part:
-                            content_parts[i] = replace(
-                                part, citations=citations_by_part[text_part_index]
-                            )
+                            content_parts[i] = replace(part, citations=citations_by_part[text_part_index])
                         text_part_index += 1
 
             # Add all parts to items (with updated TextParts that may have citations)
             items.extend(
-                (
-                    replace(part, id='content', provider_name=self.system)
-                    if isinstance(part, ThinkingPart)
-                    else part
-                )
+                (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
                 for part in content_parts
             )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
-                    part = ToolCallPart(
-                        c.function.name, c.function.arguments, tool_call_id=c.id
-                    )
-                elif isinstance(
-                    c, ChatCompletionMessageCustomToolCall
-                ):  # pragma: no cover
+                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
                     # NOTE: Custom tool calls are not supported.
                     # See <https://github.com/pydantic/pydantic-ai/issues/v> for more details.
                     raise RuntimeError('Custom tool calls are not supported')
@@ -915,9 +815,7 @@ class OpenAIChatModel(Model):
             finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
-    def _process_thinking(
-        self, message: chat.ChatCompletionMessage
-    ) -> list[ThinkingPart] | None:
+    def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
         """Hook that maps reasoning tokens to thinking parts.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
@@ -940,19 +838,13 @@ class OpenAIChatModel(Model):
                 continue
             reasoning: str | None = getattr(message, field_name, None)
             if reasoning:  # pragma: no branch
-                items.append(
-                    ThinkingPart(
-                        id=field_name, content=reasoning, provider_name=self.system
-                    )
-                )
+                items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
                 return items
 
         return items or None
 
     async def _process_streamed_response(
-        self,
-        response: AsyncStream[ChatCompletionChunk],
-        model_request_parameters: ModelRequestParameters,
+        self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
     ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -976,22 +868,13 @@ class OpenAIChatModel(Model):
             _model=self,  # Store model reference for parsing annotations
         )
 
-    def _get_tools(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> list[chat.ChatCompletionToolParam]:
-        return [
-            self._map_tool_definition(r)
-            for r in model_request_parameters.tool_defs.values()
-        ]
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    def _get_web_search_options(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> WebSearchOptions | None:
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):  # pragma: no branch
-                if not OpenAIModelProfile.from_profile(
-                    self.profile
-                ).openai_chat_supports_web_search:
+                if not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search:
                     raise UserError(
                         f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
                         f'Please use `OpenAIResponsesModel` instead.'
@@ -1002,9 +885,7 @@ class OpenAIChatModel(Model):
                         search_context_size=tool.search_context_size,
                         user_location=WebSearchOptionsUserLocation(
                             type='approximate',
-                            approximate=WebSearchOptionsUserLocationApproximate(
-                                **tool.user_location
-                            ),
+                            approximate=WebSearchOptionsUserLocationApproximate(**tool.user_location),
                         ),
                     )
                 return WebSearchOptions(search_context_size=tool.search_context_size)
@@ -1026,13 +907,9 @@ class OpenAIChatModel(Model):
 
         texts: list[str] = field(default_factory=list)
         thinkings: list[str] = field(default_factory=list)
-        tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
-            default_factory=list
-        )
+        tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
 
-        def map_assistant_message(
-            self, message: ModelResponse
-        ) -> chat.ChatCompletionAssistantMessageParam:
+        def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
             for item in message.parts:
                 if isinstance(item, TextPart):
                     self._map_response_text_part(item)
@@ -1040,9 +917,7 @@ class OpenAIChatModel(Model):
                     self._map_response_thinking_part(item)
                 elif isinstance(item, ToolCallPart):
                     self._map_response_tool_call_part(item)
-                elif isinstance(
-                    item, BuiltinToolCallPart | BuiltinToolReturnPart
-                ):  # pragma: no cover
+                elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
@@ -1063,10 +938,7 @@ class OpenAIChatModel(Model):
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
-            if (
-                profile.openai_chat_send_back_thinking_parts == 'field'
-                and self.thinkings
-            ):
+            if profile.openai_chat_send_back_thinking_parts == 'field' and self.thinkings:
                 field = profile.openai_chat_thinking_field
                 if field:  # pragma: no branch (handled by profile validation)
                     message_param[field] = '\n\n'.join(self.thinkings)
@@ -1108,9 +980,7 @@ class OpenAIChatModel(Model):
             """
             self.tool_calls.append(self._model._map_tool_call(item))
 
-        def _map_response_builtin_part(
-            self, item: BuiltinToolCallPart | BuiltinToolReturnPart
-        ) -> None:
+        def _map_response_builtin_part(self, item: BuiltinToolCallPart | BuiltinToolReturnPart) -> None:
             """Maps a built-in tool call or return part to the response context.
 
             This method serves as a hook that can be overridden by subclasses
@@ -1128,9 +998,7 @@ class OpenAIChatModel(Model):
             # Files generated by models are not sent back to models that don't themselves generate files.
             pass
 
-    def _map_model_response(
-        self, message: ModelResponse
-    ) -> chat.ChatCompletionMessageParam:
+    def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
         """Hook that determines how `ModelResponse` is mapped into `ChatCompletionMessageParam` objects before sending.
 
         Subclasses of `OpenAIChatModel` may override this method to provide their own mapping logic.
@@ -1138,8 +1006,7 @@ class OpenAIChatModel(Model):
         return self._MapModelResponseContext(self).map_assistant_message(message)
 
     def _map_finish_reason(
-        self,
-        key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'],
+        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
     ) -> FinishReason | None:
         """Hooks that maps a finish reason key to a [FinishReason][pydantic_ai.messages.FinishReason].
 
@@ -1148,9 +1015,7 @@ class OpenAIChatModel(Model):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     async def _map_messages(
-        self,
-        messages: list[ModelMessage],
-        model_request_parameters: ModelRequestParameters,
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
@@ -1163,12 +1028,7 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            openai_messages.insert(
-                0,
-                chat.ChatCompletionSystemMessageParam(
-                    content=instructions, role='system'
-                ),
-            )
+            openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
         return openai_messages
 
     @staticmethod
@@ -1179,21 +1039,14 @@ class OpenAIChatModel(Model):
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
 
-    def _map_json_schema(
-        self, o: OutputObjectDefinition
-    ) -> chat.completion_create_params.ResponseFormat:
+    def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
         response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
             'type': 'json_schema',
-            'json_schema': {
-                'name': o.name or DEFAULT_OUTPUT_TOOL_NAME,
-                'schema': o.json_schema,
-            },
+            'json_schema': {'name': o.name or DEFAULT_OUTPUT_TOOL_NAME, 'schema': o.json_schema},
         }
         if o.description:
             response_format_param['json_schema']['description'] = o.description
-        if OpenAIModelProfile.from_profile(
-            self.profile
-        ).openai_supports_strict_tool_definition:  # pragma: no branch
+        if OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:  # pragma: no branch
             response_format_param['json_schema']['strict'] = o.strict
         return response_format_param
 
@@ -1206,35 +1059,20 @@ class OpenAIChatModel(Model):
                 'parameters': f.parameters_json_schema,
             },
         }
-        if (
-            f.strict
-            and OpenAIModelProfile.from_profile(
-                self.profile
-            ).openai_supports_strict_tool_definition
-        ):
+        if f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:
             tool_param['function']['strict'] = f.strict
         return tool_param
 
-    async def _map_user_message(
-        self, message: ModelRequest
-    ) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+    async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                system_prompt_role = OpenAIModelProfile.from_profile(
-                    self.profile
-                ).openai_system_prompt_role
+                system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
                 if system_prompt_role == 'developer':
-                    yield chat.ChatCompletionDeveloperMessageParam(
-                        role='developer', content=part.content
-                    )
+                    yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
                 elif system_prompt_role == 'user':
-                    yield chat.ChatCompletionUserMessageParam(
-                        role='user', content=part.content
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
                 else:
-                    yield chat.ChatCompletionSystemMessageParam(
-                        role='system', content=part.content
-                    )
+                    yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
@@ -1245,9 +1083,7 @@ class OpenAIChatModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(
-                        role='user', content=part.model_response()
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
@@ -1257,9 +1093,7 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(part)
 
-    async def _map_user_prompt(
-        self, part: UserPromptPart
-    ) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
+    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
@@ -1267,23 +1101,15 @@ class OpenAIChatModel(Model):
             content = []
             for item in part.content:
                 if isinstance(item, str):
-                    content.append(
-                        ChatCompletionContentPartTextParam(text=item, type='text')
-                    )
+                    content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
                 elif isinstance(item, ImageUrl):
                     image_url: ImageURL = {'url': item.url}
                     if metadata := item.vendor_metadata:
                         image_url['detail'] = metadata.get('detail', 'auto')
                     if item.force_download:
-                        image_content = await download_item(
-                            item, data_format='base64_uri', type_format='extension'
-                        )
+                        image_content = await download_item(item, data_format='base64_uri', type_format='extension')
                         image_url['url'] = image_content['data']
-                    content.append(
-                        ChatCompletionContentPartImageParam(
-                            image_url=image_url, type='image_url'
-                        )
-                    )
+                    content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     if self._is_text_like_media_type(item.media_type):
                         # Inline text-like binary content as a text block
@@ -1298,22 +1124,11 @@ class OpenAIChatModel(Model):
                         image_url = ImageURL(url=item.data_uri)
                         if metadata := item.vendor_metadata:
                             image_url['detail'] = metadata.get('detail', 'auto')
-                        content.append(
-                            ChatCompletionContentPartImageParam(
-                                image_url=image_url, type='image_url'
-                            )
-                        )
+                        content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
-                        audio = InputAudio(
-                            data=base64.b64encode(item.data).decode('utf-8'),
-                            format=item.format,
-                        )
-                        content.append(
-                            ChatCompletionContentPartInputAudioParam(
-                                input_audio=audio, type='input_audio'
-                            )
-                        )
+                        audio = InputAudio(data=base64.b64encode(item.data).decode('utf-8'), format=item.format)
+                        content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                     elif item.is_document:
                         content.append(
                             File(
@@ -1325,26 +1140,15 @@ class OpenAIChatModel(Model):
                             )
                         )
                     else:  # pragma: no cover
-                        raise RuntimeError(
-                            f'Unsupported binary content type: {item.media_type}'
-                        )
+                        raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
-                    downloaded_item = await download_item(
-                        item, data_format='base64', type_format='extension'
-                    )
+                    downloaded_item = await download_item(item, data_format='base64', type_format='extension')
                     assert downloaded_item['data_type'] in (
                         'wav',
                         'mp3',
-                    ), f"Unsupported audio format: {downloaded_item['data_type']}"
-                    audio = InputAudio(
-                        data=downloaded_item['data'],
-                        format=downloaded_item['data_type'],
-                    )
-                    content.append(
-                        ChatCompletionContentPartInputAudioParam(
-                            input_audio=audio, type='input_audio'
-                        )
-                    )
+                    ), f'Unsupported audio format: {downloaded_item["data_type"]}'
+                    audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
+                    content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
                     if self._is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
@@ -1356,9 +1160,7 @@ class OpenAIChatModel(Model):
                             )
                         )
                     else:
-                        downloaded_item = await download_item(
-                            item, data_format='base64_uri', type_format='extension'
-                        )
+                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                         content.append(
                             File(
                                 file=FileFile(
@@ -1389,9 +1191,7 @@ class OpenAIChatModel(Model):
         )
 
     @staticmethod
-    def _inline_text_file_part(
-        text: str, *, media_type: str, identifier: str
-    ) -> ChatCompletionContentPartTextParam:
+    def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
         text = '\n'.join(
             [
                 f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
@@ -1459,9 +1259,7 @@ class OpenAIResponsesModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(
-                'gateway/openai' if provider == 'gateway' else provider
-            )
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -1493,10 +1291,7 @@ class OpenAIResponsesModel(Model):
             model_request_parameters,
         )
         response = await self._responses_create(
-            messages,
-            False,
-            cast(OpenAIResponsesModelSettings, model_settings or {}),
-            model_request_parameters,
+            messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         return self._process_response(response, model_request_parameters)
 
@@ -1514,20 +1309,13 @@ class OpenAIResponsesModel(Model):
             model_request_parameters,
         )
         response = await self._responses_create(
-            messages,
-            True,
-            cast(OpenAIResponsesModelSettings, model_settings or {}),
-            model_request_parameters,
+            messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(
-                response, model_request_parameters
-            )
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     def _process_response(  # noqa: C901
-        self,
-        response: responses.Response,
-        model_request_parameters: ModelRequestParameters,
+        self, response: responses.Response, model_request_parameters: ModelRequestParameters
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = number_to_datetime(response.created_at)
@@ -1619,12 +1407,8 @@ class OpenAIResponsesModel(Model):
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
                 # Handle raw CoT content from gpt-oss models
-                raw_content: list[str] | None = (
-                    [c.text for c in item.content] if item.content else None
-                )
-                provider_details: dict[str, Any] | None = (
-                    {'raw_content': raw_content} if raw_content else None
-                )
+                raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
+                provider_details: dict[str, Any] | None = {'raw_content': raw_content} if raw_content else None
 
                 if item.summary:
                     for summary in item.summary:
@@ -1634,9 +1418,7 @@ class OpenAIResponsesModel(Model):
                                 content=summary.text,
                                 id=item.id,
                                 signature=signature,
-                                provider_name=self.system
-                                if (signature or provider_details)
-                                else None,
+                                provider_name=self.system if (signature or provider_details) else None,
                                 provider_details=provider_details,
                             )
                         )
@@ -1649,25 +1431,17 @@ class OpenAIResponsesModel(Model):
                             content='',
                             id=item.id,
                             signature=signature,
-                            provider_name=self.system
-                            if (signature or provider_details)
-                            else None,
+                            provider_name=self.system if (signature or provider_details) else None,
                             provider_details=provider_details,
                         )
                     )
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
-                    if isinstance(
-                        content, responses.ResponseOutputText
-                    ):  # pragma: no branch
+                    if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
-                            part_provider_details = {
-                                'logprobs': _map_logprobs(content.logprobs)
-                            }
-                        citations = _parse_responses_output_text_annotations(
-                            content.text, content.annotations
-                        )
+                            part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
+                        citations = _parse_responses_output_text_annotations(content.text, content.annotations)
                         items.append(
                             TextPart(
                                 content.text,
@@ -1686,9 +1460,7 @@ class OpenAIResponsesModel(Model):
                     )
                 )
             elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
-                call_part, return_part, file_parts = _map_code_interpreter_tool_call(
-                    item, self.system
-                )
+                call_part, return_part, file_parts = _map_code_interpreter_tool_call(item, self.system)
                 items.append(call_part)
                 if file_parts:
                     items.extend(file_parts)
@@ -1698,29 +1470,21 @@ class OpenAIResponsesModel(Model):
                 items.append(call_part)
                 items.append(return_part)
             elif isinstance(item, responses.response_output_item.ImageGenerationCall):
-                call_part, return_part, file_part = _map_image_generation_tool_call(
-                    item, self.system
-                )
+                call_part, return_part, file_part = _map_image_generation_tool_call(item, self.system)
                 items.append(call_part)
                 if file_part:  # pragma: no branch
                     items.append(file_part)
                 items.append(return_part)
-            elif isinstance(
-                item, responses.ResponseComputerToolCall
-            ):  # pragma: no cover
+            elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
             elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
                 # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                 pass
-            elif isinstance(
-                item, responses.response_output_item.LocalShellCall
-            ):  # pragma: no cover
+            elif isinstance(item, responses.response_output_item.LocalShellCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
                 pass
-            elif isinstance(
-                item, responses.ResponseFileSearchToolCall
-            ):  # pragma: no cover
+            elif isinstance(item, responses.ResponseFileSearchToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the FileSearch built-in tool
                 pass
             elif isinstance(item, responses.response_output_item.McpCall):
@@ -1731,28 +1495,20 @@ class OpenAIResponsesModel(Model):
                 call_part, return_part = _map_mcp_list_tools(item, self.system)
                 items.append(call_part)
                 items.append(return_part)
-            elif isinstance(
-                item, responses.response_output_item.McpApprovalRequest
-            ):  # pragma: no cover
+            elif isinstance(item, responses.response_output_item.McpApprovalRequest):  # pragma: no cover
                 # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
                 pass
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
-        raw_finish_reason = (
-            details.reason
-            if (details := response.incomplete_details)
-            else response.status
-        )
+        raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
         if raw_finish_reason:
             provider_details = {'finish_reason': raw_finish_reason}
             finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(
-                response, self._provider.name, self._provider.base_url, self.model_name
-            ),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
             timestamp=timestamp,
@@ -1771,9 +1527,7 @@ class OpenAIResponsesModel(Model):
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
-            raise UnexpectedModelBehavior(
-                'Streamed response ended without content or tool calls'
-            )
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, responses.ResponseCreatedEvent)
         return OpenAIResponsesStreamedResponse(
@@ -1818,23 +1572,16 @@ class OpenAIResponsesModel(Model):
         profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif (
-            not model_request_parameters.allow_text_output
-            and profile.openai_supports_tool_choice_required
-        ):
+        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
 
         previous_response_id = model_settings.get('openai_previous_response_id')
         if previous_response_id == 'auto':
-            previous_response_id, messages = (
-                self._get_previous_response_id_and_new_messages(messages)
-            )
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
-        instructions, openai_messages = await self._map_messages(
-            messages, model_settings, model_request_parameters
-        )
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings)
 
         text: responses.ResponseTextConfigParam | None = None
@@ -1843,8 +1590,7 @@ class OpenAIResponsesModel(Model):
             assert output_object is not None
             text = {'format': self._map_json_schema(output_object)}
         elif (
-            model_request_parameters.output_mode == 'prompted'
-            and self.profile.supports_json_object_output
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
         ):  # pragma: no branch
             text = {'format': {'type': 'json_object'}}
 
@@ -1852,9 +1598,7 @@ class OpenAIResponsesModel(Model):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            openai_messages.insert(
-                0, responses.EasyInputMessageParam(role='system', content=instructions)
-            )
+            openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
             instructions = OMIT
 
         if verbosity := model_settings.get('openai_text_verbosity'):
@@ -1911,34 +1655,24 @@ class OpenAIResponsesModel(Model):
                 text=text or OMIT,
                 include=include or OMIT,
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=model_settings.get(
-                    'openai_prompt_cache_retention', OMIT
-                ),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code, model_name=self.model_name, body=e.body
-                ) from e
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _get_reasoning(
-        self, model_settings: OpenAIResponsesModelSettings
-    ) -> Reasoning | Omit:
+    def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
-        reasoning_generate_summary = model_settings.get(
-            'openai_reasoning_generate_summary', None
-        )
+        reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
 
         if reasoning_summary and reasoning_generate_summary:  # pragma: no cover
-            raise ValueError(
-                '`openai_reasoning_summary` and `openai_reasoning_generate_summary` cannot both be set.'
-            )
+            raise ValueError('`openai_reasoning_summary` and `openai_reasoning_generate_summary` cannot both be set.')
 
         if reasoning_generate_summary is not None:  # pragma: no cover
             warnings.warn(
@@ -1951,17 +1685,10 @@ class OpenAIResponsesModel(Model):
             return OMIT
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
-    def _get_tools(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> list[responses.FunctionToolParam]:
-        return [
-            self._map_tool_definition(r)
-            for r in model_request_parameters.tool_defs.values()
-        ]
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    def _get_builtin_tools(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> list[responses.ToolParam]:
+    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
         for tool in model_request_parameters.builtin_tools:
@@ -1970,17 +1697,13 @@ class OpenAIResponsesModel(Model):
                     type='web_search', search_context_size=tool.search_context_size
                 )
                 if tool.user_location:
-                    web_search_tool['user_location'] = (
-                        responses.web_search_tool_param.UserLocation(
-                            type='approximate', **tool.user_location
-                        )
+                    web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
+                        type='approximate', **tool.user_location
                     )
                 tools.append(web_search_tool)
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
-                tools.append(
-                    {'type': 'code_interpreter', 'container': {'type': 'auto'}}
-                )
+                tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
             elif isinstance(tool, MCPServerTool):
                 mcp_tool = responses.tool_param.Mcp(
                     type='mcp',
@@ -2028,10 +1751,7 @@ class OpenAIResponsesModel(Model):
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
                 )
 
-        if (
-            model_request_parameters.allow_image_output
-            and not has_image_generating_tool
-        ):
+        if model_request_parameters.allow_image_output and not has_image_generating_tool:
             tools.append({'type': 'image_generation'})
         return tools
 
@@ -2042,10 +1762,7 @@ class OpenAIResponsesModel(Model):
             'type': 'function',
             'description': f.description,
             'strict': bool(
-                f.strict
-                and OpenAIModelProfile.from_profile(
-                    self.profile
-                ).openai_supports_strict_tool_definition
+                f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
             ),
         }
 
@@ -2088,8 +1805,7 @@ class OpenAIResponsesModel(Model):
         """
         profile = OpenAIModelProfile.from_profile(self.profile)
         send_item_ids = model_settings.get(
-            'openai_send_reasoning_ids',
-            profile.openai_supports_encrypted_reasoning_content,
+            'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
         )
 
         openai_messages: list[responses.ResponseInputItemParam] = []
@@ -2097,11 +1813,7 @@ class OpenAIResponsesModel(Model):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
-                        openai_messages.append(
-                            responses.EasyInputMessageParam(
-                                role='system', content=part.content
-                            )
-                        )
+                        openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
@@ -2116,15 +1828,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             openai_messages.append(
-                                Message(
-                                    role='user',
-                                    content=[
-                                        {
-                                            'type': 'input_text',
-                                            'text': part.model_response(),
-                                        }
-                                    ],
-                                )
+                                Message(role='user', content=[{'type': 'input_text', 'text': part.model_response()}])
                             )
                         else:
                             call_id = _guard_tool_call_id(t=part)
@@ -2143,15 +1847,11 @@ class OpenAIResponsesModel(Model):
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
-                code_interpreter_item: (
-                    responses.ResponseCodeInterpreterToolCallParam | None
-                ) = None
+                code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         if item.id and send_item_ids:
-                            if (
-                                message_item is None or message_item['id'] != item.id
-                            ):  # pragma: no branch
+                            if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
                                     role='assistant',
                                     id=item.id,
@@ -2164,16 +1864,12 @@ class OpenAIResponsesModel(Model):
                             message_item['content'] = [
                                 *message_item['content'],
                                 responses.ResponseOutputTextParam(
-                                    text=item.content,
-                                    type='output_text',
-                                    annotations=[],
+                                    text=item.content, type='output_text', annotations=[]
                                 ),
                             ]
                         else:
                             openai_messages.append(
-                                responses.EasyInputMessageParam(
-                                    role='assistant', content=item.content
-                                )
+                                responses.EasyInputMessageParam(role='assistant', content=item.content)
                             )
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
@@ -2192,24 +1888,20 @@ class OpenAIResponsesModel(Model):
                             param['id'] = id
                         openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
-                        if (
-                            item.provider_name == self.system and send_item_ids
-                        ):  # pragma: no branch
+                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
                                 and (container_id := args.get('container_id'))
                             ):
-                                code_interpreter_item = (
-                                    responses.ResponseCodeInterpreterToolCallParam(
-                                        id=item.tool_call_id,
-                                        code=args.get('code'),
-                                        container_id=container_id,
-                                        outputs=None,  # These can be read server-side
-                                        status='completed',
-                                        type='code_interpreter_call',
-                                    )
+                                code_interpreter_item = responses.ResponseCodeInterpreterToolCallParam(
+                                    id=item.tool_call_id,
+                                    code=args.get('code'),
+                                    container_id=container_id,
+                                    outputs=None,  # These can be read server-side
+                                    status='completed',
+                                    type='code_interpreter_call',
                                 )
                                 openai_messages.append(code_interpreter_item)
                             elif (
@@ -2221,18 +1913,12 @@ class OpenAIResponsesModel(Model):
                                 args = {k: v for k, v in args.items() if v is not None}
                                 web_search_item = responses.ResponseFunctionWebSearchParam(
                                     id=item.tool_call_id,
-                                    action=cast(
-                                        responses.response_function_web_search_param.Action,
-                                        args,
-                                    ),
+                                    action=cast(responses.response_function_web_search_param.Action, args),
                                     status='completed',
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif (
-                                item.tool_name == ImageGenerationTool.kind
-                                and item.tool_call_id
-                            ):
+                            elif item.tool_name == ImageGenerationTool.kind and item.tool_call_id:
                                 # The cast is necessary because of https://github.com/openai/openai-python/issues/2648
                                 image_generation_item = cast(
                                     responses.response_input_item_param.ImageGenerationCall,
@@ -2274,9 +1960,7 @@ class OpenAIResponsesModel(Model):
                                     openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, BuiltinToolReturnPart):
-                        if (
-                            item.provider_name == self.system and send_item_ids
-                        ):  # pragma: no branch
+                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and code_interpreter_item is not None
@@ -2296,9 +1980,7 @@ class OpenAIResponsesModel(Model):
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
-                            elif item.tool_name.startswith(
-                                MCPServerTool.kind
-                            ):  # pragma: no branch
+                            elif item.tool_name.startswith(MCPServerTool.kind):  # pragma: no branch
                                 # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
@@ -2310,9 +1992,7 @@ class OpenAIResponsesModel(Model):
                         # Get raw CoT content from provider_details if present and from this provider
                         raw_content: list[str] | None = None
                         if item.provider_name == self.system:
-                            raw_content = (item.provider_details or {}).get(
-                                'raw_content'
-                            )
+                            raw_content = (item.provider_details or {}).get('raw_content')
 
                         if item.id and (send_item_ids or raw_content):
                             signature: str | None = None
@@ -2323,10 +2003,7 @@ class OpenAIResponsesModel(Model):
                             ):
                                 signature = item.signature
 
-                            if (
-                                reasoning_item is None
-                                or reasoning_item['id'] != item.id
-                            ) and (
+                            if (reasoning_item is None or reasoning_item['id'] != item.id) and (
                                 signature or item.content or raw_content
                             ):  # pragma: no branch
                                 reasoning_item = responses.ResponseReasoningItemParam(
@@ -2342,40 +2019,30 @@ class OpenAIResponsesModel(Model):
                                 assert reasoning_item is not None
                                 reasoning_item['summary'] = [
                                     *reasoning_item['summary'],
-                                    ReasoningSummary(
-                                        text=item.content, type='summary_text'
-                                    ),
+                                    ReasoningSummary(text=item.content, type='summary_text'),
                                 ]
 
                             if raw_content:
                                 # Send raw CoT back
                                 assert reasoning_item is not None
                                 reasoning_item['content'] = [
-                                    ReasoningContent(text=text, type='reasoning_text')
-                                    for text in raw_content
+                                    ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
                             start_tag, end_tag = profile.thinking_tags
                             openai_messages.append(
                                 responses.EasyInputMessageParam(
-                                    role='assistant',
-                                    content='\n'.join(
-                                        [start_tag, item.content, end_tag]
-                                    ),
+                                    role='assistant', content='\n'.join([start_tag, item.content, end_tag])
                                 )
                             )
                     else:
                         assert_never(item)
             else:
                 assert_never(message)
-        instructions = (
-            self._get_instructions(messages, model_request_parameters) or OMIT
-        )
+        instructions = self._get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
 
-    def _map_json_schema(
-        self, o: OutputObjectDefinition
-    ) -> responses.ResponseFormatTextJSONSchemaConfigParam:
+    def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
         response_format_param: responses.ResponseFormatTextJSONSchemaConfigParam = {
             'type': 'json_schema',
             'name': o.name or DEFAULT_OUTPUT_TOOL_NAME,
@@ -2383,9 +2050,7 @@ class OpenAIResponsesModel(Model):
         }
         if o.description:
             response_format_param['description'] = o.description
-        if OpenAIModelProfile.from_profile(
-            self.profile
-        ).openai_supports_strict_tool_definition:  # pragma: no branch
+        if OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:  # pragma: no branch
             response_format_param['strict'] = o.strict
         return response_format_param
 
@@ -2398,9 +2063,7 @@ class OpenAIResponsesModel(Model):
             content = []
             for item in part.content:
                 if isinstance(item, str):
-                    content.append(
-                        responses.ResponseInputTextParam(text=item, type='input_text')
-                    )
+                    content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         detail: Literal['auto', 'low', 'high'] = 'auto'
@@ -2428,25 +2091,16 @@ class OpenAIResponsesModel(Model):
                             )
                         )
                     elif item.is_audio:
-                        raise NotImplementedError(
-                            'Audio as binary content is not supported for OpenAI Responses API.'
-                        )
+                        raise NotImplementedError('Audio as binary content is not supported for OpenAI Responses API.')
                     else:  # pragma: no cover
-                        raise RuntimeError(
-                            f'Unsupported binary content type: {item.media_type}'
-                        )
+                        raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
                     detail: Literal['auto', 'low', 'high'] = 'auto'
                     image_url = item.url
                     if metadata := item.vendor_metadata:
-                        detail = cast(
-                            Literal['auto', 'low', 'high'],
-                            metadata.get('detail', 'auto'),
-                        )
+                        detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
                     if item.force_download:
-                        downloaded_item = await download_item(
-                            item, data_format='base64_uri', type_format='extension'
-                        )
+                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                         image_url = downloaded_item['data']
 
                     content.append(
@@ -2457,20 +2111,16 @@ class OpenAIResponsesModel(Model):
                         )
                     )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
-                    downloaded_item = await download_item(
-                        item, data_format='base64_uri', type_format='extension'
-                    )
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
                             file_data=downloaded_item['data'],
-                            filename=f"filename.{downloaded_item['data_type']}",
+                            filename=f'filename.{downloaded_item["data_type"]}',
                         )
                     )
                 elif isinstance(item, DocumentUrl):
-                    downloaded_item = await download_item(
-                        item, data_format='base64_uri', type_format='extension'
-                    )
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
@@ -2497,9 +2147,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
     _provider_name: str
-    _model: OpenAIModel = field(
-        repr=False
-    )  # Store model reference for parsing annotations
+    _model: OpenAIModel = field(repr=False)  # Store model reference for parsing annotations
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -2534,9 +2182,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
-                    if isinstance(maybe_event, PartStartEvent) and isinstance(
-                        maybe_event.part, ThinkingPart
-                    ):
+                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
                         maybe_event.part.id = 'content'
                         maybe_event.part.provider_name = self.provider_name
                     yield maybe_event
@@ -2554,9 +2200,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
             # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
             # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-            if reasoning := getattr(
-                choice.delta, 'reasoning', None
-            ):  # pragma: no cover
+            if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
                 yield self._parts_manager.handle_thinking_delta(
                     vendor_part_id='reasoning',
                     id='reasoning',
@@ -2565,9 +2209,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 )
                 break
 
-    def _map_text_delta(
-        self, choice: chat_completion_chunk.Choice
-    ) -> Iterable[ModelResponseStreamEvent]:
+    def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps text delta content to events.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
@@ -2581,16 +2223,12 @@ class OpenAIStreamedResponse(StreamedResponse):
                 thinking_tags=self._model_profile.thinking_tags,
                 ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
             ):
-                if isinstance(event, PartStartEvent) and isinstance(
-                    event.part, ThinkingPart
-                ):
+                if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
                     event.part.id = 'content'
                     event.part.provider_name = self.provider_name
                 yield event
 
-    def _map_tool_call_delta(
-        self, choice: chat_completion_chunk.Choice
-    ) -> Iterable[ModelResponseStreamEvent]:
+    def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
@@ -2871,9 +2509,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 self._usage += self._map_usage(chunk.response)
 
                 raw_finish_reason = (
-                    details.reason
-                    if (details := chunk.response.incomplete_details)
-                    else chunk.response.status
+                    details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                 )
                 if raw_finish_reason:  # pragma: no branch
                     self.provider_details = {'finish_reason': raw_finish_reason}
@@ -2927,9 +2563,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(
-                chunk, responses.ResponseIncompleteEvent
-            ):  # pragma: no cover
+            elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                 self._usage += self._map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseInProgressEvent):
@@ -2949,28 +2583,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
-                    call_part, _ = _map_web_search_tool_call(
-                        chunk.item, self.provider_name
-                    )
+                    call_part, _ = _map_web_search_tool_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        part=replace(call_part, args=None),
+                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                     )
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                    call_part, _, _ = _map_code_interpreter_tool_call(
-                        chunk.item, self.provider_name
-                    )
+                    call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
 
                     args_json = call_part.args_as_json_str()
                     # Drop the final `"}` so that we can add code deltas
                     args_json_delta = args_json[:-2]
-                    assert args_json_delta.endswith('"code":"'), (
-                        f'Expected {args_json_delta!r} to end in `"code":"`'
-                    )
+                    assert args_json_delta.endswith('"code":"'), f'Expected {args_json_delta!r} to end in `"code":"`'
 
                     yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        part=replace(call_part, args=None),
+                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                     )
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
@@ -2978,15 +2604,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
-                elif isinstance(
-                    chunk.item, responses.response_output_item.ImageGenerationCall
-                ):
-                    call_part, _, _ = _map_image_generation_tool_call(
-                        chunk.item, self.provider_name
-                    )
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call', part=call_part
-                    )
+                elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
+                    call_part, _, _ = _map_image_generation_tool_call(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 elif isinstance(chunk.item, responses.response_output_item.McpCall):
                     call_part, _ = _map_mcp_call(chunk.item, self.provider_name)
 
@@ -2998,8 +2618,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
 
                     yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        part=replace(call_part, args=None),
+                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                     )
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
@@ -3007,13 +2626,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
-                elif isinstance(
-                    chunk.item, responses.response_output_item.McpListTools
-                ):
+                elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                     call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call', part=call_part
-                    )
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -3032,20 +2647,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         ):
                             yield event
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                    _, return_part, file_parts = _map_code_interpreter_tool_call(
-                        chunk.item, self.provider_name
-                    )
+                    _, return_part, file_parts = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
                     for i, file_part in enumerate(file_parts):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-file-{i}', part=file_part
                         )
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                    )
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
-                    call_part, return_part = _map_web_search_tool_call(
-                        chunk.item, self.provider_name
-                    )
+                    call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
 
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
@@ -3054,43 +2663,23 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
 
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                    )
-                elif isinstance(
-                    chunk.item, responses.response_output_item.ImageGenerationCall
-                ):
-                    _, return_part, file_part = _map_image_generation_tool_call(
-                        chunk.item, self.provider_name
-                    )
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
+                    _, return_part, file_part = _map_image_generation_tool_call(chunk.item, self.provider_name)
                     if file_part:  # pragma: no branch
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-file', part=file_part
-                        )
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                    )
+                        yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-file', part=file_part)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
                 elif isinstance(chunk.item, responses.response_output_item.McpCall):
                     _, return_part = _map_mcp_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                    )
-                elif isinstance(
-                    chunk.item, responses.response_output_item.McpListTools
-                ):
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                     _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                    )
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
                 # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
-                vendor_id = (
-                    chunk.item_id
-                    if chunk.summary_index == 0
-                    else f'{chunk.item_id}-{chunk.summary_index}'
-                )
+                vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
                 for event in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=vendor_id,
                     content=chunk.part.text,
@@ -3106,11 +2695,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
                 # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
-                vendor_id = (
-                    chunk.item_id
-                    if chunk.summary_index == 0
-                    else f'{chunk.item_id}-{chunk.summary_index}'
-                )
+                vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
                 for event in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=vendor_id,
                     content=chunk.delta,
@@ -3123,9 +2708,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 for event in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=chunk.item_id,
                     id=chunk.item_id,
-                    provider_details=_make_raw_content_updater(
-                        chunk.delta, chunk.content_index
-                    ),
+                    provider_details=_make_raw_content_updater(chunk.delta, chunk.content_index),
                 ):
                     yield event
 
@@ -3167,15 +2750,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseWebSearchCallCompletedEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(
-                chunk, responses.ResponseAudioDeltaEvent
-            ):  # pragma: lax no cover
+            elif isinstance(chunk, responses.ResponseAudioDeltaEvent):  # pragma: lax no cover
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDeltaEvent):
-                json_args_delta = to_json(chunk.delta).decode()[
-                    1:-1
-                ]  # Drop the surrounding `"`
+                json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args=json_args_delta,
@@ -3194,19 +2773,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseCodeInterpreterCallCompletedEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(
-                chunk, responses.ResponseCodeInterpreterCallInProgressEvent
-            ):
+            elif isinstance(chunk, responses.ResponseCodeInterpreterCallInProgressEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(
-                chunk, responses.ResponseCodeInterpreterCallInterpretingEvent
-            ):
+            elif isinstance(chunk, responses.ResponseCodeInterpreterCallInterpretingEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(
-                chunk, responses.ResponseImageGenCallCompletedEvent
-            ):  # pragma: no cover
+            elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseImageGenCallGeneratingEvent):
@@ -3226,9 +2799,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     ),
                     id=chunk.item_id,
                 )
-                yield self._parts_manager.handle_part(
-                    vendor_part_id=f'{chunk.item_id}-file', part=file_part
-                )
+                yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
 
             elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -3252,17 +2823,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseMcpListToolsCompletedEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(
-                chunk, responses.ResponseMcpListToolsFailedEvent
-            ):  # pragma: no cover
+            elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(
-                chunk, responses.ResponseMcpCallFailedEvent
-            ):  # pragma: no cover
+            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
@@ -3275,9 +2842,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
-        return _map_usage(
-            response, self._provider_name, self._provider_url, self.model_name
-        )
+        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -3300,9 +2865,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _make_raw_content_updater(
-    delta: str, index: int
-) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
+def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
     """Create a callback that updates `provider_details['raw_content']`.
 
     This is used for streaming raw CoT from gpt-oss models. The callback pattern keeps
@@ -3332,8 +2895,7 @@ def _map_logprobs(
             'bytes': lp.bytes,
             'logprob': lp.logprob,
             'top_logprobs': [
-                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob}
-                for tlp in lp.top_logprobs
+                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
             ],
         }
         for lp in logprobs
@@ -3354,14 +2916,7 @@ def _map_usage(
     details = {
         k: v
         for k, v in usage_data.items()
-        if k
-        not in {
-            'prompt_tokens',
-            'completion_tokens',
-            'input_tokens',
-            'output_tokens',
-            'total_tokens',
-        }
+        if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
         if isinstance(v, int)
     }
     response_data = dict(model=model, usage=usage_data)
@@ -3369,18 +2924,14 @@ def _map_usage(
         api_flavor = 'responses'
 
         if getattr(response_usage, 'output_tokens_details', None) is not None:
-            details['reasoning_tokens'] = (
-                response_usage.output_tokens_details.reasoning_tokens
-            )
+            details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
         else:
             details['reasoning_tokens'] = 0
     else:
         api_flavor = 'chat'
 
         if response_usage.completion_tokens_details is not None:
-            details.update(
-                response_usage.completion_tokens_details.model_dump(exclude_none=True)
-            )
+            details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
 
     return usage.RequestUsage.extract(
         response_data,
@@ -3427,18 +2978,14 @@ def _map_code_interpreter_tool_call(
     logs: list[str] = []
     if item.outputs:
         for output in item.outputs:
-            if isinstance(
-                output, responses.response_code_interpreter_tool_call.OutputImage
-            ):
+            if isinstance(output, responses.response_code_interpreter_tool_call.OutputImage):
                 file_parts.append(
                     FilePart(
                         content=BinaryImage.from_data_uri(output.url),
                         id=item.id,
                     )
                 )
-            elif isinstance(
-                output, responses.response_code_interpreter_tool_call.OutputLogs
-            ):
+            elif isinstance(output, responses.response_code_interpreter_tool_call.OutputLogs):
                 logs.append(output.logs)
             else:
                 assert_never(output)
