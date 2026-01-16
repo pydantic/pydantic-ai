@@ -117,16 +117,17 @@ class OpenAIModelProfile(ModelProfile):
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    # default reasoning_effort='medium'
-    is_gpt_5 = model_name.startswith('gpt-5')
+    # GPT-5.1+ models use `reasoning={"effort": "none"}` by default, which allows sampling params.
+    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2'))
+
+    # doesn't support `reasoning={"effort": "none"}` -  default is set at 'medium'
+    # see https://platform.openai.com/docs/guides/reasoning
+    is_gpt_5 = model_name.startswith('gpt-5') and not is_gpt_5_1_plus
 
     # always reasoning
     is_o_series = model_name.startswith('o')
 
-    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2'))
-
-    # GPT-5.1+ models use reasoning_effort='none' by default, which allows sampling params.
-    thinking_always_enabled = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name and not is_gpt_5_1_plus)
+    thinking_always_enabled = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name)
 
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
