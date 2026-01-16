@@ -102,4 +102,3 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
         else:
             assert res.kind == 'output'
             return res.output
-

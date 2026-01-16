@@ -117,4 +117,3 @@ class RestateMCPServer(WrapperToolset[AgentDepsT]):
             assert res.kind == 'output'
             assert res.output is not None
             return res.output
-

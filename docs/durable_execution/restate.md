@@ -58,7 +58,7 @@ async def handler(ctx: restate.Context, name: str) -> str:
 
 ## Streaming and event handlers
 
-`RestateAgent` is designed to run inside Restate handlers, where streaming response APIs aren’t supported. Use an `event_stream_handler` and call [`RestateAgent.run()`][pydantic_ai.durable_exec.restate.RestateAgent.run] instead of `run_stream()` or `run_stream_events()`.
+`RestateAgent` is designed to run inside Restate handlers, where streaming response APIs aren't supported. Use an `event_stream_handler` and call [`RestateAgent.run()`][pydantic_ai.durable_exec.restate.RestateAgent.run] instead of `run_stream()` or `run_stream_events()`.
 
 ## Disabling automatic tool wrapping
 

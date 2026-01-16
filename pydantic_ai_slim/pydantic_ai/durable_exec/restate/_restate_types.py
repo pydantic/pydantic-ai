@@ -10,6 +10,7 @@ __all__ = ['T', 'Context', 'RunOptions', 'TerminalError', 'Serde']
 
 
 if TYPE_CHECKING:
+
     class TerminalError(Exception):
         """Type-checking fallback for `restate.TerminalError`."""
 
@@ -41,4 +42,3 @@ if TYPE_CHECKING:
 else:  # pragma: no cover
     from restate import Context, RunOptions, TerminalError
     from restate.serde import Serde
-

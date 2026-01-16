@@ -131,9 +131,7 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
                     )
 
                 try:
-                    args_dict = real_tool.args_validator.validate_python(
-                        tool_args, context=ctx.validation_context
-                    )
+                    args_dict = real_tool.args_validator.validate_python(tool_args, context=ctx.validation_context)
                 except ValidationError as e:
                     # Convert validation errors into ModelRetry so the agent can ask the model to retry.
                     return RestateContextRunResult(kind='model_retry', output=None, error=str(e))
@@ -196,4 +194,3 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
         while isinstance(unwrapped, WrapperToolset):
             unwrapped = unwrapped.wrapped
         return isinstance(unwrapped, FunctionToolset)
-
