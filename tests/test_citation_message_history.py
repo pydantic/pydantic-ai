@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 import pytest  # pyright: ignore[reportMissingImports]
 
-from pydantic_ai import GroundingCitation, TextPart, ToolResultCitation, URLCitation, usage
+from pydantic_ai import ContainerFileCitation, GroundingCitation, TextPart, ToolResultCitation, URLCitation, usage
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse, UserPromptPart
 
 
@@ -144,6 +144,35 @@ def test_citation_in_multi_turn_conversation():
     # Verify second response doesn't have citations (as expected)
     assert isinstance(deserialized[2], ModelResponse)
     assert deserialized[2].parts[0].citations is None or len(deserialized[2].parts[0].citations) == 0
+
+
+def test_container_file_citation_serialization_round_trip():
+    """ContainerFileCitation survives JSON serialization/deserialization."""
+    citation = ContainerFileCitation(
+        container_id='cntr_123',
+        file_id='file_abc',
+        filename='message_history.md',
+        start_index=0,
+        end_index=5,
+    )
+    text_part = TextPart(content='Hello', citations=[citation])
+    response = ModelResponse(
+        parts=[text_part],
+        model_name='test',
+        usage=usage.RequestUsage(input_tokens=10, output_tokens=5),
+    )
+    messages = [response]
+
+    json_bytes = ModelMessagesTypeAdapter.dump_json(messages)
+    deserialized = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.validate_json(json_bytes))
+
+    assert isinstance(deserialized[0], ModelResponse)
+    assert isinstance(deserialized[0].parts[0], TextPart)
+    assert deserialized[0].parts[0].citations is not None
+    assert len(deserialized[0].parts[0].citations) == 1
+    assert isinstance(deserialized[0].parts[0].citations[0], ContainerFileCitation)
+    assert deserialized[0].parts[0].citations[0].container_id == 'cntr_123'
+    assert deserialized[0].parts[0].citations[0].file_id == 'file_abc'
 
 
 @pytest.mark.anyio
