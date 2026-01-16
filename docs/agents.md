@@ -952,6 +952,50 @@ Instructions guide model behavior like system prompts, but handle `message_histo
 
 Use `instructions` by default. Use `system_prompt` only when you need prompts to accumulate across multiple agents or runs in a conversation.
 
+??? info "Example: payload structure across runs using both"
+    ```python
+    from pydantic_ai import Agent
+
+    agent_a = Agent('test', system_prompt='Be helpful')
+    agent_b = Agent('test', instructions='Speak French')
+
+    # Run 1: agent_a's system_prompt is added to the request
+    result1 = agent_a.run_sync('Hello')
+
+    # Run 2: agent_b uses message_history from run 1
+    # - agent_a's system_prompt remains in history
+    # - agent_b's instructions are added
+    result2 = agent_b.run_sync('How are you?', message_history=result1.all_messages())
+    ```
+
+    **Internal structure:**
+
+    - Run 1 creates: `ModelRequest(parts=[SystemPromptPart('Be helpful'), UserPromptPart('Hello')], instructions=None)`
+    - Run 2 creates: `ModelRequest(parts=[UserPromptPart('How are you?')], instructions='Speak French')`
+
+    **What gets sent to the provider (Run 2):**
+
+    - **OpenAI**: System prompts and instructions become separate messages:
+      ```python
+      [
+          {'role': 'system', 'content': 'Be helpful'},
+          {'role': 'system', 'content': 'Speak French'},
+          {'role': 'user', 'content': 'Hello'},
+          {'role': 'assistant', 'content': '...'},
+          {'role': 'user', 'content': 'How are you?'},
+      ]
+      ```
+
+    - **Anthropic / Google**: System prompts and instructions are concatenated:
+      ```python
+      system = 'Be helpful\n\nSpeak French'
+      messages = [
+          {'role': 'user', 'content': 'Hello'},
+          {'role': 'assistant', 'content': '...'},
+          {'role': 'user', 'content': 'How are you?'},
+      ]
+      ```
+
 Instructions, like system prompts, can be specified at different times:
 
 1. **Static instructions**: These are known when writing the code and can be defined via the `instructions` parameter of the [`Agent` constructor][pydantic_ai.agent.Agent.__init__].
