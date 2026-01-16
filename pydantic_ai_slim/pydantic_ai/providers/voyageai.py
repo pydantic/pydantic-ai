@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from typing import overload
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider
@@ -28,6 +29,12 @@ class VoyageAIProvider(Provider[AsyncClient]):
     @property
     def client(self) -> AsyncClient:
         return self._client
+
+    @overload
+    def __init__(self, *, voyageai_client: AsyncClient) -> None: ...
+
+    @overload
+    def __init__(self, *, api_key: str | None = None, voyageai_client: None = None) -> None: ...
 
     def __init__(
         self,
