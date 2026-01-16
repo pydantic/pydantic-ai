@@ -64,6 +64,14 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
     """
     sampling_msgs: list[mcp_types.SamplingMessage] = []
 
+    def tool_return_text(part: messages.BaseToolReturnPart) -> str:
+        return f'Tool `{part.tool_name}` (id={part.tool_call_id}) returned:\n{part.model_response_str()}'
+
+    def retry_prompt_text(part: messages.RetryPromptPart) -> str:
+        if part.tool_name is None:
+            return part.model_response()
+        return f'Tool `{part.tool_name}` (id={part.tool_call_id}) requested retry:\n{part.model_response()}'
+
     def add_msg(
         role: Literal['user', 'assistant'],
         content: mcp_types.TextContent | mcp_types.ImageContent | mcp_types.AudioContent,
@@ -98,6 +106,10 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                             # TODO(Marcelo): Add support for audio content.
                             else:
                                 raise NotImplementedError(f'Unsupported content type: {type(chunk)}')
+                if isinstance(part, messages.ToolReturnPart):
+                    add_msg('user', mcp_types.TextContent(type='text', text=tool_return_text(part)))
+                if isinstance(part, messages.RetryPromptPart):
+                    add_msg('user', mcp_types.TextContent(type='text', text=retry_prompt_text(part)))
         else:
             add_msg('assistant', map_from_model_response(pai_message))
     return ''.join(system_prompt), sampling_msgs
