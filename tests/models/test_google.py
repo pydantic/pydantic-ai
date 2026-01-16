@@ -5458,8 +5458,7 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
     """
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
-    # Create a ModelRequest with tool return followed by user prompt
-    # This simulates continuing a conversation after structured output
+    # ToolReturn + UserPrompt
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
@@ -5471,7 +5470,6 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
 
     _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
-    # Verify split into two content objects
     assert contents == snapshot(
         [
             {
@@ -5486,6 +5484,99 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                     }
                 ],
             },
-            {'role': 'user', 'parts': [{'text': "What's 2 + 2?"}]},
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': "What's 2 + 2?",
+                    }
+                ],
+            },
+        ]
+    )
+
+    # ToolReturn + Retry + UserPrompt
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
+                RetryPromptPart(content='Please retry'),
+                UserPromptPart(content="What's 2 + 2?"),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': 'Validation feedback:\nPlease retry\n\nFix the errors and try again.',
+                    },
+                    {
+                        'text': "What's 2 + 2?",
+                    },
+                ],
+            },
+        ]
+    )
+
+    # ToolReturn + Retry + Multiple UserPrompts
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
+                RetryPromptPart(content='Please retry'),
+                UserPromptPart(content="What's 2 + 2?"),
+                UserPromptPart(content="What's 3 + 3?"),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': 'Validation feedback:\nPlease retry\n\nFix the errors and try again.',
+                    },
+                    {
+                        'text': "What's 2 + 2?",
+                    },
+                    {
+                        'text': "What's 3 + 3?",
+                    },
+                ],
+            },
         ]
     )
