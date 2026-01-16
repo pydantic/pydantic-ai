@@ -2382,18 +2382,8 @@ async def test_image_agent(allow_model_requests: None, client: Client):
 # media_type is properly serialized through Temporal activities
 # ============================================================================
 
-
-def document_url_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Return a DocumentUrl with a custom media_type that cannot be inferred from the URL."""
-    assert info.output_tools is not None
-    document_url_json = '{"url": "https://example.com/doc/12345", "media_type": "application/pdf"}'
-    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, document_url_json)])
-
-
-document_url_model = FunctionModel(document_url_response)
-
 document_url_agent = Agent(
-    document_url_model,
+    TestModel(custom_output_args={'url': 'https://example.com/doc/12345', 'media_type': 'application/pdf'}),
     name='document_url_agent',
     output_type=DocumentUrl,
 )
@@ -3081,26 +3071,6 @@ class MockPayloadCodec(PayloadCodec):
         self, payloads: Sequence[temporalio.api.common.v1.Payload]
     ) -> list[temporalio.api.common.v1.Payload]:  # pragma: no cover
         return list(payloads)
-
-
-def test_pydantic_ai_json_payload_converter_preserves_document_url_media_type() -> None:
-    """Test that `PydanticAIJSONPayloadConverter` preserves `DocumentUrl.media_type` during round-trip.
-
-    This is a regression test for https://github.com/pydantic/pydantic-ai/issues/3949
-    """
-
-    converter = PydanticAIPayloadConverter()
-    json_converter = converter.converters[b'json/plain']
-
-    original = DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf')
-
-    payload = json_converter.to_payload(original)
-    assert payload is not None
-
-    restored = json_converter.from_payload(payload, DocumentUrl)  # pyright: ignore[reportUnknownMemberType]
-    assert restored == snapshot(
-        DocumentUrl(url='https://example.com/doc/12345', _media_type='application/pdf', _identifier='eb8998')
-    )
 
 
 def test_pydantic_ai_plugin_no_converter_returns_pydantic_ai_data_converter() -> None:
