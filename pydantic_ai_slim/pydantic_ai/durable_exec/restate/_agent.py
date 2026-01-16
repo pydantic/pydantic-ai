@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from typing import Any, Never, overload
+from typing import Any, overload
 
 from restate import Context, TerminalError
+from typing_extensions import Never
 
 from pydantic_ai import models
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.agent.abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT
 from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -17,12 +17,13 @@ from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRun, AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import BuiltinToolFunc, DeferredToolResults, RunContext
+from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, DeferredToolResults, RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._model import RestateModelWrapper
+from ._dynamic_toolset import RestateDynamicToolset
 from ._toolset import RestateContextRunToolSet
 
 
@@ -110,6 +111,30 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             """Set the Restate context for the toolset, wrapping tools if needed."""
             if isinstance(toolset, FunctionToolset) and not disable_auto_wrapping_tools:
                 return RestateContextRunToolSet(toolset, restate_context)
+
+            # Dynamic toolsets may resolve to I/O toolsets; ensure tool discovery and calls are durable.
+            try:
+                from pydantic_ai.toolsets._dynamic import DynamicToolset
+            except ImportError:  # pragma: no cover
+                pass
+            else:
+                if isinstance(toolset, DynamicToolset):
+                    return RestateDynamicToolset(
+                        toolset,
+                        restate_context,
+                        disable_auto_wrapping_tools=disable_auto_wrapping_tools,
+                    )
+
+            # FastMCP toolsets require I/O, so they must be wrapped for durability.
+            try:
+                from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+            except ImportError:  # pragma: no cover
+                pass
+            else:
+                if isinstance(toolset, FastMCPToolset):
+                    from ._fastmcp_toolset import RestateFastMCPToolset
+
+                    return RestateFastMCPToolset(toolset, restate_context)
             try:
                 from pydantic_ai.mcp import MCPServer
             except ImportError:
@@ -249,10 +274,12 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata for this run.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -373,10 +400,12 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata for this run.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.

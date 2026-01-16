@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from restate import Context, RunOptions
+from pydantic.errors import PydanticUserError
+from restate import Context, RunOptions, TerminalError
 
 from pydantic_ai.agent.abstract import EventStreamHandler
 from pydantic_ai.durable_exec.restate._serde import PydanticTypeAdapter
@@ -12,7 +13,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStrea
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 MODEL_RESPONSE_SERDE = PydanticTypeAdapter(ModelResponse)
@@ -56,7 +57,7 @@ class RestateModelWrapper(WrapperModel):
         self,
         wrapped: Model,
         context: Context,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
         max_attempts: int | None = None,
     ):
         super().__init__(wrapped)
@@ -65,7 +66,13 @@ class RestateModelWrapper(WrapperModel):
         self._event_stream_handler = event_stream_handler
 
     async def request(self, *args: Any, **kwargs: Any) -> ModelResponse:
-        return await self._context.run_typed('Model call', self.wrapped.request, self._options, *args, **kwargs)
+        async def request_run() -> ModelResponse:
+            try:
+                return await self.wrapped.request(*args, **kwargs)
+            except (UserError, PydanticUserError) as e:
+                raise TerminalError(str(e)) from e
+
+        return await self._context.run_typed('Model call', request_run, self._options)
 
     @asynccontextmanager
     async def request_stream(
@@ -73,7 +80,7 @@ class RestateModelWrapper(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[AgentDepsT] | None = None,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         if run_context is None:
             raise UserError(
@@ -88,17 +95,20 @@ class RestateModelWrapper(WrapperModel):
             )
 
         async def request_stream_run():
-            async with self.wrapped.request_stream(
-                messages,
-                model_settings,
-                model_request_parameters,
-                run_context,
-            ) as streamed_response:
-                await fn(run_context, streamed_response)
+            try:
+                async with self.wrapped.request_stream(
+                    messages,
+                    model_settings,
+                    model_request_parameters,
+                    run_context,
+                ) as streamed_response:
+                    await fn(run_context, streamed_response)
 
-                async for _ in streamed_response:
-                    pass
-            return streamed_response.get()
+                    async for _ in streamed_response:
+                        pass
+                return streamed_response.get()
+            except (UserError, PydanticUserError) as e:
+                raise TerminalError(str(e)) from e
 
         response = await self._context.run_typed('Model stream call', request_stream_run, self._options)
 

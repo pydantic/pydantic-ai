@@ -11,7 +11,7 @@ __all__ = [
 ]
 
 try:
-    from ._mcp_server import RestateMCPServer
+    from ._mcp_server import RestateMCPServer  # noqa: F401
 except ImportError:  # pragma: no cover
     pass
 else:

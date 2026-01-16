@@ -4,11 +4,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pydantic.errors import PydanticUserError
 from restate import Context, RunOptions, TerminalError
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
@@ -22,6 +22,7 @@ class RestateContextRunResult:
     kind: Literal['output', 'call_deferred', 'approval_required', 'model_retry']
     output: Any
     error: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 CONTEXT_RUN_SERDE = PydanticTypeAdapter(RestateContextRunResult)
@@ -48,19 +49,19 @@ class RestateContextRunToolSet(WrapperToolset[AgentDepsT]):
                 return RestateContextRunResult(kind='output', output=output, error=None)
             except ModelRetry as e:
                 return RestateContextRunResult(kind='model_retry', output=None, error=e.message)
-            except CallDeferred:
-                return RestateContextRunResult(kind='call_deferred', output=None, error=None)
-            except ApprovalRequired:
-                return RestateContextRunResult(kind='approval_required', output=None, error=None)
-            except UserError as e:
+            except CallDeferred as e:
+                return RestateContextRunResult(kind='call_deferred', output=None, error=None, metadata=e.metadata)
+            except ApprovalRequired as e:
+                return RestateContextRunResult(kind='approval_required', output=None, error=None, metadata=e.metadata)
+            except (UserError, PydanticUserError) as e:
                 raise TerminalError(str(e)) from e
 
         res = await self._context.run_typed(f'Calling {name}', action, self.options)
 
         if res.kind == 'call_deferred':
-            raise CallDeferred()
+            raise CallDeferred(metadata=res.metadata)
         elif res.kind == 'approval_required':
-            raise ApprovalRequired()
+            raise ApprovalRequired(metadata=res.metadata)
         elif res.kind == 'model_retry':
             assert res.error is not None
             raise ModelRetry(res.error)

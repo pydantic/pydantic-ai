@@ -4,7 +4,14 @@
 
 ## Durable Agent
 
-Any agent can be wrapped in a [`RestateAgent`][pydantic_ai.durable_exec.restate.RestateAgent] to run model calls and (by default) tool calls inside Restate `ctx.run_typed(...)` blocks.
+Any agent can be wrapped in a [`RestateAgent`][pydantic_ai.durable_exec.restate.RestateAgent] to run **model calls**, **tool calls**, and **tool discovery** inside Restate `ctx.run_typed(...)` blocks.
+
+This includes:
+
+- Function tools (by default)
+- MCP toolsets ([`MCPServer`][pydantic_ai.mcp.MCPServer])
+- FastMCP toolsets ([`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset])
+- Dynamic toolsets (e.g. from `@agent.toolset(...)`, including those that resolve to MCP/FastMCP toolsets)
 
 ### Installation
 
@@ -57,4 +64,6 @@ async def handler(ctx: restate.Context, name: str) -> str:
 
 By default, function tools are executed inside `ctx.run_typed(...)`. If you want to use the Restate context directly in your tool code (e.g. to call `ctx.run(...)` yourself), initialize the agent with `disable_auto_wrapping_tools=True`.
 
-In that mode, model calls (and MCP tool calls, if used) are still wrapped, but function tools are not.
+Restate does not allow nested context operations inside `ctx.run_typed(...)`, so calling `ctx.run(...)`/`ctx.run_typed(...)` inside an automatically-wrapped tool will fail — disable wrapping for those tools.
+
+In that mode, model calls (and MCP/FastMCP tool calls, if used) are still wrapped, but function tools (including those coming from dynamic toolsets like `@agent.toolset(...)`) are not.
