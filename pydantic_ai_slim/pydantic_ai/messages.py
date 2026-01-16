@@ -883,7 +883,10 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     _: KW_ONLY
 
     provider_name: str | None = None
-    """The name of the provider that generated the response. Set this when provider_details exists."""
+    """The name of the provider that generated the response.
+
+    Required to be set when provider_details is set.
+    """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
@@ -1037,15 +1040,23 @@ class TextPart:
     _: KW_ONLY
 
     id: str | None = None
-    """An optional identifier of the text part."""
+    """An optional identifier of the text part.
+
+    When this field is set, provider_name is required to identify the provider that generated this data.
+    """
 
     provider_name: str | None = None
-    """The name of the provider that generated the response. Set this when provider_details or id exists as they are provider-specific information."""
+    """The name of the provider that generated the response.
+
+    Required to be set when provider_details or id is set.
+    """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, provider_name is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1067,7 +1078,10 @@ class ThinkingPart:
     _: KW_ONLY
 
     id: str | None = None
-    """The identifier of the thinking part."""
+    """The identifier of the thinking part.
+
+    When this field is set, provider_name is required to identify the provider that generated this data.
+    """
 
     signature: str | None = None
     """The signature of the thinking.
@@ -1084,13 +1098,15 @@ class ThinkingPart:
     """The name of the provider that generated the response.
 
     Signatures are only sent back to the same provider.
-    Set this when provider_details or id exists as they are provider-specific information.
+    Required to be set when provider_details or id is set.
     """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, provider_name is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1112,16 +1128,23 @@ class FilePart:
     _: KW_ONLY
 
     id: str | None = None
-    """The identifier of the file part."""
+    """The identifier of the file part.
+
+    When this field is set, provider_name is required to identify the provider that generated this data.
+    """
 
     provider_name: str | None = None
-    """The name of the provider that generated the response. Set this when provider_details or id exists as they are provider-specific information.
+    """The name of the provider that generated the response.
+
+    Required to be set when provider_details or id is set.
     """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, provider_name is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1157,18 +1180,23 @@ class BaseToolCallPart:
     id: str | None = None
     """An optional identifier of the tool call part, separate from the tool call ID.
 
-    This is used by some APIs like OpenAI Responses."""
+    This is used by some APIs like OpenAI Responses.
+    When this field is set, provider_name is required to identify the provider that generated this data.
+    """
 
     provider_name: str | None = None
     """The name of the provider that generated the response.
 
-    Builtin tool calls are only sent back to the same provider. Set this when provider_details or id exists as they are provider-specific information.
+    Builtin tool calls are only sent back to the same provider.
+    Required to be set when provider_details or id is set.
     """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, provider_name is required to identify the provider that generated this data.
+    """
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -1508,7 +1536,7 @@ class TextPartDelta:
     _: KW_ONLY
 
     provider_name: str | None = None
-    """The name of the provider that generated the response. Set this when provider_details exists."""
+    """The name of the provider that generated the response."""
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
@@ -1559,7 +1587,7 @@ class ThinkingPartDelta:
     """Optional provider name for the thinking part.
 
     Signatures are only sent back to the same provider.
-    Set this when provider_details or id exists as they are provider-specific information.
+    Required to be set when provider_details is set.
     """
 
     provider_details: ProviderDetailsDelta = None
@@ -1568,7 +1596,8 @@ class ThinkingPartDelta:
     Can be a dict to merge with existing details, or a callable that takes
     the existing details and returns updated details.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, provider_name is required to identify the provider that generated this data."""
 
     part_delta_kind: Literal['thinking'] = 'thinking'
     """Part delta type identifier, used as a discriminator."""
@@ -1670,12 +1699,13 @@ class ToolCallPartDelta:
     non-matching value is provided an error will be raised."""
 
     provider_name: str | None = None
-    """The name of the provider that generated the response. Set this when provider_details exists."""
+    """The name of the provider that generated the response."""
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    """
 
     part_delta_kind: Literal['tool_call'] = 'tool_call'
     """Part delta type identifier, used as a discriminator."""

@@ -632,24 +632,9 @@ Short answer:
                     }
                 },
             },
-            {
-                'type': 'text-delta',
-                'delta': ' FastAPI/OpenTelemetry',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' instrumentation already records method',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '/route/status',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' FastAPI/OpenTelemetry', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' instrumentation already records method', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '/route/status', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -657,32 +642,11 @@ Short answer:
 - To also\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' include HTTP headers',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ', set',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' the capture-',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'headers env',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' include HTTP headers', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ', set', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' the capture-', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'headers env', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -690,80 +654,19 @@ Short answer:
 -\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' To include request',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '/response bodies',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ', use the',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' FastAPI',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '/ASGI',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' request/response',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' hooks and add',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' the',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' payload to',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' the span yourself',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' (with red',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'action/size',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' To include request', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '/response bodies', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ', use the', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' FastAPI', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '/ASGI', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' request/response', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' hooks and add', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' the', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' payload to', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' the span yourself', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' (with red', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'action/size', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -772,14 +675,8 @@ Short answer:
 How\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' to do it',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' to do it', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -788,20 +685,9 @@ How\
 1)\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' Enable header capture',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' (server side',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' Enable header capture', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' (server side', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -809,26 +695,10 @@ How\
 - Choose\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' just the',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' headers you need; avoid',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' sensitive ones or sanitize',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' just the', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' headers you need; avoid', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' sensitive ones or sanitize', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -837,56 +707,15 @@ How\
 export OTEL\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': '_INSTRUMENTATION_HTTP_CAPTURE',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '_HEADERS_SERVER_REQUEST="content',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '-type,user',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '-agent"\n',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'export OTEL_INSTRUMENTATION',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '_HTTP_CAPTURE_HEADERS',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '_SERVER_RESPONSE="content-type"\n',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'export OTEL_INSTRUMENTATION_HTTP',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': '_INSTRUMENTATION_HTTP_CAPTURE', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_HEADERS_SERVER_REQUEST="content', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '-type,user', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '-agent"\n', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'export OTEL_INSTRUMENTATION', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_HTTP_CAPTURE_HEADERS', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_SERVER_RESPONSE="content-type"\n', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'export OTEL_INSTRUMENTATION_HTTP', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -897,20 +726,9 @@ This makes headers appear on spans as http.request.header.* and http.response.he
 2)\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' Add hooks to capture request',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '/response bodies',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' Add hooks to capture request', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '/response bodies', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -918,92 +736,21 @@ This makes headers appear on spans as http.request.header.* and http.response.he
 Note:\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': IsStr(),
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' a built-in Python',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' env',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' var to',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' auto-capture',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' HTTP bodies for Fast',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'API/AS',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'GI. Use',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' hooks to look at',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' ASGI receive',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '/send events and',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' attach (tr',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'uncated) bodies',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' as span attributes',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': IsStr(), 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' a built-in Python', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' env', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' var to', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' auto-capture', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' HTTP bodies for Fast', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'API/AS', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'GI. Use', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' hooks to look at', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' ASGI receive', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '/send events and', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' attach (tr', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'uncated) bodies', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' as span attributes', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1012,20 +759,9 @@ Note:\
 from\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' fastapi import',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' FastAPI',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' fastapi import', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' FastAPI', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1033,20 +769,9 @@ from\
 from opente\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': 'lemetry.trace',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' import Span',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': 'lemetry.trace', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' import Span', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1054,26 +779,10 @@ from opente\
 from opente\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': 'lemetry.instrument',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'ation.fastapi import',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' FastAPIInstrument',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': 'lemetry.instrument', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'ation.fastapi import', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' FastAPIInstrument', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1082,32 +791,11 @@ or
 MAX\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': '_BYTES = ',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '2048 ',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' # keep this',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' small in prod',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': '_BYTES = ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '2048 ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' # keep this', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' small in prod', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1116,32 +804,11 @@ MAX\
 def client\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': '_request_hook(span',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ': Span,',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' scope: dict',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ', message:',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': '_request_hook(span', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ': Span,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' scope: dict', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ', message:', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1149,44 +816,13 @@ def client\
    \
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' if span and',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' span.is_record',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'ing() and',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' message.get("',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'type") ==',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' "http.request',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' if span and', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' span.is_record', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'ing() and', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' message.get("', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'type") ==', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' "http.request', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1194,26 +830,10 @@ def client\
         body\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' = message.get',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '("body")',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' or b"',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' = message.get', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '("body")', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' or b"', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1221,7 +841,6 @@ def client\
         if\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1230,14 +849,8 @@ def client\
            \
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' span.set_attribute',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' span.set_attribute', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1245,14 +858,8 @@ def client\
                 "\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': 'http.request.body',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': 'http.request.body', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1260,32 +867,11 @@ def client\
                 body\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': '[:MAX_BYTES',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '].decode("',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'utf-8',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '", "replace',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': '[:MAX_BYTES', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '].decode("', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'utf-8', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '", "replace', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1293,7 +879,6 @@ def client\
             )
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1302,32 +887,11 @@ def client\
 def client_response\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': '_hook(span:',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' Span, scope',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ': dict,',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' message: dict',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': '_hook(span:', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' Span, scope', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ': dict,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' message: dict', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1335,44 +899,13 @@ def client_response\
     if\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' span and span',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '.is_recording',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '() and message',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '.get("type',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '") == "',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'http.response.body',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' span and span', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.is_recording', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '() and message', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.get("type', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '") == "', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'http.response.body', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1380,26 +913,10 @@ def client_response\
         body\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' = message.get',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '("body")',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' or b"',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' = message.get', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '("body")', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' or b"', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1407,7 +924,6 @@ def client_response\
         if\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1416,14 +932,8 @@ def client_response\
            \
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' span.set_attribute',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' span.set_attribute', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1431,14 +941,8 @@ def client_response\
                 "\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': 'http.response.body',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': 'http.response.body', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1446,32 +950,11 @@ def client_response\
                 body\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': '[:MAX_BYTES',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '].decode("',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'utf-8',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '", "replace',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': '[:MAX_BYTES', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '].decode("', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'utf-8', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '", "replace', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1479,7 +962,6 @@ def client_response\
             )
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1488,7 +970,6 @@ def client_response\
 app = Fast\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1497,20 +978,9 @@ API()
 Fast\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': 'APIInstrumentor',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '.instrument_app(',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': 'APIInstrumentor', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.instrument_app(', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1518,7 +988,6 @@ Fast\
     app,\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1527,14 +996,8 @@ Fast\
     client_request\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': '_hook=client',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': '_hook=client', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1542,20 +1005,9 @@ _request_hook,
    \
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' client_response_hook',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '=client_response',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' client_response_hook', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '=client_response', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1563,7 +1015,6 @@ _hook,
 )
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1572,116 +1023,29 @@ _hook,
 - The hooks\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' receive the AS',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'GI event dict',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 's: http',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '.request (with',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' body/more',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '_body) and',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' http.response.body',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '. If your',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' bodies can be',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' chunked,',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' you may need',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' to accumulate across',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' calls when message',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '.get("more',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '_body") is',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' True. ',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' receive the AS', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'GI event dict', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 's: http', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.request (with', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' body/more', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_body) and', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' http.response.body', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '. If your', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' bodies can be', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' chunked,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' you may need', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' to accumulate across', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' calls when message', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.get("more', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_body") is', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' True. ', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': '([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html)',
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ')',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ')', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1690,20 +1054,9 @@ _hook,
 3)\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' Be careful with',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' PII and',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' Be careful with', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' PII and', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1711,26 +1064,10 @@ _hook,
 -\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' Always limit size',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' and consider redaction',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' before putting payloads',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' Always limit size', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' and consider redaction', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' before putting payloads', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1738,37 +1075,15 @@ _hook,
 -\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' Use the sanitize',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' env var above',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' for sensitive headers',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '. ',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' Use the sanitize', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' env var above', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' for sensitive headers', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '. ', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': '([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html))\n',
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1777,7 +1092,6 @@ _hook,
 Optional: correlate logs\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1786,38 +1100,12 @@ Optional: correlate logs\
 -\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' If you also want',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' request/response',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' details in logs with',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' trace IDs, enable',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' Python log correlation:\n',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' If you also want', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' request/response', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' details in logs with', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' trace IDs, enable', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' Python log correlation:\n', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1825,20 +1113,9 @@ Optional: correlate logs\
 export OTEL_P\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': 'YTHON_LOG_COR',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'RELATION=true',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': 'YTHON_LOG_COR', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'RELATION=true', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1847,7 +1124,6 @@ export OTEL_P\
 or programmatically\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1856,20 +1132,9 @@ or programmatically\
 from opente\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': 'lemetry.instrumentation',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '.logging import LoggingInstrument',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': 'lemetry.instrumentation', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.logging import LoggingInstrument', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1877,20 +1142,9 @@ or
 LoggingInstrument\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': 'or().instrument(set',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': '_logging_format=True)\n',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': 'or().instrument(set', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_logging_format=True)\n', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1898,49 +1152,17 @@ LoggingInstrument\
 This injects trace\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': '_id/span_id into',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' log records so you',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' can line up logs',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' with the span that',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' carries the HTTP payload',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' attributes. ',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': '_id/span_id into', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' log records so you', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' can line up logs', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' with the span that', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' carries the HTTP payload', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' attributes. ', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': '([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai))\n',
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'text-delta',
@@ -1949,42 +1171,16 @@ This injects trace\
 Want me to tailor\
 """,
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
-            {
-                'type': 'text-delta',
-                'delta': ' the hook to only',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' capture JSON bodies,',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' skip binary content,',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' or accumulate chunked',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'text-delta',
-                'delta': ' bodies safely?',
-                'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
+            {'type': 'text-delta', 'delta': ' the hook to only', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' capture JSON bodies,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' skip binary content,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' or accumulate chunked', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
             {
                 'type': 'text-end',
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'id': IsStr(), 'provider_name': 'openai'}},
+                'providerMetadata': {'pydantic_ai': {'id': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'stop'},
@@ -4735,7 +3931,6 @@ async def test_event_stream_text_with_provider_metadata():
                 'providerMetadata': {
                     'pydantic_ai': {
                         'id': 'text_event_id',
-                        'provider_name': 'openai',
                         'provider_details': {'model': 'gpt-4', 'tokens': 10},
                     }
                 },
@@ -4849,8 +4044,8 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata():
                 'providerExecuted': True,
                 'providerMetadata': {
                     'pydantic_ai': {
-                        'provider_name': 'openai',
                         'provider_details': {'tool_type': 'web_search_preview'},
+                        'provider_name': 'openai',
                         'id': 'builtin_call_id_456',
                     }
                 },

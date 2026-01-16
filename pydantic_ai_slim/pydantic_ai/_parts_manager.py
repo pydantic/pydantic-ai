@@ -149,9 +149,7 @@ class ModelResponsePartsManager:
         else:
             # Update the existing TextPart with the new content delta
             existing_text_part, part_index = existing_text_part_and_index
-            part_delta = TextPartDelta(
-                content_delta=content, provider_name=provider_name, provider_details=provider_details
-            )
+            part_delta = TextPartDelta(content_delta=content, provider_details=provider_details)
             self._parts[part_index] = part_delta.apply(existing_text_part)
             yield PartDeltaEvent(index=part_index, delta=part_delta)
 
