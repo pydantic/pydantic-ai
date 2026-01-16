@@ -16,26 +16,28 @@ from collections import defaultdict
 from pathlib import Path
 
 import pytest
+from pytest_recording.plugin import get_default_cassette_name
 
 
-def _remove_yaml_ext(s: str) -> str:
-    """Remove .yaml extension if present."""
-    if s.endswith('.yaml'):
-        return s[:-5]
-    return s
+class _CollectVcrTests:
+    """Pytest plugin that collects cassette names referenced by VCR-marked tests.
 
-
-class _CollectCassettes:
-    """Pytest plugin to collect cassette names from VCR-marked tests."""
+    This is a class (not functions) because pytest's plugin system requires objects
+    with hook methods, and we need to accumulate state across all test items.
+    """
 
     def __init__(self) -> None:
         self.tests: dict[str, set[str]] = defaultdict(set)
 
+    @staticmethod
+    def _remove_yaml_ext(s: str) -> str:
+        if s.endswith('.yaml'):
+            return s[:-5]
+        return s
+
     def pytest_collection_modifyitems(
         self, session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
     ) -> None:
-        from pytest_recording.plugin import get_default_cassette_name
-
         for item in items:
             if not any(item.iter_markers('vcr')):
                 continue
@@ -44,15 +46,15 @@ class _CollectCassettes:
 
             m = item.get_closest_marker('default_cassette')
             if m and m.args:
-                self.tests[test_file_stem].add(_remove_yaml_ext(m.args[0]))
+                self.tests[test_file_stem].add(self._remove_yaml_ext(m.args[0]))
             else:
                 self.tests[test_file_stem].add(
-                    _remove_yaml_ext(get_default_cassette_name(getattr(item, 'cls', None), item.name))
+                    self._remove_yaml_ext(get_default_cassette_name(getattr(item, 'cls', None), item.name))
                 )
 
             for vm in item.iter_markers('vcr'):
                 for arg in vm.args:
-                    self.tests[test_file_stem].add(_remove_yaml_ext(arg))
+                    self.tests[test_file_stem].add(self._remove_yaml_ext(arg))
 
 
 def get_all_cassettes() -> dict[str, set[str]]:
@@ -73,7 +75,7 @@ def get_all_cassettes() -> dict[str, set[str]]:
 
 def get_all_tests() -> dict[str, set[str]]:
     """Use pytest collection to get all VCR-marked tests and their cassette names."""
-    collector = _CollectCassettes()
+    collector = _CollectVcrTests()
     rc = pytest.main(['--collect-only', '-q', 'tests/'], plugins=[collector])
     if rc not in (pytest.ExitCode.OK, pytest.ExitCode.NO_TESTS_COLLECTED):
         raise SystemExit(rc)

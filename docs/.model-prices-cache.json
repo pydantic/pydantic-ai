@@ -1,0 +1,4178 @@
+{
+  "anthropic:claude-2": {
+    "input_mtok": 8,
+    "output_mtok": 24
+  },
+  "anthropic:claude-3-5-haiku-latest": {
+    "input_mtok": 0.8,
+    "output_mtok": 4
+  },
+  "anthropic:claude-3-5-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "anthropic:claude-3-7-sonnet-latest": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "anthropic:claude-3-haiku": {
+    "input_mtok": 0.25,
+    "output_mtok": 1.25
+  },
+  "anthropic:claude-3-opus-latest": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "anthropic:claude-3-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "anthropic:claude-haiku-4-5": {
+    "input_mtok": 1,
+    "output_mtok": 5
+  },
+  "anthropic:claude-instant-1": {
+    "input_mtok": 1.63,
+    "output_mtok": 55.1
+  },
+  "anthropic:claude-instant-1.2": {
+    "input_mtok": 1.63,
+    "output_mtok": 5.51
+  },
+  "anthropic:claude-opus-4-0": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "anthropic:claude-opus-4-1": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "anthropic:claude-opus-4-5": {
+    "input_mtok": 5,
+    "output_mtok": 25
+  },
+  "anthropic:claude-sonnet-4-0": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "anthropic:claude-sonnet-4-5": {
+    "input_mtok": {
+      "base": 3,
+      "tiers": [
+        {
+          "start": 200000,
+          "price": 6
+        }
+      ]
+    },
+    "output_mtok": {
+      "base": 15,
+      "tiers": [
+        {
+          "start": 200000,
+          "price": 22.5
+        }
+      ]
+    }
+  },
+  "anthropic:claude-v1": {
+    "input_mtok": 8,
+    "output_mtok": 24
+  },
+  "avian:Meta-Llama-3.1-405B-Instruct": {
+    "input_mtok": 1.5,
+    "output_mtok": 1.5
+  },
+  "avian:Meta-Llama-3.1-70B-Instruct": {
+    "input_mtok": 0.45,
+    "output_mtok": 0.45
+  },
+  "avian:Meta-Llama-3.1-8B-Instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "avian:Meta-Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.45,
+    "output_mtok": 0.45
+  },
+  "aws:amazon.nova-lite-v1:0": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.24
+  },
+  "aws:amazon.nova-micro-v1:0": {
+    "input_mtok": 0.035,
+    "output_mtok": 0.14
+  },
+  "aws:amazon.nova-premier-v1:0": {
+    "input_mtok": 2.5,
+    "output_mtok": 12.5
+  },
+  "aws:amazon.nova-pro-v1:0": {
+    "input_mtok": 0.8,
+    "output_mtok": 3.2
+  },
+  "aws:amazon.nova-sonic-v1:0": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.24
+  },
+  "aws:amazon.titan-text-express-v1": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "aws:amazon.titan-text-lite-v1": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.2
+  },
+  "aws:deepseek.r1-v1:0": {
+    "input_mtok": 1.35,
+    "output_mtok": 5.4
+  },
+  "aws:global.anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "input_mtok": 1,
+    "output_mtok": 5
+  },
+  "aws:global.anthropic.claude-sonnet-4-20250514-v1:0": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "aws:global.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "aws:meta.llama3-1-70b-instruct-v1:0": {
+    "input_mtok": 0.72,
+    "output_mtok": 0.72
+  },
+  "aws:meta.llama3-1-8b-instruct-v1:0": {
+    "input_mtok": 0.22,
+    "output_mtok": 0.22
+  },
+  "aws:meta.llama3-2-11b-instruct-v1:0": {
+    "input_mtok": 0.16,
+    "output_mtok": 0.16
+  },
+  "aws:meta.llama3-2-1b-instruct-v1:0": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "aws:meta.llama3-2-3b-instruct-v1:0": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "aws:meta.llama3-2-90b-instruct-v1:0": {
+    "input_mtok": 0.72,
+    "output_mtok": 0.72
+  },
+  "aws:meta.llama3-3-70b-instruct-v1:0": {
+    "input_mtok": 0.72,
+    "output_mtok": 0.72
+  },
+  "aws:meta.llama3-70b-instruct-v1:0": {
+    "input_mtok": 2.65,
+    "output_mtok": 3.5
+  },
+  "aws:meta.llama3-8b-instruct-v1:0": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.6
+  },
+  "aws:meta.llama4-maverick-17b-instruct-v1:0": {
+    "input_mtok": 0.24,
+    "output_mtok": 0.97
+  },
+  "aws:meta.llama4-scout-17b-instruct-v1:0": {
+    "input_mtok": 0.17,
+    "output_mtok": 0.66
+  },
+  "aws:mistral.mistral-7b-instruct-v0:2": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.2
+  },
+  "aws:mistral.mistral-large-2402-v1:0": {
+    "input_mtok": 4,
+    "output_mtok": 12
+  },
+  "aws:mistral.mistral-small-2402-v1:0": {
+    "input_mtok": 1,
+    "output_mtok": 3
+  },
+  "aws:mistral.mixtral-8x7b-instruct-v0:1": {
+    "input_mtok": 0.45,
+    "output_mtok": 0.7
+  },
+  "aws:mistral.pixtral-large-2502-v1:0": {
+    "input_mtok": 2,
+    "output_mtok": 6
+  },
+  "aws:openai.gpt-oss-120b-1:0": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "aws:openai.gpt-oss-20b-1:0": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.3
+  },
+  "aws:qwen.qwen3-32b-v1:0": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "aws:qwen.qwen3-coder-30b-a3b-v1:0": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "aws:qwen.qwen3-coder-480b-a35b-v1:0": {
+    "input_mtok": 0.45,
+    "output_mtok": 1.8
+  },
+  "aws:regional.anthropic.claude-3-5-haiku-20241022-v1:0": {
+    "input_mtok": 0.8,
+    "output_mtok": 4
+  },
+  "aws:regional.anthropic.claude-3-5-sonnet-20240620-v1:0": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "aws:regional.anthropic.claude-3-5-sonnet-20241022-v2:0": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "aws:regional.anthropic.claude-3-7-sonnet-20250219-v1:0": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "aws:regional.anthropic.claude-3-haiku-20240307-v1:0": {
+    "input_mtok": 0.25,
+    "output_mtok": 1.25
+  },
+  "aws:regional.anthropic.claude-3-opus-20240229-v1:0": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "aws:regional.anthropic.claude-3-sonnet-20240229-v1:0": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "aws:regional.anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "input_mtok": 1.1,
+    "output_mtok": 5.5
+  },
+  "aws:regional.anthropic.claude-opus-4-1-20250805-v1:0": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "aws:regional.anthropic.claude-opus-4-20250514-v1:0": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "aws:regional.anthropic.claude-sonnet-4-20250514-v1:0": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "aws:regional.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+    "input_mtok": 3.3,
+    "output_mtok": 16.5
+  },
+  "azure:gpt-3.5-turbo": {
+    "input_mtok": 1.5,
+    "output_mtok": 2
+  },
+  "azure:gpt-3.5-turbo-0125": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "azure:gpt-3.5-turbo-1106": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "azure:gpt-3.5-turbo-16k-0613": {
+    "input_mtok": 3,
+    "output_mtok": 4
+  },
+  "azure:gpt-35-16k": {
+    "input_mtok": 3,
+    "output_mtok": 4
+  },
+  "azure:gpt-35-turbo": {
+    "input_mtok": 1.5,
+    "output_mtok": 2
+  },
+  "azure:gpt-35-turbo-16k": {
+    "input_mtok": 3,
+    "output_mtok": 4
+  },
+  "azure:gpt-4": {
+    "input_mtok": 30,
+    "output_mtok": 60
+  },
+  "azure:gpt-4-0125-preview": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "azure:gpt-4-1106-preview": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "azure:gpt-4-1106-vision-preview": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "azure:gpt-4-32k": {
+    "input_mtok": 60,
+    "output_mtok": 120
+  },
+  "azure:gpt-4-preview-1106": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "azure:gpt-4-turbo": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "azure:gpt-4-vision": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "azure:gpt-4.1": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "azure:gpt-4.1-mini": {
+    "input_mtok": 0.4,
+    "output_mtok": 1.6
+  },
+  "azure:gpt-4.1-nano": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "azure:gpt-4o-2024-0513": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "azure:gpt-4o-2024-08-06": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "azure:gpt-4o-2024-1120": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "azure:gpt-4o-mini": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "azure:gpt-4o-mini-realtime": {
+    "input_mtok": 0.6,
+    "output_mtok": 2.4
+  },
+  "azure:gpt-4o-realtime": {
+    "input_mtok": 5,
+    "output_mtok": 20
+  },
+  "azure:gpt-5": {
+    "input_mtok": 1.25,
+    "output_mtok": 10
+  },
+  "azure:gpt-5-mini": {
+    "input_mtok": 0.25,
+    "output_mtok": 2
+  },
+  "azure:gpt-5-nano": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.4
+  },
+  "azure:gpt35": {
+    "input_mtok": 1.5,
+    "output_mtok": 2
+  },
+  "azure:gpt4-turbo-preview": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "azure:o1": {
+    "input_mtok": 15,
+    "output_mtok": 60
+  },
+  "azure:o1-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "azure:o3-2025-04-16": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "azure:o3-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "azure:o4-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "azure:phi-3-medium-128k-instruct": {
+    "input_mtok": 1,
+    "output_mtok": 1
+  },
+  "azure:phi-3-mini-128k-instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "azure:phi-3.5-mini-128k-instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "azure:phi-4": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.14
+  },
+  "azure:phi-4-multimodal-instruct": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.1
+  },
+  "azure:phi-4-reasoning-plus": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.35
+  },
+  "azure:wizardlm-2-8x22b": {
+    "input_mtok": 0.48,
+    "output_mtok": 0.48
+  },
+  "cerebras:gpt-oss-120b": {
+    "input_mtok": 0.35,
+    "output_mtok": 0.75
+  },
+  "cerebras:llama-3.3-70b": {
+    "input_mtok": 0.85,
+    "output_mtok": 1.2
+  },
+  "cerebras:llama3.1-8b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "cerebras:qwen-3-32b": {
+    "input_mtok": 0.4,
+    "output_mtok": 0.8
+  },
+  "cohere:command": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "cohere:command-a": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "cohere:command-r": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "cohere:command-r-plus": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "cohere:command-r7b": {
+    "input_mtok": 0.0375,
+    "output_mtok": 0.15
+  },
+  "fireworks:deepseek-r1-0528": {
+    "input_mtok": 3,
+    "output_mtok": 8
+  },
+  "fireworks:deepseek-v3-0324": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "fireworks:gemma-3-27b-it": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "fireworks:llama-v3p1-8b-instruct": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "fireworks:llama4-maverick-instruct-basic": {
+    "input_mtok": 0.22,
+    "output_mtok": 0.88
+  },
+  "fireworks:qwen2p5-vl-72b-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "fireworks:qwen3-235b-a22b": {
+    "input_mtok": 0.22,
+    "output_mtok": 0.88
+  },
+  "google:claude-3-5-haiku": {
+    "input_mtok": 0.8,
+    "output_mtok": 4
+  },
+  "google:claude-3-5-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "google:claude-3-7-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "google:claude-3-haiku": {
+    "input_mtok": 0.25,
+    "output_mtok": 1.25
+  },
+  "google:claude-3-opus": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "google:claude-4-opus": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "google:claude-4-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "google:gemini-1.0-pro-vision-001": {
+    "input_mtok": 0.125,
+    "output_mtok": 0.375
+  },
+  "google:gemini-1.5-flash": {
+    "input_mtok": {
+      "base": 0.075,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 0.15
+        }
+      ]
+    },
+    "output_mtok": {
+      "base": 0.3,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 0.6
+        }
+      ]
+    }
+  },
+  "google:gemini-1.5-pro": {
+    "input_mtok": {
+      "base": 1.25,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 2.5
+        }
+      ]
+    },
+    "output_mtok": {
+      "base": 5,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 10
+        }
+      ]
+    }
+  },
+  "google:gemini-2.0-flash": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "google:gemini-2.0-flash-lite": {
+    "input_mtok": 0.075,
+    "output_mtok": 0.3
+  },
+  "google:gemini-2.5-flash": {
+    "input_mtok": 0.3,
+    "output_mtok": 2.5
+  },
+  "google:gemini-2.5-flash-image": {
+    "input_mtok": 0.3,
+    "output_mtok": 30
+  },
+  "google:gemini-2.5-flash-lite": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "google:gemini-2.5-flash-preview": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "google:gemini-2.5-pro": {
+    "input_mtok": {
+      "base": 1.25,
+      "tiers": [
+        {
+          "start": 200000,
+          "price": 2.5
+        }
+      ]
+    },
+    "output_mtok": {
+      "base": 10,
+      "tiers": [
+        {
+          "start": 200000,
+          "price": 15
+        }
+      ]
+    }
+  },
+  "google:gemini-3-flash-preview": {
+    "input_mtok": 0.5,
+    "output_mtok": 3
+  },
+  "google:gemini-3-pro-image-preview": {
+    "input_mtok": 2,
+    "output_mtok": 120
+  },
+  "google:gemini-3-pro-preview": {
+    "input_mtok": {
+      "base": 2,
+      "tiers": [
+        {
+          "start": 200000,
+          "price": 4
+        }
+      ]
+    },
+    "output_mtok": {
+      "base": 12,
+      "tiers": [
+        {
+          "start": 200000,
+          "price": 18
+        }
+      ]
+    }
+  },
+  "google:gemini-flash-1.5": {
+    "input_mtok": {
+      "base": 0.075,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 0.15
+        }
+      ]
+    },
+    "output_mtok": {
+      "base": 0.3,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 0.6
+        }
+      ]
+    }
+  },
+  "google:gemini-flash-1.5-8b": {
+    "input_mtok": {
+      "base": 0.0375,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 0.075
+        }
+      ]
+    },
+    "output_mtok": {
+      "base": 0.15,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 0.3
+        }
+      ]
+    }
+  },
+  "google:gemini-live-2.5-flash-preview": {
+    "input_mtok": 0.5,
+    "output_mtok": 2
+  },
+  "google:gemini-pro": {
+    "input_mtok": 0.125,
+    "output_mtok": 0.375
+  },
+  "google:gemini-pro-1.5": {
+    "input_mtok": {
+      "base": 1.25,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 2.5
+        }
+      ]
+    },
+    "output_mtok": {
+      "base": 5,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 10
+        }
+      ]
+    }
+  },
+  "groq:deepseek-r1-distill-llama-70b": {
+    "input_mtok": 0.75,
+    "output_mtok": 0.99
+  },
+  "groq:gemma-7b-it": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.07
+  },
+  "groq:gemma2-9b-it": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "groq:llama-3.1-405b-reasoning": {
+    "input_mtok": 0.59,
+    "output_mtok": 0.79
+  },
+  "groq:llama-3.1-70b-versatile": {
+    "input_mtok": 0.59,
+    "output_mtok": 0.79
+  },
+  "groq:llama-3.1-8b-instant": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.08
+  },
+  "groq:llama-3.2-11b-text-preview": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.18
+  },
+  "groq:llama-3.2-11b-vision-preview": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.18
+  },
+  "groq:llama-3.2-1b-preview": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.04
+  },
+  "groq:llama-3.2-3b-preview": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.06
+  },
+  "groq:llama-3.2-90b-text-preview": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "groq:llama-3.2-90b-vision-preview": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "groq:llama-3.3-70b-specdec": {
+    "input_mtok": 0.59,
+    "output_mtok": 0.99
+  },
+  "groq:llama-3.3-70b-versatile": {
+    "input_mtok": 0.59,
+    "output_mtok": 0.79
+  },
+  "groq:llama-guard-3-8b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "groq:llama2-70b-4096": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.8
+  },
+  "groq:llama3-70b-8192": {
+    "input_mtok": 0.59,
+    "output_mtok": 0.79
+  },
+  "groq:llama3-8b-8192": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.08
+  },
+  "groq:llama3-groq-70b-8192-tool-use-preview": {
+    "input_mtok": 0.89,
+    "output_mtok": 0.89
+  },
+  "groq:llama3-groq-8b-8192-tool-use-preview": {
+    "input_mtok": 0.19,
+    "output_mtok": 0.19
+  },
+  "groq:meta-llama/llama-4-maverick-17b-128e-instruct": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "groq:meta-llama/llama-4-scout-17b-16e-instruct": {
+    "input_mtok": 0.11,
+    "output_mtok": 0.34
+  },
+  "groq:meta-llama/llama-guard-4-12b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "groq:mistral-saba-24b": {
+    "input_mtok": 0.79,
+    "output_mtok": 0.79
+  },
+  "groq:mixtral-8x7b-32768": {
+    "input_mtok": 0.24,
+    "output_mtok": 0.24
+  },
+  "groq:moonshotai/kimi-k2-instruct": {
+    "input_mtok": 1,
+    "output_mtok": 3
+  },
+  "groq:openai/gpt-oss-120b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "groq:openai/gpt-oss-20b": {
+    "input_mtok": 0.075,
+    "output_mtok": 0.3
+  },
+  "groq:qwen/qwen3-32b": {
+    "input_mtok": 0.29,
+    "output_mtok": 0.59
+  },
+  "huggingface_cerebras:Qwen/Qwen3-235B-A22B-Instruct-2507": {
+    "input_mtok": 0.6,
+    "output_mtok": 1.2
+  },
+  "huggingface_cerebras:Qwen/Qwen3-32B": {
+    "input_mtok": 0.4,
+    "output_mtok": 0.8
+  },
+  "huggingface_cerebras:meta-llama/Llama-3.1-8B-Instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "huggingface_cerebras:meta-llama/Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.85,
+    "output_mtok": 1.2
+  },
+  "huggingface_cerebras:openai/gpt-oss-120b": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.69
+  },
+  "huggingface_fireworks-ai:Qwen/Qwen2.5-VL-32B-Instruct": {
+    "input_mtok": 0.22,
+    "output_mtok": 0.88
+  },
+  "huggingface_fireworks-ai:Qwen/Qwen3-235B-A22B": {
+    "input_mtok": 0.22,
+    "output_mtok": 0.88
+  },
+  "huggingface_fireworks-ai:Qwen/Qwen3-30B-A3B": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "huggingface_fireworks-ai:deepseek-ai/DeepSeek-R1-0528": {
+    "input_mtok": 3,
+    "output_mtok": 8
+  },
+  "huggingface_fireworks-ai:deepseek-ai/DeepSeek-V3-0324": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "huggingface_fireworks-ai:meta-llama/Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "huggingface_fireworks-ai:openai/gpt-oss-120b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "huggingface_fireworks-ai:openai/gpt-oss-20b": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.2
+  },
+  "huggingface_fireworks-ai:zai-org/GLM-4.5": {
+    "input_mtok": 0.55,
+    "output_mtok": 2.19
+  },
+  "huggingface_groq:Qwen/Qwen3-32B": {
+    "input_mtok": 0.29,
+    "output_mtok": 0.59
+  },
+  "huggingface_groq:meta-llama/Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.59,
+    "output_mtok": 0.79
+  },
+  "huggingface_groq:openai/gpt-oss-120b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.75
+  },
+  "huggingface_groq:openai/gpt-oss-20b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.5
+  },
+  "huggingface_hyperbolic:Qwen/QwQ-32B": {
+    "input_mtok": 0.4,
+    "output_mtok": 0.4
+  },
+  "huggingface_hyperbolic:Qwen/Qwen2.5-72B-Instruct": {
+    "input_mtok": 0.4,
+    "output_mtok": 0.4
+  },
+  "huggingface_hyperbolic:Qwen/Qwen2.5-Coder-32B-Instruct": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "huggingface_hyperbolic:Qwen/Qwen2.5-VL-72B-Instruct": {
+    "input_mtok": 0.6,
+    "output_mtok": 0.6
+  },
+  "huggingface_hyperbolic:Qwen/Qwen2.5-VL-7B-Instruct": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "huggingface_hyperbolic:Qwen/Qwen3-235B-A22B-Instruct-2507": {
+    "input_mtok": 2,
+    "output_mtok": 2
+  },
+  "huggingface_hyperbolic:Qwen/Qwen3-Coder-480B-A35B-Instruct": {
+    "input_mtok": 2,
+    "output_mtok": 2
+  },
+  "huggingface_hyperbolic:Qwen/Qwen3-Next-80B-A3B-Instruct": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "huggingface_hyperbolic:Qwen/Qwen3-Next-80B-A3B-Thinking": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "huggingface_hyperbolic:deepseek-ai/DeepSeek-R1": {
+    "input_mtok": 2,
+    "output_mtok": 2
+  },
+  "huggingface_hyperbolic:deepseek-ai/DeepSeek-R1-0528": {
+    "input_mtok": 3,
+    "output_mtok": 3
+  },
+  "huggingface_hyperbolic:deepseek-ai/DeepSeek-V3-0324": {
+    "input_mtok": 1.25,
+    "output_mtok": 1.25
+  },
+  "huggingface_hyperbolic:meta-llama/Llama-3.1-8B-Instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "huggingface_hyperbolic:meta-llama/Llama-3.2-3B-Instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "huggingface_hyperbolic:meta-llama/Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.4,
+    "output_mtok": 0.4
+  },
+  "huggingface_hyperbolic:meta-llama/Meta-Llama-3-70B-Instruct": {
+    "input_mtok": 0.4,
+    "output_mtok": 0.4
+  },
+  "huggingface_hyperbolic:openai/gpt-oss-120b": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "huggingface_hyperbolic:openai/gpt-oss-20b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "huggingface_nebius:NousResearch/Hermes-4-405B": {
+    "input_mtok": 1,
+    "output_mtok": 3
+  },
+  "huggingface_nebius:NousResearch/Hermes-4-70B": {
+    "input_mtok": 0.13,
+    "output_mtok": 0.4
+  },
+  "huggingface_nebius:PrimeIntellect/INTELLECT-3-FP8": {
+    "input_mtok": 0.2,
+    "output_mtok": 1.1
+  },
+  "huggingface_nebius:Qwen/Qwen2.5-Coder-7B": {
+    "input_mtok": 0.03,
+    "output_mtok": 0.09
+  },
+  "huggingface_nebius:Qwen/Qwen2.5-VL-72B-Instruct": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.75
+  },
+  "huggingface_nebius:Qwen/Qwen3-235B-A22B-Instruct-2507": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "huggingface_nebius:Qwen/Qwen3-235B-A22B-Thinking-2507": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.8
+  },
+  "huggingface_nebius:Qwen/Qwen3-30B-A3B-Instruct-2507": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.3
+  },
+  "huggingface_nebius:Qwen/Qwen3-30B-A3B-Thinking-2507": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.3
+  },
+  "huggingface_nebius:Qwen/Qwen3-32B": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.3
+  },
+  "huggingface_nebius:Qwen/Qwen3-Coder-30B-A3B-Instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.3
+  },
+  "huggingface_nebius:Qwen/Qwen3-Coder-480B-A35B-Instruct": {
+    "input_mtok": 0.4,
+    "output_mtok": 1.8
+  },
+  "huggingface_nebius:deepseek-ai/DeepSeek-R1-0528": {
+    "input_mtok": 0.8,
+    "output_mtok": 2.4
+  },
+  "huggingface_nebius:deepseek-ai/DeepSeek-V3-0324": {
+    "input_mtok": 0.75,
+    "output_mtok": 2.25
+  },
+  "huggingface_nebius:google/gemma-2-2b-it": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.06
+  },
+  "huggingface_nebius:google/gemma-2-9b-it": {
+    "input_mtok": 0.03,
+    "output_mtok": 0.09
+  },
+  "huggingface_nebius:google/gemma-3-27b-it": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "huggingface_nebius:meta-llama/Llama-3.1-8B-Instruct": {
+    "input_mtok": 0.03,
+    "output_mtok": 0.09
+  },
+  "huggingface_nebius:meta-llama/Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.75
+  },
+  "huggingface_nebius:moonshotai/Kimi-K2-Instruct": {
+    "input_mtok": 0.5,
+    "output_mtok": 2.4
+  },
+  "huggingface_nebius:moonshotai/Kimi-K2-Thinking": {
+    "input_mtok": 0.6,
+    "output_mtok": 2.5
+  },
+  "huggingface_nebius:nvidia/Llama-3_1-Nemotron-Ultra-253B-v1": {
+    "input_mtok": 0.6,
+    "output_mtok": 1.8
+  },
+  "huggingface_nebius:nvidia/NVIDIA-Nemotron-Nano-12B-v2": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.2
+  },
+  "huggingface_nebius:openai/gpt-oss-120b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "huggingface_nebius:openai/gpt-oss-20b": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.2
+  },
+  "huggingface_nebius:zai-org/GLM-4.5": {
+    "input_mtok": 0.6,
+    "output_mtok": 2.2
+  },
+  "huggingface_nebius:zai-org/GLM-4.5-Air": {
+    "input_mtok": 0.2,
+    "output_mtok": 1.2
+  },
+  "huggingface_novita:MiniMaxAI/MiniMax-M1-80k": {
+    "input_mtok": 0.44,
+    "output_mtok": 1.76
+  },
+  "huggingface_novita:MiniMaxAI/MiniMax-M2": {
+    "input_mtok": 0.3,
+    "output_mtok": 1.2
+  },
+  "huggingface_novita:NousResearch/Hermes-2-Pro-Llama-3-8B": {
+    "input_mtok": 0.14,
+    "output_mtok": 0.14
+  },
+  "huggingface_novita:Qwen/Qwen2.5-72B-Instruct": {
+    "input_mtok": 0.304,
+    "output_mtok": 0.32
+  },
+  "huggingface_novita:Qwen/Qwen3-235B-A22B": {
+    "input_mtok": 0.16,
+    "output_mtok": 0.64
+  },
+  "huggingface_novita:Qwen/Qwen3-235B-A22B-Instruct-2507": {
+    "input_mtok": 0.072,
+    "output_mtok": 0.464
+  },
+  "huggingface_novita:Qwen/Qwen3-235B-A22B-Thinking-2507": {
+    "input_mtok": 0.24,
+    "output_mtok": 2.4
+  },
+  "huggingface_novita:Qwen/Qwen3-30B-A3B": {
+    "input_mtok": 0.072,
+    "output_mtok": 0.36
+  },
+  "huggingface_novita:Qwen/Qwen3-32B": {
+    "input_mtok": 0.08,
+    "output_mtok": 0.36
+  },
+  "huggingface_novita:Qwen/Qwen3-Coder-480B-A35B-Instruct": {
+    "input_mtok": 0.3,
+    "output_mtok": 1.3
+  },
+  "huggingface_novita:Qwen/Qwen3-Next-80B-A3B-Instruct": {
+    "input_mtok": 0.12,
+    "output_mtok": 1.2
+  },
+  "huggingface_novita:Qwen/Qwen3-Next-80B-A3B-Thinking": {
+    "input_mtok": 0.12,
+    "output_mtok": 1.2
+  },
+  "huggingface_novita:Qwen/Qwen3-VL-235B-A22B-Instruct": {
+    "input_mtok": 0.24,
+    "output_mtok": 1.2
+  },
+  "huggingface_novita:Qwen/Qwen3-VL-235B-A22B-Thinking": {
+    "input_mtok": 0.784,
+    "output_mtok": 3.16
+  },
+  "huggingface_novita:Qwen/Qwen3-VL-30B-A3B-Instruct": {
+    "input_mtok": 0.16,
+    "output_mtok": 0.56
+  },
+  "huggingface_novita:Qwen/Qwen3-VL-30B-A3B-Thinking": {
+    "input_mtok": 0.16,
+    "output_mtok": 0.8
+  },
+  "huggingface_novita:Qwen/Qwen3-VL-8B-Instruct": {
+    "input_mtok": 0.064,
+    "output_mtok": 0.4
+  },
+  "huggingface_novita:Sao10K/L3-70B-Euryale-v2.1": {
+    "input_mtok": 1.48,
+    "output_mtok": 1.48
+  },
+  "huggingface_novita:Sao10K/L3-8B-Lunaris-v1": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.05
+  },
+  "huggingface_novita:Sao10K/L3-8B-Stheno-v3.2": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.05
+  },
+  "huggingface_novita:alpindale/WizardLM-2-8x22B": {
+    "input_mtok": 0.496,
+    "output_mtok": 0.496
+  },
+  "huggingface_novita:baichuan-inc/Baichuan-M2-32B": {
+    "input_mtok": 0.056,
+    "output_mtok": 0.056
+  },
+  "huggingface_novita:baidu/ERNIE-4.5-21B-A3B-PT": {
+    "input_mtok": 0.056,
+    "output_mtok": 0.224
+  },
+  "huggingface_novita:baidu/ERNIE-4.5-300B-A47B-Base-PT": {
+    "input_mtok": 0.224,
+    "output_mtok": 0.88
+  },
+  "huggingface_novita:baidu/ERNIE-4.5-VL-28B-A3B-PT": {
+    "input_mtok": 0.112,
+    "output_mtok": 0.448
+  },
+  "huggingface_novita:baidu/ERNIE-4.5-VL-424B-A47B-Base-PT": {
+    "input_mtok": 0.336,
+    "output_mtok": 1
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-Prover-V2-671B": {
+    "input_mtok": 0.56,
+    "output_mtok": 2
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-R1": {
+    "input_mtok": 0.56,
+    "output_mtok": 2
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-R1-0528-Qwen3-8B": {
+    "input_mtok": 0.048,
+    "output_mtok": 0.072
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-R1-Distill-Qwen-14B": {
+    "input_mtok": 0.12,
+    "output_mtok": 0.12
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": {
+    "input_mtok": 0.24,
+    "output_mtok": 0.24
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-V3": {
+    "input_mtok": 0.32,
+    "output_mtok": 1.04
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-V3-0324": {
+    "input_mtok": 0.216,
+    "output_mtok": 0.896
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-V3.1": {
+    "input_mtok": 0.216,
+    "output_mtok": 0.8
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-V3.2": {
+    "input_mtok": 0.269,
+    "output_mtok": 0.4
+  },
+  "huggingface_novita:deepseek-ai/DeepSeek-V3.2-Exp": {
+    "input_mtok": 0.216,
+    "output_mtok": 0.328
+  },
+  "huggingface_novita:meta-llama/Llama-3.1-8B-Instruct": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.05
+  },
+  "huggingface_novita:meta-llama/Llama-3.2-3B-Instruct": {
+    "input_mtok": 0.024,
+    "output_mtok": 0.04
+  },
+  "huggingface_novita:meta-llama/Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.108,
+    "output_mtok": 0.32
+  },
+  "huggingface_novita:meta-llama/Meta-Llama-3-70B-Instruct": {
+    "input_mtok": 0.51,
+    "output_mtok": 0.74
+  },
+  "huggingface_novita:meta-llama/Meta-Llama-3-8B-Instruct": {
+    "input_mtok": 0.032,
+    "output_mtok": 0.032
+  },
+  "huggingface_novita:moonshotai/Kimi-K2-Instruct": {
+    "input_mtok": 0.456,
+    "output_mtok": 1.84
+  },
+  "huggingface_novita:moonshotai/Kimi-K2-Instruct-0905": {
+    "input_mtok": 0.48,
+    "output_mtok": 2
+  },
+  "huggingface_novita:moonshotai/Kimi-K2-Thinking": {
+    "input_mtok": 0.48,
+    "output_mtok": 2
+  },
+  "huggingface_novita:openai/gpt-oss-120b": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.2
+  },
+  "huggingface_novita:openai/gpt-oss-20b": {
+    "input_mtok": 0.032,
+    "output_mtok": 0.12
+  },
+  "huggingface_novita:zai-org/AutoGLM-Phone-9B-Multilingual": {
+    "input_mtok": 0.035,
+    "output_mtok": 0.138
+  },
+  "huggingface_novita:zai-org/GLM-4.1V-9B-Thinking": {
+    "input_mtok": 0.028,
+    "output_mtok": 0.1104
+  },
+  "huggingface_novita:zai-org/GLM-4.5": {
+    "input_mtok": 0.48,
+    "output_mtok": 1.76
+  },
+  "huggingface_novita:zai-org/GLM-4.5-Air": {
+    "input_mtok": 0.104,
+    "output_mtok": 0.68
+  },
+  "huggingface_novita:zai-org/GLM-4.5V": {
+    "input_mtok": 0.48,
+    "output_mtok": 1.44
+  },
+  "huggingface_novita:zai-org/GLM-4.6": {
+    "input_mtok": 0.44,
+    "output_mtok": 1.76
+  },
+  "huggingface_novita:zai-org/GLM-4.6V-Flash": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.9
+  },
+  "huggingface_nscale:Qwen/QwQ-32B": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.2
+  },
+  "huggingface_nscale:Qwen/Qwen2.5-Coder-32B-Instruct": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.2
+  },
+  "huggingface_nscale:Qwen/Qwen2.5-Coder-3B-Instruct": {
+    "input_mtok": 0.01,
+    "output_mtok": 0.03
+  },
+  "huggingface_nscale:Qwen/Qwen2.5-Coder-7B-Instruct": {
+    "input_mtok": 0.01,
+    "output_mtok": 0.03
+  },
+  "huggingface_nscale:Qwen/Qwen3-14B": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.2
+  },
+  "huggingface_nscale:Qwen/Qwen3-235B-A22B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "huggingface_nscale:Qwen/Qwen3-32B": {
+    "input_mtok": 0.08,
+    "output_mtok": 0.25
+  },
+  "huggingface_nscale:Qwen/Qwen3-4B-Instruct-2507": {
+    "input_mtok": 0.01,
+    "output_mtok": 0.03
+  },
+  "huggingface_nscale:Qwen/Qwen3-4B-Thinking-2507": {
+    "input_mtok": 0.01,
+    "output_mtok": 0.03
+  },
+  "huggingface_nscale:Qwen/Qwen3-8B": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.18
+  },
+  "huggingface_nscale:deepseek-ai/DeepSeek-R1-Distill-Llama-70B": {
+    "input_mtok": 0.75,
+    "output_mtok": 0.75
+  },
+  "huggingface_nscale:deepseek-ai/DeepSeek-R1-Distill-Llama-8B": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.05
+  },
+  "huggingface_nscale:deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "huggingface_nscale:deepseek-ai/DeepSeek-R1-Distill-Qwen-14B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "huggingface_nscale:deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "huggingface_nscale:deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "huggingface_nscale:meta-llama/Llama-3.1-8B-Instruct": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.06
+  },
+  "huggingface_nscale:meta-llama/Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.4,
+    "output_mtok": 0.4
+  },
+  "huggingface_nscale:openai/gpt-oss-120b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "huggingface_nscale:openai/gpt-oss-20b": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.2
+  },
+  "huggingface_ovhcloud:Qwen/Qwen2.5-VL-72B-Instruct": {
+    "input_mtok": 1.01,
+    "output_mtok": 1.01
+  },
+  "huggingface_ovhcloud:Qwen/Qwen3-Coder-30B-A3B-Instruct": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.26
+  },
+  "huggingface_sambanova:Qwen/Qwen3-32B": {
+    "input_mtok": 0.4,
+    "output_mtok": 0.8
+  },
+  "huggingface_sambanova:deepseek-ai/DeepSeek-R1-0528": {
+    "input_mtok": 5,
+    "output_mtok": 7
+  },
+  "huggingface_sambanova:deepseek-ai/DeepSeek-R1-Distill-Llama-70B": {
+    "input_mtok": 0.7,
+    "output_mtok": 1.4
+  },
+  "huggingface_sambanova:deepseek-ai/DeepSeek-V3-0324": {
+    "input_mtok": 3,
+    "output_mtok": 4.5
+  },
+  "huggingface_sambanova:meta-llama/Llama-3.1-8B-Instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.2
+  },
+  "huggingface_sambanova:meta-llama/Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.6,
+    "output_mtok": 1.2
+  },
+  "huggingface_sambanova:openai/gpt-oss-120b": {
+    "input_mtok": 0.22,
+    "output_mtok": 0.59
+  },
+  "huggingface_sambanova:tokyotech-llm/Llama-3.3-Swallow-70B-Instruct-v0.4": {
+    "input_mtok": 0.6,
+    "output_mtok": 1.2
+  },
+  "huggingface_together:EssentialAI/rnj-1-instruct": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "huggingface_together:Qwen/Qwen2.5-72B-Instruct": {
+    "input_mtok": 1.2,
+    "output_mtok": 1.2
+  },
+  "huggingface_together:Qwen/Qwen2.5-7B-Instruct": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "huggingface_together:Qwen/Qwen3-235B-A22B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "huggingface_together:Qwen/Qwen3-Coder-480B-A35B-Instruct": {
+    "input_mtok": 2,
+    "output_mtok": 2
+  },
+  "huggingface_together:Qwen/Qwen3-Next-80B-A3B-Instruct": {
+    "input_mtok": 0.15,
+    "output_mtok": 1.5
+  },
+  "huggingface_together:Qwen/Qwen3-Next-80B-A3B-Thinking": {
+    "input_mtok": 0.15,
+    "output_mtok": 1.5
+  },
+  "huggingface_together:Qwen/Qwen3-VL-32B-Instruct": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "huggingface_together:deepcogito/cogito-671b-v2.1": {
+    "input_mtok": 1.25,
+    "output_mtok": 1.25
+  },
+  "huggingface_together:deepcogito/cogito-v2-preview-llama-405B": {
+    "input_mtok": 3.5,
+    "output_mtok": 3.5
+  },
+  "huggingface_together:deepcogito/cogito-v2-preview-llama-70B": {
+    "input_mtok": 0.88,
+    "output_mtok": 0.88
+  },
+  "huggingface_together:deepseek-ai/DeepSeek-R1": {
+    "input_mtok": 3,
+    "output_mtok": 7
+  },
+  "huggingface_together:deepseek-ai/DeepSeek-V3": {
+    "input_mtok": 1.25,
+    "output_mtok": 1.25
+  },
+  "huggingface_together:deepseek-ai/DeepSeek-V3.1": {
+    "input_mtok": 0.6,
+    "output_mtok": 1.7
+  },
+  "huggingface_together:marin-community/marin-8b-instruct": {
+    "input_mtok": 0.18000000000000002,
+    "output_mtok": 0.18000000000000002
+  },
+  "huggingface_together:meta-llama/Llama-3.2-3B-Instruct": {
+    "input_mtok": 0.060000000000000005,
+    "output_mtok": 0.060000000000000005
+  },
+  "huggingface_together:meta-llama/Llama-3.3-70B-Instruct": {
+    "input_mtok": 0.88,
+    "output_mtok": 0.88
+  },
+  "huggingface_together:meta-llama/Meta-Llama-3-70B-Instruct": {
+    "input_mtok": 0.88,
+    "output_mtok": 0.88
+  },
+  "huggingface_together:moonshotai/Kimi-K2-Instruct": {
+    "input_mtok": 1,
+    "output_mtok": 3
+  },
+  "huggingface_together:moonshotai/Kimi-K2-Thinking": {
+    "input_mtok": 1.2,
+    "output_mtok": 4
+  },
+  "huggingface_together:openai/gpt-oss-120b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "huggingface_together:openai/gpt-oss-20b": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.2
+  },
+  "huggingface_together:zai-org/GLM-4.5-Air-FP8": {
+    "input_mtok": 0.2,
+    "output_mtok": 1.1
+  },
+  "mistral:codestral": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.9
+  },
+  "mistral:devstral-small": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.12
+  },
+  "mistral:magistral-medium": {
+    "input_mtok": 2,
+    "output_mtok": 5
+  },
+  "mistral:magistral-small": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "mistral:ministral-3b": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.04
+  },
+  "mistral:ministral-8b": {
+    "input_mtok": 0.1,
+    "output_mtok": 1
+  },
+  "mistral:mistral-7b": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.25
+  },
+  "mistral:mistral-embed": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "mistral:mistral-large": {
+    "input_mtok": 2,
+    "output_mtok": 6
+  },
+  "mistral:mistral-medium-3": {
+    "input_mtok": 0.4,
+    "output_mtok": 2
+  },
+  "mistral:mistral-nemo": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "mistral:mistral-saba": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "mistral:mistral-small": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "mistral:mistral-small-24b-instruct-2501": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.08
+  },
+  "mistral:mistral-small-latest": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.3
+  },
+  "mistral:mistral-tiny": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.25
+  },
+  "mistral:mixtral-8x22b-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "mistral:mixtral-8x7b": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.7
+  },
+  "mistral:pixtral-12b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "mistral:pixtral-large": {
+    "input_mtok": 2,
+    "output_mtok": 6
+  },
+  "novita:Sao10K/L3-8B-Stheno-v3.2": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.05
+  },
+  "novita:cognitivecomputations/dolphin-mixtral-8x22b": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "novita:deepseek/deepseek-r1": {
+    "input_mtok": 4,
+    "output_mtok": 4
+  },
+  "novita:deepseek/deepseek-r1-distill-llama-70b": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "novita:deepseek/deepseek-r1-distill-llama-8b": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.04
+  },
+  "novita:deepseek/deepseek-r1-distill-qwen-14b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "novita:deepseek/deepseek-r1-distill-qwen-32b": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "novita:deepseek/deepseek_v3": {
+    "input_mtok": 0.89,
+    "output_mtok": 0.89
+  },
+  "novita:google/gemma-2-9b-it": {
+    "input_mtok": 0.08,
+    "output_mtok": 0.08
+  },
+  "novita:gryphe/mythomax-l2-13b": {
+    "input_mtok": 0.09,
+    "output_mtok": 0.09
+  },
+  "novita:jondurbin/airoboros-l2-70b": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.5
+  },
+  "novita:meta-llama/llama-3-70b-instruct": {
+    "input_mtok": 0.51,
+    "output_mtok": 0.74
+  },
+  "novita:meta-llama/llama-3-8b-instruct": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.04
+  },
+  "novita:meta-llama/llama-3.1-70b-instruct": {
+    "input_mtok": 0.34,
+    "output_mtok": 0.39
+  },
+  "novita:meta-llama/llama-3.1-8b-instruct": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.05
+  },
+  "novita:meta-llama/llama-3.1-8b-instruct-bf16": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.06
+  },
+  "novita:meta-llama/llama-3.2-11b-vision-instruct": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.06
+  },
+  "novita:meta-llama/llama-3.2-1b-instruct": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.02
+  },
+  "novita:meta-llama/llama-3.2-3b-instruct": {
+    "input_mtok": 0.03,
+    "output_mtok": 0.05
+  },
+  "novita:meta-llama/llama-3.3-70b-instruct": {
+    "input_mtok": 0.39,
+    "output_mtok": 0.39
+  },
+  "novita:microsoft/wizardlm-2-8x22b": {
+    "input_mtok": 0.62,
+    "output_mtok": 0.62
+  },
+  "novita:mistralai/mistral-7b-instruct": {
+    "input_mtok": 0.059,
+    "output_mtok": 0.059
+  },
+  "novita:mistralai/mistral-nemo": {
+    "input_mtok": 0.17,
+    "output_mtok": 0.17
+  },
+  "novita:nousresearch/hermes-2-pro-llama-3-8b": {
+    "input_mtok": 0.14,
+    "output_mtok": 0.14
+  },
+  "novita:nousresearch/nous-hermes-llama2-13b": {
+    "input_mtok": 0.17,
+    "output_mtok": 0.17
+  },
+  "novita:openchat/openchat-7b": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.06
+  },
+  "novita:qwen/qwen-2-7b-instruct": {
+    "input_mtok": 0.054,
+    "output_mtok": 0.054
+  },
+  "novita:qwen/qwen-2-vl-72b-instruct": {
+    "input_mtok": 0.45,
+    "output_mtok": 0.45
+  },
+  "novita:qwen/qwen-2.5-72b-instruct": {
+    "input_mtok": 0.38,
+    "output_mtok": 0.4
+  },
+  "novita:sao10k/l3-70b-euryale-v2.1": {
+    "input_mtok": 1.48,
+    "output_mtok": 1.48
+  },
+  "novita:sao10k/l3-8b-lunaris": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.05
+  },
+  "novita:sao10k/l31-70b-euryale-v2.2": {
+    "input_mtok": 1.48,
+    "output_mtok": 1.48
+  },
+  "novita:sophosympatheia/midnight-rose-70b": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "novita:teknium/openhermes-2.5-mistral-7b": {
+    "input_mtok": 0.17,
+    "output_mtok": 0.17
+  },
+  "openai:ada": {
+    "input_mtok": 0.4,
+    "output_mtok": 0.4
+  },
+  "openai:babbage": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.5
+  },
+  "openai:chatgpt-4o-latest": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "openai:codex-mini": {
+    "input_mtok": 1.5,
+    "output_mtok": 6
+  },
+  "openai:computer-use": {
+    "input_mtok": 3,
+    "output_mtok": 12
+  },
+  "openai:curie": {
+    "input_mtok": 2,
+    "output_mtok": 2
+  },
+  "openai:davinci": {
+    "input_mtok": 20,
+    "output_mtok": 20
+  },
+  "openai:ft:gpt-3.5-turbo-": {
+    "input_mtok": 3,
+    "output_mtok": 6
+  },
+  "openai:ft:gpt-4o": {
+    "input_mtok": 3.75,
+    "output_mtok": 15
+  },
+  "openai:ft:gpt-4o-mini": {
+    "input_mtok": 0.3,
+    "output_mtok": 1.2
+  },
+  "openai:gpt-3.5-0301": {
+    "input_mtok": 1.5,
+    "output_mtok": 2
+  },
+  "openai:gpt-3.5-turbo": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "openai:gpt-3.5-turbo-0613": {
+    "input_mtok": 1.5,
+    "output_mtok": 2
+  },
+  "openai:gpt-3.5-turbo-1106": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "openai:gpt-3.5-turbo-16k": {
+    "input_mtok": 3,
+    "output_mtok": 4
+  },
+  "openai:gpt-3.5-turbo-instruct": {
+    "input_mtok": 1.5,
+    "output_mtok": 2
+  },
+  "openai:gpt-4": {
+    "input_mtok": 30,
+    "output_mtok": 60
+  },
+  "openai:gpt-4-32k": {
+    "input_mtok": 60,
+    "output_mtok": 120
+  },
+  "openai:gpt-4-turbo": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "openai:gpt-4-vision-preview": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "openai:gpt-4.1": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openai:gpt-4.1-mini": {
+    "input_mtok": 0.4,
+    "output_mtok": 1.6
+  },
+  "openai:gpt-4.1-nano": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openai:gpt-4.5-preview": {
+    "input_mtok": 75,
+    "output_mtok": 150
+  },
+  "openai:gpt-4o": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openai:gpt-4o-mini": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "openai:gpt-4o-mini-2024-07-18.ft-": {
+    "input_mtok": 0.3,
+    "output_mtok": 1.2
+  },
+  "openai:gpt-4o-mini-realtime-preview": {
+    "input_mtok": 0.6,
+    "output_mtok": 2.4
+  },
+  "openai:gpt-4o-mini-transcribe": {
+    "input_mtok": 1.25,
+    "output_mtok": 5
+  },
+  "openai:gpt-4o-realtime-preview": {
+    "input_mtok": 5,
+    "output_mtok": 20
+  },
+  "openai:gpt-4o-search-preview": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openai:gpt-4o-transcribe": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openai:gpt-4o:extended": {
+    "input_mtok": 6,
+    "output_mtok": 18
+  },
+  "openai:gpt-5": {
+    "input_mtok": 1.25,
+    "output_mtok": 10
+  },
+  "openai:gpt-5-image": {
+    "input_mtok": 10,
+    "output_mtok": 10
+  },
+  "openai:gpt-5-image-mini": {
+    "input_mtok": 2.5,
+    "output_mtok": 2
+  },
+  "openai:gpt-5-mini": {
+    "input_mtok": 0.25,
+    "output_mtok": 2
+  },
+  "openai:gpt-5-nano": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.4
+  },
+  "openai:gpt-5-pro": {
+    "input_mtok": 15,
+    "output_mtok": 120
+  },
+  "openai:gpt-5.1": {
+    "input_mtok": 1.25,
+    "output_mtok": 10
+  },
+  "openai:gpt-5.1-codex-mini": {
+    "input_mtok": 0.25,
+    "output_mtok": 2
+  },
+  "openai:gpt-5.2": {
+    "input_mtok": 1.75,
+    "output_mtok": 14
+  },
+  "openai:gpt-5.2-pro": {
+    "input_mtok": 21,
+    "output_mtok": 168
+  },
+  "openai:gpt-realtime": {
+    "input_mtok": 4,
+    "output_mtok": 16
+  },
+  "openai:gpt-realtime-mini": {
+    "input_mtok": 0.6,
+    "output_mtok": 2.4
+  },
+  "openai:o1": {
+    "input_mtok": 15,
+    "output_mtok": 60
+  },
+  "openai:o1-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "openai:o1-pro": {
+    "input_mtok": 150,
+    "output_mtok": 600
+  },
+  "openai:o3-deep-research": {
+    "input_mtok": 10,
+    "output_mtok": 40
+  },
+  "openai:o3-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "openai:o3-pro": {
+    "input_mtok": 20,
+    "output_mtok": 80
+  },
+  "openai:o4-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "openai:o4-mini-deep-research": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openai:text-davinci-002": {
+    "input_mtok": 20,
+    "output_mtok": 20
+  },
+  "openai:text-davinci-003": {
+    "input_mtok": 20,
+    "output_mtok": 20
+  },
+  "openrouter:01-ai/yi-large": {
+    "input_mtok": 3,
+    "output_mtok": 3
+  },
+  "openrouter:aetherwiing/mn-starcannon-12b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:ai21/jamba-1-5-large": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:ai21/jamba-1-5-mini": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.4
+  },
+  "openrouter:ai21/jamba-1.6-large": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:ai21/jamba-1.6-mini": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.4
+  },
+  "openrouter:ai21/jamba-instruct": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.7
+  },
+  "openrouter:aion-1.0": {
+    "input_mtok": 4,
+    "output_mtok": 8
+  },
+  "openrouter:aion-1.0-mini": {
+    "input_mtok": 0.7,
+    "output_mtok": 1.4
+  },
+  "openrouter:aion-labs/aion-1.0": {
+    "input_mtok": 4,
+    "output_mtok": 8
+  },
+  "openrouter:aion-labs/aion-1.0-mini": {
+    "input_mtok": 0.7,
+    "output_mtok": 1.4
+  },
+  "openrouter:aion-labs/aion-rp-llama-3.1-8b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:aion-rp-llama-3.1-8b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:alfredpros/codellama-7b-instruct-solidity": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:all-hands/openhands-lm-32b-v0.1": {
+    "input_mtok": 2.6,
+    "output_mtok": 3.4
+  },
+  "openrouter:alpindale/goliath-120b": {
+    "input_mtok": 6.5625,
+    "output_mtok": 9.375
+  },
+  "openrouter:alpindale/magnum-72b": {
+    "input_mtok": 1.5,
+    "output_mtok": 2.25
+  },
+  "openrouter:amazon/nova-lite-v1": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.24
+  },
+  "openrouter:amazon/nova-micro-v1": {
+    "input_mtok": 0.035,
+    "output_mtok": 0.14
+  },
+  "openrouter:amazon/nova-pro-v1": {
+    "input_mtok": 0.8,
+    "output_mtok": 3.2
+  },
+  "openrouter:anthracite-org/magnum-v2-72b": {
+    "input_mtok": 3,
+    "output_mtok": 3
+  },
+  "openrouter:anthracite-org/magnum-v4-72b": {
+    "input_mtok": 1.5,
+    "output_mtok": 2.25
+  },
+  "openrouter:anthropic/claude-2": {
+    "input_mtok": 8,
+    "output_mtok": 24
+  },
+  "openrouter:anthropic/claude-3-haiku": {
+    "input_mtok": 0.25,
+    "output_mtok": 1.25
+  },
+  "openrouter:anthropic/claude-3-opus": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "openrouter:anthropic/claude-3-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:anthropic/claude-3.5-haiku": {
+    "input_mtok": 0.8,
+    "output_mtok": 4
+  },
+  "openrouter:anthropic/claude-3.5-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:anthropic/claude-3.7-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:anubis-pro-105b-v1": {
+    "input_mtok": 0.8,
+    "output_mtok": 1
+  },
+  "openrouter:arcee-blitz": {
+    "input_mtok": 0.45,
+    "output_mtok": 0.75
+  },
+  "openrouter:caller-large": {
+    "input_mtok": 0.55,
+    "output_mtok": 0.85
+  },
+  "openrouter:chatgpt-4o-latest": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "openrouter:claude-2": {
+    "input_mtok": 8,
+    "output_mtok": 24
+  },
+  "openrouter:claude-3-haiku": {
+    "input_mtok": 0.25,
+    "output_mtok": 1.25
+  },
+  "openrouter:claude-3-opus": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "openrouter:claude-3-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:claude-3.5-haiku": {
+    "input_mtok": 0.8,
+    "output_mtok": 4
+  },
+  "openrouter:claude-3.5-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:claude-3.7-sonnet": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:claude-opus-4": {
+    "input_mtok": 15,
+    "output_mtok": 75
+  },
+  "openrouter:claude-sonnet-4": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:codellama-7b-instruct-solidity": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:coder-large": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.8
+  },
+  "openrouter:codestral-2501": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.9
+  },
+  "openrouter:codex-mini": {
+    "input_mtok": 1.5,
+    "output_mtok": 6
+  },
+  "openrouter:cognitivecomputations/dolphin-mixtral-8x22b": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:cognitivecomputations/dolphin-mixtral-8x7b": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.5
+  },
+  "openrouter:cohere/command": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "openrouter:cohere/command-a": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:cohere/command-r": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "openrouter:cohere/command-r-08-2024": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "openrouter:cohere/command-r-plus": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:cohere/command-r-plus-08-2024": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:cohere/command-r7b-12-2024": {
+    "input_mtok": 0.0375,
+    "output_mtok": 0.15
+  },
+  "openrouter:command": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "openrouter:command-a": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:command-r": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "openrouter:command-r-08-2024": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "openrouter:command-r-plus": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:command-r-plus-08-2024": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:command-r7b-12-2024": {
+    "input_mtok": 0.0375,
+    "output_mtok": 0.15
+  },
+  "openrouter:deepseek-chat": {
+    "input_mtok": 0.38,
+    "output_mtok": 0.89
+  },
+  "openrouter:deepseek-chat-v3-0324": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.88
+  },
+  "openrouter:deepseek-prover-v2": {
+    "input_mtok": 0.5,
+    "output_mtok": 2.18
+  },
+  "openrouter:deepseek-r1": {
+    "input_mtok": 0.45,
+    "output_mtok": 2.15
+  },
+  "openrouter:deepseek-r1-0528": {
+    "input_mtok": 0.5,
+    "output_mtok": 2.15
+  },
+  "openrouter:deepseek-r1-0528-qwen3-8b": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.1
+  },
+  "openrouter:deepseek-r1-distill-llama-70b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openrouter:deepseek-r1-distill-llama-8b": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.04
+  },
+  "openrouter:deepseek-r1-distill-qwen-1.5b": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.18
+  },
+  "openrouter:deepseek-r1-distill-qwen-14b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "openrouter:deepseek-r1-distill-qwen-32b": {
+    "input_mtok": 0.12,
+    "output_mtok": 0.18
+  },
+  "openrouter:deepseek-r1-distill-qwen-7b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.2
+  },
+  "openrouter:deepseek-v3.1-terminus": {
+    "input_mtok": 0.23,
+    "output_mtok": 0.9
+  },
+  "openrouter:deepseek/deepseek-chat": {
+    "input_mtok": 0.38,
+    "output_mtok": 0.89
+  },
+  "openrouter:deepseek/deepseek-chat-v3-0324": {
+    "input_mtok": 0.27,
+    "output_mtok": 1.1
+  },
+  "openrouter:deepseek/deepseek-chat-v3.1": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.8
+  },
+  "openrouter:deepseek/deepseek-r1": {
+    "input_mtok": 0.5,
+    "output_mtok": 3
+  },
+  "openrouter:deepseek/deepseek-r1-distill-llama-70b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openrouter:deepseek/deepseek-r1-distill-llama-8b": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.04
+  },
+  "openrouter:deepseek/deepseek-r1-distill-qwen-1.5b": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.18
+  },
+  "openrouter:deepseek/deepseek-r1-distill-qwen-14b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "openrouter:deepseek/deepseek-r1-distill-qwen-32b": {
+    "input_mtok": 0.12,
+    "output_mtok": 0.18
+  },
+  "openrouter:deepseek/deepseek-v3.2-exp": {
+    "input_mtok": 0.27,
+    "output_mtok": 0.4
+  },
+  "openrouter:devstral-small": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.12
+  },
+  "openrouter:dobby-mini-unhinged-plus-llama-3.1-8b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:dolphin-mixtral-8x22b": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:eleutherai/llemma_7b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:eva-llama-3.33-70b": {
+    "input_mtok": 4,
+    "output_mtok": 6
+  },
+  "openrouter:eva-qwen-2.5-32b": {
+    "input_mtok": 2.6,
+    "output_mtok": 3.4
+  },
+  "openrouter:eva-qwen-2.5-72b": {
+    "input_mtok": 4,
+    "output_mtok": 6
+  },
+  "openrouter:eva-unit-01/eva-llama-3.33-70b": {
+    "input_mtok": 4,
+    "output_mtok": 6
+  },
+  "openrouter:eva-unit-01/eva-qwen-2.5-32b": {
+    "input_mtok": 2.6,
+    "output_mtok": 3.4
+  },
+  "openrouter:eva-unit-01/eva-qwen-2.5-72b": {
+    "input_mtok": 0.9,
+    "output_mtok": 1.2
+  },
+  "openrouter:fimbulvetr-11b-v2": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:gemini-2.0-flash-001": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openrouter:gemini-2.0-flash-lite-001": {
+    "input_mtok": 0.075,
+    "output_mtok": 0.3
+  },
+  "openrouter:gemini-2.5-flash": {
+    "input_mtok": 0.3,
+    "output_mtok": 2.5
+  },
+  "openrouter:gemini-2.5-flash-lite-preview-06-17": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openrouter:gemini-2.5-flash-preview": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "openrouter:gemini-2.5-flash-preview-05-20:thinking": {
+    "input_mtok": 0.15,
+    "output_mtok": 3.5
+  },
+  "openrouter:gemini-2.5-flash-preview:thinking": {
+    "input_mtok": 0.15,
+    "output_mtok": 3.5
+  },
+  "openrouter:gemini-2.5-pro": {
+    "input_mtok": 1.25,
+    "output_mtok": 10
+  },
+  "openrouter:gemini-flash-1.5": {
+    "input_mtok": 0.075,
+    "output_mtok": 0.3
+  },
+  "openrouter:gemini-flash-1.5-8b": {
+    "input_mtok": 0.0375,
+    "output_mtok": 0.15
+  },
+  "openrouter:gemini-pro-1.5": {
+    "input_mtok": 1.25,
+    "output_mtok": 5
+  },
+  "openrouter:gemma-2-27b-it": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "openrouter:gemma-2-9b-it": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:gemma-3-12b-it": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.1
+  },
+  "openrouter:gemma-3-27b-it": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.2
+  },
+  "openrouter:gemma-3-4b-it": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.04
+  },
+  "openrouter:glm-4-32b": {
+    "input_mtok": 0.24,
+    "output_mtok": 0.24
+  },
+  "openrouter:glm-z1-32b": {
+    "input_mtok": 0.24,
+    "output_mtok": 0.24
+  },
+  "openrouter:glm-z1-rumination-32b": {
+    "input_mtok": 0.24,
+    "output_mtok": 0.24
+  },
+  "openrouter:goliath-120b": {
+    "input_mtok": 10,
+    "output_mtok": 12.5
+  },
+  "openrouter:google/gemini-2.0-flash-001": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openrouter:google/gemini-2.0-flash-lite-001": {
+    "input_mtok": 0.075,
+    "output_mtok": 0.3
+  },
+  "openrouter:google/gemini-2.5-flash-image": {
+    "input_mtok": 0.3,
+    "output_mtok": 2.5
+  },
+  "openrouter:google/gemini-2.5-flash-lite": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openrouter:google/gemini-2.5-flash-lite-preview-09-2025": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openrouter:google/gemini-2.5-flash-preview": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "openrouter:google/gemini-2.5-flash-preview-09-2025": {
+    "input_mtok": 0.3,
+    "output_mtok": 2.5
+  },
+  "openrouter:google/gemini-2.5-flash-preview:thinking": {
+    "input_mtok": 0.15,
+    "output_mtok": 3.5
+  },
+  "openrouter:google/gemini-2.5-pro-preview-03-25": {
+    "input_mtok": 1.25,
+    "output_mtok": 10
+  },
+  "openrouter:google/gemini-flash-1.5": {
+    "input_mtok": 0.075,
+    "output_mtok": 0.3
+  },
+  "openrouter:google/gemini-flash-1.5-8b": {
+    "input_mtok": 0.0375,
+    "output_mtok": 0.15
+  },
+  "openrouter:google/gemini-pro": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "openrouter:google/gemini-pro-1.5": {
+    "input_mtok": 1.25,
+    "output_mtok": 5
+  },
+  "openrouter:google/gemma-2-27b-it": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "openrouter:google/gemma-2-9b-it": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.07
+  },
+  "openrouter:google/gemma-3-12b-it": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.1
+  },
+  "openrouter:google/gemma-3-27b-it": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.2
+  },
+  "openrouter:google/gemma-3-4b-it": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.04
+  },
+  "openrouter:google/palm-2-chat-bison": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "openrouter:google/palm-2-codechat-bison": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "openrouter:gpt-3.5-turbo": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "openrouter:gpt-3.5-turbo-0613": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "openrouter:gpt-3.5-turbo-1106": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "openrouter:gpt-3.5-turbo-16k": {
+    "input_mtok": 3,
+    "output_mtok": 4
+  },
+  "openrouter:gpt-3.5-turbo-instruct": {
+    "input_mtok": 1.5,
+    "output_mtok": 2
+  },
+  "openrouter:gpt-4": {
+    "input_mtok": 30,
+    "output_mtok": 60
+  },
+  "openrouter:gpt-4-1106-preview": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "openrouter:gpt-4-turbo": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "openrouter:gpt-4.1": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:gpt-4.1-mini": {
+    "input_mtok": 0.4,
+    "output_mtok": 1.6
+  },
+  "openrouter:gpt-4.1-nano": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openrouter:gpt-4.5-preview": {
+    "input_mtok": 75,
+    "output_mtok": 150
+  },
+  "openrouter:gpt-4o": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:gpt-4o-2024-05-13": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "openrouter:gpt-4o-mini": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "openrouter:gpt-4o-mini-search-preview": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "openrouter:gpt-4o-search-preview": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:gpt-4o:extended": {
+    "input_mtok": 6,
+    "output_mtok": 18
+  },
+  "openrouter:grok-2-1212": {
+    "input_mtok": 2,
+    "output_mtok": 10
+  },
+  "openrouter:grok-2-vision-1212": {
+    "input_mtok": 2,
+    "output_mtok": 10
+  },
+  "openrouter:grok-3": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:grok-3-mini": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.5
+  },
+  "openrouter:grok-beta": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "openrouter:grok-vision-beta": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "openrouter:gryphe/mythomax-l2-13b": {
+    "input_mtok": 0.065,
+    "output_mtok": 0.065
+  },
+  "openrouter:hermes-2-pro-llama-3-8b": {
+    "input_mtok": 0.025,
+    "output_mtok": 0.04
+  },
+  "openrouter:hermes-3-llama-3.1-405b": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.8
+  },
+  "openrouter:hermes-3-llama-3.1-70b": {
+    "input_mtok": 0.12,
+    "output_mtok": 0.3
+  },
+  "openrouter:infermatic/mn-inferor-12b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:inflection-3-pi": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:inflection-3-productivity": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:inflection/inflection-3-pi": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:inflection/inflection-3-productivity": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:jamba-1.6-large": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:jamba-1.6-mini": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.4
+  },
+  "openrouter:jondurbin/airoboros-l2-70b": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.5
+  },
+  "openrouter:l3-euryale-70b": {
+    "input_mtok": 1.48,
+    "output_mtok": 1.48
+  },
+  "openrouter:l3-lunaris-8b": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.05
+  },
+  "openrouter:l3.1-euryale-70b": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.8
+  },
+  "openrouter:l3.3-euryale-70b": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.8
+  },
+  "openrouter:latitudegames/wayfarer-large-70b-llama-3.3": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.9
+  },
+  "openrouter:lfm-3b": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.02
+  },
+  "openrouter:lfm-40b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "openrouter:lfm-7b": {
+    "input_mtok": 0.01,
+    "output_mtok": 0.01
+  },
+  "openrouter:liquid/lfm-3b": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.02
+  },
+  "openrouter:liquid/lfm-40b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.15
+  },
+  "openrouter:liquid/lfm-7b": {
+    "input_mtok": 0.01,
+    "output_mtok": 0.01
+  },
+  "openrouter:llama-3-70b-instruct": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.4
+  },
+  "openrouter:llama-3-8b-instruct": {
+    "input_mtok": 0.03,
+    "output_mtok": 0.06
+  },
+  "openrouter:llama-3-lumimaid-70b": {
+    "input_mtok": 4,
+    "output_mtok": 6
+  },
+  "openrouter:llama-3-lumimaid-8b": {
+    "input_mtok": 0.2,
+    "output_mtok": 1.25
+  },
+  "openrouter:llama-3.1-405b": {
+    "input_mtok": 2,
+    "output_mtok": 2
+  },
+  "openrouter:llama-3.1-405b-instruct": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "openrouter:llama-3.1-70b-instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.28
+  },
+  "openrouter:llama-3.1-8b-instruct": {
+    "input_mtok": 0.016,
+    "output_mtok": 0.029
+  },
+  "openrouter:llama-3.1-lumimaid-70b": {
+    "input_mtok": 2.5,
+    "output_mtok": 3
+  },
+  "openrouter:llama-3.1-lumimaid-8b": {
+    "input_mtok": 0.2,
+    "output_mtok": 1.25
+  },
+  "openrouter:llama-3.1-nemotron-70b-instruct": {
+    "input_mtok": 0.12,
+    "output_mtok": 0.3
+  },
+  "openrouter:llama-3.1-nemotron-ultra-253b-v1": {
+    "input_mtok": 0.6,
+    "output_mtok": 1.8
+  },
+  "openrouter:llama-3.1-sonar-large-128k-online": {
+    "input_mtok": 1,
+    "output_mtok": 1
+  },
+  "openrouter:llama-3.1-sonar-small-128k-online": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:llama-3.2-11b-vision-instruct": {
+    "input_mtok": 0.049,
+    "output_mtok": 0.049
+  },
+  "openrouter:llama-3.2-1b-instruct": {
+    "input_mtok": 0.005,
+    "output_mtok": 0.01
+  },
+  "openrouter:llama-3.2-3b-instruct": {
+    "input_mtok": 0.01,
+    "output_mtok": 0.02
+  },
+  "openrouter:llama-3.2-90b-vision-instruct": {
+    "input_mtok": 1.2,
+    "output_mtok": 1.2
+  },
+  "openrouter:llama-3.3-70b-instruct": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.24
+  },
+  "openrouter:llama-3.3-nemotron-super-49b-v1": {
+    "input_mtok": 0.13,
+    "output_mtok": 0.4
+  },
+  "openrouter:llama-4-maverick": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "openrouter:llama-4-scout": {
+    "input_mtok": 0.08,
+    "output_mtok": 0.3
+  },
+  "openrouter:llama-guard-2-8b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:llama-guard-3-8b": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.06
+  },
+  "openrouter:llama-guard-4-12b": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.05
+  },
+  "openrouter:llama3.1-typhoon2-70b-instruct": {
+    "input_mtok": 0.88,
+    "output_mtok": 0.88
+  },
+  "openrouter:llemma_7b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:maestro-reasoning": {
+    "input_mtok": 0.9,
+    "output_mtok": 3.3
+  },
+  "openrouter:magistral-medium-2506": {
+    "input_mtok": 2,
+    "output_mtok": 5
+  },
+  "openrouter:magistral-small-2506": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "openrouter:magnum-72b": {
+    "input_mtok": 4,
+    "output_mtok": 6
+  },
+  "openrouter:magnum-v2-72b": {
+    "input_mtok": 3,
+    "output_mtok": 3
+  },
+  "openrouter:magnum-v4-72b": {
+    "input_mtok": 2.5,
+    "output_mtok": 3
+  },
+  "openrouter:mancer/weaver": {
+    "input_mtok": 1.125,
+    "output_mtok": 1.125
+  },
+  "openrouter:mercury-coder-small-beta": {
+    "input_mtok": 0.25,
+    "output_mtok": 1
+  },
+  "openrouter:meta-llama/llama-2-13b-chat": {
+    "input_mtok": 0.22,
+    "output_mtok": 0.22
+  },
+  "openrouter:meta-llama/llama-2-70b-chat": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:meta-llama/llama-3-70b-instruct": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.4
+  },
+  "openrouter:meta-llama/llama-3-8b-instruct": {
+    "input_mtok": 0.03,
+    "output_mtok": 0.06
+  },
+  "openrouter:meta-llama/llama-3.1-405b": {
+    "input_mtok": 2,
+    "output_mtok": 2
+  },
+  "openrouter:meta-llama/llama-3.1-405b-instruct": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "openrouter:meta-llama/llama-3.1-70b-instruct": {
+    "input_mtok": 0.119,
+    "output_mtok": 0.39
+  },
+  "openrouter:meta-llama/llama-3.1-8b-instruct": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.03
+  },
+  "openrouter:meta-llama/llama-3.2-11b-vision-instruct": {
+    "input_mtok": 0.049,
+    "output_mtok": 0.049
+  },
+  "openrouter:meta-llama/llama-3.2-1b-instruct": {
+    "input_mtok": 0.01,
+    "output_mtok": 0.01
+  },
+  "openrouter:meta-llama/llama-3.2-3b-instruct": {
+    "input_mtok": 0.015,
+    "output_mtok": 0.025
+  },
+  "openrouter:meta-llama/llama-3.2-90b-vision-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:meta-llama/llama-3.3-70b-instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.25
+  },
+  "openrouter:meta-llama/llama-4-maverick": {
+    "input_mtok": 0.17,
+    "output_mtok": 0.85
+  },
+  "openrouter:meta-llama/llama-4-scout": {
+    "input_mtok": 0.08,
+    "output_mtok": 0.3
+  },
+  "openrouter:meta-llama/llama-guard-2-8b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:meta-llama/llama-guard-3-8b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:microsoft/phi-3-medium-128k-instruct": {
+    "input_mtok": 1,
+    "output_mtok": 1
+  },
+  "openrouter:microsoft/phi-3-mini-128k-instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:microsoft/phi-3.5-mini-128k-instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:microsoft/phi-4": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.14
+  },
+  "openrouter:microsoft/phi-4-multimodal-instruct": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.1
+  },
+  "openrouter:microsoft/wizardlm-2-7b": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.07
+  },
+  "openrouter:microsoft/wizardlm-2-8x22b": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.5
+  },
+  "openrouter:midnight-rose-70b": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "openrouter:minimax-01": {
+    "input_mtok": 0.2,
+    "output_mtok": 1.1
+  },
+  "openrouter:minimax-m1": {
+    "input_mtok": 0.3,
+    "output_mtok": 1.65
+  },
+  "openrouter:minimax-m1:extended": {
+    "input_mtok": 0.55,
+    "output_mtok": 2.2
+  },
+  "openrouter:minimax/minimax-01": {
+    "input_mtok": 0.2,
+    "output_mtok": 1.1
+  },
+  "openrouter:ministral-3b": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.04
+  },
+  "openrouter:ministral-8b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:mistral-7b-instruct": {
+    "input_mtok": 0.028,
+    "output_mtok": 0.054
+  },
+  "openrouter:mistral-7b-instruct-v0.1": {
+    "input_mtok": 0.11,
+    "output_mtok": 0.19
+  },
+  "openrouter:mistral-7b-instruct-v0.2": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:mistral-large": {
+    "input_mtok": 2,
+    "output_mtok": 6
+  },
+  "openrouter:mistral-medium": {
+    "input_mtok": 2.75,
+    "output_mtok": 8.1
+  },
+  "openrouter:mistral-medium-3": {
+    "input_mtok": 0.4,
+    "output_mtok": 2
+  },
+  "openrouter:mistral-nemo": {
+    "input_mtok": 0.01,
+    "output_mtok": 0.019
+  },
+  "openrouter:mistral-saba": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "openrouter:mistral-small": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "openrouter:mistral-small-24b-instruct-2501": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.09
+  },
+  "openrouter:mistral-small-3.1-24b-instruct": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.15
+  },
+  "openrouter:mistral-tiny": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.25
+  },
+  "openrouter:mistral/ministral-8b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:mistralai/codestral-2501": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.9
+  },
+  "openrouter:mistralai/codestral-mamba": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.25
+  },
+  "openrouter:mistralai/ministral-3b": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.04
+  },
+  "openrouter:mistralai/ministral-8b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:mistralai/mistral-7b-instruct": {
+    "input_mtok": 0.029,
+    "output_mtok": 0.059
+  },
+  "openrouter:mistralai/mistral-7b-instruct-v0.1": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:mistralai/mistral-7b-instruct-v0.2": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:mistralai/mistral-large": {
+    "input_mtok": 2,
+    "output_mtok": 6
+  },
+  "openrouter:mistralai/mistral-medium": {
+    "input_mtok": 2.75,
+    "output_mtok": 8.1
+  },
+  "openrouter:mistralai/mistral-nemo": {
+    "input_mtok": 0.035,
+    "output_mtok": 0.08
+  },
+  "openrouter:mistralai/mistral-saba": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "openrouter:mistralai/mistral-small": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.6
+  },
+  "openrouter:mistralai/mistral-small-24b-instruct-2501": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.14
+  },
+  "openrouter:mistralai/mistral-small-3.1-24b-instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.3
+  },
+  "openrouter:mistralai/mistral-tiny": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.25
+  },
+  "openrouter:mistralai/mixtral-8x22b-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:mistralai/mixtral-8x7b-instruct": {
+    "input_mtok": 0.24,
+    "output_mtok": 0.24
+  },
+  "openrouter:mistralai/pixtral-12b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:mistralai/pixtral-large-2411": {
+    "input_mtok": 2,
+    "output_mtok": 6
+  },
+  "openrouter:mixtral-8x22b-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:mixtral-8x7b-instruct": {
+    "input_mtok": 0.08,
+    "output_mtok": 0.24
+  },
+  "openrouter:mn-celeste-12b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:mn-inferor-12b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:mn-starcannon-12b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:mythalion-13b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:mythomax-l2-13b": {
+    "input_mtok": 0.065,
+    "output_mtok": 0.065
+  },
+  "openrouter:neversleep/llama-3-lumimaid-70b": {
+    "input_mtok": 3.375,
+    "output_mtok": 4.5
+  },
+  "openrouter:neversleep/llama-3-lumimaid-8b": {
+    "input_mtok": 0.09375,
+    "output_mtok": 0.75
+  },
+  "openrouter:neversleep/llama-3.1-lumimaid-70b": {
+    "input_mtok": 1.5,
+    "output_mtok": 2.25
+  },
+  "openrouter:neversleep/llama-3.1-lumimaid-8b": {
+    "input_mtok": 0.09375,
+    "output_mtok": 0.75
+  },
+  "openrouter:neversleep/noromaid-20b": {
+    "input_mtok": 0.75,
+    "output_mtok": 1.5
+  },
+  "openrouter:noromaid-20b": {
+    "input_mtok": 1.25,
+    "output_mtok": 2
+  },
+  "openrouter:nothingiisreal/mn-celeste-12b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:nous-hermes-2-mixtral-8x7b-dpo": {
+    "input_mtok": 0.6,
+    "output_mtok": 0.6
+  },
+  "openrouter:nousresearch/hermes-2-pro-llama-3-8b": {
+    "input_mtok": 0.025,
+    "output_mtok": 0.04
+  },
+  "openrouter:nousresearch/hermes-3-llama-3.1-405b": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "openrouter:nousresearch/hermes-3-llama-3.1-70b": {
+    "input_mtok": 0.12,
+    "output_mtok": 0.3
+  },
+  "openrouter:nousresearch/nous-hermes-2-mixtral-8x7b-dpo": {
+    "input_mtok": 0.6,
+    "output_mtok": 0.6
+  },
+  "openrouter:nousresearch/nous-hermes-llama2-13b": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.18
+  },
+  "openrouter:nova-lite-v1": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.24
+  },
+  "openrouter:nova-micro-v1": {
+    "input_mtok": 0.035,
+    "output_mtok": 0.14
+  },
+  "openrouter:nova-pro-v1": {
+    "input_mtok": 0.8,
+    "output_mtok": 3.2
+  },
+  "openrouter:nvidia/llama-3.1-nemotron-70b-instruct": {
+    "input_mtok": 0.12,
+    "output_mtok": 0.3
+  },
+  "openrouter:o1": {
+    "input_mtok": 15,
+    "output_mtok": 60
+  },
+  "openrouter:o1-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "openrouter:o1-pro": {
+    "input_mtok": 150,
+    "output_mtok": 600
+  },
+  "openrouter:o3": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:o3-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "openrouter:o3-pro": {
+    "input_mtok": 20,
+    "output_mtok": 80
+  },
+  "openrouter:o4-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "openrouter:openai/chatgpt-4o-latest": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "openrouter:openai/codex-mini": {
+    "input_mtok": 1.5,
+    "output_mtok": 6
+  },
+  "openrouter:openai/gpt-3.5-turbo": {
+    "input_mtok": 0.5,
+    "output_mtok": 1.5
+  },
+  "openrouter:openai/gpt-3.5-turbo-0613": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "openrouter:openai/gpt-3.5-turbo-1106": {
+    "input_mtok": 1,
+    "output_mtok": 2
+  },
+  "openrouter:openai/gpt-3.5-turbo-16k": {
+    "input_mtok": 3,
+    "output_mtok": 4
+  },
+  "openrouter:openai/gpt-3.5-turbo-instruct": {
+    "input_mtok": 1.5,
+    "output_mtok": 2
+  },
+  "openrouter:openai/gpt-4": {
+    "input_mtok": 30,
+    "output_mtok": 60
+  },
+  "openrouter:openai/gpt-4-1106-preview": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "openrouter:openai/gpt-4-32k": {
+    "input_mtok": 60,
+    "output_mtok": 120
+  },
+  "openrouter:openai/gpt-4-turbo": {
+    "input_mtok": 10,
+    "output_mtok": 30
+  },
+  "openrouter:openai/gpt-4.1": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:openai/gpt-4.1-mini": {
+    "input_mtok": 0.4,
+    "output_mtok": 1.6
+  },
+  "openrouter:openai/gpt-4.1-nano": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.4
+  },
+  "openrouter:openai/gpt-4.5-preview": {
+    "input_mtok": 75,
+    "output_mtok": 150
+  },
+  "openrouter:openai/gpt-4o": {
+    "input_mtok": 2.5,
+    "output_mtok": 10
+  },
+  "openrouter:openai/gpt-4o-2024-05-13": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "openrouter:openai/gpt-4o-mini": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.6
+  },
+  "openrouter:openai/gpt-4o:extended": {
+    "input_mtok": 6,
+    "output_mtok": 18
+  },
+  "openrouter:openai/gpt-5": {
+    "input_mtok": 1.25,
+    "output_mtok": 10
+  },
+  "openrouter:openai/gpt-5-image": {
+    "input_mtok": 10,
+    "output_mtok": 10
+  },
+  "openrouter:openai/gpt-5-image-mini": {
+    "input_mtok": 2.5,
+    "output_mtok": 2
+  },
+  "openrouter:openai/gpt-5-mini": {
+    "input_mtok": 0.25,
+    "output_mtok": 2
+  },
+  "openrouter:openai/gpt-5-nano": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.4
+  },
+  "openrouter:openai/gpt-5-pro": {
+    "input_mtok": 15,
+    "output_mtok": 120
+  },
+  "openrouter:openai/gpt-5.1-codex-mini": {
+    "input_mtok": 0.25,
+    "output_mtok": 2
+  },
+  "openrouter:openai/gpt-oss-120b": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.2
+  },
+  "openrouter:openai/gpt-oss-20b": {
+    "input_mtok": 0.03,
+    "output_mtok": 0.14
+  },
+  "openrouter:openai/gpt-oss-safeguard-20b": {
+    "input_mtok": 0.075,
+    "output_mtok": 0.3
+  },
+  "openrouter:openai/o1": {
+    "input_mtok": 15,
+    "output_mtok": 60
+  },
+  "openrouter:openai/o1-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "openrouter:openai/o1-pro": {
+    "input_mtok": 150,
+    "output_mtok": 600
+  },
+  "openrouter:openai/o3": {
+    "input_mtok": 10,
+    "output_mtok": 40
+  },
+  "openrouter:openai/o3-deep-research": {
+    "input_mtok": 10,
+    "output_mtok": 40
+  },
+  "openrouter:openai/o3-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "openrouter:openai/o3-pro": {
+    "input_mtok": 20,
+    "output_mtok": 80
+  },
+  "openrouter:openai/o4-mini": {
+    "input_mtok": 1.1,
+    "output_mtok": 4.4
+  },
+  "openrouter:openai/o4-mini-deep-research": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:openchat/openchat-7b": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.07
+  },
+  "openrouter:openhands-lm-32b-v0.1": {
+    "input_mtok": 2.6,
+    "output_mtok": 3.4
+  },
+  "openrouter:perplexity/llama-3.1-sonar-large-128k-online": {
+    "input_mtok": 1,
+    "output_mtok": 1
+  },
+  "openrouter:perplexity/llama-3.1-sonar-small-128k-online": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:perplexity/r1-1776": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:perplexity/sonar": {
+    "input_mtok": 1,
+    "output_mtok": 1
+  },
+  "openrouter:perplexity/sonar-deep-research": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:perplexity/sonar-pro": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:perplexity/sonar-reasoning": {
+    "input_mtok": 1,
+    "output_mtok": 5
+  },
+  "openrouter:perplexity/sonar-reasoning-pro": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:phi-3-medium-128k-instruct": {
+    "input_mtok": 1,
+    "output_mtok": 1
+  },
+  "openrouter:phi-3-mini-128k-instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:phi-3.5-mini-128k-instruct": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:phi-4": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.14
+  },
+  "openrouter:phi-4-multimodal-instruct": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.1
+  },
+  "openrouter:phi-4-reasoning-plus": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.35
+  },
+  "openrouter:pixtral-12b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "openrouter:pixtral-large-2411": {
+    "input_mtok": 2,
+    "output_mtok": 6
+  },
+  "openrouter:pygmalionai/mythalion-13b": {
+    "input_mtok": 0.5625,
+    "output_mtok": 1.125
+  },
+  "openrouter:qwen-2-72b-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:qwen-2.5-72b-instruct": {
+    "input_mtok": 0.12,
+    "output_mtok": 0.39
+  },
+  "openrouter:qwen-2.5-7b-instruct": {
+    "input_mtok": 0.04,
+    "output_mtok": 0.1
+  },
+  "openrouter:qwen-2.5-coder-32b-instruct": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.15
+  },
+  "openrouter:qwen-2.5-vl-7b-instruct": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:qwen-max": {
+    "input_mtok": 1.6,
+    "output_mtok": 6.4
+  },
+  "openrouter:qwen-plus": {
+    "input_mtok": 0.4,
+    "output_mtok": 1.2
+  },
+  "openrouter:qwen-turbo": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.2
+  },
+  "openrouter:qwen-vl-max": {
+    "input_mtok": 0.8,
+    "output_mtok": 3.2
+  },
+  "openrouter:qwen-vl-plus": {
+    "input_mtok": 0.21,
+    "output_mtok": 0.63
+  },
+  "openrouter:qwen/qwen-2-72b-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:qwen/qwen-2.5-72b-instruct": {
+    "input_mtok": 0.12,
+    "output_mtok": 0.39
+  },
+  "openrouter:qwen/qwen-2.5-7b-instruct": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.1
+  },
+  "openrouter:qwen/qwen-2.5-coder-32b-instruct": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.15
+  },
+  "openrouter:qwen/qwen-2.5-vl-72b-instruct": {
+    "input_mtok": 0.6,
+    "output_mtok": 0.6
+  },
+  "openrouter:qwen/qwen-2.5-vl-7b-instruct": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:qwen/qwen-max": {
+    "input_mtok": 1.6,
+    "output_mtok": 6.4
+  },
+  "openrouter:qwen/qwen-plus": {
+    "input_mtok": 0.4,
+    "output_mtok": 1.2
+  },
+  "openrouter:qwen/qwen-turbo": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.2
+  },
+  "openrouter:qwen/qwen-vl-max": {
+    "input_mtok": 0.8,
+    "output_mtok": 3.2
+  },
+  "openrouter:qwen/qwen-vl-plus": {
+    "input_mtok": 0.21,
+    "output_mtok": 0.63
+  },
+  "openrouter:qwen/qwen2.5-coder-7b-instruct": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:qwen/qwen2.5-vl-32b-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:qwen/qwen2.5-vl-72b-instruct": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.7
+  },
+  "openrouter:qwen/qwq-32b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.2
+  },
+  "openrouter:qwen/qwq-32b-preview": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:qwen2.5-vl-32b-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "openrouter:qwen2.5-vl-72b-instruct": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.75
+  },
+  "openrouter:qwen3-14b": {
+    "input_mtok": 0.06,
+    "output_mtok": 0.24
+  },
+  "openrouter:qwen3-235b-a22b": {
+    "input_mtok": 0.13,
+    "output_mtok": 0.6
+  },
+  "openrouter:qwen3-30b-a3b": {
+    "input_mtok": 0.08,
+    "output_mtok": 0.29
+  },
+  "openrouter:qwen3-32b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.3
+  },
+  "openrouter:qwen3-8b": {
+    "input_mtok": 0.035,
+    "output_mtok": 0.138
+  },
+  "openrouter:qwq-32b": {
+    "input_mtok": 0.15,
+    "output_mtok": 0.2
+  },
+  "openrouter:qwq-32b-preview": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "openrouter:r1-1776": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:raifle/sorcererlm-8x22b": {
+    "input_mtok": 4.5,
+    "output_mtok": 4.5
+  },
+  "openrouter:remm-slerp-l2-13b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:rocinante-12b": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.5
+  },
+  "openrouter:sao10k/fimbulvetr-11b-v2": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:sao10k/l3-euryale-70b": {
+    "input_mtok": 1.48,
+    "output_mtok": 1.48
+  },
+  "openrouter:sao10k/l3-lunaris-8b": {
+    "input_mtok": 0.02,
+    "output_mtok": 0.05
+  },
+  "openrouter:sao10k/l3.1-euryale-70b": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.8
+  },
+  "openrouter:sao10k/l3.3-euryale-70b": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.8
+  },
+  "openrouter:scb10x/llama3.1-typhoon2-70b-instruct": {
+    "input_mtok": 0.88,
+    "output_mtok": 0.88
+  },
+  "openrouter:scb10x/llama3.1-typhoon2-8b-instruct": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.18
+  },
+  "openrouter:skyfall-36b-v2": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.8
+  },
+  "openrouter:sonar": {
+    "input_mtok": 1,
+    "output_mtok": 1
+  },
+  "openrouter:sonar-deep-research": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:sonar-pro": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:sonar-reasoning": {
+    "input_mtok": 1,
+    "output_mtok": 5
+  },
+  "openrouter:sonar-reasoning-pro": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "openrouter:sophosympatheia/midnight-rose-70b": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "openrouter:sorcererlm-8x22b": {
+    "input_mtok": 4.5,
+    "output_mtok": 4.5
+  },
+  "openrouter:spotlight": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.18
+  },
+  "openrouter:steelskull/l3.3-electra-r1-70b": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.95
+  },
+  "openrouter:thedrummer/anubis-pro-105b-v1": {
+    "input_mtok": 0.8,
+    "output_mtok": 1
+  },
+  "openrouter:thedrummer/rocinante-12b": {
+    "input_mtok": 0.25,
+    "output_mtok": 0.5
+  },
+  "openrouter:thedrummer/skyfall-36b-v2": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.8
+  },
+  "openrouter:thedrummer/unslopnemo-12b": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.5
+  },
+  "openrouter:toppy-m-7b": {
+    "input_mtok": 0.8,
+    "output_mtok": 1.2
+  },
+  "openrouter:undi95/remm-slerp-l2-13b": {
+    "input_mtok": 0.5625,
+    "output_mtok": 1.125
+  },
+  "openrouter:undi95/toppy-m-7b": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.07
+  },
+  "openrouter:unslopnemo-12b": {
+    "input_mtok": 0.45,
+    "output_mtok": 0.45
+  },
+  "openrouter:valkyrie-49b-v1": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.8
+  },
+  "openrouter:virtuoso-large": {
+    "input_mtok": 0.75,
+    "output_mtok": 1.2
+  },
+  "openrouter:virtuoso-medium-v2": {
+    "input_mtok": 0.5,
+    "output_mtok": 0.8
+  },
+  "openrouter:weaver": {
+    "input_mtok": 1.5,
+    "output_mtok": 1.5
+  },
+  "openrouter:wizardlm-2-8x22b": {
+    "input_mtok": 0.48,
+    "output_mtok": 0.48
+  },
+  "openrouter:x-ai/grok-2-1212": {
+    "input_mtok": 2,
+    "output_mtok": 10
+  },
+  "openrouter:x-ai/grok-2-vision-1212": {
+    "input_mtok": 2,
+    "output_mtok": 10
+  },
+  "openrouter:x-ai/grok-3-beta": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "openrouter:x-ai/grok-3-mini-beta": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.5
+  },
+  "openrouter:x-ai/grok-4-fast": {
+    "input_mtok": {
+      "base": 0.2,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 0.4
+        }
+      ]
+    },
+    "output_mtok": {
+      "base": 0.5,
+      "tiers": [
+        {
+          "start": 128000,
+          "price": 1
+        }
+      ]
+    }
+  },
+  "openrouter:x-ai/grok-beta": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "openrouter:x-ai/grok-code-fast-1": {
+    "input_mtok": 0.2,
+    "output_mtok": 1.5
+  },
+  "openrouter:x-ai/grok-vision-beta": {
+    "input_mtok": 5,
+    "output_mtok": 15
+  },
+  "openrouter:xwin-lm/xwin-lm-70b": {
+    "input_mtok": 3.75,
+    "output_mtok": 3.75
+  },
+  "openrouter:yi-large": {
+    "input_mtok": 3,
+    "output_mtok": 3
+  },
+  "openrouter:z-ai/glm-4.5": {
+    "input_mtok": 0.35,
+    "output_mtok": 1.55
+  },
+  "openrouter:z-ai/glm-4.6": {
+    "input_mtok": 0.4,
+    "output_mtok": 1.75
+  },
+  "ovhcloud:DeepSeek-R1-Distill-Llama-70B": {
+    "input_mtok": 0.74,
+    "output_mtok": 0.74
+  },
+  "ovhcloud:Llama-3.1-8B-Instruct": {
+    "input_mtok": 0.11,
+    "output_mtok": 0.11
+  },
+  "ovhcloud:Meta-Llama-3_1-70B-Instruct": {
+    "input_mtok": 0.74,
+    "output_mtok": 0.74
+  },
+  "ovhcloud:Meta-Llama-3_3-70B-Instruct": {
+    "input_mtok": 0.74,
+    "output_mtok": 0.74
+  },
+  "ovhcloud:Mistral-7B-Instruct-v0.3": {
+    "input_mtok": 0.11,
+    "output_mtok": 0.11
+  },
+  "ovhcloud:Mistral-Nemo-Instruct-2407": {
+    "input_mtok": 0.14,
+    "output_mtok": 0.14
+  },
+  "ovhcloud:Mistral-Small-3.2-24B-Instruct-2506": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.31
+  },
+  "ovhcloud:Mixtral-8x7B-Instruct-v0.1": {
+    "input_mtok": 0.7,
+    "output_mtok": 0.7
+  },
+  "ovhcloud:Qwen2.5-Coder-32B-Instruct": {
+    "input_mtok": 0.96,
+    "output_mtok": 0.96
+  },
+  "ovhcloud:Qwen2.5-VL-72B-Instruct": {
+    "input_mtok": 1.01,
+    "output_mtok": 1.01
+  },
+  "ovhcloud:Qwen3-32B": {
+    "input_mtok": 0.09,
+    "output_mtok": 0.25
+  },
+  "ovhcloud:Qwen3-Coder-30B-A3B-Instruct": {
+    "input_mtok": 0.07,
+    "output_mtok": 0.26
+  },
+  "ovhcloud:gpt-oss-120b": {
+    "input_mtok": 0.09,
+    "output_mtok": 0.47
+  },
+  "ovhcloud:gpt-oss-20b": {
+    "input_mtok": 0.05,
+    "output_mtok": 0.18
+  },
+  "ovhcloud:llava-next-mistral-7b": {
+    "input_mtok": 0.32,
+    "output_mtok": 0.32
+  },
+  "perplexity:llama-3.1-sonar-large-128k-online": {
+    "input_mtok": 1,
+    "output_mtok": 1
+  },
+  "perplexity:llama-3.1-sonar-small-128k-online": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "perplexity:r1-1776": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "perplexity:sonar": {
+    "input_mtok": 1,
+    "output_mtok": 1
+  },
+  "perplexity:sonar-deep-research": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "perplexity:sonar-pro": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "perplexity:sonar-reasoning": {
+    "input_mtok": 1,
+    "output_mtok": 5
+  },
+  "perplexity:sonar-reasoning-pro": {
+    "input_mtok": 2,
+    "output_mtok": 8
+  },
+  "together:Austism/chronos-hermes-13b": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "together:Gryphe/MythoMax-L2-13b": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "together:Nexusflow/NexusRaven-V2-13B": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "together:NousResearch/Nous-Capybara-7B-V1p9": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "together:NousResearch/Nous-Hermes-2-Mixtral-8x7B-SFT": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "together:NousResearch/Nous-Hermes-2-Yi-34B": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "together:NousResearch/Nous-Hermes-Llama2-13b": {
+    "input_mtok": 0.225,
+    "output_mtok": 0.225
+  },
+  "together:NousResearch/Nous-Hermes-llama-2-7b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:Open-Orca/Mistral-7B-OpenOrca": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:Qwen/Qwen1.5-0.5B": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "together:Qwen/Qwen1.5-1.8B": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "together:Qwen/Qwen1.5-14B": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "together:Qwen/Qwen1.5-4B": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "together:Qwen/Qwen1.5-72B": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "together:Qwen/Qwen1.5-7B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:Undi95/ReMM-SLERP-L2-13B": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "together:Undi95/Toppy-M-7B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:WizardLM/WizardLM-13B-V1.2": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "together:allenai/OLMo-7B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:codellama/CodeLlama-13b-Instruct-hf": {
+    "input_mtok": 0.225,
+    "output_mtok": 0.225
+  },
+  "together:codellama/CodeLlama-34b-Instruct-hf": {
+    "input_mtok": 0.776,
+    "output_mtok": 0.776
+  },
+  "together:codellama/CodeLlama-70b-Instruct-hf": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "together:codellama/CodeLlama-7b-Instruct-hf": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:deepseek-ai/deepseek-coder-33b-instruct": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "together:garage-bAInd/Platypus2-70B-instruct": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "together:google/gemma-2b": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "together:google/gemma-7b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:lmsys/vicuna-13b-v1.5": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "together:lmsys/vicuna-7b-v1.5": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:meta-llama/Llama-2-13b-chat-hf": {
+    "input_mtok": 0.225,
+    "output_mtok": 0.225
+  },
+  "together:meta-llama/Llama-2-70b-chat-hf": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "together:meta-llama/Llama-2-7b-chat-hf": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:meta-llama/Llama-3-70b-chat-hf": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "together:meta-llama/Llama-3-8b-chat-hf": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:meta-llama/Llama-3.3-70B-Instruct-Turbo": {
+    "input_mtok": 0.88,
+    "output_mtok": 0.88
+  },
+  "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": {
+    "input_mtok": 0.27,
+    "output_mtok": 0.85
+  },
+  "together:meta-llama/Llama-4-Scout-17B-16E-Instruct": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.59
+  },
+  "together:meta-llama/Meta-Llama-3-70B-Instruct-Lite": {
+    "input_mtok": 0.54,
+    "output_mtok": 0.54
+  },
+  "together:meta-llama/Meta-Llama-3-70B-Instruct-Turbo": {
+    "input_mtok": 0.88,
+    "output_mtok": 0.88
+  },
+  "together:meta-llama/Meta-Llama-3-8B-Instruct-Lite": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "together:meta-llama/Meta-Llama-3-8B-Instruct-Turbo": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.18
+  },
+  "together:meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo": {
+    "input_mtok": 3.5,
+    "output_mtok": 3.5
+  },
+  "together:meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo": {
+    "input_mtok": 0.88,
+    "output_mtok": 0.88
+  },
+  "together:meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo": {
+    "input_mtok": 0.18,
+    "output_mtok": 0.18
+  },
+  "together:meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo": {
+    "input_mtok": 0.88,
+    "output_mtok": 0.88
+  },
+  "together:microsoft/WizardLM-2-8x22B": {
+    "input_mtok": 1.2,
+    "output_mtok": 1.2
+  },
+  "together:microsoft/phi-2": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "together:mistralai/Mistral-7B-Instruct-v0.1": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:mistralai/Mistral-7B-Instruct-v0.2": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:mistralai/Mistral-7B-v0.1": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:mistralai/Mixtral-8x22B-Instruct-v0.1": {
+    "input_mtok": 2.4,
+    "output_mtok": 2.4
+  },
+  "together:mistralai/Mixtral-8x7B-Instruct-v0.1": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "together:mistralai/Mixtral-8x7B-v0.1": {
+    "input_mtok": 0.9,
+    "output_mtok": 0.9
+  },
+  "together:openchat/openchat-3.5-1210": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:snorkelai/Snorkel-Mistral-PairRM-DPO": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:teknium/OpenHermes-2-Mistral-7B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:teknium/OpenHermes-2p5-Mistral-7B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:togethercomputer/GPT-JT-Moderation-6B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:togethercomputer/Llama-2-7B-32K-Instruct": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:togethercomputer/RedPajama-INCITE-7B-Base": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:togethercomputer/RedPajama-INCITE-7B-Chat": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:togethercomputer/RedPajama-INCITE-7B-Instruct": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:togethercomputer/RedPajama-INCITE-Base-3B-v1": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "together:togethercomputer/RedPajama-INCITE-Chat-3B-v1": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "together:togethercomputer/RedPajama-INCITE-Instruct-3B-v1": {
+    "input_mtok": 0.1,
+    "output_mtok": 0.1
+  },
+  "together:togethercomputer/StripedHyena-Hessian-7B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:togethercomputer/StripedHyena-Nous-7B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:togethercomputer/alpaca-7b": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "together:upstage/SOLAR-10.7B-Instruct-v1.0": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.3
+  },
+  "together:zero-one-ai/Yi-34B": {
+    "input_mtok": 0.8,
+    "output_mtok": 0.8
+  },
+  "together:zero-one-ai/Yi-6B": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.2
+  },
+  "x-ai:grok-2-1212": {
+    "input_mtok": 2,
+    "output_mtok": 10
+  },
+  "x-ai:grok-2-vision-1212": {
+    "input_mtok": 2,
+    "output_mtok": 10
+  },
+  "x-ai:grok-3": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "x-ai:grok-3-fast": {
+    "input_mtok": 5,
+    "output_mtok": 25
+  },
+  "x-ai:grok-3-mini": {
+    "input_mtok": 0.3,
+    "output_mtok": 0.5
+  },
+  "x-ai:grok-3-mini-fast": {
+    "input_mtok": 0.6,
+    "output_mtok": 4
+  },
+  "x-ai:grok-4-0709": {
+    "input_mtok": 3,
+    "output_mtok": 15
+  },
+  "x-ai:grok-4-1-fast-non-reasoning": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.5
+  },
+  "x-ai:grok-4-1-fast-reasoning": {
+    "input_mtok": 0.2,
+    "output_mtok": 0.5
+  },
+  "x-ai:grok-code-fast-1": {
+    "input_mtok": 0.2,
+    "output_mtok": 1.5
+  }
+}
