@@ -437,22 +437,6 @@ class TestVoyageAI:
         with pytest.raises(ModelAPIError, match='not supported'):
             await embedder.embed_query('Hello, world!')
 
-    async def test_query_with_voyageai_truncation(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
-        embedder = Embedder(model)
-        result = await embedder.embed_query('Hello, world!', settings={'voyageai_truncation': True})  # pyright: ignore[reportArgumentType]
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
-                inputs=['Hello, world!'],
-                input_type='query',
-                usage=RequestUsage(input_tokens=3),
-                model_name='voyage-3.5',
-                timestamp=IsDatetime(),
-                provider_name='voyageai',
-            )
-        )
-
     async def test_query_with_truncate(self, voyage_api_key: str):
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)

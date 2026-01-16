@@ -60,12 +60,6 @@ class VoyageAIEmbeddingSettings(EmbeddingSettings, total=False):
 
     # ALL FIELDS MUST BE `voyageai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    voyageai_truncation: bool
-    """Whether to truncate inputs that exceed the model's context length.
-
-    Defaults to False. If True, inputs that are too long will be truncated.
-    """
-
     voyageai_input_type: VoyageAIEmbedInputType
     """The VoyageAI-specific input type for the embedding.
 
@@ -164,18 +158,12 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
             'voyageai_input_type', 'document' if input_type == 'document' else 'query'
         )
 
-        # Determine truncation: voyageai_truncation takes precedence over truncate
-        if 'voyageai_truncation' in settings:
-            truncation = settings['voyageai_truncation']
-        else:
-            truncation = settings.get('truncate', False)
-
         try:
             response = await self._provider.client.embed(
                 texts=list(inputs),
                 model=self.model_name,
                 input_type=voyageai_input_type,
-                truncation=truncation,
+                truncation=settings.get('truncate', False),
                 output_dimension=settings.get('dimensions'),
             )
         except VoyageError as e:
