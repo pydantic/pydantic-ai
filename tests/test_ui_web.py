@@ -234,10 +234,10 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
     from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
 
-    result = await _get_ui_html('test-version')
+    result = await _get_ui_html()
 
     assert result == test_content
-    cache_file: Path = tmp_path / 'test-version.html'
+    cache_file: Path = tmp_path / f'{app_module.DEFAULT_UI_VERSION}.html'
     assert cache_file.exists()
     assert cache_file.read_bytes() == test_content
 
@@ -250,50 +250,14 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     test_content = b'<html>Cached UI</html>'
-    cache_file = tmp_path / 'cached-version.html'
+    cache_file = tmp_path / f'{app_module.DEFAULT_UI_VERSION}.html'
     cache_file.write_bytes(test_content)
 
     from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
 
-    result = await _get_ui_html('cached-version')
+    result = await _get_ui_html()
 
     assert result == test_content
-
-
-def test_chat_app_index_invalid_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """Test that index endpoint returns 502 for invalid UI version."""
-    import httpx
-
-    import pydantic_ai.ui._web.app as app_module
-
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
-
-    class MockResponse:
-        status_code = 404
-
-        def raise_for_status(self) -> None:
-            raise httpx.HTTPStatusError('Not Found', request=None, response=self)  # type: ignore
-
-    class MockAsyncClient:
-        async def __aenter__(self) -> MockAsyncClient:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get(self, url: str) -> MockResponse:
-            return MockResponse()
-
-    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
-
-    agent = Agent('test')
-    app = create_web_app(agent)
-
-    with TestClient(app) as client:
-        response = client.get('/?version=nonexistent-version')
-        assert response.status_code == 502
-        assert 'nonexistent-version' in response.text
-        assert '404' in response.text
 
 
 def test_chat_app_index_caching():

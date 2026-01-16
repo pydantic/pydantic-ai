@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TypeVar
@@ -47,35 +46,28 @@ def _get_cache_dir() -> Path:
     return cache_dir
 
 
-def _sanitize_version(version: str) -> str:
-    """Sanitize version string for use as filename."""
-    return re.sub(r'[^a-zA-Z0-9._-]', '_', version)
-
-
-async def _get_ui_html(version: str | None = None, ui_source: str | Path | None = None) -> bytes:
+async def _get_ui_html(ui_source: str | Path | None = None) -> bytes:
     """Get UI HTML content from the specified source or default CDN.
 
-    When ui_source is provided, it is used directly without version templating.
-    When ui_source is None, fetches from the default CDN using the version.
+    When ui_source is provided, it is used directly.
+    When ui_source is None, fetches from the default CDN.
 
     Args:
-        version: The UI version to fetch from CDN (only used when ui_source is None).
         ui_source: Source for the chat UI HTML. Can be:
-            - None: Uses the default CDN with version (cached locally)
+            - None: Uses the default CDN (cached locally)
             - A Path instance: Reads from the local file
             - A URL (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
     """
-    # Use default CDN with version and caching
+    # Use default CDN with caching
     if ui_source is None:
-        version = version or DEFAULT_UI_VERSION
         cache_dir = _get_cache_dir()
-        cache_file = cache_dir / f'{_sanitize_version(version)}.html'
+        cache_file = cache_dir / f'{DEFAULT_UI_VERSION}.html'
 
         if cache_file.exists():
             return cache_file.read_bytes()
 
-        cdn_url = CDN_URL_TEMPLATE.format(version=version)
+        cdn_url = CDN_URL_TEMPLATE.format(version=DEFAULT_UI_VERSION)
         async with httpx.AsyncClient() as client:
             response = await client.get(cdn_url)
             response.raise_for_status()
@@ -154,14 +146,11 @@ def create_web_app(
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
-        version = request.query_params.get('version')
-        ui_version = version or DEFAULT_UI_VERSION
-
         try:
-            content = await _get_ui_html(ui_version, ui_source)
+            content = await _get_ui_html(ui_source)
         except httpx.HTTPStatusError as e:
             return HTMLResponse(
-                content=f'Failed to fetch UI version "{ui_version}": {e.response.status_code}',
+                content=f'Failed to fetch UI: {e.response.status_code}',
                 status_code=502,
             )
         except FileNotFoundError as e:

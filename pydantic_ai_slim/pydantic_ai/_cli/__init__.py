@@ -180,7 +180,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     )
     parser.add_argument(
         '--ui-source',
-        help='URL or file path for the chat UI HTML.',
+        help='URL or file path for the chat UI HTML. If not specified, the UI is downloaded from a CDN.',
     )
     parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
