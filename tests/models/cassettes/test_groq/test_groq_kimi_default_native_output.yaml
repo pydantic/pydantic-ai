@@ -1,0 +1,88 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '385'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of Germany?
+        role: user
+      model: moonshotai/kimi-k2-instruct-0905
+      n: 1
+      response_format:
+        json_schema:
+          name: CityLocation
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+        type: json_schema
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '628'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '{"city":"Berlin","country":"Germany"}'
+          role: assistant
+      created: 1766762949
+      id: chatcmpl-c071e4ea-07b6-4ed8-a97d-84e24120a321
+      model: moonshotai/kimi-k2-instruct-0905
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_05df423bab
+      usage:
+        completion_time: 0.01814546
+        completion_tokens: 11
+        prompt_time: 0.017299093
+        prompt_tokens: 89
+        queue_time: 0.070218425
+        total_time: 0.035444553
+        total_tokens: 100
+      usage_breakdown: null
+      x_groq:
+        id: req_01kddmeawretd93bek1q8nqj7w
+        seed: 1651381752
+    status:
+      code: 200
+      message: OK
+version: 1
