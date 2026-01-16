@@ -3868,6 +3868,16 @@ Fix the errors and try again.\
         ]
     )
 
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    # Content will have changed for retry prompt part, so we set it back to the original value
+    retry_prompt_part = reloaded_messages[2].parts[0]
+    assert isinstance(retry_prompt_part, RetryPromptPart)
+    assert retry_prompt_part.content == 'Tool execution failed\n\nFix the errors and try again.'
+    retry_prompt_part.content = 'Tool execution failed'
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
 
 async def test_event_stream_text_with_provider_metadata():
     """Test that text events include provider_metadata when TextPart has provider_name and provider_details."""
