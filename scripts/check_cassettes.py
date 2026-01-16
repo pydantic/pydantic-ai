@@ -16,7 +16,6 @@ from collections import defaultdict
 from pathlib import Path
 
 import pytest
-from pytest_recording.plugin import get_default_cassette_name
 
 
 class _CollectVcrTests:
@@ -38,6 +37,9 @@ class _CollectVcrTests:
     def pytest_collection_modifyitems(
         self, session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
     ) -> None:
+        # prevents pytest.PytestAssertRewriteWarning: Module already imported so cannot be rewritten; pytest_recording
+        from pytest_recording.plugin import get_default_cassette_name
+
         for item in items:
             if not any(item.iter_markers('vcr')):
                 continue
