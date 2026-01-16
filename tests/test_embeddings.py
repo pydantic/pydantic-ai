@@ -334,8 +334,8 @@ class TestCohere:
 @pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
 @pytest.mark.vcr
 class TestBedrock:
-    async def test_infer_model(self, bedrock_provider: BedrockProvider):
-        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+    async def test_infer_model(self):
+        model = infer_embedding_model('bedrock:amazon.titan-embed-text-v2:0')
         assert isinstance(model, BedrockEmbeddingModel)
         assert model.model_name == 'amazon.titan-embed-text-v2:0'
         assert model.system == 'bedrock'
