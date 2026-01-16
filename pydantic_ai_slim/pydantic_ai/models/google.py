@@ -664,24 +664,21 @@ class GoogleModel(Model):
                 #
                 # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
                 if message_parts:
-                    reworked_parts: list[PartDict] = []
-                    reworked_parts_has_function_response: bool | None = None
+                    content_parts: list[PartDict] = []
 
                     for part in message_parts:
-                        part_has_function_response = 'function_response' in part
-
                         if (
-                            reworked_parts_has_function_response is not None
-                            and part_has_function_response != reworked_parts_has_function_response
-                            and reworked_parts
+                            content_parts
+                            and 'function_response' in content_parts[-1]
+                            and 'function_response' not in part
                         ):
-                            contents.append({'role': 'user', 'parts': reworked_parts})
-                            reworked_parts = []
+                            contents.append({'role': 'user', 'parts': content_parts})
+                            content_parts = []
 
-                        reworked_parts_has_function_response = part_has_function_response
-                        reworked_parts.append(part)
+                        content_parts.append(part)
 
-                    contents.append({'role': 'user', 'parts': reworked_parts})
+                    if content_parts:
+                        contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(m, self.system)
                 if maybe_content:
