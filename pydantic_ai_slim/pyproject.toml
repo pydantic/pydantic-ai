@@ -124,6 +124,8 @@ temporal = ["temporalio==1.20.0"]
 dbos = ["dbos>=1.14.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
+# Restate
+restate = ["restate_sdk[serde]==0.10"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
