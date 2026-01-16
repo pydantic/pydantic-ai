@@ -278,7 +278,7 @@ def test_output_tool_retry_error_handled():
         x: int
         y: str
 
-    agent = Agent('test', output_type=OutputModel, retries=2)
+    agent = Agent('test', output_type=OutputModel, output_retries=2)
 
     call_count = 0
 
@@ -305,7 +305,7 @@ async def test_multiple_concurrent_tool_retries():
         x: int
         y: str
 
-    agent = Agent('test', deps_type=AgentRunDeps, output_type=OutputModel, retries=2)
+    agent = Agent('test', deps_type=AgentRunDeps, output_type=OutputModel, output_retries=2)
     retried_run_ids = set[int]()
     event = Event()
 
@@ -329,7 +329,7 @@ def test_output_tool_retry_error_handled_with_custom_args():
         x: int
         y: str
 
-    agent = Agent('test', output_type=ResultModel, retries=2)
+    agent = Agent('test', output_type=ResultModel, output_retries=2)
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
         agent.run_sync('Hello', model=TestModel(custom_output_args={'foo': 'a', 'bar': 1}))

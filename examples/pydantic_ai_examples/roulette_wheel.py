@@ -23,7 +23,8 @@ class Deps:
 roulette_agent = Agent(
     'groq:llama-3.3-70b-versatile',
     deps_type=Deps,
-    retries=3,
+    output_retries=3,
+    tool_retries=3,
     output_type=bool,
     system_prompt=(
         'Use the `roulette_wheel` function to determine if the customer has won based on the number they bet on.'
