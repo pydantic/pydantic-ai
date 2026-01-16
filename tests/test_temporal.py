@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
@@ -16,6 +18,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryContent,
     BinaryImage,
     ExternalToolset,
     FinalResultEvent,
@@ -54,6 +57,7 @@ from pydantic_graph.beta.join import reduce_list_append
 
 try:
     import temporalio.api.common.v1
+    from pydantic_core import to_json
     from temporalio import workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
@@ -77,6 +81,12 @@ try:
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._toolset import (
+        SerializableBinaryContent,
+        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+        from_serializable,
+        to_serializable,
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -3103,3 +3113,77 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
         result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
     assert result['data_converter'].payload_codec is codec
+
+
+# Tests for BinaryContent serialization in Temporal (#3702)
+
+
+def test_binary_content_to_serializable():
+    """Test that BinaryContent is converted to SerializableBinaryContent."""
+    # PNG magic bytes - non-UTF8 binary data
+    binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    bc = BinaryContent(data=binary_data, media_type='image/png')
+
+    result = to_serializable(bc)
+
+    assert isinstance(result, SerializableBinaryContent)
+    assert result.data == binary_data
+    assert result.media_type == 'image/png'
+    assert result.identifier == bc.identifier
+    assert result.kind == 'binary'
+
+
+def test_binary_content_from_serializable():
+    """Test that SerializableBinaryContent is converted back to BinaryContent."""
+    binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    sbc = SerializableBinaryContent(
+        data=binary_data,
+        media_type='image/png',
+        identifier='test-id',
+    )
+
+    result = from_serializable(sbc)
+
+    assert isinstance(result, BinaryContent)
+    assert result.data == binary_data
+    assert result.media_type == 'image/png'
+    assert result.identifier == 'test-id'
+
+
+def test_binary_content_from_dict():
+    """Test that a dict with kind='binary' is converted back to BinaryContent."""
+    binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    # Simulate what Temporal deserialization produces
+    dict_result = {
+        'data': base64.b64encode(binary_data).decode('ascii'),
+        'media_type': 'image/png',
+        'identifier': 'test-id',
+        'vendor_metadata': None,
+        'kind': 'binary',
+    }
+
+    result = from_serializable(dict_result)
+
+    assert result == snapshot()
+
+
+def test_binary_content_serialization_round_trip():
+    """Test full round-trip: BinaryContent -> to_json -> dict -> BinaryContent."""
+    # PNG magic bytes - non-UTF8 binary data that would fail direct JSON serialization
+    binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    bc = BinaryContent(data=binary_data, media_type='image/png', identifier='test-file')
+
+    # Wrap in _ToolReturn like Temporal toolset does
+    serializable_result = to_serializable(bc)
+    wrapped = _ToolReturn(result=serializable_result)
+
+    # Serialize with to_json (what Temporal uses internally)
+    serialized = to_json(wrapped)
+
+    # Deserialize (simulating Temporal's deserialization)
+    deserialized = json.loads(serialized)
+
+    # The result field will be a dict after JSON deserialization
+    result = from_serializable(deserialized['result'])
+
+    assert result == snapshot()
