@@ -1018,9 +1018,9 @@ class ReportCaseRenderer:
 
         return row
 
-    def build_failure_row(self, case: ReportCaseFailure) -> list[str]:
+    def build_failure_row(self, case: ReportCaseFailure) -> list[str | Text]:
         """Build a table row for a single case failure."""
-        row = [case.name]
+        row: list[str | Text] = [case.name]
 
         if self.include_input:
             row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
@@ -1032,10 +1032,10 @@ class ReportCaseRenderer:
             row.append(self.output_renderer.render_value(None, case.expected_output) or EMPTY_CELL_STR)
 
         if self.include_error_message:
-            row.append(case.error_message or EMPTY_CELL_STR)
+            row.append(Text(case.error_message) if case.error_message else EMPTY_CELL_STR)
 
         if self.include_error_stacktrace:
-            row.append(case.error_stacktrace or EMPTY_CELL_STR)
+            row.append(Text(case.error_stacktrace) if case.error_stacktrace else EMPTY_CELL_STR)
 
         return row
 
