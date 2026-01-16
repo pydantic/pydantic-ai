@@ -123,7 +123,7 @@ class ModelResponsePartsManager:
                         self._handle_embedded_thinking_end(vendor_part_id)
                         return
                     yield from self._handle_embedded_thinking_content(
-                        existing_part, part_index, content, provider_name, provider_details
+                        existing_part, part_index, content, provider_details
                     )
                     return
                 elif isinstance(existing_part, TextPart):
@@ -228,10 +228,7 @@ class ModelResponsePartsManager:
                 return
 
             part_delta = ThinkingPartDelta(
-                content_delta=content,
-                signature_delta=signature,
-                provider_name=provider_name,
-                provider_details=provider_details,
+                content_delta=content, signature_delta=signature, provider_details=provider_details
             )
             self._parts[part_index] = part_delta.apply(existing_thinking_part)
             yield PartDeltaEvent(index=part_index, delta=part_delta)
@@ -444,17 +441,10 @@ class ModelResponsePartsManager:
         yield PartStartEvent(index=new_index, part=part)
 
     def _handle_embedded_thinking_content(
-        self,
-        existing_part: ThinkingPart,
-        part_index: int,
-        content: str,
-        provider_name: str | None,
-        provider_details: dict[str, Any] | None,
+        self, existing_part: ThinkingPart, part_index: int, content: str, provider_details: dict[str, Any] | None
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle content inside <think>...</think>."""
-        part_delta = ThinkingPartDelta(
-            content_delta=content, provider_name=provider_name, provider_details=provider_details
-        )
+        part_delta = ThinkingPartDelta(content_delta=content, provider_details=provider_details)
         self._parts[part_index] = part_delta.apply(existing_part)
         yield PartDeltaEvent(index=part_index, delta=part_delta)
 

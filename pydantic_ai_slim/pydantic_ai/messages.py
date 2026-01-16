@@ -1589,7 +1589,6 @@ class ThinkingPartDelta:
     """Optional provider name for the thinking part.
 
     Signatures are only sent back to the same provider.
-    Required to be set when provider_details is set.
     """
 
     provider_details: ProviderDetailsDelta = None
@@ -1598,8 +1597,7 @@ class ThinkingPartDelta:
     Can be a dict to merge with existing details, or a callable that takes
     the existing details and returns updated details.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
-    When this field is set, provider_name is required to identify the provider that generated this data."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
     part_delta_kind: Literal['thinking'] = 'thinking'
     """Part delta type identifier, used as a discriminator."""
