@@ -10,6 +10,21 @@ from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
 from . import ModelProfile
 
+SAMPLING_PARAMS = (
+    'temperature',
+    'top_p',
+    'presence_penalty',
+    'frequency_penalty',
+    'logit_bias',
+    'logprobs',
+    'top_logprobs',
+)
+"""Sampling parameter names that are incompatible with reasoning.
+
+These parameters are not supported when reasoning is enabled (reasoning_effort != 'none').
+See https://platform.openai.com/docs/guides/reasoning for details.
+"""
+
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
@@ -73,6 +88,12 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_encrypted_reasoning_content: bool = False
     """Whether the model supports including encrypted reasoning content in the response."""
 
+    openai_supports_sampling_with_reasoning_off: bool = False
+    """Whether the model supports sampling parameters (temperature, top_p, etc.) when reasoning_effort='none'.
+
+    Models like GPT-5.1 and GPT-5.2 default to reasoning_effort='none' and support sampling params in that mode.
+    When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported."""
+
     openai_responses_requires_function_call_status_none: bool = False
     """Whether the Responses API requires the `status` field on function tool calls to be `None`.
 
@@ -98,25 +119,25 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     is_gpt_5 = model_name.startswith('gpt-5')
     is_o_series = model_name.startswith('o')
-    is_reasoning_model = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name)
+
+    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2'))
+
+    # GPT-5.1+ models support reasoning_effort='none' (the default), which allows sampling params.
+    # o-series, GPT-5, GPT-5-pro always have reasoning enabled.
+    thinking_always_enabled = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name and not is_gpt_5_1_plus)
 
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
+    supports_image_output = is_gpt_5 or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
 
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
     # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
     # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
 
-    if is_reasoning_model:
-        openai_unsupported_model_settings = (
-            'temperature',
-            'top_p',
-            'presence_penalty',
-            'frequency_penalty',
-            'logit_bias',
-            'logprobs',
-            'top_logprobs',
-        )
+    # For models that always have reasoning on (o-series, GPT-5), sampling params are unsupported.
+    # For GPT-5.1+ models, sampling params support depends on reasoning_effort setting (handled in model layer).
+    if thinking_always_enabled:
+        openai_unsupported_model_settings = tuple(sp for sp in SAMPLING_PARAMS)
     else:
         openai_unsupported_model_settings = ()
 
@@ -128,11 +149,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
-        supports_image_output=is_gpt_5 or 'o3' in model_name or '4.1' in model_name or '4o' in model_name,
+        supports_image_output=supports_image_output,
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
-        openai_supports_encrypted_reasoning_content=is_reasoning_model,
+        openai_supports_encrypted_reasoning_content=thinking_always_enabled or is_gpt_5_1_plus,
+        openai_supports_sampling_with_reasoning_off=is_gpt_5_1_plus,
     )
 
 
