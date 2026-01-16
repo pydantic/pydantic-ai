@@ -587,3 +587,36 @@ def test_chat_app_index_file_not_found(tmp_path: Path):
         response = client.get('/')
         assert response.status_code == 404
         assert 'Local UI file not found' in response.text
+
+
+def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
+    """Test that index endpoint returns 502 when CDN fetch fails with HTTPStatusError."""
+    import httpx
+
+    import pydantic_ai.ui._web.app as app_module
+
+    class MockResponse:
+        status_code = 500
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> None:
+            response = MockResponse()
+            raise httpx.HTTPStatusError('Server error', request=None, response=response)  # type: ignore
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    # Use a fresh temp dir so there's no cached file
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: Path('/tmp/nonexistent-cache-dir-for-test'))
+
+    agent = Agent('test')
+    app = create_web_app(agent)
+
+    with TestClient(app) as client:
+        response = client.get('/')
+        assert response.status_code == 502
+        assert 'Failed to fetch UI: 500' in response.text
