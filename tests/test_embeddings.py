@@ -334,8 +334,10 @@ class TestCohere:
 @pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
 @pytest.mark.vcr
 class TestBedrock:
-    async def test_infer_model(self):
-        model = infer_embedding_model('bedrock:amazon.titan-embed-text-v2:0')
+    def test_infer_model(self, bedrock_provider: BedrockProvider):
+        """Test that infer_embedding_model works with bedrock prefix."""
+        with patch('pydantic_ai.embeddings.infer_provider', return_value=bedrock_provider):
+            model = infer_embedding_model('bedrock:amazon.titan-embed-text-v2:0')
         assert isinstance(model, BedrockEmbeddingModel)
         assert model.model_name == 'amazon.titan-embed-text-v2:0'
         assert model.system == 'bedrock'
