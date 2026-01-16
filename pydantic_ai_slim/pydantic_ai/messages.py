@@ -26,12 +26,8 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 
-AudioMediaType: TypeAlias = Literal[
-    'audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac'
-]
-ImageMediaType: TypeAlias = Literal[
-    'image/jpeg', 'image/png', 'image/gif', 'image/webp'
-]
+AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
+ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 DocumentMediaType: TypeAlias = Literal[
     'application/pdf',
     'text/plain',
@@ -56,12 +52,8 @@ VideoMediaType: TypeAlias = Literal[
 
 AudioFormat: TypeAlias = Literal['wav', 'mp3', 'oga', 'flac', 'aiff', 'aac']
 ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
-DocumentFormat: TypeAlias = Literal[
-    'csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx'
-]
-VideoFormat: TypeAlias = Literal[
-    'mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp'
-]
+DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
+VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 
 FinishReason: TypeAlias = Literal[
     'stop',
@@ -72,9 +64,7 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
-ProviderDetailsDelta: TypeAlias = (
-    dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
-)
+ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
 
@@ -105,21 +95,11 @@ class SystemPromptPart:
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         return LogRecord(
             attributes={'event.name': 'gen_ai.system.message'},
-            body={
-                'role': 'system',
-                **({'content': self.content} if settings.include_content else {}),
-            },
+            body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
         )
 
-    def otel_message_parts(
-        self, settings: InstrumentationSettings
-    ) -> list[_otel_messages.MessagePart]:
-        return [
-            _otel_messages.TextPart(
-                type='text',
-                **{'content': self.content} if settings.include_content else {},
-            )
-        ]
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        return [_otel_messages.TextPart(type='text', **{'content': self.content} if settings.include_content else {})]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -155,13 +135,13 @@ class FileUrl(ABC):
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
-    _media_type: Annotated[
-        str | None, pydantic.Field(alias='media_type', default=None, exclude=True)
-    ] = field(compare=False, default=None)
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
 
-    _identifier: Annotated[
-        str | None, pydantic.Field(alias='identifier', default=None, exclude=True)
-    ] = field(compare=False, default=None)
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
 
     def __init__(
         self,
@@ -280,9 +260,7 @@ class VideoUrl(FileUrl):
     @property
     def is_youtube(self) -> bool:
         """True if the URL has a YouTube domain."""
-        return self.url.startswith(
-            ('https://youtu.be/', 'https://youtube.com/', 'https://www.youtube.com/')
-        )
+        return self.url.startswith(('https://youtu.be/', 'https://youtube.com/', 'https://www.youtube.com/'))
 
     @property
     def format(self) -> VideoFormat:
@@ -511,9 +489,9 @@ class BinaryContent:
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
-    _identifier: Annotated[
-        str | None, pydantic.Field(alias='identifier', default=None, exclude=True)
-    ] = field(compare=False, default=None)
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
 
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -651,16 +629,11 @@ class BinaryImage(BinaryContent):
         _identifier: str | None = None,
     ):
         super().__init__(
-            data=data,
-            media_type=media_type,
-            identifier=identifier or _identifier,
-            vendor_metadata=vendor_metadata,
+            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
         )
 
         if not self.is_image:
-            raise ValueError(
-                '`BinaryImage` must be have a media type that starts with "image/"'
-            )  # pragma: no cover
+            raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
 
 
 @dataclass
@@ -774,40 +747,24 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
-        content: Any = [
-            {'kind': part.pop('type'), **part}
-            for part in self.otel_message_parts(settings)
-        ]
+        content: Any = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
         for part in content:
             if part['kind'] == 'binary' and 'content' in part:
                 part['binary_content'] = part.pop('content')
         content = [
-            part['content']
-            if part == {'kind': 'text', 'content': part.get('content')}
-            else part
-            for part in content
+            part['content'] if part == {'kind': 'text', 'content': part.get('content')} else part for part in content
         ]
         if content in ([{'kind': 'text'}], [self.content]):
             content = content[0]
-        return LogRecord(
-            attributes={'event.name': 'gen_ai.user.message'},
-            body={'content': content, 'role': 'user'},
-        )
+        return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
 
-    def otel_message_parts(
-        self, settings: InstrumentationSettings
-    ) -> list[_otel_messages.MessagePart]:
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
-        content: Sequence[UserContent] = (
-            [self.content] if isinstance(self.content, str) else self.content
-        )
+        content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content
         for part in content:
             if isinstance(part, str):
                 parts.append(
-                    _otel_messages.TextPart(
-                        type='text',
-                        **({'content': part} if settings.include_content else {}),
-                    )
+                    _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
                 )
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 parts.append(
@@ -817,9 +774,7 @@ class UserPromptPart:
                     )
                 )
             elif isinstance(part, BinaryContent):
-                converted_part = _otel_messages.BinaryDataPart(
-                    type='binary', media_type=part.media_type
-                )
+                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
                 if settings.include_content and settings.include_binary_content:
                     converted_part['content'] = base64.b64encode(part.data).decode()
                 parts.append(converted_part)
@@ -834,10 +789,7 @@ class UserPromptPart:
 
 
 tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
-    Any,
-    config=pydantic.ConfigDict(
-        defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'
-    ),
+    Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 
 
@@ -892,9 +844,7 @@ class BaseToolReturnPart:
             },
         )
 
-    def otel_message_parts(
-        self, settings: InstrumentationSettings
-    ) -> list[_otel_messages.MessagePart]:
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         from .models.instrumented import InstrumentedModel
 
         part = _otel_messages.ToolCallResponsePart(
@@ -943,9 +893,7 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
-error_details_ta = pydantic.TypeAdapter(
-    list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True)
-)
+error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
 @dataclass(repr=False)
@@ -996,11 +944,11 @@ class RetryPromptPart:
             else:
                 description = self.content
         else:
-            json_errors = error_details_ta.dump_json(
-                self.content, exclude={'__all__': {'ctx'}}, indent=2
-            )
+            json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
             plural = isinstance(self.content, list) and len(self.content) != 1
-            description = f"{len(self.content)} validation error{'s' if plural else ''}:\n```json\n{json_errors.decode()}\n```"
+            description = (
+                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+            )
         return f'{description}\n\nFix the errors and try again.'
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
@@ -1013,20 +961,14 @@ class RetryPromptPart:
             return LogRecord(
                 attributes={'event.name': 'gen_ai.tool.message'},
                 body={
-                    **(
-                        {'content': self.model_response()}
-                        if settings.include_content
-                        else {}
-                    ),
+                    **({'content': self.model_response()} if settings.include_content else {}),
                     'role': 'tool',
                     'id': self.tool_call_id,
                     'name': self.tool_name,
                 },
             )
 
-    def otel_message_parts(
-        self, settings: InstrumentationSettings
-    ) -> list[_otel_messages.MessagePart]:
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         if self.tool_name is None:
             return [_otel_messages.TextPart(type='text', content=self.model_response())]
         else:
@@ -1045,8 +987,7 @@ class RetryPromptPart:
 
 
 ModelRequestPart = Annotated[
-    SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart,
-    pydantic.Discriminator('part_kind'),
+    SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart, pydantic.Discriminator('part_kind')
 ]
 """A message part sent by Pydantic AI to a model."""
 
@@ -1073,9 +1014,7 @@ class ModelRequest:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     @classmethod
-    def user_text_prompt(
-        cls, user_prompt: str, *, instructions: str | None = None
-    ) -> ModelRequest:
+    def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
         return cls(parts=[UserPromptPart(user_prompt)], instructions=instructions)
 
@@ -1107,15 +1046,11 @@ class URLCitation:
     def __post_init__(self) -> None:
         """Check that citation indices are valid."""
         if self.start_index < 0:
-            raise ValueError(
-                f'start_index must be non-negative, got {self.start_index}'
-            )
+            raise ValueError(f'start_index must be non-negative, got {self.start_index}')
         if self.end_index < 0:
             raise ValueError(f'end_index must be non-negative, got {self.end_index}')
         if self.start_index > self.end_index:
-            raise ValueError(
-                f'start_index ({self.start_index}) must be <= end_index ({self.end_index})'
-            )
+            raise ValueError(f'start_index ({self.start_index}) must be <= end_index ({self.end_index})')
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1214,10 +1149,7 @@ class GroundingCitation:
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
-
-Citation: TypeAlias = (
-    URLCitation | ContainerFileCitation | ToolResultCitation | GroundingCitation
-)
+Citation: TypeAlias = URLCitation | ContainerFileCitation | ToolResultCitation | GroundingCitation
 """All possible citation types from different providers.
 
 Covers:
