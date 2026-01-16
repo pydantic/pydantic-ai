@@ -453,7 +453,7 @@ class ModelResponsePartsManager:
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle content inside <think>...</think>."""
         part_delta = ThinkingPartDelta(
-            content_delta=content, provider_name=existing_part.provider_name, provider_details=provider_details
+            content_delta=content, provider_name=provider_name, provider_details=provider_details
         )
         self._parts[part_index] = part_delta.apply(existing_part)
         yield PartDeltaEvent(index=part_index, delta=part_delta)
