@@ -1242,7 +1242,7 @@ def test_fallback_on_mixed_list() -> None:
         fallback_model_impl,
         fallback_on=[CustomError, custom_exception_handler, reject_bad_response],
     )
-    agent = Agent(model=fallback)
+    agent = Agent(model=fallback)  # pragma: lax no cover
 
     # Should fallback because response contains 'bad'
     result = agent.run_sync('hello')
@@ -1357,10 +1357,12 @@ def test_is_response_handler_builtin() -> None:
 
 def test_is_exception_types_tuple_with_non_exception() -> None:
     """Test that tuples with non-exception types return False."""
-    from pydantic_ai.models.fallback import _is_exception_types_tuple  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.fallback import (
+        _is_exception_types_tuple,  # pyright: ignore[reportPrivateUsage]  # pragma: lax no cover
+    )
 
     # Tuple with non-exception type
-    assert _is_exception_types_tuple((ValueError, str)) is False
+    assert _is_exception_types_tuple((ValueError, str)) is False  # pragma: lax no cover
     assert _is_exception_types_tuple((int, float)) is False
     # Valid exception tuple
     assert _is_exception_types_tuple((ValueError, TypeError)) is True
@@ -1408,7 +1410,7 @@ def test_empty_fallback_on_list_warning() -> None:
             fallback_model_impl,
             fallback_on=[],
         )
-
+        # pragma: lax no cover
         assert len(w) == 1
         assert issubclass(w[0].category, UserWarning)
         assert 'empty fallback_on list' in str(w[0].message)
