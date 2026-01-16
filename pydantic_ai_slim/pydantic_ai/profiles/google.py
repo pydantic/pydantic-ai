@@ -5,6 +5,13 @@ from dataclasses import dataclass
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
 
+# Google effort-to-budget mapping - higher values for Gemini's thinking
+GOOGLE_EFFORT_TO_BUDGET: dict[str, int] = {
+    'low': 1024,
+    'medium': 8192,
+    'high': 32768,
+}
+
 
 @dataclass(kw_only=True)
 class GoogleModelProfile(ModelProfile):
@@ -22,6 +29,13 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
     is_3_or_newer = 'gemini-3' in model_name
+    # Gemini 2.5 models have thinking capabilities (dynamic thinking enabled by default)
+    is_2_5_or_newer = 'gemini-2.5' in model_name or is_3_or_newer
+    supports_thinking = is_2_5_or_newer and not is_image_model
+
+    # Gemini 3 uses thinking_level, Gemini 2.5 uses thinking_budget
+    uses_thinking_level = is_3_or_newer and supports_thinking
+
     return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
@@ -29,6 +43,11 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=is_3_or_newer or not is_image_model,
         supports_tools=not is_image_model,
         google_supports_native_output_with_builtin_tools=is_3_or_newer,
+        # Thinking capabilities for Gemini 2.5+ models
+        supports_thinking=supports_thinking,
+        supports_thinking_level=uses_thinking_level,  # Gemini 3 uses thinking_level instead of budget
+        # effort_to_budget_map only applies to Gemini 2.5 (budget-based thinking)
+        effort_to_budget_map=GOOGLE_EFFORT_TO_BUDGET if supports_thinking and not uses_thinking_level else None,
     )
 
 

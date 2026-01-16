@@ -133,6 +133,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=is_reasoning_model,
+        # Thinking capabilities for reasoning models
+        supports_thinking=is_reasoning_model,
+        # o-series models always have thinking enabled (only support low/medium/high effort)
+        # GPT-5.x supports reasoning.effort='none' to disable thinking
+        thinking_always_enabled=is_o_series,
     )
 
 

@@ -10,6 +10,7 @@ from typing_extensions import override
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
+from ..thinking import resolve_thinking_config
 from . import ModelRequestParameters
 
 try:
@@ -92,8 +93,57 @@ class CerebrasModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _cerebras_settings_to_openai_settings(cast(CerebrasModelSettings, merged_settings or {}))
+        merged_settings = cast(CerebrasModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'cerebras_disable_reasoning' not in merged_settings:
+            disable_reasoning = self._resolve_reasoning_config(merged_settings)
+            if disable_reasoning is not None:
+                merged_settings['cerebras_disable_reasoning'] = disable_reasoning  # pragma: no cover
+
+        new_settings = _cerebras_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
+
+    def _resolve_reasoning_config(self, model_settings: CerebrasModelSettings) -> bool | None:
+        """Resolve unified thinking settings to Cerebras disable_reasoning config.
+
+        Args:
+            model_settings: The model settings to check.
+
+        Returns:
+            True to disable reasoning, None to leave default behavior.
+
+        Raises:
+            UserError: If thinking is requested but the model doesn't support it.
+        """
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
+        if resolved is None:  # pragma: no cover
+            return None
+        if not resolved.enabled:
+            return True  # disable_reasoning=True
+
+        # Warn about ignored settings (Cerebras only supports enable/disable)
+        ignored: list[str] = []
+        for setting in ('budget_tokens', 'effort', 'include_in_response', 'summary'):
+            value = getattr(resolved, setting, None)
+            if value is not None and (setting != 'include_in_response' or value is not True):
+                ignored.append(setting)
+
+        if ignored:
+            from ._warnings import warn_settings_ignored_batch
+
+            warn_settings_ignored_batch(
+                setting_names=ignored,
+                provider_name='Cerebras',
+                model_name=self._model_name,
+                reason='Cerebras reasoning can only be enabled or disabled. Reasoning will be enabled with default behavior',
+            )
+
+        return None  # Don't set disable_reasoning (use default enabled behavior)
 
 
 def _cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:
