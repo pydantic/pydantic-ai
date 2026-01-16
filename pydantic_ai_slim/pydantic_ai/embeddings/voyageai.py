@@ -22,6 +22,9 @@ except ImportError as _import_error:
     ) from _import_error
 
 LatestVoyageAIEmbeddingModelNames = Literal[
+    'voyage-4-large',
+    'voyage-4',
+    'voyage-4-lite',
     'voyage-3-large',
     'voyage-3.5',
     'voyage-3.5-lite',
@@ -72,6 +75,9 @@ class VoyageAIEmbeddingSettings(EmbeddingSettings, total=False):
 
 
 _MAX_INPUT_TOKENS: dict[VoyageAIEmbeddingModelName, int] = {
+    'voyage-4-large': 32000,
+    'voyage-4': 32000,
+    'voyage-4-lite': 32000,
     'voyage-3-large': 32000,
     'voyage-3.5': 32000,
     'voyage-3.5-lite': 32000,

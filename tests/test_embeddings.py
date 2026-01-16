@@ -393,6 +393,22 @@ class TestVoyageAI:
             )
         )
 
+    async def test_query_voyage_4(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key=voyage_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=3),
+                model_name='voyage-4',
+                timestamp=IsDatetime(),
+                provider_name='voyageai',
+            )
+        )
+
     async def test_documents(self, voyage_api_key: str):
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
