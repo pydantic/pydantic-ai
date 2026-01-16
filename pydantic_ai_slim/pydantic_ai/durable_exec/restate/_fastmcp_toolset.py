@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic.errors import PydanticUserError
-from restate import Context, RunOptions, TerminalError
 from typing_extensions import Self
 
 from pydantic_ai import ToolDefinition
@@ -15,6 +14,7 @@ from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
+from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
 from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult
 
@@ -62,7 +62,7 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
             # so we just return ToolDefinitions and reconstruct ToolsetTool outside of ctx.run_typed().
             return RestateFastMCPGetToolsContextRunResult(output={name: tool.tool_def for name, tool in res.items()})
 
-        options = RunOptions(serde=FAST_MCP_GET_TOOLS_SERDE)
+        options = RunOptions[RestateFastMCPGetToolsContextRunResult](serde=FAST_MCP_GET_TOOLS_SERDE)
         tool_defs = await self._context.run_typed('get fastmcp tools', get_tools_in_context, options)
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.output.items()}
 

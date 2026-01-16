@@ -5,16 +5,16 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic.errors import PydanticUserError
-from restate import Context, RunOptions, TerminalError
 from typing_extensions import Self
 
 from pydantic_ai import ToolDefinition
-from pydantic_ai.mcp import MCPServer, ToolResult
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.mcp import MCPServer, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
+from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
 
 
@@ -74,7 +74,7 @@ class RestateMCPServer(WrapperToolset[AgentDepsT]):
             # so we just return the ToolDefinitions and wrap them in ToolsetTool outside of ctx.run_typed().
             return RestateMCPGetToolsContextRunResult(output={name: tool.tool_def for name, tool in res.items()})
 
-        options = RunOptions(serde=MCP_GET_TOOLS_SERDE)
+        options = RunOptions[RestateMCPGetToolsContextRunResult](serde=MCP_GET_TOOLS_SERDE)
         tool_defs = await self._context.run_typed('get mcp tools', get_tools_in_context, options)
 
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.output.items()}
@@ -103,7 +103,7 @@ class RestateMCPServer(WrapperToolset[AgentDepsT]):
             except (UserError, PydanticUserError) as e:
                 raise TerminalError(str(e)) from e
 
-        options = RunOptions(serde=MCP_RUN_SERDE)
+        options = RunOptions[RestateMCPToolRunResult](serde=MCP_RUN_SERDE)
         res = await self._context.run_typed(f'Calling mcp tool {name}', call_tool_in_context, options)
 
         if res.kind == 'call_deferred':

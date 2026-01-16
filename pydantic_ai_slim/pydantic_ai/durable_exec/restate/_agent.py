@@ -4,7 +4,6 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import Any, overload
 
-from restate import Context, TerminalError
 from typing_extensions import Never
 
 from pydantic_ai import models
@@ -18,12 +17,14 @@ from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRun, AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, DeferredToolResults, RunContext
+from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from ._model import RestateModelWrapper
 from ._dynamic_toolset import RestateDynamicToolset
+from ._model import RestateModelWrapper
+from ._restate_types import Context, TerminalError
 from ._toolset import RestateContextRunToolSet
 
 
@@ -113,17 +114,12 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 return RestateContextRunToolSet(toolset, restate_context)
 
             # Dynamic toolsets may resolve to I/O toolsets; ensure tool discovery and calls are durable.
-            try:
-                from pydantic_ai.toolsets._dynamic import DynamicToolset
-            except ImportError:  # pragma: no cover
-                pass
-            else:
-                if isinstance(toolset, DynamicToolset):
-                    return RestateDynamicToolset(
-                        toolset,
-                        restate_context,
-                        disable_auto_wrapping_tools=disable_auto_wrapping_tools,
-                    )
+            if isinstance(toolset, DynamicToolset):
+                return RestateDynamicToolset(
+                    toolset,
+                    restate_context,
+                    disable_auto_wrapping_tools=disable_auto_wrapping_tools,
+                )
 
             # FastMCP toolsets require I/O, so they must be wrapped for durability.
             try:

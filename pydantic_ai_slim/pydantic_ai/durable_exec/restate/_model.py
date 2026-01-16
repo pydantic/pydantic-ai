@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Any
 
 from pydantic.errors import PydanticUserError
-from restate import Context, RunOptions, TerminalError
 
 from pydantic_ai.agent.abstract import EventStreamHandler
 from pydantic_ai.durable_exec.restate._serde import PydanticTypeAdapter
@@ -15,6 +14,8 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
+
+from ._restate_types import Context, RunOptions, TerminalError
 
 MODEL_RESPONSE_SERDE = PydanticTypeAdapter(ModelResponse)
 
@@ -61,7 +62,7 @@ class RestateModelWrapper(WrapperModel):
         max_attempts: int | None = None,
     ):
         super().__init__(wrapped)
-        self._options = RunOptions(serde=MODEL_RESPONSE_SERDE, max_attempts=max_attempts)
+        self._options = RunOptions[ModelResponse](serde=MODEL_RESPONSE_SERDE, max_attempts=max_attempts)
         self._context = context
         self._event_stream_handler = event_stream_handler
 

@@ -5,13 +5,13 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic.errors import PydanticUserError
-from restate import Context, RunOptions, TerminalError
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
+from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
 
 

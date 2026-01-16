@@ -6,20 +6,19 @@ from typing import Any
 
 from pydantic import ValidationError
 from pydantic.errors import PydanticUserError
-from restate import Context, RunOptions, TerminalError
 from typing_extensions import Self
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
+from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
 from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult
-
 
 _RESTATE_DYNAMIC_ORIGIN_KEY = '__pydantic_ai_restate_dynamic_origin'
 
@@ -89,7 +88,7 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
                     }
                 )
 
-        options = RunOptions(serde=DYNAMIC_GET_TOOLS_SERDE)
+        options = RunOptions[RestateDynamicGetToolsContextRunResult](serde=DYNAMIC_GET_TOOLS_SERDE)
         tool_infos = await self._context.run_typed('get dynamic tools', get_tools_in_context, options)
         return {name: self._tool_for_tool_info(tool_info) for name, tool_info in tool_infos.output.items()}
 
