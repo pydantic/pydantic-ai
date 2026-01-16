@@ -9,3 +9,10 @@ __all__ = [
     'PydanticTypeAdapter',
     'RestateContextRunToolSet',
 ]
+
+try:
+    from ._mcp_server import RestateMCPServer
+except ImportError:  # pragma: no cover
+    pass
+else:
+    __all__.append('RestateMCPServer')

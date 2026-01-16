@@ -43,6 +43,10 @@ class RestateStreamedResponse(StreamedResponse):
         return self.response.provider_name or ''  # pragma: no cover
 
     @property
+    def provider_url(self) -> str | None:
+        return self.response.provider_url  # pragma: no cover
+
+    @property
     def timestamp(self) -> datetime:
         return self.response.timestamp  # pragma: no cover
 
@@ -76,10 +80,12 @@ class RestateModelWrapper(WrapperModel):
                 'A model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             )
 
-        # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
-        # and that only calls `request_stream` if `event_stream_handler` is set.
         fn = self._event_stream_handler
-        assert fn is not None
+        if fn is None:
+            raise UserError(
+                'A Restate model requires an `event_stream_handler` to be set on `RestateAgent` at creation time. '
+                'Set `event_stream_handler=...` on the agent and use `agent.run()` instead.'
+            )
 
         async def request_stream_run():
             async with self.wrapped.request_stream(
