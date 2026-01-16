@@ -270,7 +270,7 @@ def _warn_about_dropped_sampling_params(profile: OpenAIModelProfile, model_setti
     supported when reasoning is off. This warns users when their params will be ignored.
     """
     reasoning_effort = model_settings.get('openai_reasoning_effort', 'none')
-    if not profile.openai_supports_sampling_with_reasoning_off or reasoning_effort == 'none':
+    if not profile.openai_supports_reasoning_effort_none or reasoning_effort == 'none':
         return
 
     if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:

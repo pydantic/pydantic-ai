@@ -88,7 +88,7 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_encrypted_reasoning_content: bool = False
     """Whether the model supports including encrypted reasoning content in the response."""
 
-    openai_supports_sampling_with_reasoning_off: bool = False
+    openai_supports_reasoning_effort_none: bool = False
     """Whether the model supports sampling parameters (temperature, top_p, etc.) when reasoning_effort='none'.
 
     Models like GPT-5.1 and GPT-5.2 default to reasoning_effort='none' and support sampling params in that mode.
@@ -157,7 +157,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=thinking_always_enabled or is_gpt_5_1_plus,
-        openai_supports_sampling_with_reasoning_off=is_gpt_5_1_plus,
+        openai_supports_reasoning_effort_none=is_gpt_5_1_plus,
     )
 
 

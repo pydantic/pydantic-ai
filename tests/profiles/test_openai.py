@@ -27,7 +27,7 @@ class TestSamplingParamsSupport:
         for model in ['o1', 'o1-mini', 'o3', 'o3-mini', 'o4-mini']:
             profile = openai_model_profile(model)
             assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_sampling_with_reasoning_off is False
+            assert profile.openai_supports_reasoning_effort_none is False
             assert 'temperature' in profile.openai_unsupported_model_settings
             assert 'top_p' in profile.openai_unsupported_model_settings
 
@@ -36,7 +36,7 @@ class TestSamplingParamsSupport:
         for model in ['gpt-5', 'gpt-5-pro', 'gpt-5-turbo']:
             profile = openai_model_profile(model)
             assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_sampling_with_reasoning_off is False
+            assert profile.openai_supports_reasoning_effort_none is False
             assert 'temperature' in profile.openai_unsupported_model_settings
 
     def test_gpt_5_1_supports_sampling_with_reasoning_off(self):
@@ -44,7 +44,7 @@ class TestSamplingParamsSupport:
         for model in ['gpt-5.1', 'gpt-5.1-turbo', 'gpt-5.1-mini', 'gpt-5.1-codex-max']:
             profile = openai_model_profile(model)
             assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_sampling_with_reasoning_off is True
+            assert profile.openai_supports_reasoning_effort_none is True
             assert profile.openai_unsupported_model_settings == ()
 
     def test_gpt_5_2_supports_sampling_with_reasoning_off(self):
@@ -52,14 +52,14 @@ class TestSamplingParamsSupport:
         for model in ['gpt-5.2', 'gpt-5.2-turbo', 'gpt-5.2-mini']:
             profile = openai_model_profile(model)
             assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_sampling_with_reasoning_off is True
+            assert profile.openai_supports_reasoning_effort_none is True
             assert profile.openai_unsupported_model_settings == ()
 
     def test_gpt_5_chat_no_reasoning(self):
         """GPT-5-chat models don't have reasoning and support all sampling params."""
         profile = openai_model_profile('gpt-5-chat')
         assert isinstance(profile, OpenAIModelProfile)
-        assert profile.openai_supports_sampling_with_reasoning_off is False
+        assert profile.openai_supports_reasoning_effort_none is False
         assert profile.openai_unsupported_model_settings == ()
 
     def test_gpt_4o_no_reasoning(self):
@@ -67,7 +67,7 @@ class TestSamplingParamsSupport:
         for model in ['gpt-4o', 'gpt-4o-mini', 'gpt-4o-2024-08-06']:
             profile = openai_model_profile(model)
             assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_sampling_with_reasoning_off is False
+            assert profile.openai_supports_reasoning_effort_none is False
             assert profile.openai_unsupported_model_settings == ()
 
 
