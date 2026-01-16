@@ -57,6 +57,12 @@ class ToolsetTool(Generic[AgentDepsT]):
 
     For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
     """
+    args_validator_func: Callable[..., Any] | None = None
+    """Custom args validator function that runs before the tool is called.
+
+    The function should have the same typed parameters as the tool function,
+    with `RunContext` as the first argument.
+    """
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):

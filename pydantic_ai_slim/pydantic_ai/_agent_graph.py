@@ -904,7 +904,7 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
-            yield _messages.FunctionToolCallEvent(call)
+            yield _messages.FunctionToolCallEvent(call, args_valid=None)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Output tool not used - a final result was already processed.',
@@ -922,7 +922,7 @@ async def process_tool_calls(  # noqa: C901
                 # This allows exhaustive strategy to complete successfully when at least one output tool is valid
                 if final_result:
                     # If output tool fails when we already have a final result, skip it without retrying
-                    yield _messages.FunctionToolCallEvent(call)
+                    yield _messages.FunctionToolCallEvent(call, args_valid=None)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Output tool not used - output failed validation.',
@@ -943,7 +943,7 @@ async def process_tool_calls(  # noqa: C901
                     ctx.state.increment_retries(
                         ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                     )
-                yield _messages.FunctionToolCallEvent(call)
+                yield _messages.FunctionToolCallEvent(call, args_valid=None)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
             else:
@@ -1033,7 +1033,7 @@ async def process_tool_calls(  # noqa: C901
             deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
 
             for call in calls:
-                yield _messages.FunctionToolCallEvent(call)
+                yield _messages.FunctionToolCallEvent(call, args_valid=None)
 
     if not final_result and deferred_calls:
         if not ctx.deps.output_schema.allows_deferred_tools:
@@ -1074,8 +1074,15 @@ async def _call_tools(  # noqa: C901
         projected_usage.tool_calls += len(tool_calls)
         usage_limits.check_before_tool_call(projected_usage)
 
+    # Pre-validate all tools to get args_valid status before emitting events
+    validation_results: dict[str, bool | None] = {}
     for call in tool_calls:
-        yield _messages.FunctionToolCallEvent(call)
+        _, args_valid, _ = await tool_manager.validate_tool_args(call)
+        validation_results[call.tool_call_id] = args_valid
+
+    # Emit FunctionToolCallEvent with args_valid from validation results
+    for call in tool_calls:
+        yield _messages.FunctionToolCallEvent(call, args_valid=validation_results.get(call.tool_call_id))
 
     with tracer.start_as_current_span(
         'running tools',

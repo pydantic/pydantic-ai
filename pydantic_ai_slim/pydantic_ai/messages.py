@@ -1957,6 +1957,14 @@ class FunctionToolCallEvent:
 
     _: KW_ONLY
 
+    args_valid: bool | None = None
+    """Indicates whether custom args validation passed.
+
+    - `True`: Custom validation passed
+    - `False`: Custom validation failed (validation error details in subsequent FunctionToolResultEvent)
+    - `None`: No custom validator was configured for this tool (default, backward compatible)
+    """
+
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""
 
