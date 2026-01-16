@@ -447,7 +447,7 @@ embedder = Embedder('bedrock:eu.cohere.embed-english-v3')
 The model automatically normalizes these prefixes when looking up `max_input_tokens()`.
 
 !!! note "Token Counting"
-    Unlike OpenAI and Cohere, Bedrock embedding models do not support the `count_tokens()` method because AWS Bedrock doesn't provide a tokenization API. Calling `count_tokens()` will raise `NotImplementedError`.
+    Bedrock embedding models do not support the `count_tokens()` method because AWS Bedrock's token counting API only works with text generation models (Claude, Llama, etc.), not embedding models. Calling `count_tokens()` will raise `NotImplementedError`.
 
 #### Bedrock-Specific Settings
 
