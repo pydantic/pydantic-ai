@@ -8,9 +8,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import anyio.to_thread
-from botocore.exceptions import ClientError
 
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES
 from pydantic_ai.usage import RequestUsage
@@ -18,6 +17,14 @@ from pydantic_ai.usage import RequestUsage
 from .base import EmbeddingModel, EmbedInputType
 from .result import EmbeddingResult
 from .settings import EmbeddingSettings
+
+try:
+    from botocore.exceptions import ClientError
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `boto3` to use Bedrock embedding models, '
+        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
+    ) from _import_error
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient
@@ -234,7 +241,7 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
         input_type: EmbedInputType,
         settings: BedrockEmbeddingSettings,
     ) -> dict[str, Any]:
-        # Titan only supports single text, caller must handle batching
+        assert len(texts) == 1, 'Titan only supports single text per request'
         body: dict[str, Any] = {'inputText': texts[0]}
 
         # Optional: Set output dimensions (Titan v2 only)
@@ -354,12 +361,11 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
         input_type: EmbedInputType,
         settings: BedrockEmbeddingSettings,
     ) -> dict[str, Any]:
-        # Nova uses a task-based format for embeddings
-        # Only supports single text per request, caller must handle batching
+        assert len(texts) == 1, 'Nova only supports single text per request'
 
         # Get truncation mode - Nova requires this field
-        # Nova accepts: START, END, NONE (default: END to avoid errors on long text)
-        truncate = settings.get('bedrock_truncate', 'END')
+        # Nova accepts: START, END, NONE (default: NONE)
+        truncate = settings.get('bedrock_truncate', 'NONE')
 
         # Build text params - 'value' and 'truncationMode' are required by Nova
         text_params: dict[str, Any] = {
@@ -625,8 +631,6 @@ class BedrockEmbeddingModel(EmbeddingModel):
             status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
             if isinstance(status_code, int):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
-            from pydantic_ai.exceptions import ModelAPIError
-
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         # Extract input token count from HTTP headers
