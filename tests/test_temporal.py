@@ -6,7 +6,7 @@ import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 import pytest
@@ -41,14 +41,14 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.direct import model_request_stream
+from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.join import reduce_list_append
 
@@ -1273,6 +1273,7 @@ async def test_temporal_agent():
             'agent__complex_agent__event_stream_handler',
             'agent__complex_agent__model_request',
             'agent__complex_agent__model_request_stream',
+            'agent__complex_agent__model_count_tokens',
             'agent__complex_agent__toolset__<agent>__call_tool',
             'agent__complex_agent__toolset__country__call_tool',
             'agent__complex_agent__mcp_server__mcp__get_tools',
@@ -3103,3 +3104,139 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
         result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
     assert result['data_converter'].payload_codec is codec
+
+
+# Tests for count_tokens and request without run context
+
+
+class CountTokensModel(Model):
+    """A test model that supports count_tokens for testing."""
+
+    def __init__(self, custom_output_text: str = 'count_tokens_response', input_token_count: int = 10):
+        super().__init__()
+        self._custom_output_text = custom_output_text
+        self._input_token_count = input_token_count
+        self.count_tokens_call_count = 0
+
+    @property
+    def model_name(self) -> str:
+        return 'count_tokens_model'
+
+    @property
+    def system(self) -> str:
+        return 'test'
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        from datetime import timezone
+
+        return ModelResponse(
+            parts=[TextPart(content=self._custom_output_text)],
+            model_name=self.model_name,
+            timestamp=datetime.now(tz=timezone.utc),
+            usage=RequestUsage(input_tokens=self._input_token_count, output_tokens=5),
+        )
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        self.count_tokens_call_count += 1
+        return RequestUsage(input_tokens=self._input_token_count)
+
+
+# Create count_tokens models for testing
+count_tokens_model_1 = CountTokensModel(custom_output_text='Model 1 count_tokens response', input_token_count=10)
+count_tokens_model_2 = CountTokensModel(custom_output_text='Model 2 count_tokens response', input_token_count=20)
+
+count_tokens_agent = Agent(count_tokens_model_1, name='count_tokens_agent')
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+count_tokens_temporal_agent = TemporalAgent(
+    count_tokens_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    models={'model_2': count_tokens_model_2},
+)
+
+
+@workflow.defn
+class CountTokensWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, model_id: str | None = None, use_usage_limits: bool = False) -> str:
+        usage_limits = (
+            UsageLimits(input_tokens_limit=100, count_tokens_before_request=True) if use_usage_limits else None
+        )
+        result = await count_tokens_temporal_agent.run(prompt, model=model_id, usage_limits=usage_limits)
+        return result.output
+
+
+async def test_count_tokens_with_usage_limits_in_workflow(allow_model_requests: None, client: Client):
+    """Test that count_tokens works with usage_limits.count_tokens_before_request in a workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CountTokensWorkflow],
+        plugins=[AgentPlugin(count_tokens_temporal_agent)],
+    ):
+        # Test with default model and usage limits
+        output = await client.execute_workflow(
+            CountTokensWorkflow.run,
+            args=['Hello', None, True],
+            id='CountTokensWorkflow_default_with_limits',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Model 1 count_tokens response'
+
+        # Test with dynamic model selection and usage limits
+        output = await client.execute_workflow(
+            CountTokensWorkflow.run,
+            args=['Hello', 'model_2', True],
+            id='CountTokensWorkflow_model2_with_limits',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Model 2 count_tokens response'
+
+
+async def test_count_tokens_direct_on_model_instance():
+    """Test calling count_tokens directly on a TemporalModel instance outside a workflow."""
+    test_model = CountTokensModel(input_token_count=15)
+    temporal_model = TemporalModel(
+        test_model,
+        activity_name_prefix='test_count_tokens',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        deps_type=type(None),
+    )
+
+    # Call count_tokens directly - should delegate to wrapped model
+    usage = await temporal_model.count_tokens(
+        [ModelRequest.user_text_prompt('test')],
+        None,
+        ModelRequestParameters(),
+    )
+    assert usage.input_tokens == 15
+    assert test_model.count_tokens_call_count == 1
+
+
+async def test_request_direct_on_model_instance():
+    """Test calling request directly on a TemporalModel instance outside a workflow via direct.model_request."""
+    test_model = CountTokensModel(custom_output_text='direct request response', input_token_count=25)
+    temporal_model = TemporalModel(
+        test_model,
+        activity_name_prefix='test_request',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        deps_type=type(None),
+    )
+
+    # Call model_request directly with the temporal model - should delegate to wrapped model
+    response = await model_request(
+        temporal_model,
+        [ModelRequest.user_text_prompt('test')],
+    )
+    assert response.parts[0].content == 'direct request response'  # type: ignore[union-attr]
+    assert response.usage.input_tokens == 25
