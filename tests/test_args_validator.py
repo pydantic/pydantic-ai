@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from typing import Any
+
+import pytest
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.exceptions import ModelRetry
