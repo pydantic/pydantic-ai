@@ -99,11 +99,8 @@ def completion_message(
 class MockOpenAIResponses:
     response: MockResponse | Sequence[MockResponse] | None = None
     stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
-    input_tokens_response: dict[str, Any] | Sequence[dict[str, Any]] | Exception | None = None
     index: int = 0
-    input_tokens_index: int = 0
     response_kwargs: list[dict[str, Any]] = field(default_factory=list)
-    input_tokens_kwargs: list[dict[str, Any]] = field(default_factory=list)
     base_url: str = 'https://api.openai.com/v1'
 
     @cached_property
@@ -143,48 +140,10 @@ class MockOpenAIResponses:
         self.index += 1
         return response
 
-    async def post(  # pragma: lax no cover
-        self,
-        path: str,
-        *,
-        cast_to: Any,
-        body: Any | None = None,
-        files: Any | None = None,
-        options: dict[str, Any] | None = None,
-        stream: bool = False,
-        stream_cls: Any | None = None,
-    ) -> Any:
-        self.input_tokens_kwargs.append(
-            {
-                'path': path,
-                'body': body,
-                'files': files,
-                'options': options,
-                'stream': stream,
-                'stream_cls': stream_cls,
-            }
-        )
-        response = self.input_tokens_response
-        if response is None:
-            response = {'object': 'response.input_tokens', 'input_tokens': 0}
-        if isinstance(response, Exception):
-            raise response
-        if isinstance(response, Sequence) and not isinstance(response, (bytes, str, dict)):
-            response = response[self.input_tokens_index]
-            self.input_tokens_index += 1
-        return response
-
 
 def get_mock_responses_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
     if isinstance(async_open_ai, MockOpenAIResponses):  # pragma: lax no cover
         return async_open_ai.response_kwargs
-    else:  # pragma: no cover
-        raise RuntimeError('Not a MockOpenAIResponses instance')
-
-
-def get_mock_input_tokens_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
-    if isinstance(async_open_ai, MockOpenAIResponses):  # pragma: lax no cover
-        return async_open_ai.input_tokens_kwargs
     else:  # pragma: no cover
         raise RuntimeError('Not a MockOpenAIResponses instance')
 
