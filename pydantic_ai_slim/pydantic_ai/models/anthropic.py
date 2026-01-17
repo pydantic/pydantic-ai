@@ -27,6 +27,8 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CodeExecutionCallPart,
+    CodeExecutionReturnPart,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -43,6 +45,10 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    WebFetchCallPart,
+    WebFetchReturnPart,
+    WebSearchCallPart,
+    WebSearchReturnPart,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -1343,21 +1349,21 @@ class AnthropicStreamedResponse(StreamedResponse):
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
     if item.name == 'web_search':
-        return BuiltinToolCallPart(
+        return WebSearchCallPart(
             provider_name=provider_name,
             tool_name=WebSearchTool.kind,
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
     elif item.name == 'code_execution':
-        return BuiltinToolCallPart(
+        return CodeExecutionCallPart(
             provider_name=provider_name,
             tool_name=CodeExecutionTool.kind,
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
     elif item.name == 'web_fetch':
-        return BuiltinToolCallPart(
+        return WebFetchCallPart(
             provider_name=provider_name,
             tool_name=WebFetchTool.kind,
             args=cast(dict[str, Any], item.input) or None,
@@ -1377,8 +1383,8 @@ web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockConte
 )
 
 
-def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
+def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provider_name: str) -> WebSearchReturnPart:
+    return WebSearchReturnPart(
         provider_name=provider_name,
         tool_name=WebSearchTool.kind,
         content=web_search_tool_result_content_ta.dump_python(item.content, mode='json'),
@@ -1393,8 +1399,8 @@ code_execution_tool_result_content_ta: TypeAdapter[BetaCodeExecutionToolResultBl
 
 def _map_code_execution_tool_result_block(
     item: BetaCodeExecutionToolResultBlock, provider_name: str
-) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
+) -> CodeExecutionReturnPart:
+    return CodeExecutionReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
@@ -1402,8 +1408,8 @@ def _map_code_execution_tool_result_block(
     )
 
 
-def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
+def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider_name: str) -> WebFetchReturnPart:
+    return WebFetchReturnPart(
         provider_name=provider_name,
         tool_name=WebFetchTool.kind,
         # Store just the content field (BetaWebFetchBlock) which has {content, type, url, retrieved_at}
