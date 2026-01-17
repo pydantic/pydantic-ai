@@ -1760,8 +1760,9 @@ class OpenAIResponsesModel(Model):
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 for item in message.parts:
+                    item_provider_matches = item.provider_name == self.system
                     if isinstance(item, TextPart):
-                        if item.id and send_item_ids:
+                        if item.id and (send_item_ids or item_provider_matches):
                             if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
                                     role='assistant',
@@ -1795,11 +1796,11 @@ class OpenAIResponsesModel(Model):
                         )
                         if profile.openai_responses_requires_function_call_status_none:
                             param['status'] = None  # type: ignore[reportGeneralTypeIssues]
-                        if id and send_item_ids:  # pragma: no branch
+                        if id and (send_item_ids or item_provider_matches):  # pragma: no branch
                             param['id'] = id
                         openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
-                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
+                        if item_provider_matches and send_item_ids:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and item.tool_call_id
@@ -1886,7 +1887,7 @@ class OpenAIResponsesModel(Model):
                                     openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, BuiltinToolReturnPart):
-                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
+                        if item_provider_matches and send_item_ids:  # pragma: no branch
                             content_is_dict = isinstance(item.content, dict)
                             status = item.content.get('status') if content_is_dict else None
                             kind_to_item = {
@@ -1910,14 +1911,14 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # Get raw CoT content from provider_details if present and from this provider
                         raw_content: list[str] | None = None
-                        if item.provider_name == self.system:
+                        if item_provider_matches:
                             raw_content = (item.provider_details or {}).get('raw_content')
 
                         if item.id and (send_item_ids or raw_content):
                             signature: str | None = None
                             if (
                                 item.signature
-                                and item.provider_name == self.system
+                                and item_provider_matches
                                 and profile.openai_supports_encrypted_reasoning_content
                             ):
                                 signature = item.signature
