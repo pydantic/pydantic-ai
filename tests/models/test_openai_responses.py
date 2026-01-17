@@ -58,9 +58,9 @@ from ..conftest import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsStr, T
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai.types.responses import ResponseFunctionWebSearch
+    from openai.types.responses import ResponseFunctionWebSearch, ResponseTextDeltaEvent, ResponseTextDoneEvent
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
-    from openai.types.responses.response_output_text import ResponseOutputText
+    from openai.types.responses.response_output_text import Logprob, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -557,6 +557,51 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                 )
 
     assert output_text == snapshot(['The capital of France is Paris.'])
+
+
+async def test_openai_responses_stream_logprobs(allow_model_requests: None):
+    logprob = Logprob.model_construct(
+        token='Calgary',
+        bytes=[67, 97, 108, 103, 97, 114, 121],
+        logprob=-0.1,
+        top_logprobs=[],
+    )
+    stream = [
+        ResponseTextDeltaEvent.model_construct(
+            type='response.output_text.delta',
+            item_id='msg_1',
+            output_index=0,
+            content_index=0,
+            delta='Calgary',
+        ),
+        ResponseTextDoneEvent.model_construct(
+            type='response.output_text.done',
+            item_id='msg_1',
+            output_index=0,
+            content_index=0,
+            text='Calgary',
+            logprobs=[logprob],
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_logprobs=True))
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                text_part = next(part for part in response.parts if isinstance(part, TextPart))
+                assert text_part.provider_details is not None
+                assert text_part.provider_details['logprobs'] == snapshot(
+                    [
+                        {
+                            'token': 'Calgary',
+                            'bytes': [67, 97, 108, 103, 97, 114, 121],
+                            'logprob': -0.1,
+                            'top_logprobs': [],
+                        }
+                    ]
+                )
 
 
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
@@ -8758,7 +8803,7 @@ I need to respond with a Python function for calculating the factorial. The user
 
 async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):
     """Test that text annotations are included in provider_details when the setting is enabled."""
-    prompt = 'What is the tallest mountain in France? Provide one sentence with a citation.'
+    prompt = 'What is the tallest mountain in Alberta? Provide one sentence with a citation.'
     instructions = 'Use web search and include citations in your answer.'
 
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
