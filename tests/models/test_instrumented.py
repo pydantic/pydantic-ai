@@ -108,6 +108,14 @@ class MyModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         yield MyResponseStream(model_request_parameters=model_request_parameters)
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        return RequestUsage(input_tokens=10)
+
 
 class MyResponseStream(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1772,3 +1780,12 @@ def test_build_tool_definitions():
             'parameters': {'type': 'object', 'properties': {}},
         },
     ]
+
+
+async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello, world!')], timestamp=IsDatetime())]
+    model = InstrumentedModel(MyModel())
+    usage = await model.count_tokens(
+        messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters()
+    )
+    assert usage == RequestUsage(input_tokens=10)

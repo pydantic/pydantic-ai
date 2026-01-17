@@ -10,6 +10,7 @@ from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfile
 from ..settings import ModelSettings
+from ..usage import RequestUsage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 
@@ -27,8 +28,21 @@ class WrapperModel(Model):
         super().__init__()
         self.wrapped = infer_model(wrapped)
 
-    async def request(self, *args: Any, **kwargs: Any) -> ModelResponse:
-        return await self.wrapped.request(*args, **kwargs)
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return await self.wrapped.request(messages, model_settings, model_request_parameters)
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        return await self.wrapped.count_tokens(messages, model_settings, model_request_parameters)
 
     @asynccontextmanager
     async def request_stream(
