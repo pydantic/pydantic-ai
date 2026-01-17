@@ -3227,6 +3227,33 @@ async def test_run_stream_events():
     )
 
 
+async def test_run_stream_finalize_with_incomplete_thinking_tag():
+    """Test that incomplete thinking tags are flushed via finalize when using run_stream()."""
+
+    async def stream_with_incomplete_thinking(
+        _messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield '<thi'
+
+    function_model = FunctionModel(stream_function=stream_with_incomplete_thinking)
+    function_model.profile.thinking_tags = ('<think>', '</think>')
+
+    agent = Agent(function_model)
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('Hello'):
+        events.append(event)
+
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='<thi')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content='<thi')),
+            AgentRunResultEvent(result=AgentRunResult(output='<thi')),
+        ]
+    )
+
+
 def test_structured_response_sync_validation():
     async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.output_tools is not None
