@@ -43,7 +43,7 @@ class RestateContextRunToolSet(WrapperToolset[AgentDepsT]):
             try:
                 # A tool may raise ModelRetry, CallDeferred, ApprovalRequired, or UserError
                 # to signal special conditions to the caller.
-                # Since, restate ctx.run() will retry this exception we need to convert these exceptions
+                # Since restate ctx.run() will retry this exception we need to convert these exceptions
                 # to a return value and handle them outside of the ctx.run().
                 output = await self.wrapped.call_tool(name, tool_args, ctx, tool)
                 return RestateContextRunResult(kind='output', output=output, error=None)

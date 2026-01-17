@@ -7,7 +7,7 @@ class PydanticTypeAdapter(Serde[T]):
     """A serializer/deserializer for Pydantic models."""
 
     def __init__(self, model_type: type[T]):
-        """Initializes a new instance of the PydanticTypeAdaptorSerde class.
+        """Initializes a new instance of the `PydanticTypeAdapter` class.
 
         Args:
             model_type (typing.Type[T]): The Pydantic model type to serialize/deserialize.
@@ -15,10 +15,10 @@ class PydanticTypeAdapter(Serde[T]):
         self._model_type = TypeAdapter(model_type)
 
     def deserialize(self, buf: bytes) -> T | None:
-        """Deserializes a bytearray to a Pydantic model.
+        """Deserializes bytes to a Pydantic model.
 
         Args:
-            buf (bytearray): The bytearray to deserialize.
+            buf (bytes): The bytes to deserialize.
 
         Returns:
             typing.Optional[T]: The deserialized Pydantic model.
@@ -28,13 +28,13 @@ class PydanticTypeAdapter(Serde[T]):
         return self._model_type.validate_json(buf.decode('utf-8'))  # raises if invalid
 
     def serialize(self, obj: T | None) -> bytes:
-        """Serializes a Pydantic model to a bytearray.
+        """Serializes a Pydantic model to bytes.
 
         Args:
             obj (typing.Optional[T]): The Pydantic model to serialize.
 
         Returns:
-            bytes: The serialized bytearray.
+            bytes: The serialized bytes.
         """
         if obj is None:
             return b''

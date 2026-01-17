@@ -36,16 +36,23 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     are automatically wrapped with Restate's execution model.
 
     Example:
-       ...
+        ```python
+        import restate
 
-       weather = restate.Service('weather')
+        from pydantic_ai import Agent
+        from pydantic_ai.durable_exec.restate import RestateAgent
 
-       @weather.handler()
-       async def get_weather(ctx: restate.Context, city: str):
+        weather_agent = Agent('openai:gpt-5')
+        weather = restate.Service('weather')
+
+        @weather.handler()
+        async def get_weather(ctx: restate.Context, city: str) -> str:
             agent = RestateAgent(weather_agent, restate_context=ctx)
             result = await agent.run(f'What is the weather in {city}?')
             return result.output
-       ...
+        ```
+
+        See `docs/durable_execution/restate.md` for more details.
 
     For advanced scenarios, you can disable automatic tool wrapping by setting
     `disable_auto_wrapping_tools=True`. This allows direct usage of Restate context
@@ -60,7 +67,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
        ...
 
        @dataclass
-       WeatherDeps:
+       class WeatherDeps:
             ...
             restate_context: Context
 
@@ -293,7 +300,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Event stream handler cannot be set at agent run time inside a Restate handler, it must be set at agent creation time.'
             )
         with self._restate_overrides():
-            return await super(WrapperAgent, self).run(
+            return await super().run(
                 user_prompt=user_prompt,
                 output_type=output_type,
                 message_history=message_history,
