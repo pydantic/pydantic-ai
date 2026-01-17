@@ -331,6 +331,8 @@ def test_file_url_from_url(url: str, url_type: type[FileUrl]):
 def test_file_url_from_url_unsupported_type():
     with pytest.raises(ValueError, match='Could not classify file from URL: https://example.com/file.bin'):
         FileUrl.from_url('https://example.com/file.bin', media_type='application/octet-stream')
+    with pytest.raises(ValueError, match='Could not infer media type from URL: https://example.com/file.unknownext'):
+        FileUrl.from_url('https://example.com/file.unknownext')
 
 
 def test_file_url_format_infer():
@@ -348,10 +350,12 @@ def test_file_url_format_unknown_media_type():
         _ = img.format
 
 
-def test_binary_content_infer_media_type_no_file_name():
+def test_binary_content_infer_media_type_error():
     # Test when file_name is provided but has unknown extension
     with pytest.raises(ValueError, match='Could not infer media type from file name: test.unknownext123'):
         BinaryContent(data=b'test', file_name='test.unknownext123')
+    with pytest.raises(ValueError, match='Media type could not be inferred. Please provide a media type or file name.'):
+        BinaryContent(data=b'test')
 
 
 @pytest.mark.xdist_group(name='url_formats')
