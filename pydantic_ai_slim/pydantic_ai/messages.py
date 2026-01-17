@@ -1890,6 +1890,13 @@ class FunctionToolCallEvent:
 
     _: KW_ONLY
 
+    args_valid: bool
+    """Indicates whether the tool arguments are valid.
+
+    - `True`: Schema validation passed AND custom validation passed (if configured)
+    - `False`: Schema validation failed OR custom validation failed
+    """
+
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""
 

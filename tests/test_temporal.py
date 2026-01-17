@@ -803,10 +803,12 @@ async def test_complex_agent_run(allow_model_requests: None):
                 ),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
+                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
+                args_valid=True,
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
+                part=ToolCallPart(tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'),
+                args_valid=True,
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -855,7 +857,8 @@ async def test_complex_agent_run(allow_model_requests: None):
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
-                )
+                ),
+                args_valid=True,
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(

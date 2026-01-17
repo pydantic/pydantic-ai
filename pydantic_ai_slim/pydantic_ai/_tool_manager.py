@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -90,6 +91,74 @@ class ToolManager(Generic[AgentDepsT]):
             return self.tools[name].tool_def
         except KeyError:
             return None
+
+    async def validate_tool_args(
+        self,
+        call: ToolCallPart,
+        *,
+        allow_partial: bool = False,
+    ) -> bool:
+        """Validate tool arguments using Pydantic schema and custom args_validator_func.
+
+        This method validates arguments BEFORE the tool is executed and before events are emitted,
+        allowing the caller to emit FunctionToolCallEvent with the validation status.
+
+        Note: This runs before approval requests, so ctx.tool_call_approved will be False.
+
+        Args:
+            call: The tool call part to validate.
+            allow_partial: Whether to allow partial validation of the tool arguments.
+
+        Returns:
+            True if schema validation AND custom validation (if configured) passed, False otherwise.
+        """
+        if self.tools is None or self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        name = call.tool_name
+        tool = self.tools.get(name)
+
+        if tool is None:
+            # Unknown tool - validation failed
+            return False
+
+        ctx = replace(
+            self.ctx,
+            tool_name=name,
+            tool_call_id=call.tool_call_id,
+            retry=self.ctx.retries.get(name, 0),
+            max_retries=tool.max_retries,
+            partial_output=allow_partial,
+        )
+
+        # Pydantic schema validation
+        pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
+        validator = tool.args_validator
+        try:
+            if isinstance(call.args, str):
+                args_dict = validator.validate_json(
+                    call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
+                )
+            else:
+                args_dict = validator.validate_python(
+                    call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
+                )
+        except ValidationError:
+            # Pydantic schema validation failed
+            return False
+
+        # Custom args_validator_func validation (if configured)
+        if tool.args_validator_func is not None:
+            try:
+                result = tool.args_validator_func(ctx, **args_dict)
+                if inspect.isawaitable(result):
+                    await result
+            except ModelRetry:
+                # Custom validation failed
+                return False
+
+        # All validation passed
+        return True
 
     async def handle_call(
         self,
