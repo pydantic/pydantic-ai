@@ -35,7 +35,7 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
 from .request_types import (
@@ -51,6 +51,7 @@ from .request_types import (
     SourceUrlUIPart,
     StepStartUIPart,
     TextUIPart,
+    ToolApprovalResponded,
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
@@ -61,8 +62,9 @@ from .request_types import (
 from .response_types import BaseChunk
 
 if TYPE_CHECKING:
-    pass
+    from starlette.requests import Request
 
+    from ...agent import AbstractAgent
 
 __all__ = ['VercelAIAdapter']
 
@@ -78,9 +80,46 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Build a Vercel AI run input object from the request body."""
         return request_data_ta.validate_json(body)
 
+    @classmethod
+    async def from_request(
+        cls,
+        request: Request,
+        *,
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        enable_tool_approval: bool = False,
+    ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
+        """Create a Vercel AI adapter from a request.
+
+        Args:
+            request: The incoming Starlette/FastAPI request.
+            agent: The Pydantic AI agent to run.
+            enable_tool_approval: Whether to enable tool approval streaming for human-in-the-loop workflows.
+        """
+        return cls(
+            agent=agent,
+            run_input=cls.build_run_input(await request.body()),
+            accept=request.headers.get('accept'),
+            enable_tool_approval=enable_tool_approval,
+        )
+
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
-        return VercelAIEventStream(self.run_input, accept=self.accept)
+        return VercelAIEventStream(self.run_input, accept=self.accept, enable_tool_approval=self.enable_tool_approval)
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Extract deferred tool results from Vercel AI messages with approval responses."""
+        if not self.enable_tool_approval:
+            return None
+        approvals: dict[str, bool | DeferredToolApprovalResult] = {}
+        for msg in self.run_input.messages:
+            if msg.role == 'assistant':
+                for part in msg.parts:
+                    if isinstance(part, ToolUIPart | DynamicToolUIPart) and isinstance(
+                        part.approval, ToolApprovalResponded
+                    ):
+                        approvals[part.tool_call_id] = part.approval.approved
+        return DeferredToolResults(approvals=approvals) if approvals else None
 
     @cached_property
     def messages(self) -> list[ModelMessage]:

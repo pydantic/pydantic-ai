@@ -125,6 +125,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
+    enable_tool_approval: bool = False
+    """Whether to enable tool approval streaming for human-in-the-loop workflows."""
+
     @classmethod
     async def from_request(
         cls, request: Request, *, agent: AbstractAgent[AgentDepsT, OutputDataT]
@@ -172,6 +175,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     @cached_property
     def state(self) -> dict[str, Any] | None:
         """Frontend state from the protocol-specific run input."""
+        return None
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Deferred tool results extracted from the request, used for tool approval workflows."""
         return None
 
     def transform_stream(
@@ -240,6 +248,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
         """
+        # Use cached property as fallback if not explicitly passed
+        if deferred_tool_results is None:
+            deferred_tool_results = self.deferred_tool_results
+
         message_history = [*(message_history or []), *self.messages]
 
         toolset = self.toolset
