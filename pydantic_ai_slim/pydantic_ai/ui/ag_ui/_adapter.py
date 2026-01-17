@@ -11,6 +11,8 @@ from typing import (
     cast,
 )
 
+from typing_extensions import assert_never
+
 from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     AudioUrl,
@@ -22,6 +24,7 @@ from ...messages import (
     ModelMessage,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -162,8 +165,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                     else:  # pragma: no cover
                                         raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
                                     user_prompt_content.append(binary_part)
-                                case _:  # pragma: no cover
-                                    raise ValueError(f'Unsupported user message part type: {type(part)}')
+                                case _:
+                                    assert_never(part)
 
                         if user_prompt_content:  # pragma: no branch
                             content_to_add = (
@@ -228,7 +231,23 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
 
-                case ActivityMessage():
-                    pass
+                case ActivityMessage() as activity_msg:
+                    # Round-trip from ActivitySnapshotEvent emitted by _event_stream.py.
+                    # See: https://docs.ag-ui.com/concepts/messages#activitymessage
+                    if activity_msg.activity_type != 'pydantic_ai_thinking':
+                        continue
+                    content = activity_msg.content
+                    builder.add(
+                        ThinkingPart(
+                            content=content.get('content', ''),
+                            id=content.get('id'),
+                            signature=content.get('signature'),
+                            provider_name=content.get('provider_name'),
+                            provider_details=content.get('provider_details'),
+                        )
+                    )
+
+                case _:  # pragma: no cover
+                    raise ValueError(f'Unsupported message type: {type(msg)}')
 
         return builder.messages

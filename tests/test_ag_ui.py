@@ -34,6 +34,7 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
@@ -62,6 +63,7 @@ from .conftest import IsDatetime, IsInt, IsSameStr, try_import
 with try_import() as imports_successful:
     from ag_ui.core import (
         ActivityMessage,
+        ActivitySnapshotEvent,
         AssistantMessage,
         BaseEvent,
         BinaryInputContent,
@@ -74,6 +76,7 @@ with try_import() as imports_successful:
         StateSnapshotEvent,
         SystemMessage,
         TextInputContent,
+        ThinkingEndEvent,
         Tool,
         ToolCall,
         ToolMessage,
@@ -1061,6 +1064,14 @@ async def test_thinking() -> None:
             {'type': 'THINKING_START', 'timestamp': IsInt()},
             {'type': 'THINKING_END', 'timestamp': IsInt()},
             {
+                'type': 'ACTIVITY_SNAPSHOT',
+                'timestamp': IsInt(),
+                'activityType': 'pydantic_ai_thinking',
+                'messageId': IsStr(),
+                'content': {'content': ''},
+                'replace': True,
+            },
+            {
                 'type': 'TEXT_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': (message_id := IsSameStr()),
@@ -1100,6 +1111,14 @@ async def test_thinking() -> None:
             {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
             {'type': 'THINKING_END', 'timestamp': IsInt()},
             {
+                'type': 'ACTIVITY_SNAPSHOT',
+                'timestamp': IsInt(),
+                'activityType': 'pydantic_ai_thinking',
+                'messageId': IsStr(),
+                'content': {'content': 'Thinking about the universe'},
+                'replace': True,
+            },
+            {
                 'type': 'RUN_FINISHED',
                 'timestamp': IsInt(),
                 'threadId': thread_id,
@@ -1107,6 +1126,153 @@ async def test_thinking() -> None:
             },
         ]
     )
+
+
+async def test_thinking_with_signature() -> None:
+    """Test that ActivitySnapshotEvent is emitted after ThinkingEndEvent with metadata."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        yield {0: DeltaThinkingPart(content='Thinking deeply', signature='sig_abc123')}
+        yield 'Here is my response'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Think about something'),
+    )
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'Thinking deeply'},
+            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
+            {
+                'type': 'ACTIVITY_SNAPSHOT',
+                'timestamp': IsInt(),
+                'activityType': 'pydantic_ai_thinking',
+                'messageId': IsStr(),
+                'content': {
+                    'content': 'Thinking deeply',
+                    'signature': 'sig_abc123',
+                    'provider_name': 'function',
+                },
+                'replace': True,
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Here is my response',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': thread_id, 'runId': run_id},
+        ]
+    )
+
+
+def test_activity_message_thinking_roundtrip() -> None:
+    """Test that ActivityMessage with pydantic_ai_thinking converts to ThinkingPart."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ActivityMessage(
+                id='activity-1',
+                activity_type='pydantic_ai_thinking',
+                content={
+                    'content': 'Let me think about this...',
+                    'id': 'thinking-1',
+                    'signature': 'sig_abc123',
+                    'provider_name': 'anthropic',
+                    'provider_details': {'some': 'details'},
+                },
+            ),
+            AssistantMessage(id='msg-1', content='Here is my response'),
+        ]
+    )
+
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Let me think about this...',
+                        id='thinking-1',
+                        signature='sig_abc123',
+                        provider_name='anthropic',
+                        provider_details={'some': 'details'},
+                    ),
+                    TextPart(content='Here is my response'),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_thinking_end_event_with_all_metadata() -> None:
+    """Test that ActivitySnapshotEvent includes all metadata fields (id, signature, provider_name, provider_details)."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE)
+
+    part = ThinkingPart(
+        content='Thinking content',
+        id='thinking-123',
+        signature='sig_xyz',
+        provider_name='anthropic',
+        provider_details={'model': 'claude-sonnet-4-5'},
+    )
+
+    events = [e async for e in event_stream.handle_thinking_end(part, followed_by_thinking=False)]
+
+    assert events == snapshot(
+        [
+            ThinkingEndEvent(),
+            ActivitySnapshotEvent(
+                message_id='thinking-123',
+                activity_type='pydantic_ai_thinking',
+                content={
+                    'content': 'Thinking content',
+                    'id': 'thinking-123',
+                    'signature': 'sig_xyz',
+                    'provider_name': 'anthropic',
+                    'provider_details': {'model': 'claude-sonnet-4-5'},
+                },
+            ),
+        ]
+    )
+
+
+def test_activity_message_other_types_ignored() -> None:
+    """Test that ActivityMessage with other activity types are ignored."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ActivityMessage(
+                id='activity-1',
+                activity_type='some_other_activity',
+                content={'foo': 'bar'},
+            ),
+            AssistantMessage(id='msg-1', content='Response'),
+        ]
+    )
+
+    assert messages == snapshot([ModelResponse(parts=[TextPart(content='Response')], timestamp=IsDatetime())])
 
 
 async def test_tool_local_then_ag_ui() -> None:
