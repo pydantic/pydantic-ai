@@ -340,9 +340,38 @@ agent = Agent('openai:gpt-5', toolsets=[weather_server, calculator_server])
 
 ## Server Instructions
 
-MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These instructions are accessible via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the server connection is established.
+MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools.
 
-```python {title="mcp_server_instructions.py"}
+### Automatic Instruction Injection (Recommended)
+
+The recommended approach is to enable automatic instruction injection when creating the MCP server. This automatically includes the server's instructions in the agent's system prompt via the toolset's `get_instructions()` method:
+
+```python {title="mcp_server_instructions_auto.py"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+server = MCPServerStreamableHTTP(
+    'http://localhost:8000/mcp',
+    use_server_instructions=True  # (1)!
+)
+agent = Agent('openai:gpt-5', toolsets=[server])
+
+async def main():
+    result = await agent.run('What is 7 plus 5?')
+    print(result.output)
+    #> The answer is 12.
+```
+
+1. Enable automatic instruction injection. The server's instructions will be included in the system prompt automatically.
+
+### Manual Instruction Access (Deprecated)
+
+!!! warning "Deprecated Approach"
+    Manually accessing `server.instructions` is deprecated in favor of using `use_server_instructions=True`. The `instructions` property will be removed in a future version.
+
+You can still manually access instructions via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the server connection is established:
+
+```python {title="mcp_server_instructions_manual.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
