@@ -928,7 +928,16 @@ class OpenAIChatModel(Model):
             # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
             # id='content' means it came from tags in content, not a custom field
             if include_method == 'auto':
-                if item.id and item.id != 'content' and item.provider_name == self._model.system:
+                # Check if thinking came from a custom field from the same provider
+                custom_field = profile.openai_chat_thinking_field
+                matches_custom_field = (not custom_field) or (item.id == custom_field)
+
+                if (
+                    item.id
+                    and item.id != 'content'
+                    and item.provider_name == self._model.system
+                    and matches_custom_field
+                ):
                     # Store both content and field name for later use in _into_message_param
                     self.thinkings.append((item.id, item.content))
                 else:
