@@ -234,10 +234,10 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
     from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
 
-    result = await _get_ui_html('test-version')
+    result = await _get_ui_html()
 
     assert result == test_content
-    cache_file: Path = tmp_path / 'test-version.html'
+    cache_file: Path = tmp_path / f'{app_module.DEFAULT_UI_VERSION}.html'
     assert cache_file.exists()
     assert cache_file.read_bytes() == test_content
 
@@ -250,50 +250,14 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     test_content = b'<html>Cached UI</html>'
-    cache_file = tmp_path / 'cached-version.html'
+    cache_file = tmp_path / f'{app_module.DEFAULT_UI_VERSION}.html'
     cache_file.write_bytes(test_content)
 
     from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
 
-    result = await _get_ui_html('cached-version')
+    result = await _get_ui_html()
 
     assert result == test_content
-
-
-def test_chat_app_index_invalid_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """Test that index endpoint returns 502 for invalid UI version."""
-    import httpx
-
-    import pydantic_ai.ui._web.app as app_module
-
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
-
-    class MockResponse:
-        status_code = 404
-
-        def raise_for_status(self) -> None:
-            raise httpx.HTTPStatusError('Not Found', request=None, response=self)  # type: ignore
-
-    class MockAsyncClient:
-        async def __aenter__(self) -> MockAsyncClient:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get(self, url: str) -> MockResponse:
-            return MockResponse()
-
-    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
-
-    agent = Agent('test')
-    app = create_web_app(agent)
-
-    with TestClient(app) as client:
-        response = client.get('/?version=nonexistent-version')
-        assert response.status_code == 502
-        assert 'nonexistent-version' in response.text
-        assert '404' in response.text
 
 
 def test_chat_app_index_caching():
@@ -509,3 +473,150 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
     mock_dispatch.assert_called_once()
     call_kwargs = mock_dispatch.call_args.kwargs
     assert call_kwargs['instructions'] == 'Always respond in Spanish'
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that _get_ui_html fetches from custom URL when provided."""
+    import pydantic_ai.ui._web.app as app_module
+
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    test_content = b'<html>Custom CDN UI</html>'
+    captured_url: list[str] = []
+
+    class MockResponse:
+        content = test_content
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            captured_url.append(url)
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+    from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
+
+    # URL is used directly, no version templating
+    custom_url = 'https://my-internal-cdn.example.com/ui/index.html'
+    result = await _get_ui_html(ui_source=custom_url)
+
+    assert result == test_content
+    assert len(captured_url) == 1
+    assert captured_url[0] == custom_url
+
+
+def test_agent_to_web_with_ui_source():
+    """Test that Agent.to_web() accepts ui_source parameter."""
+    agent = Agent('test')
+    app = agent.to_web(ui_source='https://custom-cdn.example.com/ui/index.html')
+
+    assert isinstance(app, Starlette)
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_local_file_path_string(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that _get_ui_html supports local file paths as strings."""
+    import pydantic_ai.ui._web.app as app_module
+
+    # Create a test HTML file
+    test_html = b'<html><body>Local UI Content</body></html>'
+    local_file = tmp_path / 'custom-ui.html'
+    local_file.write_bytes(test_html)
+
+    result = await app_module._get_ui_html(ui_source=str(local_file))  # pyright: ignore[reportPrivateUsage]
+
+    assert result == test_html
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_local_file_path_instance(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that _get_ui_html supports Path instances."""
+    import pydantic_ai.ui._web.app as app_module
+
+    # Create a test HTML file
+    test_html = b'<html><body>Path Instance UI</body></html>'
+    local_file = tmp_path / 'path-ui.html'
+    local_file.write_bytes(test_html)
+
+    result = await app_module._get_ui_html(ui_source=local_file)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == test_html
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_local_file_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that _get_ui_html raises FileNotFoundError for missing local file paths."""
+    import pydantic_ai.ui._web.app as app_module
+
+    # Try to use a non-existent local file path
+    nonexistent_path = str(tmp_path / 'nonexistent-ui.html')
+
+    with pytest.raises(FileNotFoundError, match='Local UI file not found'):
+        await app_module._get_ui_html(ui_source=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_path_instance_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that _get_ui_html raises FileNotFoundError for missing Path instances."""
+    import pydantic_ai.ui._web.app as app_module
+
+    # Try to use a non-existent Path instance
+    nonexistent_path = tmp_path / 'nonexistent-ui.html'
+
+    with pytest.raises(FileNotFoundError, match='Local UI file not found'):
+        await app_module._get_ui_html(ui_source=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_chat_app_index_file_not_found(tmp_path: Path):
+    """Test that index endpoint returns 404 for non-existent ui_source file."""
+    agent = Agent('test')
+    nonexistent_file = tmp_path / 'nonexistent-ui.html'
+    app = create_web_app(agent, ui_source=str(nonexistent_file))
+
+    with TestClient(app) as client:
+        response = client.get('/')
+        assert response.status_code == 404
+        assert 'Local UI file not found' in response.text
+
+
+def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
+    """Test that index endpoint returns 502 when CDN fetch fails with HTTPStatusError."""
+    import httpx
+
+    import pydantic_ai.ui._web.app as app_module
+
+    class MockResponse:
+        status_code = 500
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> None:
+            response = MockResponse()
+            raise httpx.HTTPStatusError('Server error', request=None, response=response)  # type: ignore
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    # Use a fresh temp dir so there's no cached file
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: Path('/tmp/nonexistent-cache-dir-for-test'))
+
+    agent = Agent('test')
+    app = create_web_app(agent)
+
+    with TestClient(app) as client:
+        response = client.get('/')
+        assert response.status_code == 502
+        assert 'Failed to fetch UI: 500' in response.text
