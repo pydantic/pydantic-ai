@@ -1307,9 +1307,9 @@ class OpenAIResponsesModel(Model):
             options: RequestOptions = {'headers': extra_headers}
             if not isinstance(timeout, NotGiven):
                 options['timeout'] = timeout
-            response = await self.client.post(
+            response: object = await self.client.post(
                 '/responses/input_tokens',
-                cast_to=dict[str, Any],
+                cast_to=object,
                 body=body,
                 options=options,
             )
@@ -1320,10 +1320,16 @@ class OpenAIResponsesModel(Model):
         except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        input_tokens = response.get('input_tokens') if isinstance(response, dict) else None
-        if not isinstance(input_tokens, int):
+        if not isinstance(response, dict):
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Input tokens missing from OpenAI response', str(response)
+            )
+
+        response_dict = cast(dict[str, Any], response)
+        input_tokens = response_dict.get('input_tokens')
+        if not isinstance(input_tokens, int):
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Input tokens missing from OpenAI response', str(response_dict)
             )
         return usage.RequestUsage(
             input_tokens=input_tokens,
