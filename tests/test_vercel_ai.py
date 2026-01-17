@@ -1180,7 +1180,7 @@ Want me to tailor\
             {
                 'type': 'text-end',
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'id': IsStr()}},
+                'providerMetadata': {'pydantic_ai': {'id': IsStr(), 'provider_name': 'openai'}},
             },
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'stop'},
@@ -3941,6 +3941,7 @@ async def test_event_stream_text_with_provider_metadata():
                 'providerMetadata': {
                     'pydantic_ai': {
                         'id': 'text_event_id',
+                        'provider_name': 'openai',
                         'provider_details': {'model': 'gpt-4', 'tokens': 10},
                     }
                 },
