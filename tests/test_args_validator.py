@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from typing import Any
+
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import FunctionToolCallEvent
@@ -30,7 +32,7 @@ def test_args_validator_success():
         """Add two numbers."""
         return x + y
 
-    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
 
@@ -56,7 +58,7 @@ def test_args_validator_failure():
         """Add two numbers."""
         return x + y
 
-    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     # The validator should have been called at least once
     assert validator_calls >= 1
@@ -75,9 +77,8 @@ def test_args_validator_not_configured():
         """Add two numbers."""
         return x + y
 
-    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
-
-    # Check that it completes successfully
+    # Check that it completes successfully (no assertion needed, just verify no exception)
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
 
 # Test 4: async validator function
@@ -100,7 +101,7 @@ async def test_args_validator_async():
         """Add two numbers."""
         return x + y
 
-    result = await agent.run('call add_numbers with x=1 and y=2', deps=42)
+    await agent.run('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
 
@@ -124,7 +125,7 @@ def test_args_validator_sync():
         """Add two numbers."""
         return x + y
 
-    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
 
@@ -148,7 +149,7 @@ def test_args_validator_with_deps():
         """Add two numbers."""
         return x + y
 
-    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert deps_value == 42
 
@@ -174,7 +175,7 @@ def test_args_validator_tool_direct():
         tools=[tool],
     )
 
-    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
 
@@ -201,7 +202,7 @@ def test_args_validator_toolset():
         toolsets=[toolset],
     )
 
-    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
 
@@ -224,12 +225,12 @@ async def test_args_validator_event_args_valid_field():
         """Add two numbers."""
         return x + y
 
-    events = []
+    events: list[Any] = []
     async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
         events.append(event)
 
     # Find FunctionToolCallEvent
-    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
 
     # Check args_valid is True for the tool with validator
@@ -260,12 +261,12 @@ async def test_args_validator_event_args_valid_false():
         """Add two numbers."""
         return x + y
 
-    events = []
+    events: list[Any] = []
     async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
         events.append(event)
 
     # Find FunctionToolCallEvent
-    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
 
     # At least one event should have args_valid=False (the first call that fails validation)
@@ -273,10 +274,10 @@ async def test_args_validator_event_args_valid_false():
     assert False in args_valid_values
 
 
-# Test 11: args_valid=None when no validator configured
+# Test 11: args_valid=True when no custom validator but schema passes
 @pytest.mark.anyio
-async def test_args_validator_event_args_valid_none():
-    """Test that args_valid=None when no validator configured."""
+async def test_args_validator_event_args_valid_no_custom_validator():
+    """Test that args_valid=True when no custom validator but schema validation passes."""
     agent = Agent(
         TestModel(call_tools=['add_numbers']),
         deps_type=int,
@@ -287,18 +288,18 @@ async def test_args_validator_event_args_valid_none():
         """Add two numbers."""
         return x + y
 
-    events = []
+    events: list[Any] = []
     async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
         events.append(event)
 
     # Find FunctionToolCallEvent
-    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
 
-    # args_valid should be None for tool without validator
+    # args_valid should be True when schema validation passes (no custom validator)
     for event in tool_call_events:
         if event.part.tool_name == 'add_numbers':
-            assert event.args_valid is None
+            assert event.args_valid is True
 
 
 # Test 12: tool_plain with args_validator
@@ -320,6 +321,6 @@ def test_args_validator_tool_plain():
         """Add two numbers."""
         return x + y
 
-    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called

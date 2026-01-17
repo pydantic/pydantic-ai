@@ -97,25 +97,20 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         *,
         allow_partial: bool = False,
-        approved: bool = False,
-        metadata: Any = None,
-    ) -> tuple[dict[str, Any] | None, bool | None, RunContext[AgentDepsT] | None]:
+    ) -> bool:
         """Validate tool arguments using Pydantic schema and custom args_validator_func.
 
-        This method validates arguments BEFORE the tool is executed, allowing the caller
-        to emit FunctionToolCallEvent with the validation status.
+        This method validates arguments BEFORE the tool is executed and before events are emitted,
+        allowing the caller to emit FunctionToolCallEvent with the validation status.
+
+        Note: This runs before approval requests, so ctx.tool_call_approved will be False.
 
         Args:
             call: The tool call part to validate.
             allow_partial: Whether to allow partial validation of the tool arguments.
-            approved: Whether the tool call has been approved.
-            metadata: Additional metadata from DeferredToolResults.metadata.
 
         Returns:
-            A tuple of (args_dict, args_valid, ctx) where:
-            - args_dict: The validated arguments dict, or None if validation failed
-            - args_valid: True if custom validator passed, False if failed, None if no validator
-            - ctx: The RunContext for the tool call
+            True if schema validation AND custom validation (if configured) passed, False otherwise.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -124,8 +119,8 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
 
         if tool is None:
-            # Unknown tool - return None, None, None to indicate failure
-            return None, None, None
+            # Unknown tool - validation failed
+            return False
 
         ctx = replace(
             self.ctx,
@@ -133,8 +128,6 @@ class ToolManager(Generic[AgentDepsT]):
             tool_call_id=call.tool_call_id,
             retry=self.ctx.retries.get(name, 0),
             max_retries=tool.max_retries,
-            tool_call_approved=approved,
-            tool_call_metadata=metadata,
             partial_output=allow_partial,
         )
 
@@ -151,22 +144,21 @@ class ToolManager(Generic[AgentDepsT]):
                     call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
         except ValidationError:
-            # Pydantic validation failed - return None, False, ctx
-            return None, False, ctx
+            # Pydantic schema validation failed
+            return False
 
-        # Custom args_validator_func validation
-        args_valid: bool | None = None
+        # Custom args_validator_func validation (if configured)
         if tool.args_validator_func is not None:
             try:
                 result = tool.args_validator_func(ctx, **args_dict)
                 if inspect.isawaitable(result):
                     await result
-                args_valid = True
             except ModelRetry:
-                args_valid = False
-                return args_dict, args_valid, ctx
+                # Custom validation failed
+                return False
 
-        return args_dict, args_valid, ctx
+        # All validation passed
+        return True
 
     async def handle_call(
         self,
