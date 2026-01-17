@@ -54,12 +54,13 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
     from openai.types.responses import ResponseFunctionWebSearch
-    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage
+    from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -8755,80 +8756,107 @@ I need to respond with a Python function for calculating the factorial. The user
 """)
 
 
-async def test_openai_responses_text_annotations_non_streaming(allow_model_requests: None):
+async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):
     """Test that text annotations are included in provider_details when the setting is enabled."""
-    from openai.types.responses.response_output_text import AnnotationURLCitation
+    prompt = 'What is the tallest mountain in France? Provide one sentence with a citation.'
+    instructions = 'Use web search and include citations in your answer.'
 
-    # Create a mock annotation
-    mock_annotation = AnnotationURLCitation(
-        type='url_citation',
-        start_index=0,
-        end_index=3,
-        url='https://example.com',
-        title='Example',
-    )
-
-    mock_client = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='msg_1',
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                    content=cast(
-                        list[Content],
-                        [ResponseOutputText(text='Hello world [1]', type='output_text', annotations=[mock_annotation])],
-                    ),
-                )
-            ]
-        )
-    )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model, instructions='Test agent')
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=instructions, builtin_tools=[WebSearchTool()])
 
     # Test with annotations enabled
-    settings = OpenAIResponsesModelSettings(openai_include_web_search_content_annotations_raw=True)
-    result = await agent.run('Test', model_settings=settings)
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+    result = await agent.run(prompt, model_settings=settings)
 
-    assert len(result.all_messages()) == 2
-    response_msg = result.all_messages()[1]
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+                instructions=instructions,
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': IsStr(), 'type': IsStr()},
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id=IsStr(),
+                        provider_details={'annotations': IsInstance(list)},
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    response_msg = messages[1]
     assert isinstance(response_msg, ModelResponse)
-    assert len(response_msg.parts) == 1
-    text_part = response_msg.parts[0]
-    assert isinstance(text_part, TextPart)
-    assert text_part.content == 'Hello world [1]'
+    text_part = next(part for part in response_msg.parts if isinstance(part, TextPart))
     assert text_part.provider_details is not None
-    assert 'annotations' in text_part.provider_details
-    assert text_part.provider_details['annotations'] == [mock_annotation]
+    json.dumps(text_part.provider_details)
 
     # Test with annotations disabled (default)
-    mock_client2 = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='msg_2',
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                    content=cast(
-                        list[Content],
-                        [ResponseOutputText(text='Hello world [1]', type='output_text', annotations=[mock_annotation])],
+    model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
+    result2 = await agent2.run(prompt)
+
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+                instructions=instructions,
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': IsStr(), 'type': IsStr()},
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
                     ),
-                )
-            ]
-        )
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id=IsStr(),
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
     )
-    model2 = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client2))
-    agent2 = Agent(model2, instructions='Test agent')
-
-    result2 = await agent2.run('Test')
-
-    response_msg2 = result2.all_messages()[1]
-    assert isinstance(response_msg2, ModelResponse)
-    text_part2 = response_msg2.parts[0]
-    assert isinstance(text_part2, TextPart)
-    assert text_part2.content == 'Hello world [1]'
-    # Annotations should not be present when setting is disabled
-    if text_part2.provider_details is not None:
-        assert 'annotations' not in text_part2.provider_details

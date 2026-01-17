@@ -11,7 +11,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, cast, overload
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
@@ -335,7 +335,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     Corresponds to the `file_search_call.results` value of the `include` parameter in the Responses API.
     """
 
-    openai_include_web_search_content_annotations_raw: bool
+    openai_include_raw_annotations: bool
     """Whether to include raw web search content annotations in `TextPart.provider_details`.
 
     When enabled, any annotations (e.g., citations from web search) will be available
@@ -1297,13 +1297,12 @@ class OpenAIResponsesModel(Model):
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
-                        if (
-                            model_settings.get('openai_include_web_search_content_annotations_raw')
-                            and content.annotations
-                        ):
+                        if model_settings.get('openai_include_raw_annotations') and content.annotations:
                             if part_provider_details is None:
                                 part_provider_details = {}
-                            part_provider_details['annotations'] = content.annotations
+                            part_provider_details['annotations'] = TypeAdapter(
+                                list[responses.response_output_text.Annotation]
+                            ).dump_python(list(content.annotations))
                         items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
@@ -2208,7 +2207,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         # Track annotations by item_id and content_index
-        _annotations_by_item: dict[str, list[Any]] = {}
+        _annotations_by_item: dict[str, list[responses.response_output_text.Annotation]] = {}
 
         async for chunk in self._response:
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
@@ -2416,10 +2415,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                 # Collect annotations if the setting is enabled
-                if self._model_settings.get('openai_include_web_search_content_annotations_raw'):
+                if self._model_settings.get('openai_include_raw_annotations'):
                     if chunk.item_id not in _annotations_by_item:
                         _annotations_by_item[chunk.item_id] = []
-                    _annotations_by_item[chunk.item_id].append(chunk.annotation)
+                    _annotations_by_item[chunk.item_id].append(
+                        cast(responses.response_output_text.Annotation, chunk.annotation)
+                    )
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(
@@ -2435,15 +2436,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     if chunk.logprobs:
                         if part.provider_details is None:
                             part.provider_details = {}
-                        part.provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
+                        part.provider_details['logprobs'] = _map_logprobs(
+                            cast(Sequence[responses.response_output_text.Logprob], chunk.logprobs)
+                        )
 
                     # Add annotations if the setting is enabled
-                    if self._model_settings.get('openai_include_web_search_content_annotations_raw'):
+                    if self._model_settings.get('openai_include_raw_annotations'):
                         annotations = _annotations_by_item.get(chunk.item_id)
                         if annotations:
                             if part.provider_details is None:
                                 part.provider_details = {}
-                            part.provider_details['annotations'] = annotations
+                            part.provider_details['annotations'] = TypeAdapter(
+                                list[responses.response_output_text.Annotation]
+                            ).dump_python(list(annotations))
 
             elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
                 pass  # there's nothing we need to do here
@@ -2600,10 +2605,7 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
 # Convert logprobs to a serializable format
 def _map_logprobs(
     logprobs: Sequence[chat_completion_token_logprob.ChatCompletionTokenLogprob]
-    | Sequence[responses.response_output_text.Logprob]
-    | Sequence[
-        Any
-    ],  # Accept duck-typed Logprob variants (e.g., from response_text_done_event) that share the same structure
+    | Sequence[responses.response_output_text.Logprob],
 ) -> list[dict[str, Any]]:
     return [
         {
