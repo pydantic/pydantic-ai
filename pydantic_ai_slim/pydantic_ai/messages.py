@@ -1133,7 +1133,7 @@ class FilePart:
     id: str | None = None
     """The identifier of the file part.
 
-    When this field is set, provider_name is required to identify the provider that generated this data.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
     provider_name: str | None = None
@@ -1541,7 +1541,7 @@ class TextPartDelta:
     provider_name: str | None = None
     """The name of the provider that generated the response.
 
-    This is required to be set when `provider_details` is set and the initial TextPart does not have a provider_name or has changed.
+    This is required to be set when `provider_details` is set and the initial TextPart does not have a `provider_name` or it has changed.
     """
 
     provider_details: dict[str, Any] | None = None
@@ -1596,7 +1596,7 @@ class ThinkingPartDelta:
     """Optional provider name for the thinking part.
 
     Signatures are only sent back to the same provider.
-    Required to be set when `provider_details` is set and the initial ThinkingPart does not have a provider_name or has changed.
+    Required to be set when `provider_details` is set and the initial ThinkingPart does not have a `provider_name` or it has changed.
     """
 
     provider_details: ProviderDetailsDelta = None
@@ -1711,7 +1711,7 @@ class ToolCallPartDelta:
     provider_name: str | None = None
     """The name of the provider that generated the response.
 
-    This is required to be set when `provider_details` is set and the initial ToolCallPart does not have a provider_name or has changed.
+    This is required to be set when `provider_details` is set and the initial ToolCallPart does not have a `provider_name` or it has changed.
     """
 
     provider_details: dict[str, Any] | None = None

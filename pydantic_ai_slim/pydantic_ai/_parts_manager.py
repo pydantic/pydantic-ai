@@ -472,7 +472,7 @@ class ModelResponsePartsManager:
     def _resolve_provider_name(
         self, existing_part: ModelResponsePart | ToolCallPartDelta, provider_name: str | None
     ) -> str | None:
-        """Set the  provider name if it has not been set on previous parts."""
+        """Return the provider name if it has not been set on previous parts."""
         if existing_part.provider_name is None or provider_name != existing_part.provider_name:
             return provider_name
         return None
