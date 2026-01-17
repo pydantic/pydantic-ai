@@ -180,6 +180,7 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Anthropic
     * OpenAI Responses
     * Google
+    * Bedrock (Nova2.0)
     """
 
     kind: str = 'code_execution'
