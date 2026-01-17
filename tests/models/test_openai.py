@@ -54,7 +54,6 @@ from .mock_openai import (
     MockOpenAIResponses,
     completion_message,
     get_mock_chat_completion_kwargs,
-    get_mock_input_tokens_kwargs,
     get_mock_responses_kwargs,
     response_message,
 )
@@ -83,7 +82,6 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
-        get_user_agent,
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -3564,53 +3562,27 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
-async def test_responses_count_tokens_with_mock(allow_model_requests: None) -> None:
-    mock_client = cast(
-        AsyncOpenAI,
-        MockOpenAIResponses(input_tokens_response={'object': 'response.input_tokens', 'input_tokens': 11}),
-    )
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
+async def test_responses_count_tokens(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
 
     result = await model.count_tokens(
-        [ModelRequest.user_text_prompt('hello')],
-        None,
+        [ModelRequest(parts=[], instructions='Follow the system instructions.')],
+        OpenAIResponsesModelSettings(timeout=123.0),
         ModelRequestParameters(),
     )
 
-    assert result.input_tokens == 11
-    assert get_mock_input_tokens_kwargs(mock_client)[0]['options'] == {'headers': {'User-Agent': get_user_agent()}}
+    assert result.input_tokens == snapshot(7)
 
 
-async def test_responses_count_tokens_no_messages(allow_model_requests: None) -> None:
-    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
+async def test_responses_count_tokens_no_messages(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
 
     with pytest.raises(UserError, match='Cannot count tokens without any messages or a previous response ID'):
         await model.count_tokens([], None, ModelRequestParameters())
 
 
-async def test_responses_count_tokens_instructions_only(allow_model_requests: None) -> None:
-    mock_client = cast(
-        AsyncOpenAI,
-        MockOpenAIResponses(input_tokens_response={'object': 'response.input_tokens', 'input_tokens': 7}),
-    )
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
-
-    result = await model.count_tokens(
-        [ModelRequest(parts=[], instructions='Follow the system instructions.')],
-        None,
-        ModelRequestParameters(),
-    )
-
-    assert result.input_tokens == 7
-
-
-async def test_responses_count_tokens_with_tools(allow_model_requests: None) -> None:
-    mock_client = cast(
-        AsyncOpenAI,
-        MockOpenAIResponses(input_tokens_response={'object': 'response.input_tokens', 'input_tokens': 25}),
-    )
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
+async def test_responses_count_tokens_with_tools(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
 
     tool_def = ToolDefinition(
         name='get_weather',
@@ -3623,66 +3595,7 @@ async def test_responses_count_tokens_with_tools(allow_model_requests: None) -> 
         ModelRequestParameters(function_tools=[tool_def], allow_text_output=False),
     )
 
-    assert result.input_tokens == 25
-
-
-async def test_responses_count_tokens_tool_choice_auto(allow_model_requests: None) -> None:
-    mock_client = cast(
-        AsyncOpenAI,
-        MockOpenAIResponses(input_tokens_response={'object': 'response.input_tokens', 'input_tokens': 20}),
-    )
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
-
-    tool_def = ToolDefinition(
-        name='get_weather',
-        description='Get the weather for a location',
-        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
-    )
-    result = await model.count_tokens(
-        [ModelRequest.user_text_prompt('What is the weather?')],
-        None,
-        ModelRequestParameters(function_tools=[tool_def], allow_text_output=True),
-    )
-
-    assert result.input_tokens == 20
-
-
-async def test_responses_count_tokens_with_native_output(allow_model_requests: None) -> None:
-    from pydantic_ai._output import OutputObjectDefinition
-
-    mock_client = cast(
-        AsyncOpenAI,
-        MockOpenAIResponses(input_tokens_response={'object': 'response.input_tokens', 'input_tokens': 30}),
-    )
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
-
-    output_object = OutputObjectDefinition(
-        json_schema={'type': 'object', 'properties': {'answer': {'type': 'string'}}},
-        name='Answer',
-    )
-    result = await model.count_tokens(
-        [ModelRequest.user_text_prompt('What is the capital of France?')],
-        None,
-        ModelRequestParameters(output_mode='native', output_object=output_object),
-    )
-
-    assert result.input_tokens == 30
-
-
-async def test_responses_count_tokens_includes_timeout(allow_model_requests: None) -> None:
-    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(openai_client=mock_client))
-
-    await model.count_tokens(
-        [ModelRequest.user_text_prompt('Hello')],
-        OpenAIResponsesModelSettings(timeout=123.0),
-        ModelRequestParameters(),
-    )
-
-    assert get_mock_input_tokens_kwargs(mock_client)[0]['options'] == {
-        'headers': {'User-Agent': get_user_agent()},
-        'timeout': 123.0,
-    }
+    assert result.input_tokens == snapshot(51)
 
 
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):

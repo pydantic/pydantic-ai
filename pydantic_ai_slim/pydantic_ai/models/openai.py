@@ -213,6 +213,19 @@ def _resolve_openai_image_generation_size(
     return mapped_size
 
 
+@dataclass
+class _ResponsesRequestInput:
+    """Common input parameters for OpenAI Responses API requests."""
+
+    tools: list[responses.ToolParam]
+    tool_choice: Literal['none', 'required', 'auto'] | None
+    previous_response_id: str | None
+    instructions: str | Omit
+    openai_messages: list[responses.ResponseInputItemParam]
+    reasoning: Reasoning | Omit
+    text: responses.ResponseTextConfigParam | None
+
+
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
@@ -1206,44 +1219,14 @@ class OpenAIResponsesModel(Model):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        tools = (
-            self._get_builtin_tools(model_request_parameters)
-            + list(settings.get('openai_builtin_tools', []))
-            + self._get_tools(model_request_parameters)
-        )
-        profile = OpenAIModelProfile.from_profile(self.profile)
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
-
-        previous_response_id = settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':  # pragma: no branch
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(
-                messages
-            )  # pragma: no cover
-
-        instructions, openai_messages = await self._map_messages(messages, settings, model_request_parameters)
-        reasoning = self._get_reasoning(settings)
-
-        text: responses.ResponseTextConfigParam | None = None
-        if model_request_parameters.output_mode == 'native':
-            output_object = model_request_parameters.output_object
-            assert output_object is not None
-            text = {'format': self._map_json_schema(output_object)}
-        elif (
-            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
-        ):  # pragma: no cover
-            text = {'format': {'type': 'json_object'}}
-
-            assert isinstance(instructions, str)
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
-            openai_messages.insert(
-                system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
-            )
-            instructions = OMIT
+        request_input = await self._build_request_input(messages, settings, model_request_parameters)
+        tools = request_input.tools
+        tool_choice = request_input.tool_choice
+        previous_response_id = request_input.previous_response_id
+        instructions = request_input.instructions
+        openai_messages = request_input.openai_messages
+        reasoning = request_input.reasoning
+        text = request_input.text
 
         if not openai_messages and not previous_response_id:
             if instructions is OMIT:
@@ -1457,32 +1440,17 @@ class OpenAIResponsesModel(Model):
             else None,
         )
 
-    @overload
-    async def _responses_create(
+    async def _build_request_input(
         self,
         messages: list[ModelRequest | ModelResponse],
-        stream: Literal[False],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response: ...
+    ) -> _ResponsesRequestInput:
+        """Build common request input parameters for the Responses API.
 
-    @overload
-    async def _responses_create(
-        self,
-        messages: list[ModelRequest | ModelResponse],
-        stream: Literal[True],
-        model_settings: OpenAIResponsesModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
-
-    async def _responses_create(  # noqa: C901
-        self,
-        messages: list[ModelRequest | ModelResponse],
-        stream: bool,
-        model_settings: OpenAIResponsesModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
-        tools = (
+        This method extracts the shared logic between count_tokens and _responses_create.
+        """
+        tools: list[responses.ToolParam] = (
             self._get_builtin_tools(model_request_parameters)
             + list(model_settings.get('openai_builtin_tools', []))
             + self._get_tools(model_request_parameters)
@@ -1507,9 +1475,7 @@ class OpenAIResponsesModel(Model):
             output_object = model_request_parameters.output_object
             assert output_object is not None
             text = {'format': self._map_json_schema(output_object)}
-        elif (
-            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
-        ):  # pragma: no branch
+        elif model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output:
             text = {'format': {'type': 'json_object'}}
 
             # Without this trick, we'd hit this error:
@@ -1522,10 +1488,55 @@ class OpenAIResponsesModel(Model):
             )
             instructions = OMIT
 
+        return _ResponsesRequestInput(
+            tools=tools,
+            tool_choice=tool_choice,
+            previous_response_id=previous_response_id,
+            instructions=instructions,
+            openai_messages=openai_messages,
+            reasoning=reasoning,
+            text=text,
+        )
+
+    @overload
+    async def _responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        stream: Literal[False],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response: ...
+
+    @overload
+    async def _responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        stream: Literal[True],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+
+    async def _responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
+        request_input = await self._build_request_input(messages, model_settings, model_request_parameters)
+        tools = request_input.tools
+        tool_choice = request_input.tool_choice
+        previous_response_id = request_input.previous_response_id
+        instructions = request_input.instructions
+        openai_messages = request_input.openai_messages
+        reasoning = request_input.reasoning
+        text = request_input.text
+
         if verbosity := model_settings.get('openai_text_verbosity'):
             text = text or {}
             text['verbosity'] = verbosity
 
+        profile = OpenAIModelProfile.from_profile(self.profile)
         unsupported_model_settings = profile.openai_unsupported_model_settings
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)

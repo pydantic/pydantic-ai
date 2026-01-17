@@ -269,15 +269,15 @@ class UsageLimits:
     """If True, perform a token counting pass before sending the request to the model,
     to enforce `request_tokens_limit` ahead of time.
 
-    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request) and is disabled by default.
+    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request)
+    and is disabled by default.
 
     Supported by:
 
     - Anthropic
     - Google
     - Bedrock Converse
-
-    Support for OpenAI is in development: https://github.com/pydantic/pydantic-ai/issues/3430
+    - OpenAI Responses
     """
 
     @property
