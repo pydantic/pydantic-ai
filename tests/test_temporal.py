@@ -1273,6 +1273,7 @@ async def test_temporal_agent():
             'agent__complex_agent__event_stream_handler',
             'agent__complex_agent__model_request',
             'agent__complex_agent__model_request_stream',
+            'agent__complex_agent__model_count_tokens',
             'agent__complex_agent__toolset__<agent>__call_tool',
             'agent__complex_agent__toolset__country__call_tool',
             'agent__complex_agent__mcp_server__mcp__get_tools',

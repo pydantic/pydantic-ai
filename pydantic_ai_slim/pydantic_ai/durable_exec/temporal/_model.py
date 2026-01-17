@@ -168,8 +168,7 @@ class TemporalModel(WrapperModel):
             )
 
         self.count_tokens_activity = count_tokens_activity
-        # Union with None for backward compatibility with activity payloads created before deps was added
-        self.count_tokens_activity.__annotations__['deps'] = deps_type | None
+        self.count_tokens_activity.__annotations__['deps'] = deps_type
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
