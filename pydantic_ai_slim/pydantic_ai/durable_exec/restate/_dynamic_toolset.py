@@ -107,7 +107,7 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
                 real_tool = tools.get(name)
                 if real_tool is None:  # pragma: no cover
                     raise UserError(
-                        f'Tool {name!r} not found in dynamic toolset {self._wrapped.label!r}. '
+                        f'Tool {name!r} not found in dynamic toolset {self._wrapped.label}. '
                         'The dynamic toolset function may have returned a different toolset than expected.'
                     )
 

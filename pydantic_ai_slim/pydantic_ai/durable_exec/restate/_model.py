@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from pydantic.errors import PydanticUserError
 
@@ -26,9 +26,9 @@ class RestateStreamedResponse(StreamedResponse):
         self.response = response
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        return
-        # noinspection PyUnreachableCode
-        yield
+        # Restate wraps a completed `ModelResponse`; streamed events are not replayed.
+        if False:  # pragma: no cover
+            yield cast(ModelResponseStreamEvent, None)
 
     def get(self) -> ModelResponse:
         return self.response

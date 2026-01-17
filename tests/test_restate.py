@@ -596,24 +596,21 @@ async def test_restate_fastmcp_toolset_maps_control_flow_exceptions_and_user_err
     def echo(value: int) -> dict[str, Any]:
         return {'value': value}
 
+    # Placeholder tool implementations; behavior is overridden by `RaisingFastMCPToolset`.
     @mcp.tool
     def retry() -> None:  # pragma: no cover
-        """Placeholder implementation; actual behavior is provided by `RaisingFastMCPToolset`."""
         raise RuntimeError('not used')
 
     @mcp.tool
     def deferred() -> None:  # pragma: no cover
-        """Placeholder implementation; actual behavior is provided by `RaisingFastMCPToolset`."""
         raise RuntimeError('not used')
 
     @mcp.tool
     def approval() -> None:  # pragma: no cover
-        """Placeholder implementation; actual behavior is provided by `RaisingFastMCPToolset`."""
         raise RuntimeError('not used')
 
     @mcp.tool
     def user_error() -> None:  # pragma: no cover
-        """Placeholder implementation; actual behavior is provided by `RaisingFastMCPToolset`."""
         raise RuntimeError('not used')
 
     class RaisingFastMCPToolset(FastMCPToolset[Any]):
