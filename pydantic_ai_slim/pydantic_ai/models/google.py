@@ -677,8 +677,7 @@ class GoogleModel(Model):
 
                         content_parts.append(part)
 
-                    if content_parts:
-                        contents.append({'role': 'user', 'parts': content_parts})
+                    contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(m, self.system)
                 if maybe_content:
