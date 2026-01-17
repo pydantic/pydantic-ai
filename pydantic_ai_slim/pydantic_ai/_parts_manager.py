@@ -149,7 +149,12 @@ class ModelResponsePartsManager:
         else:
             # Update the existing TextPart with the new content delta
             existing_text_part, part_index = existing_text_part_and_index
-            part_delta = TextPartDelta(content_delta=content, provider_details=provider_details)
+
+            part_delta = TextPartDelta(
+                content_delta=content,
+                provider_name=self._resolve_provider_name(existing_text_part, provider_name),
+                provider_details=provider_details,
+            )
             self._parts[part_index] = part_delta.apply(existing_text_part)
             yield PartDeltaEvent(index=part_index, delta=part_delta)
 
@@ -230,7 +235,7 @@ class ModelResponsePartsManager:
             part_delta = ThinkingPartDelta(
                 content_delta=content,
                 signature_delta=signature,
-                provider_name=provider_name,
+                provider_name=self._resolve_provider_name(existing_thinking_part, provider_name),
                 provider_details=provider_details,
             )
             self._parts[part_index] = part_delta.apply(existing_thinking_part)
@@ -315,7 +320,7 @@ class ModelResponsePartsManager:
                 tool_name_delta=tool_name,
                 args_delta=args,
                 tool_call_id=tool_call_id,
-                provider_name=provider_name,
+                provider_name=self._resolve_provider_name(existing_part, provider_name),
                 provider_details=provider_details,
             )
             updated_part = delta.apply(existing_part)
@@ -453,7 +458,9 @@ class ModelResponsePartsManager:
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle content inside <think>...</think>."""
         part_delta = ThinkingPartDelta(
-            content_delta=content, provider_name=provider_name, provider_details=provider_details
+            content_delta=content,
+            provider_name=self._resolve_provider_name(existing_part, provider_name),
+            provider_details=provider_details,
         )
         self._parts[part_index] = part_delta.apply(existing_part)
         yield PartDeltaEvent(index=part_index, delta=part_delta)
@@ -461,3 +468,11 @@ class ModelResponsePartsManager:
     def _handle_embedded_thinking_end(self, vendor_part_id: VendorId) -> None:
         """Handle </think> tag - stop tracking so next delta creates new part."""
         self._stop_tracking_vendor_id(vendor_part_id)
+
+    def _resolve_provider_name(
+        self, existing_part: ModelResponsePart | ToolCallPartDelta, provider_name: str | None
+    ) -> str | None:
+        """Set the  provider name if it has not been set on previous parts."""
+        if existing_part.provider_name is None or provider_name != existing_part.provider_name:
+            return provider_name
+        return None

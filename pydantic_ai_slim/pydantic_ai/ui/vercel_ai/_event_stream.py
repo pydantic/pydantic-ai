@@ -127,15 +127,17 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             yield TextDeltaChunk(id=message_id, delta=part.content, provider_metadata=provider_metadata)
 
     async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[BaseChunk]:
-        # Only provider_details is needed for deltas as provider name is sent on the start event
         if delta.content_delta:  # pragma: no branch
-            provider_metadata = dump_provider_metadata(provider_details=delta.provider_details)
+            provider_metadata = dump_provider_metadata(
+                provider_name=delta.provider_name, provider_details=delta.provider_details
+            )
             yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseChunk]:
-        # Only provider_details is needed for end events as provider name is sent on the start event
         if not followed_by_text:
-            provider_metadata = dump_provider_metadata(id=part.id, provider_details=part.provider_details)
+            provider_metadata = dump_provider_metadata(
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            )
             yield TextEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
     async def handle_thinking_start(
