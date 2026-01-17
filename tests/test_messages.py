@@ -27,6 +27,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.messages import FileUrl
 
 from .conftest import IsDatetime, IsNow, IsStr
 
@@ -311,6 +312,46 @@ def test_binary_content_base64():
     assert bc.base64 == 'SGVsbG8sIHdvcmxkIQ=='
     assert not bc.base64.startswith('data:')
     assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
+
+
+@pytest.mark.parametrize(
+    'url,url_type',
+    [
+        pytest.param('https://example.com/audio.mp3', AudioUrl, id='audio'),
+        pytest.param('https://example.com/image.jpg', ImageUrl, id='image'),
+        pytest.param('https://example.com/video.mp4', VideoUrl, id='video'),
+        pytest.param('https://example.com/document.docx', DocumentUrl, id='document'),
+    ],
+)
+def test_file_url_from_url(url: str, url_type: type[FileUrl]):
+    obj = FileUrl.from_url(url)
+    assert isinstance(obj, url_type)
+
+
+def test_file_url_from_url_unsupported_type():
+    with pytest.raises(ValueError, match='Could not classify file from URL: https://example.com/file.bin'):
+        FileUrl.from_url('https://example.com/file.bin', media_type='application/octet-stream')
+
+
+def test_file_url_format_infer():
+    # Create an ImageUrl
+    img = DocumentUrl(url='https://example.com/doc.pptx')
+    # The format property should return 'pptx'
+    assert img.format == 'pptx'
+
+
+def test_file_url_format_unknown_media_type():
+    # Create an ImageUrl with a custom unknown media type
+    img = ImageUrl(url='https://example.com/image', media_type='image/x-custom-unknown')
+    # The format property should raise an error for unknown media types
+    with pytest.raises(ValueError, match='Could not infer file format from media type: image/x-custom-unknown'):
+        _ = img.format
+
+
+def test_binary_content_infer_media_type_no_file_name():
+    # Test when file_name is provided but has unknown extension
+    with pytest.raises(ValueError, match='Could not infer media type from file name: test.unknownext123'):
+        BinaryContent(data=b'test', file_name='test.unknownext123')
 
 
 @pytest.mark.xdist_group(name='url_formats')
