@@ -827,7 +827,7 @@ class BedrockConverseModel(Model):
                         name = f'Document {next(document_count)}'
                         document: DocumentBlockTypeDef = {
                             'name': name,
-                            'format': item.format,
+                            'format': item.format,  # type: ignore[assignment]
                             'source': source,
                         }
                         content.append({'document': document})

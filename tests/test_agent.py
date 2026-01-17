@@ -4886,6 +4886,7 @@ def test_binary_content_serializable():
                                 'data': 'SGVsbG8=',
                                 'media_type': 'text/plain',
                                 'vendor_metadata': None,
+                                'file_name': None,
                                 'kind': 'binary',
                                 'identifier': 'f7ff9e',
                             },
@@ -5085,6 +5086,7 @@ def test_tool_return_part_binary_content_serialization():
             'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
             'media_type': 'image/png',
             'vendor_metadata': None,
+            'file_name': None,
             '_identifier': None,
             'kind': 'binary',
         }

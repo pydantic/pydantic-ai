@@ -259,6 +259,19 @@ async def test_image_output_json_schema():
                             ],
                             'type': 'string',
                         },
+                        {
+                            'enum': [
+                                'video/x-matroska',
+                                'video/quicktime',
+                                'video/mp4',
+                                'video/webm',
+                                'video/x-flv',
+                                'video/mpeg',
+                                'video/x-ms-wmv',
+                                'video/3gpp',
+                            ],
+                            'type': 'string',
+                        },
                         {'type': 'string'},
                     ],
                     'title': 'Media Type',
@@ -268,6 +281,7 @@ async def test_image_output_json_schema():
                     'default': None,
                     'title': 'Vendor Metadata',
                 },
+                'file_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'File Name'},
                 'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                 'identifier': {
                     'description': """\
@@ -332,6 +346,19 @@ distinguish multiple files.\
                                     ],
                                     'type': 'string',
                                 },
+                                {
+                                    'enum': [
+                                        'video/x-matroska',
+                                        'video/quicktime',
+                                        'video/mp4',
+                                        'video/webm',
+                                        'video/x-flv',
+                                        'video/mpeg',
+                                        'video/x-ms-wmv',
+                                        'video/3gpp',
+                                    ],
+                                    'type': 'string',
+                                },
                                 {'type': 'string'},
                             ],
                             'title': 'Media Type',
@@ -340,6 +367,11 @@ distinguish multiple files.\
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Vendor Metadata',
+                        },
+                        'file_name': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'File Name',
                         },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                         'identifier': {
@@ -469,6 +501,19 @@ async def test_deferred_output_json_schema():
                                     ],
                                     'type': 'string',
                                 },
+                                {
+                                    'enum': [
+                                        'video/x-matroska',
+                                        'video/quicktime',
+                                        'video/mp4',
+                                        'video/webm',
+                                        'video/x-flv',
+                                        'video/mpeg',
+                                        'video/x-ms-wmv',
+                                        'video/3gpp',
+                                    ],
+                                    'type': 'string',
+                                },
                                 {'type': 'string'},
                             ],
                             'title': 'Media Type',
@@ -477,6 +522,11 @@ async def test_deferred_output_json_schema():
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Vendor Metadata',
+                        },
+                        'file_name': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'File Name',
                         },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                         'identifier': {

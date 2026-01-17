@@ -14,6 +14,7 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
+    FileUrl,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -180,7 +181,7 @@ def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
 
 
 def test_audio_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from audio URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         AudioUrl('foobar.potato').media_type
 
 
@@ -200,10 +201,10 @@ def test_image_url_formats(image_url: ImageUrl, media_type: str, format: str):
 
 
 def test_image_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         ImageUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         ImageUrl('foobar.potato').format
 
 
@@ -241,11 +242,8 @@ def test_document_url_formats(document_url: DocumentUrl, media_type: str, format
 
 
 def test_document_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from document URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         DocumentUrl('foobar.potato').media_type
-
-    with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
-        DocumentUrl('foobar.py').format
 
 
 def test_binary_content_unknown_media_type():
@@ -316,6 +314,50 @@ def test_binary_content_base64():
     assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
 
 
+@pytest.mark.parametrize(
+    'url,url_type',
+    [
+        pytest.param('https://example.com/audio.mp3', AudioUrl, id='audio'),
+        pytest.param('https://example.com/image.jpg', ImageUrl, id='image'),
+        pytest.param('https://example.com/video.mp4', VideoUrl, id='video'),
+        pytest.param('https://example.com/document.docx', DocumentUrl, id='document'),
+    ],
+)
+def test_file_url_from_url(url: str, url_type: type[FileUrl]):
+    obj = FileUrl.from_url(url)
+    assert isinstance(obj, url_type)
+
+
+def test_file_url_from_url_unsupported_type():
+    with pytest.raises(ValueError, match='Could not classify file from URL: https://example.com/file.bin'):
+        FileUrl.from_url('https://example.com/file.bin', media_type='application/octet-stream')
+    with pytest.raises(ValueError, match='Could not infer media type from URL: https://example.com/file.unknownext'):
+        FileUrl.from_url('https://example.com/file.unknownext')
+
+
+def test_file_url_format_infer():
+    # Create an ImageUrl
+    img = DocumentUrl(url='https://example.com/doc.pptx')
+    # The format property should return 'pptx'
+    assert img.format == 'pptx'
+
+
+def test_file_url_format_unknown_media_type():
+    # Create an ImageUrl with a custom unknown media type
+    img = ImageUrl(url='https://example.com/image', media_type='image/x-custom-unknown')
+    # The format property should raise an error for unknown media types
+    with pytest.raises(ValueError, match='Could not infer file format from media type: image/x-custom-unknown'):
+        _ = img.format
+
+
+def test_binary_content_infer_media_type_error():
+    # Test when file_name is provided but has unknown extension
+    with pytest.raises(ValueError, match='Could not infer media type from file name: test.unknownext123'):
+        BinaryContent(data=b'test', file_name='test.unknownext123')
+    with pytest.raises(ValueError, match='Media type could not be inferred. Please provide a media type or file name.'):
+        BinaryContent(data=b'test')
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
@@ -336,7 +378,7 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 
 
 def test_video_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         VideoUrl('foobar.potato').media_type
 
 
@@ -505,6 +547,7 @@ def test_file_part_serialization_roundtrip():
                     {
                         'content': {
                             'data': 'ZmFrZQ==',
+                            'file_name': None,
                             'media_type': 'image/jpeg',
                             'identifier': 'c053ec',
                             'vendor_metadata': None,
@@ -628,7 +671,11 @@ def test_image_url_validation_with_optional_identifier():
     )
 
     image = image_url_ta.validate_python(
-        {'url': 'https://example.com/image.jpg', 'identifier': 'foo', 'media_type': 'image/png'}
+        {
+            'url': 'https://example.com/image.jpg',
+            'identifier': 'foo',
+            'media_type': 'image/png',
+        }
     )
     assert image.url == snapshot('https://example.com/image.jpg')
     assert image.identifier == snapshot('foo')
@@ -654,6 +701,7 @@ def test_binary_content_validation_with_optional_identifier():
     assert binary_content_ta.dump_python(binary_content) == snapshot(
         {
             'data': b'fake',
+            'file_name': None,
             'vendor_metadata': None,
             'kind': 'binary',
             'media_type': 'image/jpeg',
@@ -662,7 +710,11 @@ def test_binary_content_validation_with_optional_identifier():
     )
 
     binary_content = binary_content_ta.validate_python(
-        {'data': b'fake', 'identifier': 'foo', 'media_type': 'image/png'}
+        {
+            'data': b'fake',
+            'identifier': 'foo',
+            'media_type': 'image/png',
+        }
     )
     assert binary_content.data == b'fake'
     assert binary_content.identifier == snapshot('foo')
@@ -670,6 +722,7 @@ def test_binary_content_validation_with_optional_identifier():
     assert binary_content_ta.dump_python(binary_content) == snapshot(
         {
             'data': b'fake',
+            'file_name': None,
             'vendor_metadata': None,
             'kind': 'binary',
             'media_type': 'image/png',
@@ -683,7 +736,13 @@ def test_binary_content_from_path(tmp_path: Path):
     test_xml_file = tmp_path / 'test.xml'
     test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_xml_file)
-    assert binary_content == snapshot(BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
+    assert binary_content == snapshot(
+        BinaryContent(
+            data=b'<think>about trains</think>',
+            file_name='test.xml',
+            media_type='application/xml',
+        )
+    )
 
     # test non-existent file
     non_existent_file = tmp_path / 'non-existent.txt'
@@ -691,40 +750,61 @@ def test_binary_content_from_path(tmp_path: Path):
         BinaryContent.from_path(non_existent_file)
 
     # test file with unknown media type
-    test_unknown_file = tmp_path / 'test.unknownext'
-    test_unknown_file.write_text('some content', encoding='utf-8')
-    binary_content = BinaryContent.from_path(test_unknown_file)
-    assert binary_content == snapshot(BinaryContent(data=b'some content', media_type='application/octet-stream'))
+    with pytest.raises(ValueError, match='Could not infer media type from file name: test.unknownext'):
+        test_unknown_file = tmp_path / 'test.unknownext'
+        test_unknown_file.write_text('some content', encoding='utf-8')
+        binary_content = BinaryContent.from_path(test_unknown_file)
 
     # test string path
     test_txt_file = tmp_path / 'test.txt'
     test_txt_file.write_text('just some text', encoding='utf-8')
     string_path = test_txt_file.as_posix()
     binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
-    assert binary_content == snapshot(BinaryContent(data=b'just some text', media_type='text/plain'))
+    assert binary_content == snapshot(
+        BinaryContent(data=b'just some text', file_name='test.txt', media_type='text/plain')
+    )
 
     # test image file
     test_jpg_file = tmp_path / 'test.jpg'
     test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
     binary_content = BinaryContent.from_path(test_jpg_file)
     assert binary_content == snapshot(
-        BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
+        BinaryImage(
+            data=b'\xff\xd8\xff\xe0' + b'0' * 100,
+            media_type='image/jpeg',
+            file_name='test.jpg',
+            _identifier='bc8d49',
+        )
     )
 
     # test yaml file
     test_yaml_file = tmp_path / 'config.yaml'
     test_yaml_file.write_text('key: value', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_yaml_file)
-    assert binary_content == snapshot(BinaryContent(data=b'key: value', media_type='application/yaml'))
+    assert binary_content == snapshot(
+        BinaryContent(data=b'key: value', file_name='config.yaml', media_type='application/yaml')
+    )
 
     # test yml file (alternative extension)
     test_yml_file = tmp_path / 'docker-compose.yml'
     test_yml_file.write_text('version: "3"', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_yml_file)
-    assert binary_content == snapshot(BinaryContent(data=b'version: "3"', media_type='application/yaml'))
+    assert binary_content == snapshot(
+        BinaryContent(
+            data=b'version: "3"',
+            file_name='docker-compose.yml',
+            media_type='application/yaml',
+        )
+    )
 
     # test toml file
     test_toml_file = tmp_path / 'pyproject.toml'
     test_toml_file.write_text('[project]\nname = "test"', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_toml_file)
-    assert binary_content == snapshot(BinaryContent(data=b'[project]\nname = "test"', media_type='application/toml'))
+    assert binary_content == snapshot(
+        BinaryContent(
+            data=b'[project]\nname = "test"',
+            file_name='pyproject.toml',
+            media_type='application/toml',
+        )
+    )
