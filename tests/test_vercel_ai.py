@@ -2661,6 +2661,16 @@ Fix the errors and try again.\
         ]
     )
 
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    # Content will have changed for retry prompt part, so we set it back to the original value
+    retry_prompt_part = reloaded_messages[2].parts[0]
+    assert isinstance(retry_prompt_part, RetryPromptPart)
+    assert retry_prompt_part.content == 'Tool failed with error\n\nFix the errors and try again.'
+    retry_prompt_part.content = 'Tool failed with error'
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
 
 async def test_adapter_dump_messages_with_retry_no_tool_name():
     """Test dumping messages with retry prompts without tool_name (e.g., output validation errors)."""
@@ -2714,6 +2724,21 @@ Fix the errors and try again.\
                 ],
             },
         ]
+    )
+
+    # Verify roundtrip
+    # Note: This is a lossy conversion - RetryPromptPart without tool_call_id becomes a user text message.
+    # When loaded back, it creates a UserPromptPart instead of RetryPromptPart.
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    assert len(reloaded_messages) == 3
+    _sync_timestamps(messages, reloaded_messages)
+    # First two messages are unchanged
+    assert reloaded_messages[:2] == messages[:2]
+    # Third message: RetryPromptPart becomes UserPromptPart (lossy conversion)
+    assert isinstance(reloaded_messages[2], ModelRequest)
+    assert isinstance(reloaded_messages[2].parts[0], UserPromptPart)
+    assert reloaded_messages[2].parts[0].content == (
+        'Validation feedback:\nOutput validation failed: expected integer\n\nFix the errors and try again.'
     )
 
 
