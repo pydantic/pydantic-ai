@@ -1957,12 +1957,11 @@ class FunctionToolCallEvent:
 
     _: KW_ONLY
 
-    args_valid: bool | None = None
-    """Indicates whether custom args validation passed.
+    args_valid: bool
+    """Indicates whether the tool arguments are valid.
 
-    - `True`: Custom validation passed
-    - `False`: Custom validation failed (validation error details in subsequent FunctionToolResultEvent)
-    - `None`: No custom validator was configured for this tool (default, backward compatible)
+    - `True`: Schema validation passed AND custom validation passed (if configured)
+    - `False`: Schema validation failed OR custom validation failed
     """
 
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
