@@ -66,10 +66,10 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
         # Use model defaults
         settings = BedrockEmbeddingSettings()
 
-        # Customize specific settings
+        # Customize specific settings for Titan
         settings = BedrockEmbeddingSettings(
             dimensions=512,
-            bedrock_normalize=True,
+            bedrock_titan_normalize=True,
         )
 
         # Pass custom parameters via extra_body
@@ -83,36 +83,43 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     # ==================== Amazon Titan Settings ====================
 
-    bedrock_normalize: bool
-    """Whether to normalize the embedding vectors (Amazon Titan only).
+    bedrock_titan_normalize: bool
+    """Whether to normalize embedding vectors for Titan models.
 
     Normalized vectors can be used directly for similarity calculations.
-    If not specified, model default is used.
     """
 
     # ==================== Cohere Settings ====================
 
-    bedrock_input_type: Literal['search_document', 'search_query', 'classification', 'clustering']
-    """The Cohere-specific input type for the embedding (Cohere models only).
+    bedrock_cohere_input_type: Literal['search_document', 'search_query', 'classification', 'clustering']
+    """The input type for Cohere models.
 
-    Overrides the automatic mapping from `input_type` ('query' -> 'search_query',
-    'document' -> 'search_document').
+    Defaults based on `input_type`:
+    - `'query'` maps to `'search_query'`
+    - `'document'` maps to `'search_document'`
+
+    Other options: `'classification'`, `'clustering'`.
     """
 
-    bedrock_truncate: Literal['NONE', 'START', 'END']
-    """The truncation strategy to use (Cohere and Nova models).
+    bedrock_cohere_truncate: Literal['NONE', 'START', 'END']
+    """The truncation strategy for Cohere models.
 
-    - `'NONE'`: Raise an error if input exceeds max tokens.
-    - `'START'`: Truncate the start of the input text.
-    - `'END'`: Truncate the end of the input text.
-
-    For Cohere: optional (defaults to NONE).
-    For Nova: defaults to END.
+    - `'NONE'` (default): Raise an error if input exceeds max tokens.
+    - `'START'`: Truncate the start of the input.
+    - `'END'`: Truncate the end of the input.
     """
 
     # ==================== Amazon Nova Settings ====================
 
-    bedrock_embedding_purpose: Literal[
+    bedrock_nova_truncate: Literal['NONE', 'START', 'END']
+    """The truncation strategy for Nova models.
+
+    - `'NONE'` (default): Raise an error if input exceeds max tokens.
+    - `'START'`: Truncate the start of the input.
+    - `'END'`: Truncate the end of the input.
+    """
+
+    bedrock_nova_embedding_purpose: Literal[
         'GENERIC_INDEX',
         'GENERIC_RETRIEVAL',
         'TEXT_RETRIEVAL',
@@ -125,17 +132,12 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     ]
     """The embedding purpose for Nova models.
 
-    - `'GENERIC_INDEX'`: General-purpose indexing.
-    - `'GENERIC_RETRIEVAL'`: General-purpose retrieval.
-    - `'TEXT_RETRIEVAL'`: Optimized for text retrieval tasks.
-    - `'IMAGE_RETRIEVAL'`: Optimized for image retrieval tasks.
-    - `'VIDEO_RETRIEVAL'`: Optimized for video retrieval tasks.
-    - `'DOCUMENT_RETRIEVAL'`: Optimized for document retrieval tasks.
-    - `'AUDIO_RETRIEVAL'`: Optimized for audio retrieval tasks.
-    - `'CLASSIFICATION'`: Optimized for classification tasks.
-    - `'CLUSTERING'`: Optimized for clustering tasks.
+    Defaults based on `input_type`:
+    - `'query'` maps to `'GENERIC_RETRIEVAL'` (optimized for search)
+    - `'document'` maps to `'GENERIC_INDEX'` (optimized for indexing)
 
-    If not specified, model default is used.
+    Other options: `'TEXT_RETRIEVAL'`, `'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`,
+    `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
     """
 
 
@@ -211,7 +213,7 @@ def _apply_extra_body(body: dict[str, Any], settings: BedrockEmbeddingSettings) 
 
     **Final precedence (highest to lowest):**
     1. `extra_body` values (user overrides) - always wins
-    2. Handler-generated values (from settings like `dimensions`, `bedrock_normalize`)
+    2. Handler-generated values (from settings like `dimensions`, `bedrock_titan_normalize`)
     3. Model defaults (applied by AWS Bedrock if field is omitted)
 
     **Use cases:**
@@ -250,7 +252,7 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
             body['dimensions'] = dimensions
 
         # Optional: Normalize embedding vectors for direct similarity calculations
-        if (normalize := settings.get('bedrock_normalize')) is not None:
+        if (normalize := settings.get('bedrock_titan_normalize')) is not None:
             body['normalize'] = normalize
 
         return _apply_extra_body(body, settings)
@@ -292,9 +294,9 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
         # Map generic input_type to Cohere-specific input_type
         # - 'document' maps to 'search_document' (for indexing)
         # - 'query' maps to 'search_query' (for searching)
-        # Can be overridden with bedrock_input_type setting
+        # Can be overridden with bedrock_cohere_input_type setting
         cohere_input_type = settings.get(
-            'bedrock_input_type', 'search_document' if input_type == 'document' else 'search_query'
+            'bedrock_cohere_input_type', 'search_document' if input_type == 'document' else 'search_query'
         )
 
         body: dict[str, Any] = {
@@ -303,7 +305,7 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
         }
 
         # Optional: Truncation strategy (model default: NONE - raise error if input exceeds max tokens)
-        if truncate := settings.get('bedrock_truncate'):
+        if truncate := settings.get('bedrock_cohere_truncate'):
             body['truncate'] = truncate
 
         return _apply_extra_body(body, settings)
@@ -365,7 +367,7 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
 
         # Get truncation mode - Nova requires this field
         # Nova accepts: START, END, NONE (default: NONE)
-        truncate = settings.get('bedrock_truncate', 'NONE')
+        truncate = settings.get('bedrock_nova_truncate', 'NONE')
 
         # Build text params - 'value' and 'truncationMode' are required by Nova
         text_params: dict[str, Any] = {
@@ -380,7 +382,7 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
         # - queries default to GENERIC_RETRIEVAL (optimized for search)
         # - documents default to GENERIC_INDEX (optimized for indexing)
         default_purpose = 'GENERIC_RETRIEVAL' if input_type == 'query' else 'GENERIC_INDEX'
-        embedding_purpose = settings.get('bedrock_embedding_purpose', default_purpose)
+        embedding_purpose = settings.get('bedrock_nova_embedding_purpose', default_purpose)
 
         # Build singleEmbeddingParams - all fields are required by Nova
         single_embedding_params: dict[str, Any] = {

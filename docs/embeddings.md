@@ -466,7 +466,7 @@ embedder = Embedder(
     'bedrock:amazon.titan-embed-text-v2:0',
     settings=BedrockEmbeddingSettings(
         dimensions=512,
-        bedrock_normalize=True,  # Normalize vectors for similarity calculations
+        bedrock_titan_normalize=True,  # Normalize vectors for similarity calculations
     ),
 )
 
@@ -474,7 +474,7 @@ embedder = Embedder(
 embedder = Embedder(
     'bedrock:cohere.embed-english-v3',
     settings=BedrockEmbeddingSettings(
-        bedrock_truncate='END',  # Truncate long inputs instead of erroring
+        bedrock_cohere_truncate='END',  # Truncate long inputs instead of erroring
     ),
 )
 
@@ -482,7 +482,7 @@ embedder = Embedder(
 embedder = Embedder(
     'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
     settings=BedrockEmbeddingSettings(
-        bedrock_embedding_purpose='TEXT_RETRIEVAL',  # Optimized for text retrieval
+        bedrock_nova_embedding_purpose='TEXT_RETRIEVAL',  # Optimized for text retrieval
     ),
 )
 ```

@@ -370,7 +370,7 @@ class TestBedrock:
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
-        embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=256, bedrock_normalize=True))
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=256, bedrock_titan_normalize=True))
         result = await embedder.embed_query('Test embedding dimensions')
         assert result == snapshot(
             EmbeddingResult(
@@ -424,7 +424,7 @@ class TestBedrock:
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
-        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_truncate='END'))
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='END'))
         result = await embedder.embed_query('Test truncation setting')
         assert result == snapshot(
             EmbeddingResult(
@@ -512,7 +512,7 @@ class TestBedrock:
         embedder = Embedder(
             model,
             settings=BedrockEmbeddingSettings(
-                bedrock_embedding_purpose='TEXT_RETRIEVAL',
+                bedrock_nova_embedding_purpose='TEXT_RETRIEVAL',
             ),
         )
         result = await embedder.embed_query('Test Nova settings')
