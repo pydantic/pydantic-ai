@@ -964,6 +964,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 toolset=self,
                 tool_def=tool_def,
                 max_retries=self.max_retries,
+                usage_policy=None,
                 args_validator=self.processors[tool_def.name].validator,
             )
             for tool_def in self._tool_defs

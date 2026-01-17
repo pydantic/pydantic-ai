@@ -58,7 +58,8 @@ class ToolManager(Generic[AgentDepsT]):
                 failed_tool_name: self.ctx.retries.get(failed_tool_name, 0) + 1
                 for failed_tool_name in self.failed_tools
             }
-            ctx = replace(ctx, retries=retries)
+            tools_use_counts = self.ctx.tools_use_counts.copy()
+            ctx = replace(ctx, retries=retries, tools_use_counts=tools_use_counts)
 
         return self.__class__(
             toolset=self.toolset,
@@ -69,11 +70,20 @@ class ToolManager(Generic[AgentDepsT]):
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
-        """The tool definitions for the tools in this tool manager."""
-        if self.tools is None:
+        """The tool definitions for the tools in this tool manager.
+
+        Tools that have reached their `max_uses` limit (based on successful calls) are filtered out.
+        """
+        if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        return [tool.tool_def for tool in self.tools.values()]
+        return [
+            tool.tool_def
+            for tool in self.tools.values()
+            if (limits := tool.usage_policy) is None
+            or (max_uses := limits.max_uses) is None
+            or (self._get_current_uses_of_tool(tool.tool_def.name) < max_uses)
+        ]
 
     def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
         """Whether to require sequential tool calls for a list of tool calls."""
@@ -181,7 +191,9 @@ class ToolManager(Generic[AgentDepsT]):
                     call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
 
-            return await self.toolset.call_tool(name, args_dict, ctx, tool)
+            result = await self.toolset.call_tool(name, args_dict, ctx, tool)
+            self.ctx.tools_use_counts[name] = self.ctx.tools_use_counts.get(name, 0) + 1
+            return result
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             current_retry = self.ctx.retries.get(name, 0)
@@ -283,3 +295,138 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
         return tool_result
+
+    def _get_max_uses_of_tool(self, tool_name: str) -> int | None:
+        """Get the maximum number of uses allowed for a given tool, or `None` if unlimited."""
+        if self.tools is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        tool = self.tools.get(tool_name, None)
+        if tool is None or tool.usage_policy is None:
+            return None
+
+        return tool.usage_policy.max_uses
+
+    def _get_current_uses_of_tool(self, tool_name: str) -> int:
+        """Get the current number of uses of a given tool."""
+        ctx = self._assert_ctx()
+        return ctx.tools_use_counts.get(tool_name, 0)
+
+    def _get_max_uses_per_step_of_tool(self, tool_name: str) -> int | None:
+        """Get the maximum number of uses allowed for a given tool within a step, or `None` if unlimited."""
+        if self.tools is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        if (
+            (tool := self.tools.get(tool_name)) is not None
+            and (usage_policy := tool.usage_policy) is not None
+            and (max_uses_per_step := usage_policy.max_uses_per_step) is not None
+        ):
+            return max_uses_per_step
+        return None
+
+    def check_tool_call_allowed(
+        self,
+        tool_name: str,
+        current_tool_calls: int,
+        total_accepted_in_step: int,
+        tool_accepted_in_step: int,
+        projected_tool_uses: int,
+        projected_usage: RunUsage,
+    ) -> str | None:
+        """Check if a tool call is allowed, considering both aggregate and per-tool limits.
+
+        This is the unified check for partial acceptance. It checks:
+        1. Aggregate limits (policy-level max_uses across all tools)
+        2. Per-tool limits (max_uses for this specific tool)
+
+        Args:
+            tool_name: The name of the tool to check.
+            current_tool_calls: Number of tool calls already made in this run (from usage).
+            total_accepted_in_step: Number of tool calls already accepted in the current batch.
+            tool_accepted_in_step: Number of times this specific tool was accepted in the batch.
+            projected_tool_uses: The projected number of uses of the tool in this step.
+            projected_usage: The projected usage of the tool calls.
+
+        Returns:
+            None if the call is allowed.
+            A string error message if the call should be rejected.
+        """
+        if self.tools is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        ctx = self._assert_ctx()
+
+        policy = ctx.tools_policy
+
+        # All or nothing batches for all tool_calls
+        # If partial_acceptance is not allowed and the batch will exceed limits then we need to return here
+        if policy is not None and policy.partial_acceptance is False:
+            batch_size = projected_usage.tool_calls - current_tool_calls
+            if (policy.max_uses is not None and projected_usage.tool_calls > policy.max_uses) or (
+                policy.max_uses_per_step is not None and batch_size > policy.max_uses_per_step
+            ):
+                # TODO: Should be configurable via PromptConfig #3656
+                return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
+
+        # Check aggregate limits (policy-level) incrementally
+        if policy is not None:
+            if (policy.max_uses is not None) and (current_tool_calls + total_accepted_in_step == policy.max_uses):
+                # If already equal, going through with this call will put us over the limit
+                # TODO: Should be configurable via PromptConfig #3656
+                return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
+            if (policy.max_uses_per_step is not None) and (total_accepted_in_step == policy.max_uses_per_step):
+                # If already equal, going through with this call will put us over the limit
+                # TODO: Should be configurable via PromptConfig #3656
+                return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
+
+        # For unknown tools, allow the call - error will be caught during execution
+        # This provides a better error message than "tool limit reached" which would technically be incorrect.
+        if tool_name not in self.tools:
+            return None
+
+        # Per-tool limits
+        current_tool_uses = self._get_current_uses_of_tool(tool_name)
+        max_uses = self._get_max_uses_of_tool(tool_name)
+        max_uses_per_step = self._get_max_uses_per_step_of_tool(tool_name)
+
+        # Check entire step for tool first - if the batch will exceed per-tool limits
+
+        if (max_uses_per_step is not None and projected_tool_uses > max_uses_per_step) or (
+            max_uses is not None and projected_tool_uses + current_tool_uses > max_uses
+        ):
+            # If limits would be exceeded and partial acceptance is not allowed, reject all calls.
+            # For partial acceptance to work:
+            # 1. Policy must allow it (defaults to True; if no policy is set, we use the default True)
+            # 2. The tool's ToolPolicy must have partial_acceptance != False (None means inherit default True)
+            #    If the tool has no usage_policy, it inherits the policy-level setting (defaulting to True)
+            policy_allows_partial = policy is None or policy.partial_acceptance is not False
+            tool = self.tools.get(tool_name)
+            # Tool allows partial if: no tool, no usage_policy (inherits default True),
+            # or usage_policy.partial_acceptance is not explicitly False
+            tool_allows_partial = (
+                tool is None  # Unknown tool - allow through, will fail later with proper error
+                or tool.usage_policy is None  # No policy on tool - inherits default True behavior
+                or tool.usage_policy.partial_acceptance is not False  # None means inherit default True
+            )
+            if not (policy_allows_partial and tool_allows_partial):
+                # TODO: Should be configurable via PromptConfig #3656
+                return f'Tool use limit reached for tool "{tool_name}".'
+
+        # Check incremental call for tool
+
+        if (max_uses_per_step is not None) and (tool_accepted_in_step == max_uses_per_step):
+            # If already equal, going through with this call will put us over the limit
+            # TODO: Should be configurable via PromptConfig #3656
+            return f'Tool use limit reached for tool "{tool_name}".'
+
+        if (max_uses is not None) and (current_tool_uses + tool_accepted_in_step == max_uses):
+            # If already equal, going through with this call will put us over the limit
+            # TODO: Should be configurable via PromptConfig #3656
+            return f'Tool use limit reached for tool "{tool_name}".'
+
+        return None
+
+    def _assert_ctx(self) -> RunContext[AgentDepsT]:
+        if self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        return self.ctx
