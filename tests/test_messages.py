@@ -14,6 +14,7 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
+    FileUrl,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -27,7 +28,6 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import FileUrl
 
 from .conftest import IsDatetime, IsNow, IsStr
 
