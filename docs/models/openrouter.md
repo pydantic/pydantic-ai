@@ -73,3 +73,35 @@ model = OpenRouterModel('openai/gpt-5')
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+## Web Search
+
+OpenRouter supports web search via its [plugins](https://openrouter.ai/docs/guides/features/plugins/web-search). You can enable it using the [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool].
+
+### Web Search Parameters
+
+You can customize the web search behavior using parameters on [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.models.openrouter import OpenRouterModel
+
+tool = WebSearchTool(
+    search_context_size='high',
+    engine='exa',
+    max_results=3,
+)
+model = OpenRouterModel('openai/gpt-5')
+agent = Agent(
+    model,
+    builtin_tools=[tool]
+)
+result = agent.run_sync('What is the latest news in AI?')
+```
+
+Available OpenRouter-specific parameters:
+
+- [`engine`][pydantic_ai.builtin_tools.WebSearchTool.engine]: `'native'` or `'exa'`. Native uses the provider's built-in search (OpenAI, Anthropic, Perplexity, xAI), Exa is used for other providers.
+- [`max_results`][pydantic_ai.builtin_tools.WebSearchTool.max_results]: Maximum number of search results (defaults to 5).
+- [`search_prompt`][pydantic_ai.builtin_tools.WebSearchTool.search_prompt]: Custom prompt for attaching web search results.
