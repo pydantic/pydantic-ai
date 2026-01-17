@@ -11,6 +11,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, cast, overload
 
+from httpx import Timeout
 from pydantic import ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
@@ -1220,43 +1221,17 @@ class OpenAIResponsesModel(Model):
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
         request_input = await self._build_request_input(messages, settings, model_request_parameters)
-        tools = request_input.tools
-        tool_choice = request_input.tool_choice
-        previous_response_id = request_input.previous_response_id
-        instructions = request_input.instructions
-        openai_messages = request_input.openai_messages
-        reasoning = request_input.reasoning
-        text = request_input.text
-
-        if not openai_messages and not previous_response_id:
-            if instructions is OMIT:
-                raise UserError('Cannot count tokens without any messages or a previous response ID.')
-            openai_messages.append(
-                responses.EasyInputMessageParam(
-                    role='user',
-                    content='',
-                )
-            )
-
-        body = {
-            'model': self.model_name,
-            'input': openai_messages,
-            'instructions': None if instructions is OMIT else instructions,
-            'parallel_tool_calls': settings.get('parallel_tool_calls'),
-            'tools': tools or None,
-            'tool_choice': tool_choice,
-            'previous_response_id': previous_response_id,
-            'reasoning': None if reasoning is OMIT else reasoning,
-            'text': text,
-            'truncation': settings.get('openai_truncation'),
-        }
-        body = {k: v for k, v in body.items() if v is not None and v is not OMIT and v is not NOT_GIVEN}
+        self._ensure_request_input(request_input, allow_instructions_only=True)
+        request_kwargs = self._build_responses_request_kwargs(
+            request_input,
+            settings,
+            include_text_verbosity=False,
+        )
+        body = self._request_body_from_kwargs(request_kwargs)
 
         try:
-            extra_headers = settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
+            extra_headers, timeout = self._build_request_options(settings)
             options: RequestOptions = {'headers': extra_headers}
-            timeout = settings.get('timeout', NOT_GIVEN)
             if not isinstance(timeout, NotGiven):
                 options['timeout'] = timeout
             response = await self.client.post(
@@ -1498,6 +1473,60 @@ class OpenAIResponsesModel(Model):
             text=text,
         )
 
+    def _ensure_request_input(
+        self,
+        request_input: _ResponsesRequestInput,
+        *,
+        allow_instructions_only: bool,
+    ) -> None:
+        if not request_input.openai_messages and not request_input.previous_response_id:
+            if allow_instructions_only and request_input.instructions is OMIT:
+                raise UserError('Cannot count tokens without any messages or a previous response ID.')
+            request_input.openai_messages.append(
+                responses.EasyInputMessageParam(
+                    role='user',
+                    content='',
+                )
+            )
+
+    def _build_responses_request_kwargs(
+        self,
+        request_input: _ResponsesRequestInput,
+        model_settings: OpenAIResponsesModelSettings,
+        *,
+        include_text_verbosity: bool,
+    ) -> dict[str, Any]:
+        text = request_input.text
+        if include_text_verbosity and (verbosity := model_settings.get('openai_text_verbosity')):
+            text = text or {}
+            text['verbosity'] = verbosity
+
+        return {
+            'model': self.model_name,
+            'input': request_input.openai_messages,
+            'instructions': request_input.instructions,
+            'parallel_tool_calls': model_settings.get('parallel_tool_calls', OMIT),
+            'tools': request_input.tools or OMIT,
+            'tool_choice': request_input.tool_choice or OMIT,
+            'previous_response_id': request_input.previous_response_id or OMIT,
+            'reasoning': request_input.reasoning,
+            'text': text or OMIT,
+            'truncation': model_settings.get('openai_truncation', OMIT),
+        }
+
+    @staticmethod
+    def _request_body_from_kwargs(request_kwargs: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in request_kwargs.items() if v is not None and v is not OMIT and v is not NOT_GIVEN}
+
+    @staticmethod
+    def _build_request_options(
+        model_settings: OpenAIResponsesModelSettings,
+    ) -> tuple[dict[str, str], float | Timeout | NotGiven]:
+        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers.setdefault('User-Agent', get_user_agent())
+        timeout = model_settings.get('timeout', NOT_GIVEN)
+        return extra_headers, timeout
+
     @overload
     async def _responses_create(
         self,
@@ -1524,17 +1553,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         request_input = await self._build_request_input(messages, model_settings, model_request_parameters)
-        tools = request_input.tools
-        tool_choice = request_input.tool_choice
-        previous_response_id = request_input.previous_response_id
-        instructions = request_input.instructions
-        openai_messages = request_input.openai_messages
-        reasoning = request_input.reasoning
-        text = request_input.text
-
-        if verbosity := model_settings.get('openai_text_verbosity'):
-            text = text or {}
-            text['verbosity'] = verbosity
+        self._ensure_request_input(request_input, allow_instructions_only=False)
 
         profile = OpenAIModelProfile.from_profile(self.profile)
         unsupported_model_settings = profile.openai_unsupported_model_settings
@@ -1553,46 +1572,38 @@ class OpenAIResponsesModel(Model):
         if model_settings.get('openai_logprobs'):
             include.append('message.output_text.logprobs')
 
-        # When there are no input messages and we're not reusing a previous response,
-        # the OpenAI API will reject a request without any input,
-        # even if there are instructions.
-        # To avoid this provide an explicit empty user message.
-        if not openai_messages and not previous_response_id:
-            openai_messages.append(
-                responses.EasyInputMessageParam(
-                    role='user',
-                    content='',
-                )
-            )
+        request_kwargs = self._build_responses_request_kwargs(
+            request_input,
+            model_settings,
+            include_text_verbosity=True,
+        )
+        request_kwargs.update(
+            max_output_tokens=model_settings.get('max_tokens', OMIT),
+            stream=stream,
+            temperature=model_settings.get('temperature', OMIT),
+            top_p=model_settings.get('top_p', OMIT),
+            service_tier=model_settings.get('openai_service_tier', OMIT),
+            top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+            user=model_settings.get('openai_user', OMIT),
+            include=include or OMIT,
+            prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+            prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
+        )
+        extra_headers, timeout = self._build_request_options(model_settings)
+        request_kwargs.update(
+            timeout=timeout,
+            extra_headers=extra_headers,
+            extra_body=model_settings.get('extra_body'),
+        )
 
         try:
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
-            return await self.client.responses.create(
-                input=openai_messages,
-                model=self.model_name,
-                instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                max_output_tokens=model_settings.get('max_tokens', OMIT),
-                stream=stream,
-                temperature=model_settings.get('temperature', OMIT),
-                top_p=model_settings.get('top_p', OMIT),
-                truncation=model_settings.get('openai_truncation', OMIT),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
-                service_tier=model_settings.get('openai_service_tier', OMIT),
-                previous_response_id=previous_response_id or OMIT,
-                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                reasoning=reasoning,
-                user=model_settings.get('openai_user', OMIT),
-                text=text or OMIT,
-                include=include or OMIT,
-                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
-                extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+            response = cast(
+                responses.Response | AsyncStream[responses.ResponseStreamEvent],
+                await self.client.responses.create(**request_kwargs),
             )
+            if stream:
+                return cast(AsyncStream[responses.ResponseStreamEvent], response)
+            return cast(responses.Response, response)
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
