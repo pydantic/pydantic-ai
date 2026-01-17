@@ -856,9 +856,7 @@ class OpenAIChatModel(Model):
         _model: OpenAIChatModel
 
         texts: list[str] = field(default_factory=list)
-        thinkings: list[str | tuple[str, str]] = field(
-            default_factory=list
-        )  # str for 'field' mode, tuple[field_name, content] for 'auto' mode
+        thinkings: list[tuple[str, str]] = field(default_factory=list)
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
@@ -890,23 +888,18 @@ class OpenAIChatModel(Model):
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
-            if profile.openai_chat_send_back_thinking_parts == 'auto' and self.thinkings:
-                # Auto mode: thinkings are stored as tuples of (field_name, content)
-                # Group by field name and set each field
-                field_contents: dict[str, list[str]] = {}
-                for item in self.thinkings:
-                    if isinstance(item, tuple):
-                        field_name, content = item
+            if self.thinkings:
+                if profile.openai_chat_send_back_thinking_parts == 'auto':
+                    # Group by field name and set each field
+                    field_contents: dict[str, list[str]] = {}
+                    for field_name, content in self.thinkings:
                         field_contents.setdefault(field_name, []).append(content)
-                    else:
-                        # Fallback for non-tuple items
-                        field_contents.setdefault('reasoning', []).append(item)  # pragma: no cover
-                for field_name, contents in field_contents.items():
-                    message_param[field_name] = '\n\n'.join(contents)
-            elif profile.openai_chat_send_back_thinking_parts == 'field' and self.thinkings:
-                field = profile.openai_chat_thinking_field
-                if field:  # pragma: no branch (handled by profile validation)
-                    message_param[field] = '\n\n'.join(t if isinstance(t, str) else t[1] for t in self.thinkings)
+                    for field_name, contents in field_contents.items():
+                        message_param[field_name] = '\n\n'.join(contents)
+                elif profile.openai_chat_send_back_thinking_parts == 'field':
+                    field = profile.openai_chat_thinking_field
+                    if field:  # pragma: no branch
+                        message_param[field] = '\n\n'.join(content for _, content in self.thinkings)
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
@@ -946,7 +939,9 @@ class OpenAIChatModel(Model):
                 start_tag, end_tag = self._model.profile.thinking_tags
                 self.texts.append('\n'.join([start_tag, item.content, end_tag]))
             elif include_method == 'field':
-                self.thinkings.append(item.content)
+                field = profile.openai_chat_thinking_field
+                if field:  # pragma: no branch
+                    self.thinkings.append((field, item.content))
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.

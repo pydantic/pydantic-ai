@@ -36,7 +36,9 @@ class OpenAIModelProfile(ModelProfile):
     This can be:
     * `'auto'` (default): Automatically detects how to send thinking content. If thinking was received in a custom field
     (tracked via `ThinkingPart.id` and `ThinkingPart.provider_name`), it's sent back in that same field. Otherwise,
-    it's sent using tags.
+    it's sent using tags. only the `reasoning` and `reasoning_content` fields are checked by
+    default when receiving responses. If your provider uses a different field name, you must explicitly set
+    `openai_chat_thinking_field` to that field name.
     * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
