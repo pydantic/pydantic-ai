@@ -53,6 +53,14 @@ def test_pydantic_type_adapter_round_trip():
 
 
 @pytest.mark.anyio
+async def test_fake_restate_context_run_typed_sync_fn():
+    fake_ctx = FakeRestateContext()
+    result = await fake_ctx.run_typed('sync', lambda: 'ok')
+    assert result == 'ok'
+    assert fake_ctx.calls == ['sync']
+
+
+@pytest.mark.anyio
 async def test_restate_context_run_toolset_success_and_error_mapping():
     fake_ctx = FakeRestateContext()
     toolset = FunctionToolset()
@@ -136,10 +144,29 @@ async def test_restate_model_wrapper_maps_user_error_to_terminal_error():
         def system(self) -> str:
             return 'test'
 
+    model = ErrorModel()
+    assert model.model_name == 'error-model'
+    assert model.system == 'test'
+
     fake_ctx = FakeRestateContext()
-    wrapped = RestateModelWrapper(ErrorModel(), fake_ctx)
+    wrapped = RestateModelWrapper(model, fake_ctx)
     with pytest.raises(TerminalError, match='bad'):
         await wrapped.request([], None, ModelRequestParameters())
+
+
+@pytest.mark.anyio
+async def test_restate_model_wrapper_request_stream_maps_user_error_to_terminal_error():
+    fake_ctx = FakeRestateContext()
+
+    async def boom(_: RunContext[Any], __: AsyncIterable[Any]) -> None:
+        raise UserError('boom')
+
+    wrapped = RestateModelWrapper(TestModel(call_tools=[]), fake_ctx, event_stream_handler=boom)
+    mrp = ModelRequestParameters()
+    ctx = _run_ctx()
+    with pytest.raises(TerminalError, match='boom'):
+        async with wrapped.request_stream([], None, mrp, run_context=ctx):
+            pass
 
 
 @pytest.mark.anyio
@@ -225,6 +252,8 @@ async def test_restate_agent_restrictions():
     async def handler(_: RunContext[Any], __: AsyncIterable[Any]) -> None:
         return None
 
+    await handler(_run_ctx(), cast(AsyncIterable[Any], []))
+
     with pytest.raises(TerminalError, match='Event stream handler cannot be set'):
         await restate_agent.run('x', event_stream_handler=handler)
 
@@ -273,7 +302,7 @@ async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
                         description=name,
                         parameters_json_schema={'type': 'object', 'properties': {'value': {}}, 'required': ['value']},
                     )
-                    for name in ('echo', 'retry', 'deferred', 'approval')
+                    for name in ('echo', 'retry', 'deferred', 'approval', 'user_error')
                 }
                 return {
                     name: ToolsetTool[Any](
@@ -299,10 +328,16 @@ async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
                     raise CallDeferred(metadata={'foo': 'bar'})
                 elif name == 'approval':
                     raise ApprovalRequired(metadata={'hello': 'world'})
+                elif name == 'user_error':
+                    raise UserError('bad')
                 return {'name': name, 'args': tool_args}
 
     fake_ctx = FakeRestateContext()
     fake_server = FakeMCPServer(tool_prefix='fake')
+
+    with pytest.raises(RuntimeError, match='not used'):
+        async with fake_server.client_streams():
+            pass
 
     restate_server = RestateMCPServer(fake_server, fake_ctx)
     restate_server = restate_server.visit_and_replace(lambda t: t)  # cover visit_and_replace
@@ -336,6 +371,9 @@ async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
     with pytest.raises(ApprovalRequired) as exc_info:
         await restate_server.call_tool('approval', {'value': 1}, ctx, tools['approval'])
     assert exc_info.value.metadata == {'hello': 'world'}
+
+    with pytest.raises(TerminalError, match='bad'):
+        await restate_server.call_tool('user_error', {'value': 1}, ctx, tools['user_error'])
 
     # Ensure RestateAgent hits the MCP wrapping branch when an MCPServer toolset is present.
     fake_ctx.calls.clear()
@@ -376,6 +414,115 @@ async def test_restate_dynamic_toolset_is_durable_and_revalidates_args():
 
     with pytest.raises(ModelRetry):
         await durable_dynamic.call_tool('add_one', {'x': 'not-an-int'}, ctx, tools['add_one'])
+
+
+@pytest.mark.anyio
+async def test_restate_dynamic_toolset_maps_control_flow_exceptions_and_user_error():
+    from pydantic_ai.durable_exec.restate._dynamic_toolset import RestateDynamicToolset
+
+    fake_ctx = FakeRestateContext()
+
+    def toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
+        toolset = FunctionToolset[None](id='dynamic')
+
+        @toolset.tool
+        async def retry() -> None:
+            raise ModelRetry('nope')
+
+        @toolset.tool
+        async def deferred() -> None:
+            raise CallDeferred(metadata={'foo': 'bar'})
+
+        @toolset.tool
+        async def approval() -> None:
+            raise ApprovalRequired(metadata={'hello': 'world'})
+
+        @toolset.tool
+        async def user_error() -> None:
+            raise UserError('bad')
+
+        return toolset
+
+    dynamic = DynamicToolset[None](toolset_func=toolset_func, id='dyn')
+    durable_dynamic = RestateDynamicToolset(dynamic, fake_ctx, disable_auto_wrapping_tools=False)
+
+    ctx = _run_ctx()
+    tools = await durable_dynamic.get_tools(ctx)
+
+    with pytest.raises(ModelRetry, match='nope'):
+        await durable_dynamic.call_tool('retry', {}, ctx, tools['retry'])
+
+    with pytest.raises(CallDeferred) as exc_info:
+        await durable_dynamic.call_tool('deferred', {}, ctx, tools['deferred'])
+    assert exc_info.value.metadata == {'foo': 'bar'}
+
+    with pytest.raises(ApprovalRequired) as exc_info:
+        await durable_dynamic.call_tool('approval', {}, ctx, tools['approval'])
+    assert exc_info.value.metadata == {'hello': 'world'}
+
+    with pytest.raises(TerminalError, match='bad'):
+        await durable_dynamic.call_tool('user_error', {}, ctx, tools['user_error'])
+
+    fake_ctx.calls.clear()
+    with pytest.raises(TerminalError, match="Tool 'missing' not found"):
+        await durable_dynamic.call_tool('missing', {}, ctx, tools['retry'])
+    assert fake_ctx.calls == ['Calling dynamic tool missing']
+
+
+@pytest.mark.anyio
+async def test_restate_dynamic_toolset_disable_auto_wrapping_tools_validation_error_raises_model_retry():
+    from pydantic_ai.durable_exec.restate._dynamic_toolset import RestateDynamicToolset
+
+    fake_ctx = FakeRestateContext()
+
+    def toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
+        toolset = FunctionToolset[None](id='dynamic')
+
+        @toolset.tool
+        async def add_one(x: int) -> int:
+            return x + 1
+
+        return toolset
+
+    dynamic = DynamicToolset[None](toolset_func=toolset_func, id='dyn')
+    durable_dynamic = RestateDynamicToolset(dynamic, fake_ctx, disable_auto_wrapping_tools=True)
+
+    ctx = _run_ctx()
+    tools = await durable_dynamic.get_tools(ctx)
+
+    fake_ctx.calls.clear()
+    with pytest.raises(ModelRetry):
+        await durable_dynamic.call_tool('add_one', {'x': 'not-an-int'}, ctx, tools['add_one'])
+    assert await durable_dynamic.call_tool('add_one', {'x': 1}, ctx, tools['add_one']) == 2
+    assert fake_ctx.calls == []
+
+
+@pytest.mark.anyio
+async def test_restate_dynamic_toolset_function_origin_unwraps_wrapper_toolsets():
+    from pydantic_ai.durable_exec.restate._dynamic_toolset import RestateDynamicToolset
+    from pydantic_ai.toolsets import PrefixedToolset
+    from pydantic_ai.toolsets.abstract import AbstractToolset
+
+    fake_ctx = FakeRestateContext()
+
+    def toolset_func(ctx: RunContext[None]) -> AbstractToolset[None]:
+        inner = FunctionToolset[None](id='inner')
+
+        @inner.tool
+        async def plus_one(x: int) -> int:
+            return x + 1
+
+        return PrefixedToolset(inner, prefix='p')
+
+    dynamic = DynamicToolset[None](toolset_func=toolset_func, id='dyn')
+    durable_dynamic = RestateDynamicToolset(dynamic, fake_ctx, disable_auto_wrapping_tools=True)
+
+    ctx = _run_ctx()
+    tools = await durable_dynamic.get_tools(ctx)
+
+    assert tools['p_plus_one'].tool_def.metadata is not None
+    assert tools['p_plus_one'].tool_def.metadata.get('__pydantic_ai_restate_dynamic_origin') == 'function'
+    assert await durable_dynamic.call_tool('p_plus_one', {'x': 1}, ctx, tools['p_plus_one']) == 2
 
 
 @pytest.mark.anyio
@@ -434,6 +581,123 @@ async def test_restate_fastmcp_toolset_wrapping_smoke():
 
 
 @pytest.mark.anyio
+async def test_restate_fastmcp_toolset_maps_control_flow_exceptions_and_user_error():
+    pytest.importorskip('pydantic_ai.toolsets.fastmcp')
+    pytest.importorskip('fastmcp')
+
+    from fastmcp import FastMCP
+
+    from pydantic_ai.durable_exec.restate._fastmcp_toolset import RestateFastMCPToolset
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+    mcp = FastMCP('test')
+
+    @mcp.tool
+    def echo(value: int) -> dict[str, Any]:
+        return {'value': value}
+
+    @mcp.tool
+    def retry() -> None:  # pragma: no cover
+        raise RuntimeError('not used')
+
+    @mcp.tool
+    def deferred() -> None:  # pragma: no cover
+        raise RuntimeError('not used')
+
+    @mcp.tool
+    def approval() -> None:  # pragma: no cover
+        raise RuntimeError('not used')
+
+    @mcp.tool
+    def user_error() -> None:  # pragma: no cover
+        raise RuntimeError('not used')
+
+    class RaisingFastMCPToolset(FastMCPToolset[Any]):
+        async def call_tool(
+            self,
+            name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[Any],
+            tool: ToolsetTool[Any],
+        ) -> Any:
+            if name == 'retry':
+                raise ModelRetry('nope')
+            elif name == 'deferred':
+                raise CallDeferred(metadata={'foo': 'bar'})
+            elif name == 'approval':
+                raise ApprovalRequired(metadata={'hello': 'world'})
+            elif name == 'user_error':
+                raise UserError('bad')
+            return await super().call_tool(name, tool_args, ctx, tool)
+
+    toolset = RaisingFastMCPToolset(mcp, id='fastmcp')
+    fake_ctx = FakeRestateContext()
+    durable_toolset = RestateFastMCPToolset(toolset, fake_ctx)
+    assert durable_toolset.visit_and_replace(lambda t: t) is durable_toolset
+
+    ctx = _run_ctx()
+    tools = await durable_toolset.get_tools(ctx)
+
+    result = await durable_toolset.call_tool('echo', {'value': 123}, ctx, tools['echo'])
+    assert isinstance(result, dict)
+    assert cast(dict[str, Any], result).get('value') == 123
+
+    with pytest.raises(ModelRetry, match='nope'):
+        await durable_toolset.call_tool('retry', {}, ctx, tools['retry'])
+
+    with pytest.raises(CallDeferred) as exc_info:
+        await durable_toolset.call_tool('deferred', {}, ctx, tools['deferred'])
+    assert exc_info.value.metadata == {'foo': 'bar'}
+
+    with pytest.raises(ApprovalRequired) as exc_info:
+        await durable_toolset.call_tool('approval', {}, ctx, tools['approval'])
+    assert exc_info.value.metadata == {'hello': 'world'}
+
+    with pytest.raises(TerminalError, match='bad'):
+        await durable_toolset.call_tool('user_error', {}, ctx, tools['user_error'])
+
+
+@pytest.mark.anyio
+async def test_restate_agent_wraps_fastmcp_toolset_and_disables_event_handler_wrapping():
+    pytest.importorskip('pydantic_ai.toolsets.fastmcp')
+    pytest.importorskip('fastmcp')
+
+    from fastmcp import FastMCP
+
+    from pydantic_ai.durable_exec.restate._fastmcp_toolset import RestateFastMCPToolset
+    from pydantic_ai.messages import AgentStreamEvent
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+    mcp = FastMCP('test')
+
+    def echo(value: int) -> dict[str, Any]:
+        return {'value': value}
+
+    mcp.tool(echo)
+
+    async def handler(_: RunContext[Any], __: AsyncIterable[AgentStreamEvent]) -> None:
+        return None
+
+    assert echo(123) == {'value': 123}
+    await handler(_run_ctx(), cast(AsyncIterable[AgentStreamEvent], []))
+
+    toolset = FastMCPToolset(mcp, id='fastmcp')
+    agent = Agent(TestModel(call_tools=[]), toolsets=[toolset])
+    fake_ctx = FakeRestateContext()
+
+    restate_agent = RestateAgent(
+        agent,
+        fake_ctx,
+        event_stream_handler=handler,
+        disable_auto_wrapping_tools=True,
+    )
+
+    assert isinstance(restate_agent.model, RestateModelWrapper)
+    assert restate_agent.event_stream_handler is handler
+    assert any(isinstance(ts, RestateFastMCPToolset) for ts in restate_agent.toolsets)
+
+
+@pytest.mark.anyio
 async def test_restate_agent_wraps_dynamic_toolset():
     fake_ctx = FakeRestateContext()
 
@@ -475,3 +739,33 @@ async def test_restate_agent_disable_auto_wrapping_tools_does_not_wrap_dynamic_f
     assert 'get dynamic tools' in fake_ctx.calls
     # But execution of function tools is not automatically wrapped.
     assert not any(call.startswith('Calling dynamic tool plus_one') for call in fake_ctx.calls)
+
+
+@pytest.mark.anyio
+async def test_restate_agent_misc_properties_and_wrapped_event_handler_noop_and_iter_model_guard():
+    from pydantic_ai.messages import AgentStreamEvent
+
+    class EmptyAgentStream:
+        def __aiter__(self) -> EmptyAgentStream:
+            return self
+
+        async def __anext__(self) -> AgentStreamEvent:
+            raise StopAsyncIteration
+
+    fake_ctx = FakeRestateContext()
+    agent = Agent(TestModel(call_tools=[]))
+    restate_agent = RestateAgent(agent, fake_ctx)
+
+    assert isinstance(restate_agent.model, RestateModelWrapper)
+    _ = restate_agent.toolsets
+
+    stream = EmptyAgentStream()
+    assert stream.__aiter__() is stream
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()
+
+    await restate_agent.wrapped_event_stream_handler(_run_ctx(), stream)
+
+    with pytest.raises(TerminalError, match='cannot be set at agent run time'):
+        async with restate_agent.iter('go', model=TestModel(call_tools=[])):
+            pass
