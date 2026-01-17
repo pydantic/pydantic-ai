@@ -96,6 +96,7 @@ nav:
           - Temporal: durable_execution/temporal.md
           - DBOS: durable_execution/dbos.md
           - Prefect: durable_execution/prefect.md
+          - Restate: durable_execution/restate.md
       - UI Event Streams:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
