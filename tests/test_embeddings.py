@@ -640,6 +640,23 @@ class TestBedrock:
             )
         )
 
+    async def test_nova_s3(self, bedrock_provider: BedrockProvider):
+        """Test Nova with S3 URI input."""
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('s3://pydantic-ai-test-bucket/hello_world.txt')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['s3://pydantic-ai-test-bucket/hello_world.txt'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=18),
+            )
+        )
+
     # ==================== Max Input Tokens Tests ====================
 
     async def test_titan_max_input_tokens(self, bedrock_provider: BedrockProvider):
