@@ -52,13 +52,20 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
-    from openai.types.responses import ResponseFunctionWebSearch
-    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses import (
+        ResponseCreatedEvent,
+        ResponseFunctionWebSearch,
+        ResponseOutputTextAnnotationAddedEvent,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+    )
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage
+    from openai.types.responses.response_output_text import AnnotationURLCitation, Logprob, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -565,6 +572,86 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                 )
 
     assert output_text == snapshot(['The capital of France is Paris.'])
+
+
+async def test_openai_responses_stream_logprobs(allow_model_requests: None):
+    annotation = AnnotationURLCitation(
+        type='url_citation',
+        start_index=0,
+        end_index=5,
+        title='Example',
+        url='https://example.com',
+    )
+    logprob = Logprob.model_construct(
+        token='Paris',
+        bytes=[80, 97, 114, 105, 115],
+        logprob=-0.1,
+        top_logprobs=[],
+    )
+    stream = [
+        ResponseCreatedEvent.model_construct(
+            type='response.created',
+            sequence_number=0,
+            response=response_message([]),
+        ),
+        ResponseTextDeltaEvent.model_construct(
+            type='response.output_text.delta',
+            item_id='msg_1',
+            output_index=0,
+            content_index=0,
+            delta='Paris',
+        ),
+        ResponseOutputTextAnnotationAddedEvent.model_construct(
+            type='response.output_text.annotation.added',
+            sequence_number=1,
+            item_id='msg_1',
+            output_index=0,
+            content_index=0,
+            annotation_index=0,
+            annotation=annotation,
+        ),
+        ResponseTextDoneEvent.model_construct(
+            type='response.output_text.done',
+            item_id='msg_1',
+            output_index=0,
+            content_index=0,
+            text='Paris',
+            logprobs=[logprob],
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        model_settings=OpenAIResponsesModelSettings(openai_logprobs=True, openai_include_raw_annotations=True),
+    )
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                text_part = next(part for part in response.parts if isinstance(part, TextPart))
+                assert text_part.provider_details is not None
+                assert text_part.provider_details['logprobs'] == snapshot(
+                    [
+                        {
+                            'token': 'Paris',
+                            'bytes': [80, 97, 114, 105, 115],
+                            'logprob': -0.1,
+                            'top_logprobs': [],
+                        }
+                    ]
+                )
+                assert text_part.provider_details['annotations'] == snapshot(
+                    [
+                        {
+                            'type': 'url_citation',
+                            'start_index': 0,
+                            'end_index': 5,
+                            'title': 'Example',
+                            'url': 'https://example.com',
+                        }
+                    ]
+                )
 
 
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
@@ -8964,3 +9051,118 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):
+    """Test that text annotations are included in provider_details when the setting is enabled."""
+    prompt = 'What is the tallest mountain in Alberta? Provide one sentence with a citation.'
+    instructions = 'Use web search and include citations in your answer.'
+
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=instructions, builtin_tools=[WebSearchTool()])
+
+    # Test with annotations enabled
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+    result = await agent.run(prompt, model_settings=settings)
+
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions=instructions,
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={
+                            'query': IsStr(),
+                            'type': IsStr(),
+                            'queries': [
+                                'tallest mountain in Alberta',
+                                'Mount Columbia tallest mountain in Alberta elevation',
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id=IsStr(),
+                        provider_details={'annotations': IsInstance(list)},
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    response_msg = messages[1]
+    assert isinstance(response_msg, ModelResponse)
+    text_part = next(part for part in response_msg.parts if isinstance(part, TextPart))
+    assert text_part.provider_details is not None
+    json.dumps(text_part.provider_details)
+
+    # Test with annotations disabled (default)
+    model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
+    result2 = await agent2.run(prompt)
+
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions=instructions,
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': IsStr(), 'type': IsStr(), 'queries': ['tallest mountain in Alberta']},
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id=IsStr(),
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )

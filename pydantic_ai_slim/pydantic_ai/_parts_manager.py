@@ -70,6 +70,20 @@ class ModelResponsePartsManager:
         """
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
+    def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
+        """Return a part by its vendor ID.
+
+        Args:
+            vendor_id: The vendor-specific ID of the part.
+
+        Returns:
+            The part corresponding to the vendor ID, or None if not found.
+        """
+        part_index = self._vendor_id_to_part_index.get(vendor_id)
+        if part_index is not None:
+            return self._parts[part_index]
+        return None
+
     def handle_text_delta(
         self,
         *,

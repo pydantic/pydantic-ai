@@ -11,7 +11,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, cast, overload
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
@@ -402,6 +402,14 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Whether to include the file search results in the response.
 
     Corresponds to the `file_search_call.results` value of the `include` parameter in the Responses API.
+    """
+
+    openai_include_raw_annotations: bool
+    """Whether to include the raw annotations in `TextPart.provider_details`.
+
+    When enabled, any annotations (e.g., citations from web search) will be available
+    in the `provider_details['annotations']` field of text parts.
+    This is opt-in to avoid duplicate data once native annotation support is added.
     """
 
 
@@ -1254,7 +1262,9 @@ class OpenAIResponsesModel(Model):
         if isinstance(response, ModelResponse):
             return response
 
-        return self._process_response(response, model_request_parameters)
+        return self._process_response(
+            response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+        )
 
     @asynccontextmanager
     async def request_stream(
@@ -1273,10 +1283,15 @@ class OpenAIResponsesModel(Model):
             messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(response, model_request_parameters)
+            yield await self._process_streamed_response(
+                response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+            )
 
     def _process_response(  # noqa: C901
-        self, response: responses.Response, model_request_parameters: ModelRequestParameters
+        self,
+        response: responses.Response,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
@@ -1320,6 +1335,12 @@ class OpenAIResponsesModel(Model):
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
+                        if model_settings.get('openai_include_raw_annotations') and content.annotations:
+                            if part_provider_details is None:
+                                part_provider_details = {}
+                            part_provider_details['annotations'] = TypeAdapter(
+                                list[responses.response_output_text.Annotation]
+                            ).dump_python(list(content.annotations))
                         items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
@@ -1395,6 +1416,7 @@ class OpenAIResponsesModel(Model):
     async def _process_streamed_response(
         self,
         response: AsyncStream[responses.ResponseStreamEvent],
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -1407,6 +1429,7 @@ class OpenAIResponsesModel(Model):
         return OpenAIResponsesStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.response.model,
+            _model_settings=model_settings,
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
@@ -2209,6 +2232,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI Responses API."""
 
     _model_name: OpenAIModelName
+    _model_settings: OpenAIResponsesModelSettings
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _provider_name: str
     _provider_url: str
@@ -2216,6 +2240,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        # Track annotations by item_id and content_index
+        _annotations_by_item: dict[str, list[responses.response_output_text.Annotation]] = {}
+
         if self._provider_timestamp is not None:  # pragma: no branch
             self.provider_details = {'timestamp': self._provider_timestamp}
 
@@ -2425,8 +2452,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # content already accumulated via delta events
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                # TODO(Marcelo): We should support annotations in the future.
-                pass  # there's nothing we need to do here
+                # Collect annotations if the setting is enabled
+                if self._model_settings.get('openai_include_raw_annotations'):
+                    if chunk.item_id not in _annotations_by_item:
+                        _annotations_by_item[chunk.item_id] = []
+                    _annotations_by_item[chunk.item_id].append(
+                        cast(responses.response_output_text.Annotation, chunk.annotation)
+                    )
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(
@@ -2435,7 +2467,26 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield event
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
-                pass  # there's nothing we need to do here
+                # When text is done, add logprobs and annotations to provider_details if available
+                part = self._parts_manager.get_part_by_vendor_id(chunk.item_id)
+                if part is not None and isinstance(part, TextPart):
+                    # Add logprobs if available
+                    if chunk.logprobs:
+                        if part.provider_details is None:
+                            part.provider_details = {}
+                        part.provider_details['logprobs'] = _map_logprobs(
+                            cast(Sequence[responses.response_output_text.Logprob], chunk.logprobs)
+                        )
+
+                    # Add annotations if the setting is enabled
+                    if self._model_settings.get('openai_include_raw_annotations'):
+                        annotations = _annotations_by_item.get(chunk.item_id)
+                        if annotations:
+                            if part.provider_details is None:
+                                part.provider_details = {}
+                            part.provider_details['annotations'] = TypeAdapter(
+                                list[responses.response_output_text.Annotation]
+                            ).dump_python(list(annotations))
 
             elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
                 pass  # there's nothing we need to do here
@@ -2591,8 +2642,8 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
 
 # Convert logprobs to a serializable format
 def _map_logprobs(
-    logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
-    | list[responses.response_output_text.Logprob],
+    logprobs: Sequence[chat_completion_token_logprob.ChatCompletionTokenLogprob]
+    | Sequence[responses.response_output_text.Logprob],
 ) -> list[dict[str, Any]]:
     return [
         {
