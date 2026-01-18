@@ -9039,6 +9039,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
         [
             ModelRequest(
                 parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions=instructions,
                 run_id=IsStr(),
             ),
@@ -9046,7 +9047,14 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': IsStr(), 'type': IsStr()},
+                        args={
+                            'query': IsStr(),
+                            'type': IsStr(),
+                            'queries': [
+                                'tallest mountain in Alberta',
+                                'Mount Columbia tallest mountain in Alberta elevation',
+                            ],
+                        },
                         tool_call_id=IsStr(),
                         provider_name='openai',
                     ),
@@ -9068,7 +9076,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr()},
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -9091,6 +9099,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
         [
             ModelRequest(
                 parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions=instructions,
                 run_id=IsStr(),
             ),
@@ -9098,7 +9107,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': IsStr(), 'type': IsStr()},
+                        args={'query': IsStr(), 'type': IsStr(), 'queries': ['tallest mountain in Alberta']},
                         tool_call_id=IsStr(),
                         provider_name='openai',
                     ),
@@ -9119,7 +9128,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr()},
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
