@@ -4,13 +4,14 @@ import json
 import sys
 from collections.abc import AsyncIterator
 from datetime import timezone
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_core import to_json
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
