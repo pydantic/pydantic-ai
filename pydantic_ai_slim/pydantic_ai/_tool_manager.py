@@ -189,8 +189,11 @@ class ToolManager(Generic[AgentDepsT]):
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
             if isinstance(call.args, str):
-                # Attempt to repair malformed JSON if fast_json_repair is available
-                args_str = _maybe_repair_json(call.args or '{}')
+                args_str = call.args or '{}'
+                # Only attempt to repair JSON when not in partial/streaming mode,
+                # as repairing partial JSON can interfere with streaming behavior
+                if not allow_partial:
+                    args_str = _maybe_repair_json(args_str)
                 args_dict = validator.validate_json(
                     args_str, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
