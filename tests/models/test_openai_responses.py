@@ -570,8 +570,8 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
 
 async def test_openai_responses_stream_logprobs(allow_model_requests: None):
     logprob = Logprob.model_construct(
-        token='Calgary',
-        bytes=[67, 97, 108, 103, 97, 114, 121],
+        token='Paris',
+        bytes=[80, 97, 114, 105, 115],
         logprob=-0.1,
         top_logprobs=[],
     )
@@ -581,14 +581,14 @@ async def test_openai_responses_stream_logprobs(allow_model_requests: None):
             item_id='msg_1',
             output_index=0,
             content_index=0,
-            delta='Calgary',
+            delta='Paris',
         ),
         ResponseTextDoneEvent.model_construct(
             type='response.output_text.done',
             item_id='msg_1',
             output_index=0,
             content_index=0,
-            text='Calgary',
+            text='Paris',
             logprobs=[logprob],
         ),
     ]
@@ -604,8 +604,8 @@ async def test_openai_responses_stream_logprobs(allow_model_requests: None):
                 assert text_part.provider_details['logprobs'] == snapshot(
                     [
                         {
-                            'token': 'Calgary',
-                            'bytes': [67, 97, 108, 103, 97, 114, 121],
+                            'token': 'Paris',
+                            'bytes': [80, 97, 114, 105, 115],
                             'logprob': -0.1,
                             'top_logprobs': [],
                         }
