@@ -20,6 +20,22 @@ from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
 
+try:
+    from fast_json_repair import repair_json  # pyright: ignore[reportUnknownVariableType]
+
+    def _maybe_repair_json(json_string: str) -> str:
+        """Attempt to repair malformed JSON using fast_json_repair."""
+        result = repair_json(json_string, return_objects=False)
+        # repair_json returns str when return_objects=False
+        return str(result)
+
+except ImportError:
+
+    def _maybe_repair_json(json_string: str) -> str:  # pragma: no cover
+        """Fallback when fast_json_repair is not available - returns input unchanged."""
+        return json_string
+
+
 _sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
 
 
@@ -173,8 +189,10 @@ class ToolManager(Generic[AgentDepsT]):
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
             if isinstance(call.args, str):
+                # Attempt to repair malformed JSON if fast_json_repair is available
+                args_str = _maybe_repair_json(call.args or '{}')
                 args_dict = validator.validate_json(
-                    call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
+                    args_str, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
             else:
                 args_dict = validator.validate_python(
