@@ -435,8 +435,6 @@ embedder = Embedder(
 - `bedrock_nova_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`. Overrides the base `truncate` setting if provided.
 - `bedrock_nova_embedding_purpose` — Embedding purpose. Defaults to `'GENERIC_RETRIEVAL'` for `embed_query()` and `'GENERIC_INDEX'` for `embed_documents()`. Other options: `'TEXT_RETRIEVAL'`, `'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`, `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
 
-Nova also supports S3 URIs as input (e.g., `s3://bucket/key`) for embedding files stored in S3.
-
 ```python {title="bedrock_nova.py"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
@@ -447,6 +445,19 @@ embedder = Embedder(
         bedrock_nova_embedding_purpose='TEXT_RETRIEVAL',
     ),
 )
+```
+
+Nova also supports S3 URIs as input for embedding files stored in S3:
+
+```python {title="bedrock_nova_s3.py" test="skip"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('bedrock:amazon.nova-2-multimodal-embeddings-v1:0')
+
+
+async def main():
+    result = await embedder.embed_query('s3://my-bucket/documents/report.pdf')
+    print(len(result.embeddings[0]))
 ```
 
 #### Regional Prefixes (Cross-Region Inference)
