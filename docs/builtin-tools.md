@@ -74,6 +74,7 @@ making it ideal for queries that require up-to-date data.
 | OpenAI Responses | ✅ | Full feature support. To include search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] [model setting](agents.md#model-run-settings). |
 | Anthropic | ✅ | Full feature support |
 | Google | ✅ | No parameter support. No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is generated when streaming. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| xAI | ✅ | Supports `blocked_domains` and `allowed_domains` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
@@ -144,13 +145,13 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter | OpenAI | Anthropic | Groq |
-|-----------|--------|-----------|------|
-| `search_context_size` | ✅ | ❌ | ❌ |
-| `user_location` | ✅ | ✅ | ❌ |
-| `blocked_domains` | ❌ | ✅ | ✅ |
-| `allowed_domains` | ❌ | ✅ | ✅ |
-| `max_uses` | ❌ | ✅ | ❌ |
+| Parameter | OpenAI | Anthropic | xAI | Groq |
+|-----------|--------|-----------|-----|------|
+| `search_context_size` | ✅ | ❌ | ❌ | ❌ |
+| `user_location` | ✅ | ✅ | ❌ | ❌ |
+| `blocked_domains` | ❌ | ✅ | ✅ | ✅ |
+| `allowed_domains` | ❌ | ✅ | ✅ | ✅ |
+| `max_uses` | ❌ | ✅ | ❌ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
@@ -167,6 +168,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | OpenAI | ✅ | To include code execution output on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agents.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Anthropic | ✅ | |
+| xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
 | Mistral | ❌ | |
@@ -246,6 +248,7 @@ The [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] enabl
 | OpenAI Responses | ✅ | Full feature support. Only supported by models newer than `gpt-5`. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. |
 | Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-2.5-flash-image` and `gemini-3-pro-image-preview`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this built-in tool is not explicitly specified. |
 | Anthropic | ❌ | |
+| xAI | ❌ | |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
 | Mistral | ❌ | |
@@ -402,6 +405,7 @@ allowing it to pull up-to-date information from the web.
 |----------|-----------|-------|
 | Anthropic | ✅ | Full feature support. Uses Anthropic's [Web Fetch Tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-fetch-tool) internally to retrieve URL contents. |
 | Google | ✅ | No parameter support. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| xAI | ❌ | Web browsing is implemented as part of [`WebSearchTool`](#web-search-tool) with xAI. |
 | OpenAI | ❌ | |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
@@ -564,6 +568,7 @@ but can result in optimized context use and caching, and faster performance due 
 |----------|-----------|-----------------------|
 | OpenAI Responses | ✅ | Full feature support. [Connectors](https://platform.openai.com/docs/guides/tools-connectors-mcp#connectors) can be used by specifying a special `x-openai-connector:<connector_id>` URL.  |
 | Anthropic | ✅ | Full feature support |
+| xAI | ✅ | Full feature support |
 | Google  | ❌ | Not supported |
 | Groq  | ❌ | Not supported |
 | OpenAI Chat Completions | ❌ | Not supported |
@@ -687,12 +692,12 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter             | OpenAI | Anthropic |
-|-----------------------|--------|-----------|
-| `authorization_token` | ✅ | ✅ |
-| `allowed_tools`       | ✅ | ✅ |
-| `description`         | ✅ | ❌ |
-| `headers`             | ✅ | ❌ |
+| Parameter             | OpenAI | Anthropic | xAI |
+|-----------------------|--------|-----------|-----|
+| `authorization_token` | ✅ | ✅ | ✅ |
+| `allowed_tools`       | ✅ | ✅ | ✅ |
+| `description`         | ✅ | ❌ | ✅ |
+| `headers`             | ✅ | ❌ | ✅ |
 
 ## File Search Tool
 

@@ -21,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import OpenAIModelName
+    from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
     from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
@@ -29,7 +30,7 @@ if not imports_successful():
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
-    DeepSeekModelName = GrokModelName = MoonshotAIModelName = None
+    DeepSeekModelName = GrokModelName = XaiModelName = MoonshotAIModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -65,6 +66,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'google-gla': GoogleModelName,
     'google-vertex': GoogleModelName,
     'grok': GrokModelName,
+    'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,
     'mistral': MistralModelName,
