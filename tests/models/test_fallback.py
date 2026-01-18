@@ -1384,10 +1384,10 @@ def test_is_response_handler_unresolvable_forward_ref() -> None:
     # Using exec to create the function in an isolated namespace where the type doesn't exist
     exec_globals: dict[str, object] = {}
     exec(  # noqa: S102 - intentional use for testing unresolvable forward refs
-        '''
+        """
 def handler_with_bad_ref(x: "NonExistentType") -> bool:
     return True
-''',
+""",
         exec_globals,
     )
     handler = exec_globals['handler_with_bad_ref']
