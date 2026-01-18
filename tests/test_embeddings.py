@@ -504,6 +504,46 @@ class TestBedrock:
             )
         )
 
+    async def test_cohere_with_max_tokens(self, bedrock_provider: BedrockProvider):
+        """Test Cohere with bedrock_cohere_max_tokens setting (v4 only)."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_max_tokens=256))
+        result = await embedder.embed_query('Test max tokens setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test max tokens setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_with_dimensions(self, bedrock_provider: BedrockProvider):
+        """Test Cohere with dimensions setting."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=512))
+        result = await embedder.embed_query('Test dimensions setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=512), length=1),
+                inputs=['Test dimensions setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=3),
+                provider_response_id=IsStr(),
+            )
+        )
+
     async def test_cohere_batch_documents(self, bedrock_provider: BedrockProvider):
         """Test Cohere batch embedding (multiple texts in single request)."""
         model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
