@@ -1138,3 +1138,567 @@ class TestBatchJSONParseErrorHandling:
         # Third result should also be successful
         assert results[2].custom_id == 'req-2'
         assert results[2].is_successful is True
+
+
+# --- High-Level model_request_batch Tests ---
+
+
+class TestModelRequestBatch:
+    """Tests for the high-level model_request_batch function."""
+
+    async def test_model_request_batch_success(self, allow_model_requests: None):
+        """Test model_request_batch completes successfully."""
+        from pydantic_ai.direct import model_request_batch
+
+        # Set up mock that returns completed status immediately
+        mock_client = MockOpenAIBatch()
+
+        # First call creates the batch
+        mock_client.batches_list = [
+            OpenAIBatchResponse(
+                id='batch_123',
+                completion_window='24h',
+                created_at=1704067200,
+                endpoint='/v1/chat/completions',
+                input_file_id='file_input',
+                object='batch',
+                status='completed',
+                output_file_id='file_output',
+                request_counts=BatchRequestCounts(completed=1, failed=0, total=1),
+            )
+        ]
+
+        # Set up results
+        output_line = {
+            'id': 'resp_123',
+            'custom_id': 'req-1',
+            'response': {
+                'status_code': 200,
+                'body': {
+                    'id': 'chatcmpl-123',
+                    'object': 'chat.completion',
+                    'created': 1704067200,
+                    'model': 'gpt-4o-mini',
+                    'choices': [
+                        {
+                            'index': 0,
+                            'message': {'role': 'assistant', 'content': 'Test response'},
+                            'finish_reason': 'stop',
+                        }
+                    ],
+                },
+            },
+        }
+        mock_client.file_content_responses['file_output'] = json.dumps(output_line)
+
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+        requests: list[tuple[str, list[ModelMessage]]] = [
+            ('req-1', messages_1),
+            ('req-2', messages_2),
+        ]
+
+        results = await model_request_batch(model, requests, poll_interval=0.01)
+
+        assert len(results) >= 1  # At least one result
+        assert results[0].custom_id == 'req-1'
+        assert results[0].is_successful is True
+
+    async def test_model_request_batch_timeout(self, allow_model_requests: None):
+        """Test model_request_batch raises TimeoutError on timeout."""
+        import asyncio
+
+        from pydantic_ai.direct import model_request_batch
+
+        # Set up mock that never completes
+        mock_client = MockOpenAIBatch()
+        mock_client.batches_list = [
+            OpenAIBatchResponse(
+                id='batch_123',
+                completion_window='24h',
+                created_at=1704067200,
+                endpoint='/v1/chat/completions',
+                input_file_id='file_input',
+                object='batch',
+                status='in_progress',  # Never completes
+            )
+        ]
+
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+        requests: list[tuple[str, list[ModelMessage]]] = [
+            ('req-1', messages_1),
+            ('req-2', messages_2),
+        ]
+
+        with pytest.raises(asyncio.TimeoutError, match='timed out'):
+            await model_request_batch(model, requests, poll_interval=0.01, timeout=0.05)
+
+    async def test_model_request_batch_cancellation(self, allow_model_requests: None):
+        """Test model_request_batch handles cancellation."""
+        import asyncio
+
+        from pydantic_ai.direct import model_request_batch
+
+        # Set up mock that never completes
+        mock_client = MockOpenAIBatch()
+        mock_client.batches_list = [
+            OpenAIBatchResponse(
+                id='batch_123',
+                completion_window='24h',
+                created_at=1704067200,
+                endpoint='/v1/chat/completions',
+                input_file_id='file_input',
+                object='batch',
+                status='in_progress',  # Never completes
+            )
+        ]
+
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+        requests: list[tuple[str, list[ModelMessage]]] = [
+            ('req-1', messages_1),
+            ('req-2', messages_2),
+        ]
+
+        # Create task and cancel it
+        task = asyncio.create_task(model_request_batch(model, requests, poll_interval=0.1))
+        await asyncio.sleep(0.05)  # Let it start
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    def test_model_request_batch_sync(self, allow_model_requests: None):
+        """Test the synchronous model_request_batch_sync wrapper."""
+        from pydantic_ai.direct import model_request_batch_sync
+
+        # Set up mock that returns completed status immediately
+        mock_client = MockOpenAIBatch()
+        mock_client.batches_list = [
+            OpenAIBatchResponse(
+                id='batch_sync',
+                completion_window='24h',
+                created_at=1704067200,
+                endpoint='/v1/chat/completions',
+                input_file_id='file_input',
+                object='batch',
+                status='completed',
+                output_file_id='file_output',
+                request_counts=BatchRequestCounts(completed=2, failed=0, total=2),
+            )
+        ]
+
+        # Set up results for both requests (OpenAI batch requires at least 2 requests)
+        output_lines = '\n'.join(
+            [
+                json.dumps(
+                    {
+                        'id': 'resp_sync_1',
+                        'custom_id': 'req-sync-1',
+                        'response': {
+                            'status_code': 200,
+                            'body': {
+                                'id': 'chatcmpl-sync-1',
+                                'object': 'chat.completion',
+                                'created': 1704067200,
+                                'model': 'gpt-4o-mini',
+                                'choices': [
+                                    {
+                                        'index': 0,
+                                        'message': {'role': 'assistant', 'content': 'Sync response 1'},
+                                        'finish_reason': 'stop',
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        'id': 'resp_sync_2',
+                        'custom_id': 'req-sync-2',
+                        'response': {
+                            'status_code': 200,
+                            'body': {
+                                'id': 'chatcmpl-sync-2',
+                                'object': 'chat.completion',
+                                'created': 1704067200,
+                                'model': 'gpt-4o-mini',
+                                'choices': [
+                                    {
+                                        'index': 0,
+                                        'message': {'role': 'assistant', 'content': 'Sync response 2'},
+                                        'finish_reason': 'stop',
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        mock_client.file_content_responses['file_output'] = output_lines
+
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+        requests: list[tuple[str, list[ModelMessage]]] = [
+            ('req-sync-1', messages_1),
+            ('req-sync-2', messages_2),
+        ]
+
+        results = model_request_batch_sync(model, requests, poll_interval=0.01)
+
+        assert len(results) == 2
+        result_map = {r.custom_id: r for r in results}
+        assert result_map['req-sync-1'].is_successful is True
+        assert result_map['req-sync-2'].is_successful is True
+
+    async def test_model_request_batch_with_per_request_params(self, allow_model_requests: None):
+        """Test model_request_batch with per-request ModelRequestParameters (3-tuple format)."""
+        from pydantic_ai.direct import model_request_batch
+
+        # Set up mock
+        mock_client = MockOpenAIBatch()
+        mock_client.batches_list = [
+            OpenAIBatchResponse(
+                id='batch_params',
+                completion_window='24h',
+                created_at=1704067200,
+                endpoint='/v1/chat/completions',
+                input_file_id='file_input',
+                object='batch',
+                status='completed',
+                output_file_id='file_output',
+                request_counts=BatchRequestCounts(completed=2, failed=0, total=2),
+            )
+        ]
+
+        # Set up results for both requests
+        output_lines = '\n'.join(
+            [
+                json.dumps(
+                    {
+                        'id': 'resp_1',
+                        'custom_id': 'req-1',
+                        'response': {
+                            'status_code': 200,
+                            'body': {
+                                'id': 'chatcmpl-1',
+                                'object': 'chat.completion',
+                                'created': 1704067200,
+                                'model': 'gpt-4o-mini',
+                                'choices': [
+                                    {
+                                        'index': 0,
+                                        'message': {'role': 'assistant', 'content': 'Response 1'},
+                                        'finish_reason': 'stop',
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        'id': 'resp_2',
+                        'custom_id': 'req-2',
+                        'response': {
+                            'status_code': 200,
+                            'body': {
+                                'id': 'chatcmpl-2',
+                                'object': 'chat.completion',
+                                'created': 1704067200,
+                                'model': 'gpt-4o-mini',
+                                'choices': [
+                                    {
+                                        'index': 0,
+                                        'message': {'role': 'assistant', 'content': 'Response 2'},
+                                        'finish_reason': 'stop',
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        mock_client.file_content_responses['file_output'] = output_lines
+
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        # Create different parameters for each request
+        params_1 = ModelRequestParameters(allow_text_output=True)
+        params_2 = ModelRequestParameters(allow_text_output=False)
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+
+        # Use 3-tuple format with per-request parameters
+        requests: list[tuple[str, list[ModelMessage], ModelRequestParameters]] = [
+            ('req-1', messages_1, params_1),
+            ('req-2', messages_2, params_2),
+        ]
+
+        results = await model_request_batch(model, requests, poll_interval=0.01)
+
+        assert len(results) == 2
+        assert results[0].custom_id == 'req-1'
+        assert results[1].custom_id == 'req-2'
+
+
+class TestInstrumentedModelBatch:
+    """Tests for batch operations through instrumented/wrapper models."""
+
+    async def test_instrumented_model_forwards_batch_create(self, allow_model_requests: None):
+        """Test that InstrumentedModel properly forwards batch_create to wrapped model."""
+        from pydantic_ai.models.instrumented import InstrumentedModel
+
+        # Set up mock
+        mock_client = MockOpenAIBatch()
+        mock_client.batches_list = [
+            OpenAIBatchResponse(
+                id='batch_instrumented',
+                completion_window='24h',
+                created_at=1704067200,
+                endpoint='/v1/chat/completions',
+                input_file_id='file_input',
+                object='batch',
+                status='completed',
+                output_file_id='file_output',
+                request_counts=BatchRequestCounts(completed=2, failed=0, total=2),
+            )
+        ]
+
+        base_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+        instrumented_model = InstrumentedModel(base_model)
+
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        requests: list[tuple[str, list[ModelMessage], ModelRequestParameters]] = [
+            ('req-1', messages, ModelRequestParameters()),
+            ('req-2', messages, ModelRequestParameters()),
+        ]
+
+        batch = await instrumented_model.batch_create(requests)
+
+        assert batch.id == 'batch_instrumented'
+        assert batch.status == BatchStatus.COMPLETED
+        assert len(mock_client.batch_create_calls) == 1
+
+    async def test_instrumented_model_forwards_batch_status(self, allow_model_requests: None):
+        """Test that InstrumentedModel properly forwards batch_status to wrapped model."""
+        from pydantic_ai.models.instrumented import InstrumentedModel
+
+        # Set up mock
+        mock_client = MockOpenAIBatch()
+        mock_client.batches_list = [
+            OpenAIBatchResponse(
+                id='batch_status_test',
+                completion_window='24h',
+                created_at=1704067200,
+                endpoint='/v1/chat/completions',
+                input_file_id='file_input',
+                object='batch',
+                status='in_progress',
+                request_counts=BatchRequestCounts(completed=1, failed=0, total=2),
+            )
+        ]
+
+        base_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+        instrumented_model = InstrumentedModel(base_model)
+
+        batch = OpenAIBatch(
+            id='batch_status_test',
+            status=BatchStatus.IN_PROGRESS,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+
+        updated = await instrumented_model.batch_status(batch)
+
+        assert updated.id == 'batch_status_test'
+        assert updated.status == BatchStatus.IN_PROGRESS
+
+    async def test_instrumented_model_forwards_batch_results(self, allow_model_requests: None):
+        """Test that InstrumentedModel properly forwards batch_results to wrapped model."""
+        from pydantic_ai.models.instrumented import InstrumentedModel
+
+        # Set up mock with output file
+        mock_client = MockOpenAIBatch()
+        output_lines = json.dumps(
+            {
+                'id': 'resp_1',
+                'custom_id': 'req-1',
+                'response': {
+                    'status_code': 200,
+                    'body': {
+                        'id': 'chatcmpl-1',
+                        'object': 'chat.completion',
+                        'created': 1704067200,
+                        'model': 'gpt-4o-mini',
+                        'choices': [
+                            {
+                                'index': 0,
+                                'message': {'role': 'assistant', 'content': 'Hello!'},
+                                'finish_reason': 'stop',
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+        mock_client.file_content_responses['file_output'] = output_lines
+
+        base_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+        instrumented_model = InstrumentedModel(base_model)
+
+        batch = OpenAIBatch(
+            id='batch_results_test',
+            status=BatchStatus.COMPLETED,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            output_file_id='file_output',
+        )
+
+        results = await instrumented_model.batch_results(batch)
+
+        assert len(results) == 1
+        assert results[0].custom_id == 'req-1'
+        assert results[0].is_successful is True
+
+    async def test_instrumented_model_forwards_batch_cancel(self, allow_model_requests: None):
+        """Test that InstrumentedModel properly forwards batch_cancel to wrapped model."""
+        from pydantic_ai.models.instrumented import InstrumentedModel
+
+        mock_client = MockOpenAIBatch()
+        base_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+        instrumented_model = InstrumentedModel(base_model)
+
+        batch = OpenAIBatch(
+            id='batch_cancel_test',
+            status=BatchStatus.IN_PROGRESS,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+
+        updated = await instrumented_model.batch_cancel(batch)
+
+        assert updated.id == 'batch_cancel_test'
+        assert updated.status == BatchStatus.CANCELLING
+
+
+class TestBatchResultsValidationError:
+    """Tests for ValidationError handling in batch_results."""
+
+    async def test_validation_error_converted_to_batch_error(self, allow_model_requests: None):
+        """Test that ValidationError from model_validate is converted to BatchError."""
+        # Set up mock with invalid response body that will fail validation
+        mock_client = MockOpenAIBatch()
+        output_lines = json.dumps(
+            {
+                'id': 'resp_1',
+                'custom_id': 'req-invalid',
+                'response': {
+                    'status_code': 200,
+                    'body': {
+                        # Missing required fields like 'id', 'object', 'created', 'model'
+                        'choices': [],
+                    },
+                },
+            }
+        )
+        mock_client.file_content_responses['file_output'] = output_lines
+
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        batch = OpenAIBatch(
+            id='batch_validation_test',
+            status=BatchStatus.COMPLETED,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            output_file_id='file_output',
+        )
+
+        results = await model.batch_results(batch)
+
+        # Should not raise, but return a BatchError
+        assert len(results) == 1
+        assert results[0].custom_id == 'req-invalid'
+        assert results[0].is_successful is False
+        assert results[0].error is not None
+        assert results[0].error.code == 'validation_error'
+        assert 'Failed to validate response' in results[0].error.message
+
+    async def test_mixed_valid_and_invalid_responses(self, allow_model_requests: None):
+        """Test that valid and invalid responses are handled correctly together."""
+        mock_client = MockOpenAIBatch()
+        output_lines = '\n'.join(
+            [
+                # Valid response
+                json.dumps(
+                    {
+                        'id': 'resp_1',
+                        'custom_id': 'req-valid',
+                        'response': {
+                            'status_code': 200,
+                            'body': {
+                                'id': 'chatcmpl-1',
+                                'object': 'chat.completion',
+                                'created': 1704067200,
+                                'model': 'gpt-4o-mini',
+                                'choices': [
+                                    {
+                                        'index': 0,
+                                        'message': {'role': 'assistant', 'content': 'Valid response'},
+                                        'finish_reason': 'stop',
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                ),
+                # Invalid response (missing required fields)
+                json.dumps(
+                    {
+                        'id': 'resp_2',
+                        'custom_id': 'req-invalid',
+                        'response': {
+                            'status_code': 200,
+                            'body': {
+                                # Invalid - missing required fields
+                                'not_a_valid_field': 'bad data',
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        mock_client.file_content_responses['file_output'] = output_lines
+
+        model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+
+        batch = OpenAIBatch(
+            id='batch_mixed_test',
+            status=BatchStatus.COMPLETED,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            output_file_id='file_output',
+        )
+
+        results = await model.batch_results(batch)
+
+        # Should get 2 results
+        assert len(results) == 2
+
+        # First result should be valid
+        result_map = {r.custom_id: r for r in results}
+        assert result_map['req-valid'].is_successful is True
+        assert result_map['req-valid'].response is not None
+
+        # Second result should have validation error
+        assert result_map['req-invalid'].is_successful is False
+        assert result_map['req-invalid'].error is not None
+        assert result_map['req-invalid'].error.code == 'validation_error'

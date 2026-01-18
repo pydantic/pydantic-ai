@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import cached_property
@@ -10,7 +10,15 @@ from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfile
 from ..settings import ModelSettings
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
+from . import (
+    Batch,
+    BatchResult,
+    KnownModelName,
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    infer_model,
+)
 
 
 @dataclass(init=False)
@@ -72,3 +80,27 @@ class WrapperModel(Model):
 
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)
+
+    # --- Batch Processing Methods ---
+    # Forward batch methods to wrapped model to ensure they're not shadowed
+    # by the base Model class's NotImplementedError implementations.
+
+    async def batch_create(
+        self,
+        requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
+        model_settings: ModelSettings | None = None,
+    ) -> Batch:
+        """Forward batch_create to wrapped model."""
+        return await self.wrapped.batch_create(requests, model_settings)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        """Forward batch_status to wrapped model."""
+        return await self.wrapped.batch_status(batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        """Forward batch_results to wrapped model."""
+        return await self.wrapped.batch_results(batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        """Forward batch_cancel to wrapped model."""
+        return await self.wrapped.batch_cancel(batch)

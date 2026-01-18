@@ -633,12 +633,20 @@ class Batch:
     for asynchronous processing, typically at reduced cost.
 
     Example:
-        ```python {lint="skip" test="skip"}
+        ```python
+        from pydantic_ai.messages import ModelRequest
+        from pydantic_ai.models import ModelRequestParameters
         from pydantic_ai.models.openai import OpenAIChatModel
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        batch = await model.batch_create(requests)
-        print(f'Batch {batch.id} status: {batch.status}')
+
+        async def main():
+            model = OpenAIChatModel('gpt-4o-mini')
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ]
+            batch = await model.batch_create(requests)
+            print(f'Batch {batch.id} status: {batch.status}')
         ```
     """
 
@@ -1022,15 +1030,18 @@ class Model(ABC):
             NotImplementedError: If this model doesn't support batch processing.
 
         Example:
-            ```python {lint="skip" test="skip"}
+            ```python
             from pydantic_ai.messages import ModelRequest
             from pydantic_ai.models import ModelRequestParameters
 
-            requests = [
-                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
-                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
-            ]
-            batch = await model.batch_create(requests)
+
+            async def example(model):
+                requests = [
+                    ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                    ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+                ]
+                batch = await model.batch_create(requests)
+                return batch
             ```
         """
         raise NotImplementedError(f'{self.__class__.__name__} does not support batch processing')

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -49,7 +49,18 @@ from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+from . import (
+    Batch,
+    BatchError,
+    BatchResult,
+    BatchStatus,
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    check_allow_model_requests,
+    download_item,
+    get_user_agent,
+)
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'end_turn': 'stop',
@@ -217,6 +228,55 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
     """
+
+
+@dataclass
+class AnthropicBatch(Batch):
+    """Anthropic-specific batch job information.
+
+    Extends the base Batch class with Anthropic-specific fields.
+    Use this with `AnthropicModel.batch_create()` to submit batch requests
+    at 50% reduced cost.
+
+    Example:
+        ```python
+        from pydantic_ai.messages import ModelRequest
+        from pydantic_ai.models import ModelRequestParameters
+        from pydantic_ai.models.anthropic import AnthropicModel
+
+        model = AnthropicModel('claude-sonnet-4-5-20250929')
+        requests = [
+            ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+            ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+        ]
+        batch = await model.batch_create(requests)
+        print(f'Batch {batch.id} created with {batch.request_count} requests')
+        ```
+    """
+
+    results_url: str | None = None
+    """URL to the JSONL results file (available when completed)."""
+
+    expires_at: datetime | None = None
+    """When the batch will expire."""
+
+    cancel_initiated_at: datetime | None = None
+    """When cancellation was initiated (if applicable)."""
+
+    processing_count: int = 0
+    """Number of requests currently processing."""
+
+    succeeded_count: int = 0
+    """Number of requests that succeeded."""
+
+    errored_count: int = 0
+    """Number of requests that encountered errors."""
+
+    canceled_count: int = 0
+    """Number of requests that were canceled."""
+
+    expired_count: int = 0
+    """Number of requests that expired."""
 
 
 @dataclass(init=False)
@@ -1132,6 +1192,337 @@ class AnthropicModel(Model):
             return None
         assert model_request_parameters.output_object is not None
         return {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
+
+    # --- Batch Processing Methods ---
+
+    async def batch_create(
+        self,
+        requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
+        model_settings: ModelSettings | None = None,
+    ) -> AnthropicBatch:
+        """Submit a batch of message requests to Anthropic.
+
+        Batch processing offers 50% cost reduction compared to regular API calls.
+        Batches are processed within 24 hours.
+
+        See [Anthropic Batch API docs](https://docs.anthropic.com/en/docs/build-with-claude/batch-processing)
+        for details.
+
+        Args:
+            requests: List of (custom_id, messages, parameters) tuples.
+                - custom_id: Unique identifier to match results to requests
+                - messages: Message history for this request
+                - parameters: Tool definitions, output schema, etc.
+            model_settings: Settings applied to all requests in batch.
+
+        Returns:
+            AnthropicBatch with job information.
+
+        Raises:
+            ValueError: If batch contains fewer than 2 requests.
+
+        Example:
+            ```python
+            from pydantic_ai.messages import ModelRequest
+            from pydantic_ai.models import ModelRequestParameters
+            from pydantic_ai.models.anthropic import AnthropicModel
+
+            model = AnthropicModel('claude-sonnet-4-5-20250929')
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ]
+            batch = await model.batch_create(requests)
+            ```
+        """
+        check_allow_model_requests()
+
+        if len(requests) < 2:
+            raise ValueError('Batch must contain at least 2 requests')
+
+        # Prepare model settings once
+        base_settings = cast(AnthropicModelSettings, model_settings or {})
+
+        # Build batch requests array
+        batch_requests: list[dict[str, Any]] = []
+        for custom_id, messages, params in requests:
+            request_params = await self._build_batch_request_params(messages, params, base_settings)
+            batch_requests.append(
+                {
+                    'custom_id': custom_id,
+                    'params': request_params,
+                }
+            )
+
+        try:
+            batch_response = await self.client.messages.batches.create(requests=batch_requests)
+        except APIStatusError as e:
+            if e.status_code >= 400:
+                raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        return self._parse_batch_response(batch_response)
+
+    async def _build_batch_request_params(
+        self,
+        messages: list[ModelMessage],
+        params: ModelRequestParameters,
+        base_settings: AnthropicModelSettings,
+    ) -> dict[str, Any]:
+        """Build request parameters for a single batch request."""
+        prepared_settings, prepared_params = self.prepare_request(base_settings, params)
+        prepared_settings = cast(AnthropicModelSettings, prepared_settings or {})
+
+        # Get tools
+        tools = self._get_tools(prepared_params, prepared_settings)
+        tools, mcp_servers, _builtin_tool_betas = self._add_builtin_tools(tools, prepared_params)
+        tool_choice = self._infer_tool_choice(tools, prepared_settings, prepared_params)
+
+        # Build messages
+        system_prompt, anthropic_messages = await self._map_message(messages, prepared_params, prepared_settings)
+        self._limit_cache_points(system_prompt, anthropic_messages, tools)
+
+        # Build request params
+        request_params: dict[str, Any] = {
+            'model': self._model_name,
+            'max_tokens': prepared_settings.get('max_tokens', 4096),
+            'messages': anthropic_messages,
+        }
+
+        # Add optional parameters
+        if system_prompt:
+            request_params['system'] = system_prompt
+        if tools:
+            request_params['tools'] = tools
+        if tool_choice:
+            request_params['tool_choice'] = tool_choice
+        if mcp_servers:
+            request_params['mcp_servers'] = mcp_servers
+        if output_format := self._native_output_format(prepared_params):
+            request_params['output_format'] = output_format
+
+        # Add settings-based parameters
+        self._apply_batch_settings(request_params, prepared_settings)
+
+        return request_params
+
+    def _apply_batch_settings(self, request_params: dict[str, Any], settings: AnthropicModelSettings) -> None:
+        """Apply settings to batch request parameters."""
+        if thinking := settings.get('anthropic_thinking'):
+            request_params['thinking'] = thinking
+        if stop_sequences := settings.get('stop_sequences'):
+            request_params['stop_sequences'] = stop_sequences
+        if (temperature := settings.get('temperature')) is not None:
+            request_params['temperature'] = temperature
+        if (top_p := settings.get('top_p')) is not None:
+            request_params['top_p'] = top_p
+        if metadata := settings.get('anthropic_metadata'):
+            request_params['metadata'] = metadata
+
+    async def batch_status(self, batch: Batch) -> AnthropicBatch:
+        """Get current status of an Anthropic batch job.
+
+        Args:
+            batch: Batch object from batch_create() or previous batch_status().
+
+        Returns:
+            Updated AnthropicBatch object with current status.
+        """
+        check_allow_model_requests()
+
+        try:
+            batch_response = await self.client.messages.batches.retrieve(batch.id)
+        except APIStatusError as e:
+            if e.status_code >= 400:
+                raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        return self._parse_batch_response(batch_response)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        """Retrieve results from a completed Anthropic batch.
+
+        This method streams results from the Anthropic API and converts
+        responses using the same `_process_response()` logic used for
+        regular API calls.
+
+        Args:
+            batch: Batch object that has is_complete=True.
+
+        Returns:
+            List of BatchResult objects, one per request in the batch.
+
+        Raises:
+            ValueError: If batch is not complete.
+            TypeError: If batch is not an AnthropicBatch.
+        """
+        check_allow_model_requests()
+
+        if not batch.is_complete:
+            raise ValueError(f'Batch {batch.id} is not complete (status: {batch.status})')
+
+        if not isinstance(batch, AnthropicBatch):  # pragma: no cover
+            raise TypeError(f'Expected AnthropicBatch, got {type(batch).__name__}')
+
+        results: list[BatchResult] = []
+
+        try:
+            # Stream results from the API
+            result_stream = await self.client.messages.batches.results(batch.id)
+            async for entry in result_stream:
+                custom_id = entry.custom_id
+
+                # Check result type
+                result = entry.result
+                if result.type == 'succeeded':
+                    # Parse successful response using existing logic
+                    model_response = self._process_response(result.message)
+                    results.append(BatchResult(custom_id=custom_id, response=model_response))
+                elif result.type == 'errored':
+                    error = result.error
+                    results.append(
+                        BatchResult(
+                            custom_id=custom_id,
+                            error=BatchError(
+                                code=getattr(error, 'type', 'unknown'),
+                                message=getattr(error, 'message', str(error)),
+                            ),
+                        )
+                    )
+                elif result.type == 'canceled':
+                    results.append(
+                        BatchResult(
+                            custom_id=custom_id,
+                            error=BatchError(code='canceled', message='Request was canceled'),
+                        )
+                    )
+                elif result.type == 'expired':
+                    results.append(
+                        BatchResult(
+                            custom_id=custom_id,
+                            error=BatchError(code='expired', message='Request expired'),
+                        )
+                    )
+                else:  # pragma: no cover
+                    results.append(
+                        BatchResult(
+                            custom_id=custom_id,
+                            error=BatchError(code='unknown', message=f'Unknown result type: {result.type}'),
+                        )
+                    )
+        except APIStatusError as e:
+            if e.status_code >= 400:
+                raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        return results
+
+    async def batch_cancel(self, batch: Batch) -> AnthropicBatch:
+        """Cancel an Anthropic batch job.
+
+        Args:
+            batch: Batch object to cancel.
+
+        Returns:
+            Updated AnthropicBatch object with cancellation status.
+        """
+        check_allow_model_requests()
+
+        try:
+            batch_response = await self.client.messages.batches.cancel(batch.id)
+        except APIStatusError as e:
+            if e.status_code >= 400:
+                raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        return self._parse_batch_response(batch_response)
+
+    def _parse_batch_response(self, response: Any) -> AnthropicBatch:
+        """Convert Anthropic batch response to AnthropicBatch object."""
+        from datetime import timezone
+
+        # Map Anthropic processing_status to our normalized enum
+        # Anthropic uses: in_progress, canceling, ended
+        processing_status = getattr(response, 'processing_status', 'in_progress')
+
+        if processing_status == 'in_progress':
+            status = BatchStatus.IN_PROGRESS
+        elif processing_status == 'canceling':
+            status = BatchStatus.CANCELLING
+        elif processing_status == 'ended':
+            # Determine final status based on request counts
+            request_counts = response.request_counts
+            errored = getattr(request_counts, 'errored', 0) or 0
+            canceled = getattr(request_counts, 'canceled', 0) or 0
+            expired = getattr(request_counts, 'expired', 0) or 0
+            succeeded = getattr(request_counts, 'succeeded', 0) or 0
+
+            if canceled > 0 and succeeded == 0 and errored == 0:
+                status = BatchStatus.CANCELLED
+            elif expired > 0 and succeeded == 0 and errored == 0:
+                status = BatchStatus.EXPIRED
+            elif errored > 0 and succeeded == 0:
+                status = BatchStatus.FAILED
+            else:
+                # Completed (possibly with some errors)
+                status = BatchStatus.COMPLETED
+        else:
+            status = BatchStatus.PENDING
+
+        # Extract request counts
+        request_counts = response.request_counts
+        processing_count = getattr(request_counts, 'processing', 0) or 0
+        succeeded_count = getattr(request_counts, 'succeeded', 0) or 0
+        errored_count = getattr(request_counts, 'errored', 0) or 0
+        canceled_count = getattr(request_counts, 'canceled', 0) or 0
+        expired_count = getattr(request_counts, 'expired', 0) or 0
+
+        # Total is sum of all counts
+        request_count = processing_count + succeeded_count + errored_count + canceled_count + expired_count
+        # Completed count is succeeded + errored (both are "done" processing)
+        completed_count = succeeded_count
+        failed_count = errored_count + canceled_count + expired_count
+
+        # Parse datetime fields
+        def parse_datetime(value: str | None) -> datetime | None:
+            if not value:
+                return None
+            # Handle RFC 3339 format
+            try:
+                # Try parsing with timezone
+                return datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                return None
+
+        created_at = parse_datetime(getattr(response, 'created_at', None))
+        if created_at is None:
+            created_at = datetime.now(tz=timezone.utc)
+
+        return AnthropicBatch(
+            id=response.id,
+            status=status,
+            created_at=created_at,
+            completed_at=parse_datetime(getattr(response, 'ended_at', None)),
+            request_count=request_count,
+            completed_count=completed_count,
+            failed_count=failed_count,
+            results_url=getattr(response, 'results_url', None),
+            expires_at=parse_datetime(getattr(response, 'expires_at', None)),
+            cancel_initiated_at=parse_datetime(getattr(response, 'cancel_initiated_at', None)),
+            processing_count=processing_count,
+            succeeded_count=succeeded_count,
+            errored_count=errored_count,
+            canceled_count=canceled_count,
+            expired_count=expired_count,
+        )
 
 
 def _map_usage(

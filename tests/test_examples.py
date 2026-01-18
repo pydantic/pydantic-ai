@@ -41,10 +41,11 @@ from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.models import Batch, BatchResult, BatchStatus, KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -128,6 +129,7 @@ def test_docs_examples(
     vertex_provider_auth: None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
+    mocker.patch('pydantic_ai.direct.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
@@ -1022,6 +1024,68 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)
 
 
+@dataclass
+class MockBatch(Batch):
+    """A mock Batch that stores request custom_ids for later result generation."""
+
+    _custom_ids: list[str] = field(default_factory=list, repr=False)
+
+
+class MockBatchModel(FunctionModel):
+    """A FunctionModel that also supports batch methods for testing batch examples."""
+
+    async def batch_create(
+        self,
+        requests: Sequence[tuple[str, list[ModelMessage], Any]],
+        model_settings: ModelSettings | None = None,
+    ) -> MockBatch:
+        """Mock batch_create that returns a completed batch immediately."""
+        from datetime import datetime, timezone
+
+        custom_ids = [req[0] for req in requests]
+        return MockBatch(
+            id='batch_mock_123',
+            status=BatchStatus.COMPLETED,
+            created_at=datetime.now(tz=timezone.utc),
+            request_count=len(requests),
+            completed_count=len(requests),
+            failed_count=0,
+            _custom_ids=custom_ids,
+        )
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        """Mock batch_status that returns the batch as-is (already completed)."""
+        return batch
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        """Mock batch_results that returns successful results."""
+        results: list[BatchResult] = []
+        # Use stored custom_ids if available (MockBatch), otherwise generate generic ids
+        if isinstance(batch, MockBatch) and batch._custom_ids:
+            for custom_id in batch._custom_ids:
+                results.append(
+                    BatchResult(
+                        custom_id=custom_id,
+                        response=ModelResponse(parts=[TextPart(content=f'Mock response for {custom_id}')]),
+                    )
+                )
+        else:
+            for i in range(batch.request_count):
+                results.append(
+                    BatchResult(
+                        custom_id=f'req-{i + 1}',
+                        response=ModelResponse(parts=[TextPart(content=f'Mock response {i + 1}')]),
+                    )
+                )
+        return results
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        """Mock batch_cancel that returns cancelled batch."""
+        from dataclasses import replace
+
+        return replace(batch, status=BatchStatus.CANCELLED)
+
+
 def mock_infer_model(model: Model | KnownModelName) -> Model:
     if model == 'test':
         return TestModel()
@@ -1053,7 +1117,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return model
     else:
         model_name = model if isinstance(model, str) else model.model_name
-        return FunctionModel(
+        return MockBatchModel(
             model_logic,
             stream_function=stream_model_logic,
             model_name=model_name,

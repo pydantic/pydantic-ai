@@ -218,18 +218,20 @@ class OpenAIBatch(Batch):
     at 50% reduced cost.
 
     Example:
-        ```python {lint="skip" test="skip"}
+        ```python
         from pydantic_ai.messages import ModelRequest
         from pydantic_ai.models import ModelRequestParameters
         from pydantic_ai.models.openai import OpenAIChatModel
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        requests = [
-            ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
-            ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
-        ]
-        batch = await model.batch_create(requests)
-        print(f'Batch {batch.id} created with {batch.request_count} requests')
+
+        async def main():
+            model = OpenAIChatModel('gpt-4o-mini')
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ]
+            batch = await model.batch_create(requests)
+            print(f'Batch {batch.id} created with {batch.request_count} requests')
         ```
     """
 
@@ -1274,17 +1276,20 @@ class OpenAIChatModel(Model):
             ValueError: If batch contains fewer than 2 requests.
 
         Example:
-            ```python {lint="skip" test="skip"}
+            ```python
             from pydantic_ai.messages import ModelRequest
             from pydantic_ai.models import ModelRequestParameters
             from pydantic_ai.models.openai import OpenAIChatModel
 
-            model = OpenAIChatModel('gpt-4o-mini')
-            requests = [
-                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
-                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
-            ]
-            batch = await model.batch_create(requests)
+
+            async def main():
+                model = OpenAIChatModel('gpt-4o-mini')
+                requests = [
+                    ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                    ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+                ]
+                batch = await model.batch_create(requests)
+                return batch
             ```
         """
         check_allow_model_requests()
@@ -1443,9 +1448,20 @@ class OpenAIChatModel(Model):
                 results.append(BatchResult(custom_id=custom_id, error=self._extract_batch_error(result_data)))
             else:
                 response_body = result_data.get('response', {}).get('body', {})
-                chat_completion = chat.ChatCompletion.model_validate(response_body)
-                model_response = self._process_response(chat_completion)
-                results.append(BatchResult(custom_id=custom_id, response=model_response))
+                try:
+                    chat_completion = chat.ChatCompletion.model_validate(response_body)
+                    model_response = self._process_response(chat_completion)
+                    results.append(BatchResult(custom_id=custom_id, response=model_response))
+                except ValidationError as e:
+                    results.append(
+                        BatchResult(
+                            custom_id=custom_id,
+                            error=BatchError(
+                                code='validation_error',
+                                message=f'Failed to validate response: {e}',
+                            ),
+                        )
+                    )
 
     def _parse_batch_error_content(
         self, content: str, results: list[BatchResult], processed_ids: set[str]

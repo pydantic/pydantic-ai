@@ -24,6 +24,7 @@ nav:
           - output.md
           - message-history.md
           - direct.md
+          - batch-processing.md
       - Models & Providers:
           - Overview: models/overview.md
           - models/openai.md
@@ -357,6 +358,7 @@ plugins:
           - a2a.md
           - ag-ui.md
           - agents.md
+          - batch-processing.md
           - builtin-tools.md
           - dependencies.md
           - deferred-tools.md

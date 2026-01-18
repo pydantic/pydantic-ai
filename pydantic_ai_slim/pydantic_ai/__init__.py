@@ -94,6 +94,7 @@ from .messages import (
     VideoUrl,
 )
 from .models import Batch, BatchError, BatchResult, BatchStatus, ModelRequestParameters
+from .models.batch import BatchModel
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -250,6 +251,7 @@ __all__ = (
     # models (batch processing)
     'Batch',
     'BatchError',
+    'BatchModel',
     'BatchResult',
     'BatchStatus',
     'ModelRequestParameters',

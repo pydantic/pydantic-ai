@@ -28,7 +28,10 @@ __all__ = (
     'model_request_stream',
     'model_request_stream_sync',
     'StreamedResponseSync',
-    # Batch processing functions
+    # High-level batch processing
+    'model_request_batch',
+    'model_request_batch_sync',
+    # Low-level batch processing functions (advanced)
     'batch_create',
     'batch_create_sync',
     'batch_status',
@@ -411,8 +414,177 @@ class StreamedResponseSync:
         return self._ensure_stream_ready().timestamp
 
 
-# --- Batch Processing Functions ---
+# --- High-Level Batch Processing ---
+
+
+async def model_request_batch(
+    model: models.Model | models.KnownModelName | str,
+    requests: Sequence[
+        tuple[str, Sequence[messages.ModelMessage]]
+        | tuple[str, Sequence[messages.ModelMessage], models.ModelRequestParameters]
+    ],
+    *,
+    model_request_parameters: models.ModelRequestParameters | None = None,
+    model_settings: settings.ModelSettings | None = None,
+    poll_interval: float = 60.0,
+    timeout: float | None = None,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> list[models.BatchResult]:
+    """Submit a batch and wait for all results.
+
+    This is the recommended high-level function for batch processing.
+    It handles the complete batch lifecycle: create, poll, and retrieve results.
+
+    Batch processing typically offers 50% cost reduction compared to regular API calls.
+
+    **Cancellation**: To cancel a running batch, use `asyncio.create_task(...).cancel()`.
+    The function will attempt to cancel the batch on the API before raising `CancelledError`.
+
+    ```py {title="model_request_batch_example.py" test="skip"}
+    from pydantic_ai import ModelRequest
+    from pydantic_ai.direct import model_request_batch
+
+
+    async def main():
+        requests = [
+            ('question-1', [ModelRequest.user_text_prompt('What is 2+2?')]),
+            ('question-2', [ModelRequest.user_text_prompt('What is 3+3?')]),
+            ('question-3', [ModelRequest.user_text_prompt('What is the capital of France?')]),
+        ]
+
+        results = await model_request_batch('openai:gpt-4o-mini', requests, poll_interval=30.0)
+
+        for result in results:
+            if result.is_successful:
+                print(f'{result.custom_id}: {result.response.parts[0].content}')
+            else:
+                print(f'{result.custom_id} failed: {result.error}')
+    ```
+
+    Args:
+        model: The model to make batch requests to.
+        requests: List of tuples, either:
+            - (custom_id, messages) - uses model_request_parameters default
+            - (custom_id, messages, parameters) - per-request parameters
+        model_request_parameters: Default parameters for requests that don't specify their own.
+        model_settings: Settings applied to all requests in the batch.
+        poll_interval: How often to poll for completion (in seconds). Default: 60s.
+        timeout: Maximum time to wait for completion (in seconds). None means no timeout.
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        List of BatchResult objects, one per request in the batch.
+
+    Raises:
+        NotImplementedError: If the model doesn't support batch processing.
+        asyncio.CancelledError: If the task is cancelled (batch cancellation attempted).
+        asyncio.TimeoutError: If timeout is exceeded before completion.
+    """
+    import asyncio
+
+    model_instance = _prepare_model(model, instrument)
+    default_params = model_request_parameters or models.ModelRequestParameters()
+
+    # Normalize requests to 3-tuples
+    requests_list: list[tuple[str, list[messages.ModelMessage], models.ModelRequestParameters]] = []
+    for req in requests:
+        if len(req) == 2:
+            custom_id, msgs = req
+            requests_list.append((custom_id, list(msgs), default_params))
+        else:
+            custom_id, msgs, params = req
+            requests_list.append((custom_id, list(msgs), params))
+
+    # Create the batch
+    batch = await model_instance.batch_create(requests_list, model_settings)
+
+    # Track start time for timeout
+    start_time: float | None = None
+    if timeout is not None:
+        import time
+
+        start_time = time.monotonic()
+
+    try:
+        # Poll until complete
+        while not batch.is_complete:
+            await asyncio.sleep(poll_interval)
+
+            # Check timeout
+            if timeout is not None and start_time is not None:
+                import time
+
+                elapsed = time.monotonic() - start_time
+                if elapsed >= timeout:
+                    # Attempt to cancel before raising timeout
+                    try:
+                        await model_instance.batch_cancel(batch)
+                    except Exception:
+                        pass  # Best effort cancellation
+                    raise asyncio.TimeoutError(f'Batch {batch.id} timed out after {elapsed:.1f}s')
+
+            batch = await model_instance.batch_status(batch)
+
+    except asyncio.CancelledError:
+        # On cancellation, attempt to cancel the batch
+        try:
+            await model_instance.batch_cancel(batch)
+        except Exception:
+            pass  # Best effort cancellation
+        raise
+
+    # Retrieve results
+    return await model_instance.batch_results(batch)
+
+
+def model_request_batch_sync(
+    model: models.Model | models.KnownModelName | str,
+    requests: Sequence[
+        tuple[str, Sequence[messages.ModelMessage]]
+        | tuple[str, Sequence[messages.ModelMessage], models.ModelRequestParameters]
+    ],
+    *,
+    model_request_parameters: models.ModelRequestParameters | None = None,
+    model_settings: settings.ModelSettings | None = None,
+    poll_interval: float = 60.0,
+    timeout: float | None = None,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> list[models.BatchResult]:
+    """Submit a batch and wait for all results (synchronous version).
+
+    This is a convenience method that wraps [`model_request_batch`][pydantic_ai.direct.model_request_batch]
+    with `loop.run_until_complete(...)`.
+
+    See [`model_request_batch`][pydantic_ai.direct.model_request_batch] for full documentation.
+
+    Args:
+        model: The model to make batch requests to.
+        requests: List of tuples, either (custom_id, messages) or (custom_id, messages, parameters).
+        model_request_parameters: Default parameters for requests that don't specify their own.
+        model_settings: Settings applied to all requests in the batch.
+        poll_interval: How often to poll for completion (in seconds). Default: 60s.
+        timeout: Maximum time to wait for completion (in seconds). None means no timeout.
+        instrument: Whether to instrument with OpenTelemetry/Logfire.
+
+    Returns:
+        List of BatchResult objects, one per request in the batch.
+    """
+    return _get_event_loop().run_until_complete(
+        model_request_batch(
+            model,
+            requests,
+            model_request_parameters=model_request_parameters,
+            model_settings=model_settings,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            instrument=instrument,
+        )
+    )
+
+
+# --- Low-Level Batch Processing Functions ---
 # These functions provide a thin wrapper around Model batch methods.
+# For most use cases, prefer model_request_batch() above.
 
 
 async def batch_create(
