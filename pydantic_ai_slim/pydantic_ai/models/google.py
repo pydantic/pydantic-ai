@@ -564,19 +564,22 @@ class GoogleModel(Model):
         candidate = response.candidates[0]
 
         vendor_id = response.response_id
-        vendor_details: dict[str, Any] | None = None
         finish_reason: FinishReason | None = None
+        vendor_details: dict[str, Any] = {}
+
         raw_finish_reason = candidate.finish_reason
         if raw_finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': raw_finish_reason.value}
+            # Add safety ratings to provider details
+            if candidate.safety_ratings:
+                vendor_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
+        if response.create_time is not None:  # pragma: no branch
+            vendor_details['timestamp'] = response.create_time
+
         if candidate.content is None or candidate.content.parts is None:
-            if finish_reason == 'content_filter' and raw_finish_reason:
-                raise UnexpectedModelBehavior(
-                    f'Content filter {raw_finish_reason.value!r} triggered', response.model_dump_json()
-                )
-            parts = []  # pragma: no cover
+            parts = []
         else:
             parts = candidate.content.parts or []
 
@@ -589,7 +592,7 @@ class GoogleModel(Model):
             self._provider.base_url,
             usage,
             vendor_id=vendor_id,
-            vendor_details=vendor_details,
+            vendor_details=vendor_details or None,
             finish_reason=finish_reason,
             url_context_metadata=candidate.url_context_metadata,
         )
@@ -607,9 +610,9 @@ class GoogleModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
-            _timestamp=first_chunk.create_time or _utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=first_chunk.create_time,
         )
 
     async def _map_messages(
@@ -686,10 +689,18 @@ class GoogleModel(Model):
                     if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
-                elif isinstance(item, VideoUrl) and item.is_youtube:
+                elif isinstance(item, VideoUrl) and (
+                    item.is_youtube or (item.url.startswith('gs://') and self.system == 'google-vertex')
+                ):
+                    # YouTube URLs work on both google-gla and google-vertex
+                    # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
+                    # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
+                    # Other URLs fall through to FileUrl handling (download for google-gla)
+                    # Note: force_download is not checked here, mirroring the original YouTube behavior.
+                    # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
                     file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}
-                    if item.vendor_metadata:  # pragma: no branch
+                    if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
                 elif isinstance(item, FileUrl):
@@ -704,12 +715,22 @@ class GoogleModel(Model):
                             'data': downloaded_item['data'],
                             'mime_type': downloaded_item['data_type'],
                         }
-                        content.append({'inline_data': inline_data})
+                        part_dict: PartDict = {'inline_data': inline_data}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                        content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                        part_dict: PartDict = {'file_data': file_data_dict}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)  # pragma: lax no cover
                 elif isinstance(item, CachePoint):
-                    # Google Gemini doesn't support prompt caching via CachePoint
+                    # Google doesn't support inline CachePoint markers. Google's caching requires
+                    # pre-creating cache objects via the API, then referencing them by name using
+                    # `GoogleModelSettings.google_cached_content`. See https://ai.google.dev/gemini-api/docs/caching
                     pass
                 else:
                     assert_never(item)
@@ -731,13 +752,16 @@ class GeminiStreamedResponse(StreamedResponse):
 
     _model_name: GoogleModelName
     _response: AsyncIterator[GenerateContentResponse]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        if self._provider_timestamp is not None:
+            self.provider_details = {'timestamp': self._provider_timestamp}
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
@@ -752,6 +776,12 @@ class GeminiStreamedResponse(StreamedResponse):
             raw_finish_reason = candidate.finish_reason
             if raw_finish_reason:
                 self.provider_details = {'finish_reason': raw_finish_reason.value}
+
+                if candidate.safety_ratings:
+                    self.provider_details['safety_ratings'] = [
+                        r.model_dump(by_alias=True) for r in candidate.safety_ratings
+                    ]
+
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Google streams the grounding metadata (including the web search queries and results)
@@ -777,12 +807,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
             if candidate.content is None or candidate.content.parts is None:
-                if self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
-                    raise UnexpectedModelBehavior(
-                        f'Content filter {raw_finish_reason.value!r} triggered', chunk.model_dump_json()
-                    )
-                else:  # pragma: no cover
-                    continue
+                continue
 
             parts = candidate.content.parts
             if not parts:
@@ -960,12 +985,13 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
             part['function_call'] = function_call
             if function_call_requires_signature and not part.get('thought_signature'):
-                # Per https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#migrating_from_other_models:
-                # > If you are transferring a conversation trace from another model (e.g., Gemini 2.5) or injecting
-                # > a custom function call that was not generated by Gemini 3, you will not have a valid signature.
-                # > To bypass strict validation in these specific scenarios, populate the field with this specific
-                # > dummy string: "thoughtSignature": "context_engineering_is_the_way_to_go"
-                part['thought_signature'] = b'context_engineering_is_the_way_to_go'
+                # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs:
+                # > You can set the following dummy signatures of either "context_engineering_is_the_way_to_go"
+                # > or "skip_thought_signature_validator"
+                # Per https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling:
+                # > You can set thought_signature to skip_thought_signature_validator
+                # We use "skip_thought_signature_validator" as it works for both Gemini API and Vertex AI.
+                part['thought_signature'] = b'skip_thought_signature_validator'
             # Only the first function call requires a signature
             function_call_requires_signature = False
         elif isinstance(item, TextPart):

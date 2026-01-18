@@ -228,7 +228,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
 
-                case ActivityMessage():  # pragma: no cover
-                    raise ValueError(f'Unsupported message type: {type(msg)}')
+                case ActivityMessage():
+                    pass
 
         return builder.messages

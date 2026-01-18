@@ -1,6 +1,8 @@
 import json
 import re
 from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import pytest
@@ -38,17 +40,13 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openai import (
-    OpenAIResponsesModelSettings,
-    _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
-)
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
@@ -61,6 +59,13 @@ with try_import() as imports_successful:
     from openai.types.responses import ResponseFunctionWebSearch, ResponseTextDeltaEvent, ResponseTextDoneEvent
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_text import Logprob, ResponseOutputText
+from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsNow, IsStr, TestEnv, try_import
+from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+
+with try_import() as imports_successful:
+    from openai import AsyncOpenAI
+    from openai.types.responses import ResponseFunctionWebSearch
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -69,7 +74,11 @@ with try_import() as imports_successful:
     from openai.types.responses.response_usage import ResponseUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+        _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -306,6 +315,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -328,7 +338,10 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 3, 27, 12, 42, 44, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -348,6 +361,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -366,7 +380,10 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 3, 27, 12, 42, 45, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -375,7 +392,6 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
     )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
 ):
@@ -396,6 +412,7 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -404,7 +421,7 @@ async def test_image_as_binary_content_tool_response(
                         tool_name='get_image',
                         args='{}',
                         tool_call_id=IsStr(),
-                        id='fc_681134d47cf48191b3f62e4d28b6c3820fe7a5a4e2123dc3',
+                        id='fc_023a281a6afcb9a000694a982c56e48194bcf3664373c8dc4b',
                     )
                 ],
                 usage=RequestUsage(input_tokens=40, output_tokens=11, details={'reasoning_tokens': 0}),
@@ -412,8 +429,8 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_023a281a6afcb9a000694a982b41c88194b95a756ecfbce9cc',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -421,34 +438,29 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
-                        tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA',
+                        content='See file 241a70',
+                        tool_call_id='call_KRVWp1xfOSXIGBY4lxDwWyuL',
                         timestamp=IsDatetime(),
                     ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 1c8566:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
                         content='The fruit in the image is a kiwi.',
-                        id='msg_681134d770d881919f3a3148badde27802cbfeaababb040c',
+                        id='msg_002c332eac8db08d00694a982fc6f081a2ac774015989ab025',
                     )
                 ],
-                usage=RequestUsage(input_tokens=1185, output_tokens=11, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=839, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_002c332eac8db08d00694a982d671081a29eb61df34452171c',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -550,7 +562,10 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_url='https://api.openai.com/v1/',
-                        provider_details={'finish_reason': 'completed'},
+                        provider_details={
+                            'finish_reason': 'completed',
+                            'timestamp': datetime(2025, 3, 27, 13, 37, 38, tzinfo=timezone.utc),
+                        },
                         provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
                         finish_reason='stop',
                     )
@@ -629,6 +644,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -774,7 +790,10 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 23, 19, 54, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0e3d55e9502941380068c4aa9a62f48195a373978ed720ac63',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -783,7 +802,6 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_model_instructions(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
@@ -793,6 +811,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -808,7 +827,10 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 4, 7, 16, 31, 57, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -831,6 +853,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -873,7 +896,10 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 16, 20, 27, 26, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_028829e50fbcad090068c9c82e1e0081958ddc581008b39428',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -892,6 +918,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -934,7 +961,10 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 16, 20, 27, 39, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_028829e50fbcad090068c9c83b9fb88195b6b84a32e1fc83c0',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -963,6 +993,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1005,7 +1036,10 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 23, 21, 23, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0b385a0fdc82fd920068c4aaf3ced88197a88711e356b032c4',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1035,6 +1069,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1077,7 +1112,10 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 23, 21, 47, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0b4f29854724a3120068c4ab0b660081919707b95b47552782',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1114,6 +1152,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1162,7 +1201,10 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 16, 21, 13, 32, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_00a60507bf41223d0068c9d2fbf93481a0ba2a7796ae2cab4c',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1334,6 +1376,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1382,7 +1425,10 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 16, 21, 13, 57, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_00a60507bf41223d0068c9d31574d881a090c232646860a771',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1431,7 +1477,6 @@ def test_model_profile_strict_not_supported():
     )
 
 
-@pytest.mark.vcr()
 async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIResponsesModelSettings(temperature=0.5))
@@ -1441,7 +1486,6 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
     )
 
 
-@pytest.mark.vcr()
 async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-5-pro', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
@@ -1449,7 +1493,6 @@ async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
     assert result.output == snapshot('Mexico City (Ciudad de México).')
 
 
-@pytest.mark.vcr()
 async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1475,6 +1518,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1491,7 +1535,10 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 0, 40, 43, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1505,6 +1552,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1521,7 +1569,10 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 0, 40, 44, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1535,13 +1586,13 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
     )
 
 
-@pytest.mark.vcr()
 async def test_text_output_function(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1566,6 +1617,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1582,7 +1634,10 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 0, 40, 45, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1596,6 +1651,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1610,7 +1666,10 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 0, 40, 46, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1619,7 +1678,6 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
     )
 
 
-@pytest.mark.vcr()
 async def test_native_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1647,6 +1705,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1663,7 +1722,10 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 0, 40, 47, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1677,6 +1739,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1691,7 +1754,10 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 0, 40, 47, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1700,7 +1766,6 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-@pytest.mark.vcr()
 async def test_native_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1730,6 +1795,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1746,7 +1812,10 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 0, 40, 48, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1760,6 +1829,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1774,7 +1844,10 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 0, 40, 49, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1783,7 +1856,6 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
     )
 
 
-@pytest.mark.vcr()
 async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1809,6 +1881,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1825,7 +1898,10 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 13, 11, 46, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1839,6 +1915,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1853,7 +1930,10 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 13, 11, 55, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1862,7 +1942,6 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-@pytest.mark.vcr()
 async def test_prompted_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1892,6 +1971,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1908,7 +1988,10 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 13, 11, 57, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1922,6 +2005,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1936,7 +2020,10 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 6, 10, 13, 12, 8, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1945,7 +2032,6 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_verbosity(allow_model_requests: None, openai_api_key: str):
     """Test that verbosity setting is properly passed to the OpenAI API"""
     # Following GPT-5 + verbosity documentation pattern
@@ -1959,7 +2045,6 @@ async def test_openai_responses_verbosity(allow_model_requests: None, openai_api
     assert result.output == snapshot('4')
 
 
-@pytest.mark.vcr()
 async def test_openai_previous_response_id(allow_model_requests: None, openai_api_key: str):
     """Test if previous responses are detected via previous_response_id in settings"""
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
@@ -1970,7 +2055,6 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     assert result.output == snapshot('sesame')
 
 
-@pytest.mark.vcr()
 async def test_openai_previous_response_id_auto_mode(allow_model_requests: None, openai_api_key: str):
     """Test if invalid previous response id is ignored when history contains non-OpenAI responses"""
     history = [
@@ -2139,6 +2223,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2148,6 +2233,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -2169,6 +2255,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2194,7 +2281,10 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 14, 22, 8, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68c42c902794819cb9335264c342f65407460311b0c8d3de',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2215,6 +2305,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2239,7 +2330,10 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 14, 22, 43, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68c42cb3d520819c9d28b07036e9059507460311b0c8d3de',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2268,6 +2362,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2319,6 +2414,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2341,7 +2437,10 @@ async def test_openai_responses_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 14, 23, 30, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68c42ce277ac8193ba08881bcefabaf70ad492c7955fc6fc',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2373,6 +2472,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2405,7 +2505,10 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 14, 24, 15, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2451,6 +2554,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
                 run_id=IsStr(),
             ),
@@ -2478,7 +2582,10 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 14, 24, 40, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68c42d28772c819684459966ee2201ed0e8bc41441c948f6',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2492,6 +2599,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
                 run_id=IsStr(),
             ),
@@ -2504,7 +2612,10 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 14, 25, 3, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68c42d3fd6a08196bce23d6be960ff8a0e8bc41441c948f6',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2545,6 +2656,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2556,6 +2668,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -2619,6 +2732,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2633,6 +2747,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -2685,6 +2800,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2702,7 +2818,10 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 14, 27, 43, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68c42ddf9bbc8194aa7b97304dd909cb0202c9ad459e0d23',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2739,6 +2858,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2756,7 +2876,10 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 12, 14, 27, 48, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68c42de4afcc819f995a1c59fe87c9d5051f82c608a83beb',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2788,6 +2911,7 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2841,7 +2965,10 @@ If you intended different grouping with parentheses, let me know.\
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 19, 20, 17, 21, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68cdba511c7081a389e67b16621029c609b7445677780c8f',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2860,6 +2987,7 @@ If you intended different grouping with parentheses, let me know.\
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2877,7 +3005,10 @@ If you intended different grouping with parentheses, let me know.\
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 19, 20, 17, 46, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68cdba6a610481a3b4533f345bea8a7b09b7445677780c8f',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2915,6 +3046,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2976,7 +3108,10 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 11, 22, 43, 36, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68c35098e6fc819e80fb94b25b7d031b0f2d670b80edc507',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3736,6 +3871,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3752,7 +3888,10 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 18, 18, 29, 57, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68cc4fa5603481958e2143685133fe530548824120ffcf74',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3766,6 +3905,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3784,7 +3924,10 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 18, 18, 29, 58, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3847,6 +3990,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3917,7 +4061,10 @@ plt.show()\r
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 19, 20, 56, 34, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68cdc382bc98819083a5b47ec92e077b0187028ba77f15f7',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3943,6 +4090,7 @@ plt.show()\r
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4077,7 +4225,10 @@ If you want different colors or a holographic gradient background, tell me your 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 19, 20, 57, 1, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68cdc39da72481909e0512fef9d646240187028ba77f15f7',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4121,6 +4272,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4163,7 +4315,10 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 20, 47, 35, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_06c1a26fd89d07f20068dd9367869c819788cb28e6f19eff9b',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5610,6 +5765,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5658,7 +5814,10 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 19, 20, 57, 58, tzinfo=timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5683,6 +5842,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5731,7 +5891,10 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 19, 20, 59, 28, tzinfo=timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5778,6 +5941,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5824,7 +5988,10 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 20, 40, 2, tzinfo=timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5959,6 +6126,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6004,7 +6172,10 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 19, 23, 49, 51, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68cdec1f3290819f99d9caba8703b251079003437d26d0c0',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6017,6 +6188,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6062,7 +6234,10 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 19, 23, 50, 57, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68cdec61d0a0819fac14ed057a9946a1079003437d26d0c0',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6124,6 +6299,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6167,7 +6343,10 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 19, 38, 16, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0360827931d9421b0068dd8328c08c81a0ba854f245883906f',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6180,6 +6359,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6202,7 +6382,10 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 19, 39, 28, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0360827931d9421b0068dd8370a70081a09d6de822ee43bbc4',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6216,6 +6399,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -6241,6 +6425,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6287,7 +6472,10 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 19, 41, 59, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_09b7ce6df817433c0068dd8407c37881a0ad817ef3cc3a3600',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6315,6 +6503,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6361,7 +6550,10 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 19, 55, 9, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0d14a5e3c26c21180068dd871d439081908dc36e63fab0cedf',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6395,6 +6587,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6417,7 +6610,10 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 20, 2, 36, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0481074da98340df0068dd88dceb1481918b1d167d99bc51cd',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6431,6 +6627,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6468,7 +6665,10 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 20, 2, 56, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0481074da98340df0068dd88f0ba04819185a168065ef28040',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6499,6 +6699,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6572,7 +6773,10 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 19, 28, 22, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0b6169df6e16e9690068dd80d64aec81919c65f238307673bb',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6603,6 +6807,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6646,7 +6851,10 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 1, 21, 28, 13, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_08acbdf1ae54befc0068dd9ced226c8197a2e974b29c565407',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6707,6 +6915,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6729,7 +6938,10 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 13, 11, 30, 47, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_001fd29e2d5573f70068ece2e6dfbc819c96557f0de72802be',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6743,6 +6955,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -6778,6 +6991,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -6904,7 +7118,10 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 23, 23, 42, 57, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0083938b3a28070e0068fabd81970881a0a1195f2cab45bd04',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6923,6 +7140,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -6952,7 +7170,10 @@ The monorepo is organized into these main packages:  \n\
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 23, 23, 43, 25, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0083938b3a28070e0068fabd9d414881a089cf24784f80e021',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7001,6 +7222,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -7173,7 +7395,10 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 23, 21, 40, 50, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7392,6 +7617,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 parts=[
                     UserPromptPart(content='What do I have on my Google Calendar for today?', timestamp=IsDatetime())
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -7552,7 +7778,10 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 10, 23, 21, 41, 13, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_0558010cf1416a490068faa0f945bc81a0b6a6dfb7391030d5',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7646,6 +7875,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7662,6 +7892,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -7710,6 +7941,7 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7727,6 +7959,7 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -7777,6 +8010,7 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7796,6 +8030,7 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -7803,7 +8038,6 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: None, openrouter_api_key: str):
     """Test streaming raw CoT content from gpt-oss via OpenRouter.
 
@@ -7826,6 +8060,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7850,7 +8085,10 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openrouter',
                 provider_url='https://openrouter.ai/api/v1',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 11, 27, 17, 43, 31, tzinfo=timezone.utc),
+                },
                 provider_response_id='gen-1764265411-Fu1iEX7h5MRWiL79lb94',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7965,6 +8203,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7981,6 +8220,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -7998,6 +8238,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8014,6 +8255,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -8024,6 +8266,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8042,6 +8285,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -8059,6 +8303,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8075,6 +8320,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -8085,6 +8331,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8103,6 +8350,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -8113,6 +8361,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8129,6 +8378,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -8187,33 +8437,20 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
     )
 
 
-@pytest.mark.vcr()
-async def test_openai_responses_model_file_search_tool(allow_model_requests: None, openai_api_key: str):
-    import asyncio
-    import os
-    import tempfile
-
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-    from pydantic_ai.providers.openai import OpenAIProvider
-
+async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_model_requests: None, openai_api_key: str):
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
-        test_file_path = f.name
+    test_file_path = tmp_path / 'file.txt'
+    test_file_path.touch()
+    test_file_path.write_text('Paris is the capital of France. It is known for the Eiffel Tower.')
 
     file = None
     vector_store = None
     try:
-        with open(test_file_path, 'rb') as f:
-            file = await async_client.files.create(file=f, purpose='assistants')
+        file = await async_client.files.create(file=test_file_path, purpose='assistants')
 
         vector_store = await async_client.vector_stores.create(name='test-file-search')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-
-        await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
@@ -8232,6 +8469,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     instructions='You are a helpful assistant.',
                     run_id=IsStr(),
                 ),
@@ -8260,7 +8498,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'completed'},
+                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -8279,6 +8517,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     instructions='You are a helpful assistant.',
                     run_id=IsStr(),
                 ),
@@ -8307,7 +8546,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'completed'},
+                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -8316,7 +8555,6 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
         )
 
     finally:
-        os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
@@ -8376,34 +8614,22 @@ def test_map_file_search_tool_call():
     )
 
 
-@pytest.mark.vcr()
-async def test_openai_responses_model_file_search_tool_stream(allow_model_requests: None, openai_api_key: str):
-    import asyncio
-    import os
-    import tempfile
-    from typing import Any
-
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-    from pydantic_ai.providers.openai import OpenAIProvider
-
+async def test_openai_responses_model_file_search_tool_stream(
+    tmp_path: Path, allow_model_requests: None, openai_api_key: str
+):
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
-        test_file_path = f.name
+    test_file_path = tmp_path / 'file.txt'
+    test_file_path.touch()
+    test_file_path.write_text('Paris is the capital of France. It is known for the Eiffel Tower.')
 
     file = None
     vector_store = None
     try:
-        with open(test_file_path, 'rb') as f:
-            file = await async_client.files.create(file=f, purpose='assistants')
+        file = await async_client.files.create(file=test_file_path, purpose='assistants')
 
         vector_store = await async_client.vector_stores.create(name='test-file-search-stream')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-
-        await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
@@ -8431,6 +8657,7 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     instructions='You are a helpful assistant.',
                     run_id=IsStr(),
                 ),
@@ -8459,7 +8686,7 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'completed'},
+                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -8545,27 +8772,18 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
         )
 
     finally:
-        os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
-@pytest.mark.vcr()
-async def test_openai_responses_model_file_search_tool_with_results(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_model_file_search_tool_with_results(
+    tmp_path: Path, allow_model_requests: None, openai_api_key: str
+):
     """Test that openai_include_file_search_results setting includes file search results in the response."""
-    import asyncio
-    import os
-    import tempfile
-
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
-        test_file_path = f.name
+    test_file_path = tmp_path / 'file.txt'
+    test_file_path.touch()
+    test_file_path.write_text('Paris is the capital of France. It is known for the Eiffel Tower.')
 
     file = None
     vector_store = None
@@ -8575,8 +8793,6 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
 
         vector_store = await async_client.vector_stores.create(name='test-file-search-with-results')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-
-        await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
@@ -8600,6 +8816,7 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     instructions='You are a helpful assistant.',
                     run_id=IsStr(),
                 ),
@@ -8640,7 +8857,7 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'completed'},
+                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -8649,7 +8866,6 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
         )
 
     finally:
-        os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
@@ -8723,6 +8939,7 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
             timestamp=IsDatetime(),
             provider_name='openai',
             provider_url='https://api.openai.com/v1',
+            provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
             provider_response_id='123',
             run_id=IsStr(),
         )

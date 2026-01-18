@@ -1,3 +1,4 @@
+import datetime
 from collections.abc import Sequence
 from typing import Literal, cast
 
@@ -96,7 +97,20 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
 
         _ = [chunk async for chunk in stream]
 
-        assert stream.provider_details == snapshot({'finish_reason': 'completed', 'downstream_provider': 'xAI'})
+        assert stream.provider_details is not None
+        assert stream.provider_details == snapshot(
+            {
+                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.timezone.utc),
+                'finish_reason': 'completed',
+                'cost': 0.00333825,
+                'upstream_inference_cost': None,
+                'is_byok': False,
+                'downstream_provider': 'xAI',
+            }
+        )
+        # Explicitly verify native_finish_reason is 'completed' and wasn't overwritten by the
+        # final usage chunk (which has native_finish_reason: null, see cassette for details)
+        assert stream.provider_details['finish_reason'] == 'completed'
         assert stream.finish_reason == snapshot('stop')
 
 
@@ -327,6 +341,40 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
     )
 
 
+async def test_openrouter_with_provider_details_but_no_parent_details(openrouter_api_key: str) -> None:
+    from typing import Any
+
+    class TestOpenRouterModel(OpenRouterModel):
+        def _process_provider_details(self, response: ChatCompletion) -> dict[str, Any] | None:
+            from pydantic_ai.models.openrouter import (
+                _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
+                _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+            )
+
+            assert isinstance(response, _OpenRouterChatCompletion)
+            openrouter_details = _map_openrouter_provider_details(response)
+            return openrouter_details or None
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = TestOpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+
+    choice = Choice.model_construct(
+        index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
+    )
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    assert result.provider_details == snapshot(
+        {
+            'downstream_provider': 'TestProvider',
+            'finish_reason': 'stop',
+            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
+        }
+    )
+
+
 async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('anthropic/claude-3.7-sonnet:thinking', provider=provider)
@@ -431,6 +479,29 @@ async def test_openrouter_streaming_reasoning(allow_model_requests: None, openro
                 TextPart(content='2 + 2 = 4'),
             ]
         )
+
+
+async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
+    """Test _process_provider_details when _map_openrouter_provider_details returns empty dict."""
+    from unittest.mock import patch
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+
+    choice = Choice.model_construct(
+        index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
+    )
+
+    with patch('pydantic_ai.models.openrouter._map_openrouter_provider_details', return_value={}):
+        result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    # With empty openrouter_details, we should still get the parent's provider_details (timestamp + finish_reason)
+    assert result.provider_details == snapshot(
+        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)}
+    )
 
 
 async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
