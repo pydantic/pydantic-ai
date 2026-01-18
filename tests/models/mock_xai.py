@@ -441,15 +441,19 @@ def _get_example_tool_output(
         return {}
 
 
-def _create_builtin_tool_response(
+def _create_builtin_tool_outputs(
     tool_name: str,
     arguments: ToolCallArgumentsType,
     content: ToolCallOutputType,
     tool_call_id: str,
     tool_type: chat_pb2.ToolCallType,
     initial_status: chat_pb2.ToolCallStatus,
-) -> chat_types.Response:
-    """Create a Response with builtin tool outputs (shared helper)."""
+) -> list[chat_pb2.CompletionOutput]:
+    """Create CompletionOutputs for builtin tool call and result (shared helper).
+
+    Returns a list of outputs representing the tool call in progress and completed.
+    Callers should add a final assistant message output to match real API behavior.
+    """
     in_progress_output = chat_pb2.CompletionOutput(
         index=0,
         finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
@@ -466,9 +470,9 @@ def _create_builtin_tool_response(
             ],
         ),
     )
-    completed_output = chat_pb2.CompletionOutput(
+    tool_result_output = chat_pb2.CompletionOutput(
         index=1,
-        finish_reason=sample_pb2.FinishReason.REASON_STOP,
+        finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
         message=chat_pb2.CompletionMessage(
             role=chat_pb2.MessageRole.ROLE_TOOL,
             content=_serialize_content(content),
@@ -483,11 +487,7 @@ def _create_builtin_tool_response(
             ],
         ),
     )
-
-    return _build_response_with_outputs(
-        response_id=f'grok-{tool_call_id}',
-        outputs=[in_progress_output, completed_output],
-    )
+    return [in_progress_output, tool_result_output]
 
 
 def create_failed_builtin_tool_response(
@@ -529,18 +529,23 @@ def create_code_execution_response(
     content: ToolCallOutputType | None = None,
     *,
     tool_call_id: str = 'code_exec_001',
+    assistant_text: str,
 ) -> chat_types.Response:
     """Create a Response with code execution tool outputs.
+
+    Args:
+        assistant_text: Text for the final assistant message (required to match real API).
 
     Example:
         >>> response = create_code_execution_response(
         ...     code='2 + 2',
         ...     content={'stdout': '4\\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
+        ...     assistant_text='The result is 4.',
         ... )
     """
     tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
     actual_content = _get_example_tool_output(tool_type, content)
-    return _create_builtin_tool_response(
+    outputs = _create_builtin_tool_outputs(
         tool_name='code_execution',
         arguments={'code': code},
         content=actual_content,
@@ -548,6 +553,18 @@ def create_code_execution_response(
         tool_type=tool_type,
         initial_status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
+    # Add final assistant message (matching real API behavior)
+    outputs.append(
+        chat_pb2.CompletionOutput(
+            index=len(outputs),
+            finish_reason=sample_pb2.FinishReason.REASON_STOP,
+            message=chat_pb2.CompletionMessage(
+                role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+                content=assistant_text,
+            ),
+        )
+    )
+    return _build_response_with_outputs(response_id=f'grok-{tool_call_id}', outputs=outputs)
 
 
 def create_web_search_response(
@@ -555,15 +572,23 @@ def create_web_search_response(
     content: ToolCallOutputType | None = None,
     *,
     tool_call_id: str = 'web_search_001',
+    assistant_text: str,
 ) -> chat_types.Response:
     """Create a Response with web search tool outputs.
 
+    Args:
+        assistant_text: Text for the final assistant message (required to match real API).
+
     Example:
-        >>> response = create_web_search_responses(query='date of Jan 1 in 2026', content='Thursday')
+        >>> response = create_web_search_response(
+        ...     query='date of Jan 1 in 2026',
+        ...     content='Thursday',
+        ...     assistant_text='January 1, 2026 is a Thursday.',
+        ... )
     """
     tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL
     actual_content = _get_example_tool_output(tool_type, content)
-    return _create_builtin_tool_response(
+    outputs = _create_builtin_tool_outputs(
         tool_name='web_search',
         arguments={'query': query},
         content=actual_content,
@@ -571,6 +596,18 @@ def create_web_search_response(
         tool_type=tool_type,
         initial_status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
+    # Add final assistant message (matching real API behavior)
+    outputs.append(
+        chat_pb2.CompletionOutput(
+            index=len(outputs),
+            finish_reason=sample_pb2.FinishReason.REASON_STOP,
+            message=chat_pb2.CompletionMessage(
+                role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+                content=assistant_text,
+            ),
+        )
+    )
+    return _build_response_with_outputs(response_id=f'grok-{tool_call_id}', outputs=outputs)
 
 
 def create_mcp_server_response(
@@ -580,18 +617,25 @@ def create_mcp_server_response(
     content: ToolCallOutputType | None = None,
     *,
     tool_call_id: str = 'mcp_001',
+    assistant_text: str,
 ) -> chat_types.Response:
     """Create a Response with MCP server tool outputs.
 
+    Args:
+        assistant_text: Text for the final assistant message (required to match real API).
+
     Example:
         >>> response = create_mcp_server_response(
-        ...     server_id='linear', tool_name='list_issues', content=[{'id': 'issue_001'}]
+        ...     server_id='linear',
+        ...     tool_name='list_issues',
+        ...     content=[{'id': 'issue_001'}],
+        ...     assistant_text='Found 1 issue.',
         ... )
     """
     full_tool_name = f'{server_id}.{tool_name}'
     tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL
     actual_content = _get_example_tool_output(tool_type, content)
-    return _create_builtin_tool_response(
+    outputs = _create_builtin_tool_outputs(
         tool_name=full_tool_name,
         arguments=tool_input or {},
         content=actual_content,
@@ -599,6 +643,18 @@ def create_mcp_server_response(
         tool_type=tool_type,
         initial_status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
+    # Add final assistant message (matching real API behavior)
+    outputs.append(
+        chat_pb2.CompletionOutput(
+            index=len(outputs),
+            finish_reason=sample_pb2.FinishReason.REASON_STOP,
+            message=chat_pb2.CompletionMessage(
+                role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+                content=assistant_text,
+            ),
+        )
+    )
+    return _build_response_with_outputs(response_id=f'grok-{tool_call_id}', outputs=outputs)
 
 
 def create_mixed_tools_response(

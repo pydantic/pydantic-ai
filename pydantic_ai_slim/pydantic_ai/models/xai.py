@@ -573,10 +573,6 @@ class XaiModel(Model):
         """
         parts: list[ModelResponsePart] = []
         outputs = response.proto.outputs
-        has_any_assistant_text = any(
-            o.message.role == chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT and bool(o.message.content)
-            for o in outputs
-        )
 
         for output in outputs:
             message = output.message
@@ -592,21 +588,12 @@ class XaiModel(Model):
                     )
                 )
 
-            # Add text content before tool calls
+            # Add text content from assistant messages
             if message.content and message.role == chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT:
                 part_provider_details: dict[str, Any] | None = None
                 if output.logprobs and output.logprobs.content:
                     part_provider_details = {'logprobs': _map_logprobs(output.logprobs)}
                 parts.append(TextPart(content=message.content, provider_details=part_provider_details))
-            elif message.content and message.role == chat_types.chat_pb2.MessageRole.ROLE_TOOL:
-                # For server-side tools, xAI emits the tool result content on ROLE_TOOL messages.
-                #
-                # We only surface the raw tool output as `TextPart` when the response contains *no* assistant text
-                # at all. This ensures:
-                # - mock responses that only contain tool output still produce some text output (avoids a retry loop)
-                # - real responses that also contain assistant text don't pollute `result.output` with tool JSON
-                if not has_any_assistant_text:
-                    parts.append(TextPart(content=message.content))
 
             # Process tool calls in this output
             for tool_call in message.tool_calls:

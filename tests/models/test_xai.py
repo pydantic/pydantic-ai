@@ -3282,7 +3282,7 @@ async def test_xai_logprobs(allow_model_requests: None) -> None:
 
 async def test_xai_code_execution_default_output(allow_model_requests: None) -> None:
     """Test code execution with default example output."""
-    response = create_code_execution_response(code='print(2+2)')
+    response = create_code_execution_response(code='print(2+2)', assistant_text='Tool completed successfully.')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
@@ -3304,7 +3304,6 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(content='{"stdout": "4\\n", "stderr": "", "output_files": {}, "error": "", "ret": ""}'),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
@@ -3312,6 +3311,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    TextPart(content='Tool completed successfully.'),
                 ],
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
@@ -3327,7 +3327,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
 
 async def test_xai_web_search_default_output(allow_model_requests: None) -> None:
     """Test web search with default example output."""
-    response = create_web_search_response(query='test query')
+    response = create_web_search_response(query='test query', assistant_text='Tool completed successfully.')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
@@ -3349,7 +3349,6 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(content='{}'),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content={},
@@ -3357,6 +3356,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    TextPart(content='Tool completed successfully.'),
                 ],
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
@@ -3372,7 +3372,9 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
 
 async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None:
     """Test MCP server tool with default example output."""
-    response = create_mcp_server_response(server_id='linear', tool_name='list_issues')
+    response = create_mcp_server_response(
+        server_id='linear', tool_name='list_issues', assistant_text='Tool completed successfully.'
+    )
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
@@ -3394,9 +3396,6 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
                     BuiltinToolCallPart(
                         tool_name='mcp_server:linear', args={}, tool_call_id=IsStr(), provider_name='xai'
                     ),
-                    TextPart(
-                        content='[{"id": "issue_001", "identifier": "PROJ-123", "title": "example-issue", "description": "example-issue description", "status": "Todo", "priority": {"value": 3, "name": "Medium"}, "url": "https://linear.app/team/issue/PROJ-123/example-issue"}]'
-                    ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:linear',
                         content=[
@@ -3414,6 +3413,7 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    TextPart(content='Tool completed successfully.'),
                 ],
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
@@ -3809,7 +3809,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
 async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
     """Test that BuiltinToolCallPart and BuiltinToolReturnPart in history are mapped."""
     # First response with code execution
-    response1 = create_code_execution_response(code='print(2+2)')
+    response1 = create_code_execution_response(code='print(2+2)', assistant_text='Tool completed successfully.')
     # Second response
     response2 = create_response(content='The result was 4')
 
@@ -3850,9 +3850,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                         ],
                     },
                     {
-                        'content': [
-                            {'text': '{"stdout": "4\\n", "stderr": "", "output_files": {}, "error": "", "ret": ""}'}
-                        ],
+                        'content': [{'text': 'Tool completed successfully.'}],
                         'role': 'ROLE_ASSISTANT',
                     },
                     {'content': [{'text': 'What was the result?'}], 'role': 'ROLE_USER'},
@@ -3881,7 +3879,6 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(content='{"stdout": "4\\n", "stderr": "", "output_files": {}, "error": "", "ret": ""}'),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
@@ -3889,6 +3886,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    TextPart(content='Tool completed successfully.'),
                 ],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
@@ -4755,7 +4753,9 @@ async def test_xai_provider_string_initialization(allow_model_requests: None, mo
 async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     """Test that WebSearchTool builtin calls in history are mapped."""
     # First response with web search
-    response1 = create_web_search_response(query='test query', content='Search results')
+    response1 = create_web_search_response(
+        query='test query', content='Search results', assistant_text='Tool completed successfully.'
+    )
     # Second response
     response2 = create_response(content='The search found results')
 
@@ -4795,7 +4795,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                             }
                         ],
                     },
-                    {'content': [{'text': 'Search results'}], 'role': 'ROLE_ASSISTANT'},
+                    {'content': [{'text': 'Tool completed successfully.'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'What did you find?'}], 'role': 'ROLE_USER'},
                 ],
                 'tools': [{'web_search': {'enable_image_understanding': False}}],
@@ -4822,7 +4822,6 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(content='Search results'),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content='Search results',
@@ -4830,6 +4829,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    TextPart(content='Tool completed successfully.'),
                 ],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
@@ -4861,7 +4861,11 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
     """Test that MCPServerTool builtin calls in history are mapped."""
     # First response with MCP server tool
     response1 = create_mcp_server_response(
-        server_id='my-server', tool_name='get_data', content={'data': 'MCP result'}, tool_input={'param': 'value'}
+        server_id='my-server',
+        tool_name='get_data',
+        content={'data': 'MCP result'},
+        tool_input={'param': 'value'},
+        assistant_text='Tool completed successfully.',
     )
     # Second response
     response2 = create_response(content='MCP returned data')
@@ -4902,7 +4906,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                             }
                         ],
                     },
-                    {'content': [{'text': '{"data": "MCP result"}'}], 'role': 'ROLE_ASSISTANT'},
+                    {'content': [{'text': 'Tool completed successfully.'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'What did MCP return?'}], 'role': 'ROLE_USER'},
                 ],
                 'tools': [{'mcp': {'server_label': 'my-server', 'server_url': 'https://example.com/mcp'}}],
@@ -4929,7 +4933,6 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(content='{"data": "MCP result"}'),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:my-server',
                         content={'data': 'MCP result'},
@@ -4937,6 +4940,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    TextPart(content='Tool completed successfully.'),
                 ],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
