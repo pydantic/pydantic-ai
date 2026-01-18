@@ -847,30 +847,11 @@ class XaiStreamedResponse(StreamedResponse):
                     else:
                         # Client-side tools: xAI provides tool-call argument deltas per chunk, but pydantic-ai
                         # expects *accumulated* JSON for validation (especially for streamed output tools).
-                        #
-                        # The accumulated view is available on `response.tool_calls`; prefer that when present.
-                        accumulated_tool_call = None
-                        for tc in response.tool_calls:
-                            if tc.id == tool_call.id:
-                                accumulated_tool_call = tc
-                                break
-
-                        # Ignore "tool started" frames with no args at all; these are just a name signal.
-                        if tool_call.function.arguments == '' and (
-                            accumulated_tool_call is None or accumulated_tool_call.function.arguments == ''
-                        ):
-                            continue
-
-                        # Prefer the accumulated arguments from `response` when available so downstream validation
-                        # sees a coherent JSON string.
-                        #
-                        # Note: The finish reason can arrive in a separate frame where the tool-call delta has empty
-                        # arguments; in that case we still want to keep the accumulated arguments rather than
-                        # overwriting them with empty args.
-                        if accumulated_tool_call is not None and accumulated_tool_call.function.arguments != '':
-                            tool_call_for_part = accumulated_tool_call
-                        else:
-                            tool_call_for_part = tool_call
+                        # Prefer accumulated args from `response.tool_calls` when available.
+                        accumulated = next((tc for tc in response.tool_calls if tc.id == tool_call.id), None)
+                        tool_call_for_part = (
+                            accumulated if accumulated is not None and accumulated.function.arguments else tool_call
+                        )
                         tool_result_content = _get_tool_result_content(delta.content)
                         vendor_part_id, part = _create_tool_call_part(
                             tool_call_for_part,
