@@ -639,7 +639,8 @@ class OpenRouterModel(OpenAIChatModel):
                 content = message_param.get('content')
                 if isinstance(content, str):
                     message_param['content'] = [{'type': 'text', 'text': content}] + self.file_inputs  # type: ignore[reportGeneralTypeIssues]
-                elif isinstance(content, list):
+                # `super()._into_message_param()` never returns a list in the 'content' key, but we include it for completeness
+                elif isinstance(content, list): # pragma: no branch
                     message_param['content'] = content + self.file_inputs  # type: ignore[reportGeneralTypeIssues]
                 else:
                     message_param['content'] = self.file_inputs  # type: ignore[reportGeneralTypeIssues]
