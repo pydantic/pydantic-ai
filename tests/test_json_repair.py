@@ -152,7 +152,7 @@ async def test_repair_doesnt_help_validation_error():
     @toolset.tool
     def typed_func(count: int) -> int:
         """A function that expects an int."""
-        return count * 2
+        return count * 2  # pragma: no cover
 
     context = build_run_context()
     tool_manager = await ToolManager[None](toolset).for_run_step(context)
