@@ -43,8 +43,6 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_schema_output=True,
         # xAI supports JSON object output
         supports_json_object_output=True,
-        # Default to 'native' for structured output since xAI supports it well
-        default_structured_output_mode='native',
         # Support for builtin tools (web_search, code_execution, mcp)
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         supported_builtin_tools=supported_builtin_tools,
