@@ -6,12 +6,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, NoReturn, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, get_origin
 
 from opentelemetry.trace import get_current_span
+from pydantic._internal import _decorators, _typing_extra
 from typing_extensions import assert_never
 
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext  # pyright: ignore[reportPrivateImportUsage]
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
@@ -43,36 +44,51 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 
     Returns True if the first parameter is type-hinted as ModelResponse.
     Returns False otherwise (including if there are no type hints).
+
+    Uses patterns from pydantic_ai._function_schema._takes_ctx for robust type hint detection.
     """
     try:
-        # Get the signature to find the first parameter name
         sig = inspect.signature(handler)
-        params = list(sig.parameters.values())
-        if not params:
-            return False
-
-        first_param = params[0]
-
-        # Try to get type hints - this resolves forward references automatically
-        hints = get_type_hints(handler)
-        param_type = hints.get(first_param.name)
-
-        if param_type is None:
-            return False
-
-        # Only support exact ModelResponse type (no Optional, no subclasses)
-        return param_type is ModelResponse or get_origin(param_type) is ModelResponse
-    except Exception:
-        # If we can't inspect (e.g., built-in, complex type hints), assume exception handler
+    except ValueError:
         return False
 
+    try:
+        first_param_name = next(iter(sig.parameters.keys()))
+    except StopIteration:
+        return False
 
-def _is_exception_type(value: Any) -> bool:
+    # Handle callable classes with __call__ method (same pattern as _takes_ctx)
+    callable_for_hints = handler
+    if not isinstance(handler, _decorators._function_like):  # pyright: ignore[reportPrivateUsage,reportPrivateImportUsage]
+        call_func = getattr(type(handler), '__call__', None)
+        if call_func is not None:
+            callable_for_hints = call_func
+        else:
+            return False  # pragma: no cover
+
+    try:
+        # Use pydantic's get_function_type_hints which handles forward refs better
+        type_hints = _typing_extra.get_function_type_hints(  # pyright: ignore[reportPrivateImportUsage]
+            _decorators.unwrap_wrapped_function(callable_for_hints)  # pyright: ignore[reportPrivateImportUsage]
+        )
+    except Exception:
+        # If we can't get type hints (e.g., built-in), assume exception handler
+        return False
+
+    param_type = type_hints.get(first_param_name)
+    if param_type is None:
+        return False
+
+    # Only support exact ModelResponse type (no Optional, no subclasses)
+    return param_type is ModelResponse or get_origin(param_type) is ModelResponse
+
+
+def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     """Check if value is a single exception type."""
     return isinstance(value, type) and issubclass(value, BaseException)
 
 
-def _is_exception_types_tuple(value: Any) -> bool:
+def _is_exception_types_tuple(value: Any) -> TypeGuard[tuple[type[Exception], ...]]:
     """Check if value is a tuple of exception types."""
     if not isinstance(value, tuple):
         return False
@@ -131,10 +147,10 @@ class FallbackModel(Model):
         """Parse the fallback_on parameter into exception and response handlers."""
         if _is_exception_types_tuple(fallback_on):
             # Tuple of exception types
-            self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
+            self._exception_handlers.append(_exception_types_to_handler(fallback_on))
         elif _is_exception_type(fallback_on):
             # Single exception type
-            self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))  # type: ignore[arg-type]
+            self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))
         elif callable(fallback_on):
             # Single callable - auto-detect by type hints
             self._add_handler(fallback_on)
@@ -142,13 +158,12 @@ class FallbackModel(Model):
             # Sequence of mixed handlers/types
             for item in fallback_on:
                 if _is_exception_type(item):
-                    self._exception_handlers.append(_exception_types_to_handler((item,)))  # type: ignore[arg-type]
+                    self._exception_handlers.append(_exception_types_to_handler((item,)))
                 elif callable(item):
                     self._add_handler(item)
                 else:
-                    raise TypeError(
-                        f'fallback_on items must be exception types or callables, got {type(item).__name__}'
-                    )
+                    # Types guarantee all items are exception types or callables
+                    assert_never(item)
             # Warn if empty sequence was provided
             if not self._exception_handlers and not self._response_handlers:
                 warnings.warn(

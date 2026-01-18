@@ -1305,8 +1305,8 @@ def test_fallback_on_invalid_type() -> None:
 
 
 def test_fallback_on_invalid_list_item() -> None:
-    """Test that invalid items in fallback_on list raise TypeError."""
-    with pytest.raises(TypeError, match='fallback_on items must be exception types or callables'):
+    """Test that invalid items in fallback_on list raise AssertionError via assert_never."""
+    with pytest.raises(AssertionError, match='Expected code to be unreachable'):
         FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # type: ignore
 
 
