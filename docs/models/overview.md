@@ -236,3 +236,118 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 !!! note
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agents.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
+
+!!! note "Streaming limitation"
+    For streaming requests, only exception-based fallback is currently supported, and only for errors during stream **initialization** (e.g., connection errors, authentication failures). If an exception occurs mid-stream after events have started flowing, it will propagate to the caller without triggering fallback. Response-based fallback for streaming is planned for a future release.
+
+### Response-Based Fallback
+
+In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a built-in tool reporting failure.
+
+The `fallback_on` parameter accepts:
+
+- A tuple of exception types: `(ModelAPIError, ModelHTTPError)`
+- An exception handler: `lambda exc: isinstance(exc, MyError)`
+- A response handler: `def check(r: ModelResponse) -> bool`
+- A list mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
+
+Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+#### Finish Reason Example
+
+A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
+
+```python {title="fallback_on_finish_reason.py"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import FinishReason, ModelResponse
+from pydantic_ai.models.fallback import FallbackModel
+
+
+def bad_finish_reason(response: ModelResponse) -> bool:
+    """Fallback if the model stopped due to length limit, content filter, or error."""
+    reason: FinishReason | None = response.finish_reason
+    # Trigger fallback for problematic finish reasons
+    return reason in ('length', 'content_filter', 'error')
+
+
+fallback_model = FallbackModel(
+    'openai:gpt-4o-mini',
+    'anthropic:claude-sonnet-4-5',
+    fallback_on=bad_finish_reason,
+)
+
+agent = Agent(fallback_model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+#### Built-in Tool Failure Example
+
+A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
+
+```python {title="fallback_on_builtin_tool.py"}
+from google.genai.types import UrlMetadata, UrlRetrievalStatus
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.google import GoogleModel
+
+
+def web_fetch_failed(response: ModelResponse) -> bool:
+    """Check if a web_fetch built-in tool failed to retrieve content."""
+    for call, result in response.builtin_tool_calls:
+        if call.tool_name != 'web_fetch':
+            continue
+        # Content is a list of UrlMetadata dicts from Google
+        if not isinstance(result.content, list):
+            continue
+        for item in result.content:
+            meta = UrlMetadata.model_validate(item)
+            if meta.url_retrieval_status != UrlRetrievalStatus.URL_RETRIEVAL_STATUS_SUCCESS:
+                return True
+    return False
+
+
+google_model = GoogleModel('gemini-2.5-flash')
+anthropic_model = AnthropicModel('claude-sonnet-4-5')
+
+# Auto-detected as response handler via type hint
+fallback_model = FallbackModel(
+    google_model,
+    anthropic_model,
+    fallback_on=web_fetch_failed,
+)
+
+agent = Agent(fallback_model)
+
+# If Google's web_fetch fails, automatically falls back to Anthropic
+result = agent.run_sync('Summarize https://ai.pydantic.dev')
+print(result.output)
+"""
+Pydantic AI is a Python agent framework for building production-grade LLM applications.
+"""
+```
+
+Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
+
+You can combine exception types, exception handlers, and response handlers in a single list:
+
+```python {title="fallback_on_mixed.py" requires="fallback_on_builtin_tool.py"}
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models.fallback import FallbackModel
+
+from fallback_on_builtin_tool import anthropic_model, google_model, web_fetch_failed
+
+fallback_model = FallbackModel(
+    google_model,
+    anthropic_model,
+    fallback_on=[
+        ModelAPIError,  # Exception type
+        lambda exc: 'rate limit' in str(exc).lower(),  # Exception handler (untyped lambda)
+        web_fetch_failed,  # Response handler (auto-detected via type hint)
+    ],
+)
+```
