@@ -154,9 +154,9 @@ class FallbackModel(Model):
         """Check if any exception handler wants to trigger fallback."""
         for handler in self._exception_handlers:
             if is_async_callable(handler):
-                result = await handler(exc)
+                result = await cast(Awaitable[bool], handler(exc))
             else:
-                result = handler(exc)
+                result = cast(bool, handler(exc))
             if result:
                 return True
         return False
@@ -165,9 +165,9 @@ class FallbackModel(Model):
         """Check if any response handler wants to trigger fallback."""
         for handler in self._response_handlers:
             if is_async_callable(handler):
-                result = await handler(response)
+                result = await cast(Awaitable[bool], handler(response))
             else:
-                result = handler(response)
+                result = cast(bool, handler(response))
             if result:
                 return True
         return False

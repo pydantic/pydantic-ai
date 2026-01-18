@@ -4,7 +4,7 @@ import json
 import sys
 from collections.abc import AsyncIterator
 from datetime import timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson
@@ -1129,9 +1129,8 @@ async def test_web_fetch_scenario() -> None:
                 continue  # pragma: lax no cover
             if not isinstance(result.content, list):
                 continue  # pragma: lax no cover
-            for item in result.content:  # pragma: no branch
-                content: UrlMetadataDict = item  # type: ignore[assignment]
-                if content['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':
+            for item in cast(list[UrlMetadataDict], result.content):  # pyright: ignore[reportUnknownMemberType]  # pragma: no branch
+                if item['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':
                     return True
         return False
 
