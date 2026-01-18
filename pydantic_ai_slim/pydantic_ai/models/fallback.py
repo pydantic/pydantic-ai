@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, cast, get_origin
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
-from pydantic_ai._function_schema import _get_first_param_type
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import get_first_param_type
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
@@ -45,7 +45,7 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
     Returns True if the first parameter is type-hinted as ModelResponse.
     Returns False otherwise (including if there are no type hints).
     """
-    first_param_type = _get_first_param_type(handler)
+    first_param_type = get_first_param_type(handler)
     if first_param_type is None:
         return False
     # Only support exact ModelResponse type (no Optional, no subclasses)
