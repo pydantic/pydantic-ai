@@ -256,7 +256,7 @@ Handler type is auto-detected by inspecting type hints on the first parameter. I
 
 A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
 
-```python {title="fallback_on_finish_reason.py" test="skip" lint="skip"}
+```python {title="fallback_on_finish_reason.py"}
 from pydantic_ai.messages import FinishReason, ModelResponse
 
 
@@ -271,8 +271,8 @@ def bad_finish_reason(response: ModelResponse) -> bool:
 
 A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
 
-```python {title="fallback_on_response.py" test="skip" lint="skip"}
-from typing import TypedDict
+```python {title="fallback_on_response.py"}
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
@@ -316,15 +316,18 @@ agent = Agent(fallback_model)
 # If Google's web_fetch fails, automatically falls back to Anthropic
 result = agent.run_sync('Summarize https://example.com')
 print(result.output)
+#> Example.com is a reserved domain used for illustrative examples in documents.
 ```
 
 Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
 
 You can combine exception types, exception handlers, and response handlers in a single list:
 
-```python {title="fallback_on_mixed.py" test="skip" lint="skip" requires="fallback_on_response.py"}
+```python {title="fallback_on_mixed.py" requires="fallback_on_response.py"}
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.fallback import FallbackModel
+
+from fallback_on_response import anthropic_model, google_model, web_fetch_failed
 
 fallback_model = FallbackModel(
     google_model,
