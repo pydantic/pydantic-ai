@@ -1102,6 +1102,7 @@ async def test_web_fetch_scenario() -> None:
 
     def google_web_fetch_fails(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
         # Content is a list of UrlMetadata dicts, matching google.genai.types.UrlMetadata.model_dump()
+        # Include multiple items to cover loop iteration branch
         return ModelResponse(
             parts=[
                 BuiltinToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
@@ -1109,7 +1110,8 @@ async def test_web_fetch_scenario() -> None:
                     tool_name='web_fetch',
                     tool_call_id='1',
                     content=[
-                        {'retrieved_url': 'https://example.com', 'url_retrieval_status': 'URL_RETRIEVAL_STATUS_FAILED'}
+                        {'retrieved_url': 'https://ok.com', 'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS'},
+                        {'retrieved_url': 'https://example.com', 'url_retrieval_status': 'URL_RETRIEVAL_STATUS_FAILED'},
                     ],
                 ),
                 TextPart('Could not fetch URL'),
@@ -1131,7 +1133,7 @@ async def test_web_fetch_scenario() -> None:
                 continue  # pragma: lax no cover
             # Cast needed because result.content is typed as Any
             items = cast(list[UrlMetadataDict], result.content)  # pyright: ignore[reportUnknownMemberType]
-            for item in items:  # pragma: no branch
+            for item in items:
                 if item['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':
                     return True
         return False
