@@ -1383,7 +1383,7 @@ def test_is_response_handler_unresolvable_forward_ref() -> None:
     # This triggers the exception handler in get_function_type_hints()
     # Using exec to create the function in an isolated namespace where the type doesn't exist
     exec_globals: dict[str, object] = {}
-    exec(  # noqa: S102 - intentional use for testing unresolvable forward refs
+    exec(
         """
 def handler_with_bad_ref(x: "NonExistentType") -> bool:
     return True
