@@ -286,7 +286,7 @@ print(result.output)
 A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
 
 ```python {title="fallback_on_builtin_tool.py"}
-from google.genai.types import UrlMetadata
+from google.genai.types import UrlMetadata, UrlRetrievalStatus
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
@@ -305,7 +305,7 @@ def web_fetch_failed(response: ModelResponse) -> bool:
             continue
         for item in result.content:
             meta = UrlMetadata.model_validate(item)
-            if meta.url_retrieval_status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+            if meta.url_retrieval_status != UrlRetrievalStatus.URL_RETRIEVAL_STATUS_SUCCESS:
                 return True
     return False
 
