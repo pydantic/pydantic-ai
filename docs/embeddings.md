@@ -362,7 +362,7 @@ Ensure your AWS account has access to the Bedrock embedding models you want to u
 
 #### Basic Usage
 
-```python {title="bedrock_embeddings.py"}
+```python {title="bedrock_embeddings.py" test="skip"}
 from pydantic_ai import Embedder
 
 # Using Amazon Titan
@@ -456,7 +456,7 @@ embedder = Embedder('bedrock:amazon.nova-2-multimodal-embeddings-v1:0')
 
 
 async def main():
-    result = await embedder.embed_query('s3://my-bucket/documents/report.pdf')
+    result = await embedder.embed_query('s3://pydantic-ai-test-bucket/hello-world.txt')
     print(len(result.embeddings[0]))
 ```
 
