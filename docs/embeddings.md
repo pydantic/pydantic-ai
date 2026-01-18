@@ -487,29 +487,6 @@ embedder = Embedder(
 )
 ```
 
-#### Custom Request Parameters
-
-You can pass arbitrary parameters to the model using `extra_body`. This is useful for model-specific features not covered by the standard settings:
-
-```python {title="bedrock_extra_body.py" test="skip"}
-from pydantic_ai import Embedder
-from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
-
-# Pass custom parameters directly to the API (deep merged with generated body)
-embedder = Embedder(
-    'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
-    settings=BedrockEmbeddingSettings(
-        extra_body={
-            'singleEmbeddingParams': {
-                'embeddingPurpose': 'CLUSTERING',
-            },
-        },
-    ),
-)
-```
-
-The `extra_body` dict is deep-merged with the generated request body, allowing you to override or add any parameters.
-
 #### Using a Custom Provider
 
 For advanced configuration, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly:

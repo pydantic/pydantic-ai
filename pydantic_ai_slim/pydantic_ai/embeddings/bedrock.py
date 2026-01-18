@@ -57,7 +57,6 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     plus Bedrock-specific settings prefixed with `bedrock_`.
 
     All settings are optional - if not specified, model defaults are used.
-    You can also use `extra_body` to pass arbitrary parameters to the model.
 
     Example:
         ```python
@@ -70,11 +69,6 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
         settings = BedrockEmbeddingSettings(
             dimensions=512,
             bedrock_titan_normalize=True,
-        )
-
-        # Pass custom parameters via extra_body
-        settings = BedrockEmbeddingSettings(
-            extra_body={'customParam': 'value'},
         )
         ```
     """
@@ -90,6 +84,9 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     """
 
     # ==================== Cohere Settings ====================
+
+    bedrock_cohere_max_tokens: int
+    """The maximum number of tokens to embed."""
 
     bedrock_cohere_input_type: Literal['search_document', 'search_query', 'classification', 'clustering']
     """The input type for Cohere models.
@@ -182,54 +179,6 @@ class BedrockEmbeddingHandler(ABC):
         return False
 
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge override into base, with override taking precedence.
-
-    Merge behavior:
-    - For nested dicts: recursively merges, preserving keys from both
-    - For non-dict values: override completely replaces base
-    - Keys in override not in base: added to result
-    - Keys in base not in override: preserved in result
-
-    Example:
-        base = {'a': 1, 'nested': {'x': 10, 'y': 20}}
-        override = {'b': 2, 'nested': {'y': 99}}
-        result = {'a': 1, 'b': 2, 'nested': {'x': 10, 'y': 99}}
-    """
-    result = base.copy()
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(cast(dict[str, Any], result[key]), cast(dict[str, Any], value))
-        else:
-            result[key] = value
-    return result
-
-
-def _apply_extra_body(body: dict[str, Any], settings: BedrockEmbeddingSettings) -> dict[str, Any]:
-    """Apply extra_body settings to the request body using deep merge.
-
-    This allows users to customize or override any part of the request body
-    via the `extra_body` setting. The merge uses the following precedence:
-
-    **Final precedence (highest to lowest):**
-    1. `extra_body` values (user overrides) - always wins
-    2. Handler-generated values (from settings like `dimensions`, `bedrock_titan_normalize`)
-    3. Model defaults (applied by AWS Bedrock if field is omitted)
-
-    **Use cases:**
-    - Override handler defaults: `extra_body={'truncate': 'START'}`
-    - Add custom parameters: `extra_body={'customField': 'value'}`
-    - Override nested values: `extra_body={'singleEmbeddingParams': {'embeddingDimension': 256}}`
-
-    Note: The handler first builds the request body from settings, then `extra_body`
-    is deep-merged on top, so `extra_body` values take final precedence.
-    """
-    extra_body = settings.get('extra_body')
-    if extra_body and isinstance(extra_body, dict):
-        return _deep_merge(body, cast(dict[str, Any], extra_body))
-    return body
-
-
 class TitanEmbeddingHandler(BedrockEmbeddingHandler):
     """Handler for Amazon Titan embedding models."""
 
@@ -255,7 +204,7 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
         if (normalize := settings.get('bedrock_titan_normalize')) is not None:
             body['normalize'] = normalize
 
-        return _apply_extra_body(body, settings)
+        return body
 
     def parse_response(
         self,
@@ -291,10 +240,6 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
         input_type: EmbedInputType,
         settings: BedrockEmbeddingSettings,
     ) -> dict[str, Any]:
-        # Map generic input_type to Cohere-specific input_type
-        # - 'document' maps to 'search_document' (for indexing)
-        # - 'query' maps to 'search_query' (for searching)
-        # Can be overridden with bedrock_cohere_input_type setting
         cohere_input_type = settings.get(
             'bedrock_cohere_input_type', 'search_document' if input_type == 'document' else 'search_query'
         )
@@ -304,11 +249,16 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
             'input_type': cohere_input_type,
         }
 
-        # Optional: Truncation strategy (model default: NONE - raise error if input exceeds max tokens)
+        if max_tokens := settings.get('bedrock_cohere_max_tokens'):
+            body['max_tokens'] = max_tokens
+
+        if dimensions := settings.get('dimensions'):
+            body['output_dimension'] = dimensions
+
         if truncate := settings.get('bedrock_cohere_truncate'):
             body['truncate'] = truncate
 
-        return _apply_extra_body(body, settings)
+        return body
 
     def parse_response(
         self,
@@ -365,18 +315,30 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
     ) -> dict[str, Any]:
         assert len(texts) == 1, 'Nova only supports single text per request'
 
+        text = texts[0]
+
         # Get truncation mode - Nova requires this field
         # Nova accepts: START, END, NONE (default: NONE)
         truncate = settings.get('bedrock_nova_truncate', 'NONE')
 
-        # Build text params - 'value' and 'truncationMode' are required by Nova
-        text_params: dict[str, Any] = {
-            'value': texts[0],
-            'truncationMode': truncate,
-        }
-
-        # Nova requires embeddingDimension (default: 1024)
-        dimensions = settings.get('dimensions', 1024)
+        # Build text params based on input type
+        # Nova supports both direct text values and S3 URIs
+        if text.startswith('s3://'):
+            # S3 URI format: s3://bucket/key
+            text_params: dict[str, Any] = {
+                'source': {
+                    's3Location': {
+                        'uri': text,
+                    },
+                },
+                'truncationMode': truncate,
+            }
+        else:
+            # Direct text value
+            text_params = {
+                'value': text,
+                'truncationMode': truncate,
+            }
 
         # Nova requires embeddingPurpose - default based on input_type
         # - queries default to GENERIC_RETRIEVAL (optimized for search)
@@ -384,19 +346,20 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
         default_purpose = 'GENERIC_RETRIEVAL' if input_type == 'query' else 'GENERIC_INDEX'
         embedding_purpose = settings.get('bedrock_nova_embedding_purpose', default_purpose)
 
-        # Build singleEmbeddingParams - all fields are required by Nova
         single_embedding_params: dict[str, Any] = {
-            'text': text_params,
-            'embeddingDimension': dimensions,
             'embeddingPurpose': embedding_purpose,
+            'text': text_params,
         }
+
+        if dimensions := settings.get('dimensions'):
+            single_embedding_params['embeddingDimension'] = dimensions
 
         body: dict[str, Any] = {
             'taskType': 'SINGLE_EMBEDDING',
             'singleEmbeddingParams': single_embedding_params,
         }
 
-        return _apply_extra_body(body, settings)
+        return body
 
     def parse_response(
         self,
