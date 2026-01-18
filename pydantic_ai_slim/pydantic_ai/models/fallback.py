@@ -6,13 +6,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, get_origin
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, cast, get_origin
 
 from opentelemetry.trace import get_current_span
 from pydantic._internal import _decorators, _typing_extra
 from typing_extensions import assert_never
 
-from pydantic_ai._run_context import RunContext  # pyright: ignore[reportPrivateImportUsage]
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
@@ -59,7 +59,7 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 
     # Handle callable classes with __call__ method (same pattern as _takes_ctx)
     callable_for_hints = handler
-    if not isinstance(handler, _decorators._function_like):  # pyright: ignore[reportPrivateUsage,reportPrivateImportUsage]
+    if not isinstance(handler, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
         call_func = getattr(type(handler), '__call__', None)
         if call_func is not None:
             callable_for_hints = call_func
@@ -68,8 +68,8 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 
     try:
         # Use pydantic's get_function_type_hints which handles forward refs better
-        type_hints = _typing_extra.get_function_type_hints(  # pyright: ignore[reportPrivateImportUsage]
-            _decorators.unwrap_wrapped_function(callable_for_hints)  # pyright: ignore[reportPrivateImportUsage]
+        type_hints = _typing_extra.get_function_type_hints(
+            _decorators.unwrap_wrapped_function(callable_for_hints)
         )
     except Exception:
         # If we can't get type hints (e.g., built-in), assume exception handler
@@ -92,8 +92,7 @@ def _is_exception_types_tuple(value: Any) -> TypeGuard[tuple[type[Exception], ..
     """Check if value is a tuple of exception types."""
     if not isinstance(value, tuple):
         return False
-    items: tuple[Any, ...] = value
-    return all(_is_exception_type(item) for item in items)
+    return all(_is_exception_type(item) for item in cast(tuple[object, ...], value))
 
 
 @dataclass(init=False)
