@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import inspect
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
@@ -12,7 +11,7 @@ from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import get_first_param_type
+from pydantic_ai._utils import get_first_param_type, is_async_callable
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
@@ -154,9 +153,10 @@ class FallbackModel(Model):
     async def _should_fallback_on_exception(self, exc: Exception) -> bool:
         """Check if any exception handler wants to trigger fallback."""
         for handler in self._exception_handlers:
-            result = handler(exc)
-            if inspect.isawaitable(result):
-                result = await result
+            if is_async_callable(handler):
+                result = await handler(exc)
+            else:
+                result = handler(exc)
             if result:
                 return True
         return False
@@ -164,9 +164,10 @@ class FallbackModel(Model):
     async def _should_fallback_on_response(self, response: ModelResponse) -> bool:
         """Check if any response handler wants to trigger fallback."""
         for handler in self._response_handlers:
-            result = handler(response)
-            if inspect.isawaitable(result):
-                result = await result
+            if is_async_callable(handler):
+                result = await handler(response)
+            else:
+                result = handler(response)
             if result:
                 return True
         return False
