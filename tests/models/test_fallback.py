@@ -4,7 +4,7 @@ import json
 import sys
 from collections.abc import AsyncIterator
 from datetime import timezone
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypedDict
 
 import pytest
 from dirty_equals import IsJson
@@ -1111,16 +1111,18 @@ async def test_web_fetch_scenario() -> None:
     def anthropic_succeeds(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('Successfully fetched and summarized the content')])
 
+    class WebFetchContent(TypedDict):
+        uri: str
+        url_retrieval_status: str
+
     def web_fetch_failed(response: ModelResponse) -> bool:
         for call, result in response.builtin_tool_calls:
             if call.tool_name != 'web_fetch':
                 continue  # pragma: lax no cover
-            content = result.content
-            if not isinstance(content, dict):
+            if not isinstance(result.content, dict):
                 continue  # pragma: lax no cover
-            content_dict = cast(dict[str, Any], content)
-            status = content_dict.get('url_retrieval_status', '')
-            if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':  # pragma: no branch
+            content: WebFetchContent = result.content  # type: ignore[assignment]
+            if content['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':  # pragma: no branch
                 return True
         return False
 

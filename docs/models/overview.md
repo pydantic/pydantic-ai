@@ -257,12 +257,14 @@ Handler type is auto-detected by inspecting type hints on the first parameter. I
 A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
 
 ```python {title="fallback_on_finish_reason.py" test="skip" lint="skip"}
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import FinishReason, ModelResponse
+
 
 def bad_finish_reason(response: ModelResponse) -> bool:
-    """Fallback if the model stopped due to length limit or content filter."""
-    # Common finish reasons: 'stop', 'end_turn', 'tool_use', 'length', 'content_filter'
-    return response.finish_reason not in ('stop', 'end_turn', 'tool_use', None)
+    """Fallback if the model stopped due to length limit, content filter, or error."""
+    reason: FinishReason | None = response.finish_reason
+    # Trigger fallback for problematic finish reasons
+    return reason in ('length', 'content_filter', 'error')
 ```
 
 #### Built-in Tool Failure Example
@@ -270,13 +272,20 @@ def bad_finish_reason(response: ModelResponse) -> bool:
 A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
 
 ```python {title="fallback_on_response.py" test="skip" lint="skip"}
-from typing import Any
+from typing import TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.google import GoogleModel
+
+
+class WebFetchContent(TypedDict):
+    """Content returned by Google's web_fetch built-in tool."""
+
+    uri: str
+    url_retrieval_status: str
 
 
 def web_fetch_failed(response: ModelResponse) -> bool:
@@ -286,9 +295,8 @@ def web_fetch_failed(response: ModelResponse) -> bool:
             continue
         if not isinstance(result.content, dict):
             continue
-        content: dict[str, Any] = result.content
-        status = content.get('url_retrieval_status', '')
-        if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+        content: WebFetchContent = result.content  # type: ignore[assignment]
+        if content['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':
             return True
     return False
 
@@ -328,6 +336,3 @@ fallback_model = FallbackModel(
     ],
 )
 ```
-
-!!! note
-    Response-based fallback only works with non-streaming requests (`run` and `run_sync`). For streaming requests, use exception-based fallback.
