@@ -405,7 +405,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_include_raw_annotations: bool
-    """Whether to include raw web search content annotations in `TextPart.provider_details`.
+    """Whether to include the raw annotations in `TextPart.provider_details`.
 
     When enabled, any annotations (e.g., citations from web search) will be available
     in the `provider_details['annotations']` field of text parts.
