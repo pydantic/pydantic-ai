@@ -190,13 +190,22 @@ class ToolManager(Generic[AgentDepsT]):
             validator = tool.args_validator
             if isinstance(call.args, str):
                 args_str = call.args or '{}'
-                # Only attempt to repair JSON when not in partial/streaming mode,
-                # as repairing partial JSON can interfere with streaming behavior
-                if not allow_partial:
-                    args_str = _maybe_repair_json(args_str)
-                args_dict = validator.validate_json(
-                    args_str, allow_partial=pyd_allow_partial, context=ctx.validation_context
-                )
+                try:
+                    args_dict = validator.validate_json(
+                        args_str, allow_partial=pyd_allow_partial, context=ctx.validation_context
+                    )
+                except ValidationError:
+                    # Only attempt JSON repair on final (non-partial) calls,
+                    # as repairing partial JSON can interfere with streaming behavior
+                    if allow_partial:
+                        raise
+                    repaired = _maybe_repair_json(args_str)
+                    if repaired == args_str:
+                        # Repair didn't change anything, re-raise original error
+                        raise
+                    args_dict = validator.validate_json(
+                        repaired, allow_partial=pyd_allow_partial, context=ctx.validation_context
+                    )
             else:
                 args_dict = validator.validate_python(
                     call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
