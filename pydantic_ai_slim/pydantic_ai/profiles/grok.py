@@ -16,9 +16,6 @@ class GrokModelProfile(ModelProfile):
     grok_supports_builtin_tools: bool = False
     """Whether the model supports builtin tools (web_search, code_execution, mcp)."""
 
-    grok_supports_encrypted_reasoning_content: bool = False
-    """Whether the model is a reasoning model (supports extended thinking/reasoning)."""
-
     grok_supports_tool_choice_required: bool = True
     """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
 
@@ -26,10 +23,7 @@ class GrokModelProfile(ModelProfile):
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
     # Grok-4 models support builtin tools
-    grok_supports_builtin_tools = model_name.startswith('grok-4')
-
-    # Reasoning models have 'reasoning' in their name but not 'non-reasoning'
-    is_reasoning_model = model_name == 'grok-4' or 'reasoning' in model_name and 'non-reasoning' not in model_name
+    grok_supports_builtin_tools = model_name.startswith('grok-4') or 'code' in model_name
 
     # Set supported builtin tools based on model capability
     supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = (
@@ -46,6 +40,4 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         # Support for builtin tools (web_search, code_execution, mcp)
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         supported_builtin_tools=supported_builtin_tools,
-        # Whether this is a reasoning model
-        grok_supports_encrypted_reasoning_content=is_reasoning_model,
     )

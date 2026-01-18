@@ -502,9 +502,7 @@ class XaiModel(Model):
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
-        use_encrypted_content = False
-        if profile.grok_supports_encrypted_reasoning_content and model_settings.get('xai_include_encrypted_content'):
-            use_encrypted_content = True
+        use_encrypted_content = model_settings.get('xai_include_encrypted_content') or False
         if model_settings.get('xai_include_code_execution_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
         if model_settings.get('xai_include_web_search_output'):
