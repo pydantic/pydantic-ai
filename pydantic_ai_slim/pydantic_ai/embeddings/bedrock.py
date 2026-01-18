@@ -235,8 +235,11 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
         if dimensions := settings.get('dimensions'):
             body['output_dimension'] = dimensions
 
+        # Model-specific truncate takes precedence, then base truncate setting
         if truncate := settings.get('bedrock_cohere_truncate'):
             body['truncate'] = truncate
+        elif settings.get('truncate'):
+            body['truncate'] = 'END'
 
         return body
 
@@ -284,8 +287,14 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
         text = texts[0]
 
         # Get truncation mode - Nova requires this field
+        # Model-specific truncate takes precedence, then base truncate setting
         # Nova accepts: START, END, NONE (default: NONE)
-        truncate = settings.get('bedrock_nova_truncate', 'NONE')
+        if truncate := settings.get('bedrock_nova_truncate'):
+            pass  # Use the model-specific setting
+        elif settings.get('truncate'):
+            truncate = 'END'
+        else:
+            truncate = 'NONE'
 
         # Build text params based on input type
         # Nova supports both direct text values and S3 URIs

@@ -412,7 +412,7 @@ embedder = Embedder(
 
 - `bedrock_cohere_max_tokens` — Maximum number of tokens to embed.
 - `bedrock_cohere_input_type` — Input type: `'search_query'`, `'search_document'`, `'classification'`, or `'clustering'`. Defaults to `'search_query'` for `embed_query()` and `'search_document'` for `embed_documents()`.
-- `bedrock_cohere_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`.
+- `bedrock_cohere_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`. Overrides the base `truncate` setting if provided.
 
 ```python {title="bedrock_cohere.py"}
 from pydantic_ai import Embedder
@@ -432,7 +432,7 @@ embedder = Embedder(
 
 **Nova-specific settings:**
 
-- `bedrock_nova_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`.
+- `bedrock_nova_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`. Overrides the base `truncate` setting if provided.
 - `bedrock_nova_embedding_purpose` — Embedding purpose. Defaults to `'GENERIC_RETRIEVAL'` for `embed_query()` and `'GENERIC_INDEX'` for `embed_documents()`. Other options: `'TEXT_RETRIEVAL'`, `'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`, `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
 
 Nova also supports S3 URIs as input (e.g., `s3://bucket/key`) for embedding files stored in S3.
