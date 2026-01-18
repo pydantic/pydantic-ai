@@ -360,6 +360,165 @@ async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_reques
     )
 
 
+async def test_xai_reorders_tool_return_parts_by_tool_call_id(allow_model_requests: None):
+    response = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Run tools')]),
+        ModelResponse(
+            parts=[
+                # Deliberately non-alphabetical order to ensure we don't sort tool results by name/content.
+                ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='tool_a'),
+                ToolCallPart(tool_name='tool_c', args='{}', tool_call_id='tool_c'),
+                ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='tool_b'),
+            ],
+            finish_reason='tool_call',
+        ),
+        # Intentionally shuffled: xAI expects tool results in the order the calls were requested.
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='tool_b', content='tool_b', tool_call_id='tool_b'),
+                ToolReturnPart(tool_name='tool_a', content='tool_a', tool_call_id='tool_a'),
+                ToolReturnPart(tool_name='tool_c', content='tool_c', tool_call_id='tool_c'),
+            ]
+        ),
+    ]
+
+    await m.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {'content': [{'text': 'Run tools'}], 'role': 'ROLE_USER'},
+                    {
+                        'content': [{'text': ''}],
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {
+                                'id': 'tool_a',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'tool_a', 'arguments': '{}'},
+                            },
+                            {
+                                'id': 'tool_c',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'tool_c', 'arguments': '{}'},
+                            },
+                            {
+                                'id': 'tool_b',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'tool_b', 'arguments': '{}'},
+                            },
+                        ],
+                    },
+                    {'content': [{'text': 'tool_a'}], 'role': 'ROLE_TOOL'},
+                    {'content': [{'text': 'tool_c'}], 'role': 'ROLE_TOOL'},
+                    {'content': [{'text': 'tool_b'}], 'role': 'ROLE_TOOL'},
+                ],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
+        ]
+    )
+
+
+async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_model_requests: None):
+    response = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Run tools')]),
+        ModelResponse(
+            parts=[
+                # Deliberately non-alphabetical order to ensure we don't sort tool results by name/content.
+                ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='tool_a'),
+                ToolCallPart(tool_name='tool_c', args='{}', tool_call_id='tool_c'),
+                ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='tool_b'),
+            ],
+            finish_reason='tool_call',
+        ),
+        # Intentionally shuffled, but these are tool-results too (tool_name is set).
+        ModelRequest(
+            parts=[
+                RetryPromptPart(content='retry tool_b', tool_name='tool_b', tool_call_id='tool_b'),
+                RetryPromptPart(content='retry tool_a', tool_name='tool_a', tool_call_id='tool_a'),
+                RetryPromptPart(content='retry tool_c', tool_name='tool_c', tool_call_id='tool_c'),
+            ]
+        ),
+    ]
+
+    await m.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {'content': [{'text': 'Run tools'}], 'role': 'ROLE_USER'},
+                    {
+                        'content': [{'text': ''}],
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {
+                                'id': 'tool_a',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'tool_a', 'arguments': '{}'},
+                            },
+                            {
+                                'id': 'tool_c',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'tool_c', 'arguments': '{}'},
+                            },
+                            {
+                                'id': 'tool_b',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'tool_b', 'arguments': '{}'},
+                            },
+                        ],
+                    },
+                    {
+                        'content': [{'text': 'retry tool_a\n\nFix the errors and try again.'}],
+                        'role': 'ROLE_TOOL',
+                    },
+                    {
+                        'content': [{'text': 'retry tool_c\n\nFix the errors and try again.'}],
+                        'role': 'ROLE_TOOL',
+                    },
+                    {
+                        'content': [{'text': 'retry tool_b\n\nFix the errors and try again.'}],
+                        'role': 'ROLE_TOOL',
+                    },
+                ],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
+        ]
+    )
+
+
 async def test_xai_request_structured_response_native_output(allow_model_requests: None, xai_provider: XaiProvider):
     """Test structured output using native JSON schema output (the default for xAI)."""
 

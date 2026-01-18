@@ -192,12 +192,24 @@ class XaiModel(Model):
     ) -> list[chat_types.chat_pb2.Message]:
         """Convert pydantic_ai messages to xAI SDK messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
+        # xAI expects tool results in the same order as tool calls.
+        #
+        # Pydantic AI doesn't guarantee tool-result part ordering, so we track
+        # tool call order as we walk message history and reorder tool results.
+        pending_tool_call_ids: list[str] = []
 
         for message in messages:
             if isinstance(message, ModelRequest):
-                xai_messages.extend(await self._map_request_parts(message.parts))
+                mapped_request_parts = await self._map_request_parts(
+                    message.parts,
+                    pending_tool_call_ids,
+                )
+                xai_messages.extend(mapped_request_parts)
             elif isinstance(message, ModelResponse):
                 xai_messages.extend(self._map_response_parts(message.parts))
+                pending_tool_call_ids.extend(
+                    part.tool_call_id for part in message.parts if isinstance(part, ToolCallPart) and part.tool_call_id
+                )
             else:
                 assert_never(message)
 
@@ -208,9 +220,14 @@ class XaiModel(Model):
 
         return xai_messages
 
-    async def _map_request_parts(self, parts: Sequence[ModelRequestPart]) -> list[chat_types.chat_pb2.Message]:
+    async def _map_request_parts(
+        self,
+        parts: Sequence[ModelRequestPart],
+        pending_tool_call_ids: list[str],
+    ) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
+        tool_results: list[ToolReturnPart | RetryPromptPart] = []
 
         for part in parts:
             if isinstance(part, SystemPromptPart):
@@ -219,18 +236,22 @@ class XaiModel(Model):
                 if user_msg := await self._map_user_prompt(part):
                     xai_messages.append(user_msg)
             elif isinstance(part, ToolReturnPart):
-                # The model expect tool results to be added in the order they were requested by the model
-                # There is no tool_call_id associated with tool results in current models
-                xai_messages.append(tool_result(part.model_response_str()))
+                tool_results.append(part)
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    # Retry prompt as user message
                     xai_messages.append(user(part.model_response()))
                 else:
-                    # Retry prompt as tool result
-                    xai_messages.append(tool_result(part.model_response()))
+                    tool_results.append(part)
             else:
                 assert_never(part)
+
+        # Sort tool results by requested order, then emit
+        if tool_results:
+            order = {id: i for i, id in enumerate(pending_tool_call_ids)}
+            tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
+            for part in tool_results:
+                text = part.model_response_str() if isinstance(part, ToolReturnPart) else part.model_response()
+                xai_messages.append(tool_result(text))
 
         return xai_messages
 
