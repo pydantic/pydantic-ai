@@ -629,7 +629,7 @@ class OpenRouterModel(OpenAIChatModel):
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
         reasoning_details: list[dict[str, Any]] = field(default_factory=list)
-        file_inputs: list[dict[str, dict[str, str]]] = field(default_factory=list)
+        file_inputs: list[dict[str, str | dict[str, str]]] = field(default_factory=list)
 
         def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
             message_param = super()._into_message_param()
@@ -663,7 +663,7 @@ class OpenRouterModel(OpenAIChatModel):
                 'image/gif',
             ):
                 encoding = base64.b64encode(item.content.data).decode('utf-8')
-                self.file_inputs.append({'image_url': {'url': encoding}})
+                self.file_inputs.append({'type': 'image_url', 'imageUrl': {'url': encoding}})
             else:
                 raise UserError(f'Invalid media type: {item.content.media_type}')
 

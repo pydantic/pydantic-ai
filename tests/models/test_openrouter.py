@@ -739,3 +739,52 @@ async def test_openrouter_invalid_media_type_error(openrouter_api_key: str) -> N
 
     with pytest.raises(UserError, match='Invalid media type: video/mp4'):
         await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+
+
+async def test_openrouter_map_response_multi_content(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash-image-preview', provider=provider)
+
+    response = ModelResponse(
+        parts=[
+            TextPart(content='test message'),
+            FilePart(content=BinaryContent(data=b'test data', media_type='image/png')),
+        ]
+    )
+
+    message = model._map_model_response(response)  # type: ignore[reportPrivateUsage]
+    assert message == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {'type': 'text', 'text': 'test message'},
+                {'type': 'image_url', 'imageUrl': {'url': 'dGVzdCBkYXRh'}},
+            ],
+        }
+    )
+
+    response = ModelResponse(
+        parts=[
+            TextPart(content='test message'),
+            ToolCallPart(tool_name='test_tool', args={'test': 'test'}),
+            FilePart(content=BinaryContent(data=b'test data', media_type='image/png')),
+        ]
+    )
+
+    message = model._map_model_response(response)  # type: ignore[reportPrivateUsage]
+    assert message == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {'type': 'text', 'text': 'test message'},
+                {'type': 'image_url', 'imageUrl': {'url': 'dGVzdCBkYXRh'}},
+            ],
+            'tool_calls': [
+                {
+                    'id': IsStr(),
+                    'type': 'function',
+                    'function': {'name': 'test_tool', 'arguments': '{"test":"test"}'},
+                }
+            ],
+        }
+    )
