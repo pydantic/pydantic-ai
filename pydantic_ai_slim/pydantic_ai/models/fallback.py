@@ -324,9 +324,11 @@ def _raise_fallback_exception_group(exceptions: list[Exception], rejected_respon
         exceptions: List of exceptions raised by models.
         rejected_responses: List of responses that were rejected by fallback_on handlers.
     """
-    all_errors: list[Exception] = list(exceptions)
     if rejected_responses:
-        all_errors.append(RuntimeError(f'{len(rejected_responses)} model response(s) rejected by fallback_on handler'))
+        rejection_error = RuntimeError(f'{len(rejected_responses)} model response(s) rejected by fallback_on handler')
+        all_errors: list[Exception] = [*exceptions, rejection_error]
+    else:
+        all_errors = exceptions
 
     if all_errors:
         raise FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
