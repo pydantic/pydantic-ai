@@ -11,7 +11,7 @@ import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES
+from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel, EmbedInputType
@@ -352,12 +352,7 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
 
 def _get_handler_for_model(model_name: str) -> BedrockEmbeddingHandler:
     """Get the appropriate handler for a Bedrock embedding model."""
-    # Remove inference geo prefix if present (e.g., 'us.', 'eu.')
-    normalized_name = model_name
-    for prefix in BEDROCK_GEO_PREFIXES:
-        if model_name.startswith(f'{prefix}.'):
-            normalized_name = model_name.removeprefix(f'{prefix}.')
-            break
+    normalized_name = remove_bedrock_geo_prefix(model_name)
 
     if normalized_name.startswith('amazon.titan-embed'):
         return TitanEmbeddingHandler()
@@ -561,17 +556,9 @@ class BedrockEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(normalized)
 
     @staticmethod
-    def _remove_inference_geo_prefix(model_name: str) -> str:
-        """Remove inference geographic prefix from model ID if present."""
-        for prefix in BEDROCK_GEO_PREFIXES:
-            if model_name.startswith(f'{prefix}.'):
-                return model_name.removeprefix(f'{prefix}.')
-        return model_name
-
-    @classmethod
-    def _normalize_model_name(cls, model_name: str) -> str:
+    def _normalize_model_name(model_name: str) -> str:
         """Normalize model name by removing regional prefix and version suffix."""
-        model_name = cls._remove_inference_geo_prefix(model_name)
+        model_name = remove_bedrock_geo_prefix(model_name)
 
         # Remove version suffix like :0
         if ':' in model_name:

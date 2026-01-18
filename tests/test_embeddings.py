@@ -1026,20 +1026,6 @@ class TestBedrockHandlers:
         result = BedrockEmbeddingModel._normalize_model_name('us.amazon.titan-embed-text-v2:0')  # pyright: ignore[reportPrivateUsage]
         assert result == 'amazon.titan-embed-text-v2'
 
-    def test_remove_inference_geo_prefix(self):
-        """Test _remove_inference_geo_prefix removes geo prefixes correctly."""
-        # Test with 'us.' prefix
-        result = BedrockEmbeddingModel._remove_inference_geo_prefix('us.amazon.titan-embed-text-v2:0')  # pyright: ignore[reportPrivateUsage]
-        assert result == 'amazon.titan-embed-text-v2:0'
-
-        # Test with 'eu.' prefix
-        result = BedrockEmbeddingModel._remove_inference_geo_prefix('eu.cohere.embed-v4:0')  # pyright: ignore[reportPrivateUsage]
-        assert result == 'cohere.embed-v4:0'
-
-        # Test without prefix (unchanged)
-        result = BedrockEmbeddingModel._remove_inference_geo_prefix('amazon.titan-embed-text-v2:0')  # pyright: ignore[reportPrivateUsage]
-        assert result == 'amazon.titan-embed-text-v2:0'
-
     def test_model_with_string_provider(self, bedrock_provider: BedrockProvider):
         """Test BedrockEmbeddingModel can be created with string provider."""
         with patch('pydantic_ai.embeddings.bedrock.infer_provider', return_value=bedrock_provider) as mock_infer:
