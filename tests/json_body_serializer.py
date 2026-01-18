@@ -60,6 +60,8 @@ FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent
 ALLOWED_HEADER_PREFIXES = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
     'x-xet-',
+    # required for Bedrock embeddings to preserve token count headers
+    'x-amzn-bedrock-',
 }
 ALLOWED_HEADERS = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
@@ -148,6 +150,12 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     if 'access_token' in data['parsed_body']:
                         data['parsed_body']['access_token'] = 'scrubbed'
                     del data['body']
+                    # Update content-length to match the body that will be produced during deserialize.
+                    # This is necessary because decompression changes the body size, and botocore
+                    # verifies content-length against the actual body during cassette replay.
+                    if 'content-length' in headers:
+                        new_body = json.dumps(data['parsed_body'])
+                        headers['content-length'] = [str(len(new_body.encode('utf-8')))]
             if content_type == ['application/x-www-form-urlencoded']:
                 query_params = urllib.parse.parse_qs(data['body'])
                 for key in ['client_id', 'client_secret', 'refresh_token']:  # pragma: no cover

@@ -96,6 +96,10 @@ def infer_embedding_model(
         from .cohere import CohereEmbeddingModel
 
         return CohereEmbeddingModel(model_name, provider=provider)
+    elif model_kind == 'bedrock':
+        from .bedrock import BedrockEmbeddingModel
+
+        return BedrockEmbeddingModel(model_name, provider=provider)
     elif model_kind in ('google-gla', 'google-vertex'):
         from .google import GoogleEmbeddingModel
 
