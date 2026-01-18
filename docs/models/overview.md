@@ -257,7 +257,9 @@ Handler type is auto-detected by inspecting type hints on the first parameter. I
 A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
 
 ```python {title="fallback_on_finish_reason.py"}
+from pydantic_ai import Agent
 from pydantic_ai.messages import FinishReason, ModelResponse
+from pydantic_ai.models.fallback import FallbackModel
 
 
 def bad_finish_reason(response: ModelResponse) -> bool:
@@ -265,14 +267,26 @@ def bad_finish_reason(response: ModelResponse) -> bool:
     reason: FinishReason | None = response.finish_reason
     # Trigger fallback for problematic finish reasons
     return reason in ('length', 'content_filter', 'error')
+
+
+fallback_model = FallbackModel(
+    'openai:gpt-4o-mini',
+    'anthropic:claude-sonnet-4-5',
+    fallback_on=bad_finish_reason,
+)
+
+agent = Agent(fallback_model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
 ```
 
 #### Built-in Tool Failure Example
 
-A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
+A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
 
-```python {title="fallback_on_response.py"}
-from typing_extensions import TypedDict
+```python {title="fallback_on_builtin_tool.py"}
+from google.genai.types import UrlMetadata
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
@@ -281,23 +295,18 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.google import GoogleModel
 
 
-class WebFetchContent(TypedDict):
-    """Content returned by Google's web_fetch built-in tool."""
-
-    uri: str
-    url_retrieval_status: str
-
-
 def web_fetch_failed(response: ModelResponse) -> bool:
     """Check if a web_fetch built-in tool failed to retrieve content."""
     for call, result in response.builtin_tool_calls:
         if call.tool_name != 'web_fetch':
             continue
-        if not isinstance(result.content, dict):
+        # Content is a list of UrlMetadata dicts from Google
+        if not isinstance(result.content, list):
             continue
-        content: WebFetchContent = result.content  # type: ignore[assignment]
-        if content['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':
-            return True
+        for item in result.content:
+            meta = UrlMetadata.model_validate(item)
+            if meta.url_retrieval_status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+                return True
     return False
 
 
@@ -323,11 +332,11 @@ Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelRespon
 
 You can combine exception types, exception handlers, and response handlers in a single list:
 
-```python {title="fallback_on_mixed.py" requires="fallback_on_response.py"}
+```python {title="fallback_on_mixed.py" requires="fallback_on_builtin_tool.py"}
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.fallback import FallbackModel
 
-from fallback_on_response import anthropic_model, google_model, web_fetch_failed
+from fallback_on_builtin_tool import anthropic_model, google_model, web_fetch_failed
 
 fallback_model = FallbackModel(
     google_model,

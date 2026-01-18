@@ -1094,16 +1094,23 @@ async def test_mixed_failures_all_fail() -> None:
 
 
 async def test_web_fetch_scenario() -> None:
-    """Test real-world scenario: fallback when web_fetch builtin tool fails."""
+    """Test real-world scenario: fallback when web_fetch builtin tool fails.
+
+    This matches the actual Google SDK structure where content is a list of
+    UrlMetadata dicts with 'retrieved_url' and 'url_retrieval_status' fields.
+    """
 
     def google_web_fetch_fails(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        # Content is a list of UrlMetadata dicts, matching google.genai.types.UrlMetadata.model_dump()
         return ModelResponse(
             parts=[
-                BuiltinToolCallPart(tool_name='web_fetch', args={'url': 'https://example.com'}, tool_call_id='1'),
+                BuiltinToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
                 BuiltinToolReturnPart(
                     tool_name='web_fetch',
                     tool_call_id='1',
-                    content={'uri': 'https://example.com', 'url_retrieval_status': 'URL_RETRIEVAL_STATUS_FAILED'},
+                    content=[
+                        {'retrieved_url': 'https://example.com', 'url_retrieval_status': 'URL_RETRIEVAL_STATUS_FAILED'}
+                    ],
                 ),
                 TextPart('Could not fetch URL'),
             ]
@@ -1112,19 +1119,20 @@ async def test_web_fetch_scenario() -> None:
     def anthropic_succeeds(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('Successfully fetched and summarized the content')])
 
-    class WebFetchContent(TypedDict):
-        uri: str
+    class UrlMetadataDict(TypedDict):
+        retrieved_url: str
         url_retrieval_status: str
 
     def web_fetch_failed(response: ModelResponse) -> bool:
         for call, result in response.builtin_tool_calls:
             if call.tool_name != 'web_fetch':
                 continue  # pragma: lax no cover
-            if not isinstance(result.content, dict):
+            if not isinstance(result.content, list):
                 continue  # pragma: lax no cover
-            content: WebFetchContent = result.content  # type: ignore[assignment]
-            if content['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':  # pragma: no branch
-                return True
+            for item in result.content:
+                content: UrlMetadataDict = item  # type: ignore[assignment]
+                if content['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':  # pragma: no branch
+                    return True
         return False
 
     google_model = FunctionModel(google_web_fetch_fails)

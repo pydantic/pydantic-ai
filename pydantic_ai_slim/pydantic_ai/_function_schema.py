@@ -234,6 +234,45 @@ WithoutCtx = Callable[P, R]
 TargetCallable = WithCtx[P, R] | WithoutCtx[P, R]
 
 
+def _get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
+    """Get the type annotation of the first parameter of a callable.
+
+    Handles regular functions, methods, and callable classes with __call__.
+    Uses Pydantic internals to properly resolve type hints including forward references.
+
+    Args:
+        callable_obj: The callable to inspect.
+
+    Returns:
+        The type annotation of the first parameter, or None if it cannot be determined.
+    """
+    try:
+        sig = signature(callable_obj)
+    except ValueError:
+        return None
+
+    try:
+        first_param_name = next(iter(sig.parameters.keys()))
+    except StopIteration:
+        return None
+
+    # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
+    callable_for_hints = callable_obj
+    if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
+        call_func = getattr(type(callable_obj), '__call__', None)
+        if call_func is not None:
+            callable_for_hints = call_func
+        else:
+            return None  # pragma: no cover
+
+    try:
+        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
+    except Exception:
+        return None
+
+    return type_hints.get(first_param_name)
+
+
 def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
     """Check if a callable takes a `RunContext` first argument.
 
@@ -243,28 +282,10 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
     Returns:
         `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
     """
-    try:
-        sig = signature(callable_obj)
-    except ValueError:
+    first_param_type = _get_first_param_type(callable_obj)
+    if first_param_type is None:
         return False
-    try:
-        first_param_name = next(iter(sig.parameters.keys()))
-    except StopIteration:
-        return False
-    else:
-        # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
-        if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
-            call_func = getattr(type(callable_obj), '__call__', None)
-            if call_func is not None:
-                callable_obj = call_func
-            else:
-                return False  # pragma: no cover
-
-        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_obj))
-        annotation = type_hints.get(first_param_name)
-        if annotation is None:
-            return False
-        return True is not sig.empty and _is_call_ctx(annotation)
+    return _is_call_ctx(first_param_type)
 
 
 def _build_schema(

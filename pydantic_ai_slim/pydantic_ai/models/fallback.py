@@ -9,9 +9,9 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, cast, get_origin
 
 from opentelemetry.trace import get_current_span
-from pydantic._internal import _decorators, _typing_extra
 from typing_extensions import assert_never
 
+from pydantic_ai._function_schema import _get_first_param_type
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
@@ -44,41 +44,12 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 
     Returns True if the first parameter is type-hinted as ModelResponse.
     Returns False otherwise (including if there are no type hints).
-
-    Uses patterns from pydantic_ai._function_schema._takes_ctx for robust type hint detection.
     """
-    try:
-        sig = inspect.signature(handler)
-    except ValueError:
+    first_param_type = _get_first_param_type(handler)
+    if first_param_type is None:
         return False
-
-    try:
-        first_param_name = next(iter(sig.parameters.keys()))
-    except StopIteration:
-        return False
-
-    # Handle callable classes with __call__ method (same pattern as _takes_ctx)
-    callable_for_hints = handler
-    if not isinstance(handler, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
-        call_func = getattr(type(handler), '__call__', None)
-        if call_func is not None:
-            callable_for_hints = call_func
-        else:
-            return False  # pragma: no cover
-
-    try:
-        # Use pydantic's get_function_type_hints which handles forward refs better
-        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
-    except Exception:
-        # If we can't get type hints (e.g., built-in), assume exception handler
-        return False
-
-    param_type = type_hints.get(first_param_name)
-    if param_type is None:
-        return False
-
     # Only support exact ModelResponse type (no Optional, no subclasses)
-    return param_type is ModelResponse or get_origin(param_type) is ModelResponse
+    return first_param_type is ModelResponse or get_origin(first_param_type) is ModelResponse
 
 
 def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
