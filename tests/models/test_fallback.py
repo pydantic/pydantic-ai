@@ -1353,6 +1353,49 @@ def test_is_response_handler_builtin() -> None:
     assert _is_response_handler(int) is False
 
 
+def test_is_response_handler_callable_class() -> None:
+    """Test that callable classes with __call__ are properly detected."""
+    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
+
+    class ResponseHandlerClass:
+        """A callable class that handles ModelResponse."""
+
+        def __call__(self, response: ModelResponse) -> bool:  # pragma: no cover
+            return True
+
+    class ExceptionHandlerClass:
+        """A callable class that handles exceptions."""
+
+        def __call__(self, exc: Exception) -> bool:  # pragma: no cover
+            return True
+
+    # Callable class with ModelResponse parameter should be detected as response handler
+    assert _is_response_handler(ResponseHandlerClass()) is True
+    # Callable class with Exception parameter should NOT be detected as response handler
+    assert _is_response_handler(ExceptionHandlerClass()) is False
+
+
+def test_is_response_handler_unresolvable_forward_ref() -> None:
+    """Test that functions with unresolvable forward refs are treated as exception handlers."""
+    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
+
+    # Create a function with a forward reference that can't be resolved
+    # This triggers the exception handler in get_function_type_hints()
+    # Using exec to create the function in an isolated namespace where the type doesn't exist
+    exec_globals: dict[str, object] = {}
+    exec(  # noqa: S102 - intentional use for testing unresolvable forward refs
+        '''
+def handler_with_bad_ref(x: "NonExistentType") -> bool:
+    return True
+''',
+        exec_globals,
+    )
+    handler = exec_globals['handler_with_bad_ref']
+
+    # Should return False (treat as exception handler) because type hints can't be resolved
+    assert _is_response_handler(handler) is False  # pyright: ignore[reportArgumentType]
+
+
 def test_is_exception_types_tuple_with_non_exception() -> None:
     """Test that tuples with non-exception types return False."""
     from pydantic_ai.models.fallback import _is_exception_types_tuple  # pyright: ignore[reportPrivateUsage]
