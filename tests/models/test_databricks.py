@@ -1,141 +1,221 @@
-from __future__ import annotations as _annotations
+import base64
+from typing import Literal, cast
+from unittest.mock import MagicMock, patch
 
-import json
-from typing import Any
-
-import httpx
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.models.databricks import DatabricksModel
-from pydantic_ai.providers.databricks import DatabricksProvider
-from pydantic_ai.result import RunUsage
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    ModelHTTPError,
+    ModelRequest,
+    ModelResponse,
+    RunUsage,
+    TextPart,
+    ToolCallPart,
+    ToolDefinition,
+)
+from pydantic_ai.direct import model_request, model_request_stream
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    pass
+    from pydantic_ai.models.databricks import DatabricksModel, DatabricksModelSettings
+    from pydantic_ai.providers.databricks import DatabricksProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.vcr,
     pytest.mark.anyio,
 ]
 
 
-class MockDatabricksTransport(httpx.AsyncBaseTransport):
-    def __init__(self, responses: list[dict[str, Any] | list[str]] | None = None, stream: bool = False):
-        self.responses = responses or []
-        self.request_count = 0
-        self.stream = stream
+@pytest.mark.vcr(match_on=['method', 'scheme', 'path', 'query'])
+class TestDatabricks:
+    async def test_databricks_simple_request(
+        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+    ) -> None:
+        provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        self.request_count += 1
-        if self.responses:
-            content = self.responses.pop(0)
-        else:
-            # Default response
-            if self.stream:
-                common_def = '"created": 123, "model": "default", "object": "chat.completion.chunk"'
-                content = [
-                    f'data: {{"id":"default", {common_def}, "choices":[{{"index":0,"delta":{{"role":"assistant","content":""}},"finish_reason":null}}]}}\n\n',
-                    f'data: {{"id":"default", {common_def}, "choices":[{{"index":0,"delta":{{"content":"Default"}}}}]}}\n\n',
-                    'data: [DONE]\n\n',
+        response = await model_request(model, [ModelRequest.user_text_prompt('What is the capital of France?')])
+
+        text_part = cast(TextPart, response.parts[0])
+        assert text_part.content == snapshot('Paris.')
+
+        assert response.provider_details is not None
+        assert response.provider_details['finish_reason'] == 'stop'
+
+    async def test_databricks_stream(
+        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+    ) -> None:
+        provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+
+        async with model_request_stream(model, [ModelRequest.user_text_prompt('Count to 3')]) as stream:
+            assert stream.provider_details == snapshot({'usage': RequestUsage()})
+
+            chunks = [chunk async for chunk in stream]
+
+            assert len(chunks) > 0
+            assert stream.provider_details is not None
+            assert stream.provider_details['finish_reason'] == 'stop'
+            assert 'usage' in stream.provider_details
+
+    async def test_databricks_tool_calling(
+        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+    ) -> None:
+        provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+
+        class GetWeather(BaseModel):
+            """Get the current weather."""
+
+            location: str
+            unit: Literal['celsius', 'fahrenheit'] = 'celsius'
+
+        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+
+        response = await model_request(
+            model,
+            [ModelRequest.user_text_prompt('What is the weather in London?')],
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[
+                    ToolDefinition(
+                        name='get_weather',
+                        description=GetWeather.__doc__,
+                        parameters_json_schema=GetWeather.model_json_schema(),
+                    )
                 ]
-            else:
-                content = {
-                    'id': 'chatcmpl-default',
-                    'object': 'chat.completion',
-                    'created': 1677652288,
-                    'model': 'databricks-dbrx-instruct',
-                    'choices': [
-                        {
-                            'index': 0,
-                            'message': {
-                                'role': 'assistant',
-                                'content': [{'type': 'text', 'text': 'Hello from Databricks!'}],
-                            },
-                            'finish_reason': 'stop',
-                        }
+            ),
+        )
+
+        assert len(response.parts) == 1
+        tool_call_part = response.parts[0]
+        assert isinstance(tool_call_part, ToolCallPart)
+        assert tool_call_part.tool_name == 'get_weather'
+
+        assert 'location' in tool_call_part.args_as_dict()
+        assert tool_call_part.args_as_dict()['location'] == 'London'
+
+    async def test_databricks_structured_output(
+        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+    ) -> None:
+        provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+
+        class CityInfo(BaseModel):
+            city: str
+            country: str
+            population_approx: int
+
+        agent = Agent(model, output_type=CityInfo)
+
+        result = await agent.run('Tell me about Tokyo.')
+
+        assert isinstance(result.output, CityInfo)
+        assert result.output.city == 'Tokyo'
+        assert result.output.country == 'Japan'
+        assert result.output.population_approx > 1000000
+
+    async def test_databricks_usage_tracking(
+        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+    ) -> None:
+        provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        agent = Agent(model)
+
+        result = await agent.run('Hello')
+
+        assert result.usage() == snapshot(RunUsage(input_tokens=7, output_tokens=13, requests=1))
+
+        last_msg = result.all_messages()[-1]
+        assert isinstance(last_msg, ModelResponse)
+        assert last_msg.provider_details is not None
+        # Verify raw Databricks usage fields are preserved
+        assert 'usage' in last_msg.provider_details
+
+    async def test_databricks_multimodal_content_structure(
+        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+    ) -> None:
+        """
+        Test that multimodal inputs (Text + Image) are correctly mapped to the
+        List[ContentItem] schema required by Databricks, using _map_messages inspection.
+        """
+        provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+
+        fake_image_data = b'fake_image_bytes'
+        inputs = [
+            'What is in this image?',
+            BinaryContent(data=fake_image_data, media_type='image/png'),
+        ]
+
+        message = ModelRequest.user_text_prompt(inputs)
+
+        mapped_messages = await model._map_messages([message], None)  # type: ignore[reportPrivateUsage]
+
+        assert len(mapped_messages) == 1
+        content = mapped_messages[0]['content']
+
+        assert isinstance(content, list)
+        assert len(content) == 2
+
+        assert content[0] == {'type': 'text', 'text': 'What is in this image?'}
+
+        b64_img = base64.b64encode(fake_image_data).decode('utf-8')
+        assert content[1] == {
+            'type': 'image_url',
+            'image_url': {'url': f'data:image/png;base64,{b64_img}'},
+        }
+
+    async def test_databricks_reasoning_effort_setting(
+        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+    ) -> None:
+        """
+        Test that the 'reasoning_effort' parameter is correctly passed to the client.
+        We use standard unittest.mock.patch since we cannot use respx.
+        """
+        provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        settings = DatabricksModelSettings(openai_reasoning_effort='high')
+
+        with patch.object(model.client.chat.completions, 'create', new_callable=MagicMock) as mock_create:
+
+            async def async_return(*args, **kwargs):
+                from openai.types.chat import ChatCompletion, ChatCompletionMessage
+                from openai.types.chat.chat_completion import Choice
+
+                return ChatCompletion(
+                    id='test-id',
+                    created=123,
+                    model='databricks-gpt-5-2',
+                    object='chat.completion',
+                    choices=[
+                        Choice(
+                            index=0,
+                            message=ChatCompletionMessage(role='assistant', content='Thoughtful answer'),
+                            finish_reason='stop',
+                        )
                     ],
-                    'usage': {'prompt_tokens': 10, 'completion_tokens': 20, 'total_tokens': 30},
-                }
+                )
 
-        if self.stream:
-            if not isinstance(content, list):
-                raise ValueError(f'Stream content must be list of strings, got {type(content)}')
+            mock_create.side_effect = async_return
 
-            async def stream_content():
-                for chunk in content:
-                    if isinstance(chunk, str):
-                        yield chunk.encode('utf-8')
-                    else:
-                        yield json.dumps(chunk).encode('utf-8')
+            await model_request(model, [ModelRequest.user_text_prompt('Think hard')], model_settings=settings)
 
-            return httpx.Response(200, content=stream_content())
+            call_kwargs = mock_create.call_args.kwargs
+            assert call_kwargs.get('reasoning_effort') == 'high'
 
-        return httpx.Response(200, json=content)
+    async def test_databricks_error_handling(self, allow_model_requests: None, databricks_base_url: str) -> None:
+        """Test error handling using standard VCR or by verifying behavior on failure."""
+        provider = DatabricksProvider(api_key='invalid-key', base_url=databricks_base_url)
+        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
 
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model_request(model, [ModelRequest.user_text_prompt('Hello')])
 
-async def test_databricks_model_list_content(allow_model_requests: None):
-    client = httpx.AsyncClient(transport=MockDatabricksTransport())
-    provider = DatabricksProvider(api_key='foo', base_url='https://example.com', http_client=client)
-    model = DatabricksModel('databricks-dbrx-instruct', provider=provider)
-    agent = Agent(model)
-
-    result = await agent.run('Hello')
-    assert result.output == 'Hello from Databricks!'
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=20))
-
-
-async def test_databricks_model_string_content(allow_model_requests: None):
-    # Test standard string content just in case
-    response = {
-        'id': 'chatcmpl-124',
-        'object': 'chat.completion',
-        'created': 1677652299,
-        'model': 'databricks-dbrx-instruct',
-        'choices': [
-            {'index': 0, 'message': {'role': 'assistant', 'content': 'Hello string world!'}, 'finish_reason': 'stop'}
-        ],
-        'usage': {'prompt_tokens': 5, 'completion_tokens': 5, 'total_tokens': 10},
-    }
-
-    client = httpx.AsyncClient(transport=MockDatabricksTransport([response]))
-    provider = DatabricksProvider(api_key='foo', base_url='https://example.com', http_client=client)
-    model = DatabricksModel('databricks-dbrx-instruct', provider=provider)
-    agent = Agent(model)
-
-    result = await agent.run('Hello')
-    assert result.output == 'Hello string world!'
-
-
-def test_infer_model_databricks():
-    from pydantic_ai.models import infer_model
-    from pydantic_ai.models.databricks import DatabricksModel
-
-    model = infer_model('databricks:my-model')
-    assert isinstance(model, DatabricksModel)
-    assert model.model_name == 'my-model'
-
-
-async def test_databricks_model_streaming_list_content(allow_model_requests: None):
-    # Test streaming where delta content is a list
-    common = '"created": 1677652288, "model": "databricks-dbrx-instruct", "object": "chat.completion.chunk"'
-    chunks = [
-        f'data: {{"id":"chatcmpl-1", {common}, "choices":[{{"index":0,"delta":{{"role":"assistant","content":""}},"finish_reason":null}}]}}\n\n',
-        f'data: {{"id":"chatcmpl-1", {common}, "choices":[{{"index":0,"delta":{{"content":[{{"type":"text","text":"Stream"}}]}}}}]}}\n\n',
-        f'data: {{"id":"chatcmpl-1", {common}, "choices":[{{"index":0,"delta":{{"content":[{{"type":"text","text":"ing"}}]}}}}]}}\n\n',
-        'data: [DONE]\n\n',
-    ]
-
-    client = httpx.AsyncClient(transport=MockDatabricksTransport(responses=[chunks], stream=True))
-    provider = DatabricksProvider(api_key='foo', base_url='https://example.com', http_client=client)
-    model = DatabricksModel('databricks-dbrx-instruct', provider=provider)
-    agent = Agent(model)
-
-    async with agent.run_stream('Hello') as result:
-        output = ''
-        async for chunk in result.stream_text():
-            output += chunk
-        assert output == 'Streaming'
+        assert exc_info.value.status_code in (400, 401, 403)

@@ -1,0 +1,81 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "117"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: What is the capital of France?
+            role: user
+        model: databricks-gpt-5-2
+        stream: false
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      headers:
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "773"
+        content-type:
+          - application/json
+        openai-organization:
+          - databricks-serverless
+        openai-processing-ms:
+          - "325"
+        openai-project:
+          - proj_XWG0smJyU1OZznEnXiHbHa7z
+        openai-version:
+          - "2020-10-01"
+        server-timing:
+          - request_id;dur=0;desc="7ce4f175-08c8-494f-ac37-9fa3c4b6523d", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            message:
+              annotations: []
+              content: Paris.
+              refusal: null
+              role: assistant
+        created: 1768775226
+        id: chatcmpl-CzVWc2zGIP8e1a47GQYkpGRPszQ7h
+        model: gpt-5.2-2025-12-11
+        object: chat.completion
+        service_tier: default
+        system_fingerprint: null
+        usage:
+          completion_tokens: 5
+          completion_tokens_details:
+            accepted_prediction_tokens: 0
+            audio_tokens: 0
+            reasoning_tokens: 0
+            rejected_prediction_tokens: 0
+          prompt_tokens: 13
+          prompt_tokens_details:
+            audio_tokens: 0
+            cached_tokens: 0
+          total_tokens: 18
+      status:
+        code: 200
+        message: OK
+version: 1

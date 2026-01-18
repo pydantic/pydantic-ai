@@ -1,0 +1,110 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "515"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: What is the weather in London?
+            role: user
+        model: databricks-gpt-5-2
+        stream: false
+        tool_choice: auto
+        tools:
+          - function:
+              description: Get the current weather.
+              name: get_weather
+              parameters:
+                description: Get the current weather.
+                properties:
+                  location:
+                    title: Location
+                    type: string
+                  unit:
+                    default: celsius
+                    enum:
+                      - celsius
+                      - fahrenheit
+                    title: Unit
+                    type: string
+                required:
+                  - location
+                title: GetWeather
+                type: object
+            type: function
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      headers:
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "1073"
+        content-type:
+          - application/json
+        openai-organization:
+          - databricks-serverless
+        openai-processing-ms:
+          - "475"
+        openai-project:
+          - proj_XWG0smJyU1OZznEnXiHbHa7z
+        openai-version:
+          - "2020-10-01"
+        server-timing:
+          - request_id;dur=0;desc="62240a6a-0da4-4bf8-bfb0-64d1eff94154", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: tool_calls
+            index: 0
+            message:
+              annotations: []
+              content: null
+              refusal: null
+              role: assistant
+              tool_calls:
+                - function:
+                    arguments: '{"location":"London","unit":"celsius"}'
+                    name: get_weather
+                  id: call_4gC5hql9jzqxMCPCHBxyNfCA
+                  type: function
+        created: 1768775227
+        id: chatcmpl-CzVWd0qvwVFY2GPv1MndL6FfAgElp
+        model: gpt-5.2-2025-12-11
+        object: chat.completion
+        service_tier: default
+        system_fingerprint: null
+        usage:
+          completion_tokens: 22
+          completion_tokens_details:
+            accepted_prediction_tokens: 0
+            audio_tokens: 0
+            reasoning_tokens: 0
+            rejected_prediction_tokens: 0
+          prompt_tokens: 163
+          prompt_tokens_details:
+            audio_tokens: 0
+            cached_tokens: 0
+          total_tokens: 185
+      status:
+        code: 200
+        message: OK
+version: 1

@@ -1,0 +1,71 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "136"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: Count to 3
+            role: user
+        model: databricks-gpt-5-2
+        stream: true
+        stream_options:
+          include_usage: true
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      body:
+        string: |+
+          data: {"id":"chatcmpl-CzVWciW1KC2BFGuUbnrPM3rqibUQJ","object":"chat.completion.chunk","created":1768775226,"model":"gpt-5.2-2025-12-11","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"hMHb9fQd"}
+
+          data: {"id":"chatcmpl-CzVWciW1KC2BFGuUbnrPM3rqibUQJ","object":"chat.completion.chunk","created":1768775226,"model":"gpt-5.2-2025-12-11","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"1"},"finish_reason":null}],"usage":null,"obfuscation":"Yq6KymSDB"}
+
+          data: {"id":"chatcmpl-CzVWciW1KC2BFGuUbnrPM3rqibUQJ","object":"chat.completion.chunk","created":1768775226,"model":"gpt-5.2-2025-12-11","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"  \n"},"finish_reason":null}],"usage":null,"obfuscation":"94HISe"}
+
+          data: {"id":"chatcmpl-CzVWciW1KC2BFGuUbnrPM3rqibUQJ","object":"chat.completion.chunk","created":1768775226,"model":"gpt-5.2-2025-12-11","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"2"},"finish_reason":null}],"usage":null,"obfuscation":"jMneuD7G3"}
+
+          data: {"id":"chatcmpl-CzVWciW1KC2BFGuUbnrPM3rqibUQJ","object":"chat.completion.chunk","created":1768775226,"model":"gpt-5.2-2025-12-11","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"  \n"},"finish_reason":null}],"usage":null,"obfuscation":"usDZQK"}
+
+          data: {"id":"chatcmpl-CzVWciW1KC2BFGuUbnrPM3rqibUQJ","object":"chat.completion.chunk","created":1768775226,"model":"gpt-5.2-2025-12-11","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"3"},"finish_reason":null}],"usage":null,"obfuscation":"koaLO9iMO"}
+
+          data: {"id":"chatcmpl-CzVWciW1KC2BFGuUbnrPM3rqibUQJ","object":"chat.completion.chunk","created":1768775226,"model":"gpt-5.2-2025-12-11","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null,"obfuscation":"yDtM"}
+
+          data: {"model":"gpt-5.2-2025-12-11","service_tier":"default","choices":[],"usage":{"cache_read_input_tokens":0,"completion_tokens":8,"prompt_tokens":10,"total_tokens":18,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"object":"chat.completion.chunk","id":"chatcmpl-CzVWciW1KC2BFGuUbnrPM3rqibUQJ","obfuscation":"hGAJegyiJa","system_fingerprint":null,"created":1768775226}
+
+      headers:
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-type:
+          - text/event-stream
+        openai-organization:
+          - databricks-serverless
+        openai-processing-ms:
+          - "153"
+        openai-project:
+          - proj_XWG0smJyU1OZznEnXiHbHa7z
+        openai-version:
+          - "2020-10-01"
+        server-timing:
+          - request_id;dur=0;desc="3daa61b5-9549-499f-bc0d-0d8b55e08acb", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+      status:
+        code: 200
+        message: OK
+version: 1
+...

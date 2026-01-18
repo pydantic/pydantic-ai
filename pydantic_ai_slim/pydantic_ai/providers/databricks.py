@@ -60,13 +60,8 @@ class DatabricksProvider(Provider[AsyncOpenAI]):
             self._base_url = str(openai_client.base_url)
             return
 
-        api_key = api_key or os.getenv('DATABRICKS_TOKEN') or os.getenv('DATABRICKS_API_KEY')
-        base_url = base_url or os.getenv('DATABRICKS_BASE_URL')
-
-        if not base_url:
-            host = os.getenv('DATABRICKS_HOST')
-            if host:
-                base_url = f'{host.rstrip("/")}/serving-endpoints'
+        api_key = api_key or os.getenv('DATABRICKS_API_KEY') or os.getenv('DATABRICKS_TOKEN')
+        base_url = base_url or os.getenv('DATABRICKS_BASE_URL') or os.getenv('DATABRICKS_HOST')
 
         if not base_url:
             raise UserError(
@@ -74,21 +69,10 @@ class DatabricksProvider(Provider[AsyncOpenAI]):
                 'to use the Databricks provider.'
             )
 
-        self._base_url = base_url
+        if not base_url.endswith('/serving-endpoints'):
+            base_url = f'{base_url.rstrip("/")}/serving-endpoints'
 
-        if not api_key:
-            # Databricks might use other auth methods (e.g. metadata service), but explicit token is standard.
-            # We warn or raise? OpenAI client requires api_key usually, unless we pass something else.
-            # We can use a dummy key if it's not needed (e.g. auth proxy), but standard is token.
-            # We'll allow empty if user knows what they are doing (e.g. pass via http_client headers),
-            # but OpenAI client complains if api_key is missing.
-            api_key = 'nop'  # Placeholder if not provided, assuming auth might be handled by env or http_client?
-            # Actually, let's look for DATABRICKS_TOKEN. If not found, raise UserError?
-            # User might rely on .netrc?
-            # Let's try to be helpful.
-            if not http_client:  # If http_client is custom, maybe it handles auth.
-                # raise UserError(...)
-                pass
+        self._base_url = base_url
 
         if http_client is None:
             http_client = cached_async_http_client(provider='databricks')
