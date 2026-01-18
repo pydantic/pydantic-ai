@@ -1129,9 +1129,9 @@ async def test_web_fetch_scenario() -> None:
                 continue  # pragma: lax no cover
             if not isinstance(result.content, list):
                 continue  # pragma: lax no cover
-            for item in result.content:
+            for item in result.content:  # pragma: no branch
                 content: UrlMetadataDict = item  # type: ignore[assignment]
-                if content['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':  # pragma: no branch
+                if content['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':
                     return True
         return False
 
