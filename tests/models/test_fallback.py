@@ -1126,14 +1126,14 @@ async def test_web_fetch_scenario() -> None:
         url_retrieval_status: str
 
     def web_fetch_failed(response: ModelResponse) -> bool:
-        for call, result in response.builtin_tool_calls:
+        for call, result in response.builtin_tool_calls:  # pragma: no branch
             if call.tool_name != 'web_fetch':
                 continue  # pragma: lax no cover
             if not isinstance(result.content, list):
                 continue  # pragma: lax no cover
             # Cast needed because result.content is typed as Any
             items = cast(list[UrlMetadataDict], result.content)  # pyright: ignore[reportUnknownMemberType]
-            for item in items:
+            for item in items:  # pragma: no branch
                 if item['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':
                     return True
         return False
