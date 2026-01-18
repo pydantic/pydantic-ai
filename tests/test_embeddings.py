@@ -901,15 +901,9 @@ class TestBedrockHandlers:
             'embeddings': {'float': [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]},
             'id': 'test-id',
         }
-        result = handler.parse_response(
-            response_body=response_body,
-            inputs=['hello', 'world'],
-            input_type='document',
-            model_name='cohere.embed-english-v3',
-            provider_name='bedrock',
-            input_tokens=10,
-        )
-        assert result.embeddings == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        embeddings, response_id = handler.parse_response(response_body)
+        assert embeddings == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        assert response_id == 'test-id'
 
     def test_cohere_handler_parse_response_list_format(self):
         """Test Cohere handler parsing direct list format embeddings (default response)."""
@@ -921,15 +915,9 @@ class TestBedrockHandlers:
             'embeddings': [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
             'id': 'test-id',
         }
-        result = handler.parse_response(
-            response_body=response_body,
-            inputs=['hello', 'world'],
-            input_type='document',
-            model_name='cohere.embed-english-v3',
-            provider_name='bedrock',
-            input_tokens=10,
-        )
-        assert result.embeddings == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        embeddings, response_id = handler.parse_response(response_body)
+        assert embeddings == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        assert response_id == 'test-id'
 
     def test_cohere_handler_parse_response_missing_embeddings(self):
         """Test Cohere handler raises error when embeddings field is missing."""
@@ -939,14 +927,7 @@ class TestBedrockHandlers:
         handler = CohereEmbeddingHandler()
         response_body = {'id': 'test-id'}  # No embeddings field
         with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
-            handler.parse_response(
-                response_body=response_body,
-                inputs=['hello'],
-                input_type='query',
-                model_name='cohere.embed-english-v3',
-                provider_name='bedrock',
-                input_tokens=5,
-            )
+            handler.parse_response(response_body)
 
     def test_cohere_handler_parse_response_empty_dict_embeddings(self):
         """Test Cohere handler raises error when embeddings dict has no float key."""
@@ -957,14 +938,7 @@ class TestBedrockHandlers:
         # Dict format but no 'float' key
         response_body = {'embeddings': {'int8': [[1, 2, 3]]}, 'id': 'test-id'}
         with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
-            handler.parse_response(
-                response_body=response_body,
-                inputs=['hello'],
-                input_type='query',
-                model_name='cohere.embed-english-v3',
-                provider_name='bedrock',
-                input_tokens=5,
-            )
+            handler.parse_response(response_body)
 
     def test_cohere_handler_parse_response_unexpected_embeddings_type(self):
         """Test Cohere handler raises error when embeddings is unexpected type."""
@@ -975,14 +949,7 @@ class TestBedrockHandlers:
         # Embeddings is a string (unexpected type - neither dict nor list)
         response_body: dict[str, Any] = {'embeddings': 'unexpected', 'id': 'test-id'}
         with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
-            handler.parse_response(
-                response_body=response_body,
-                inputs=['hello'],
-                input_type='query',
-                model_name='cohere.embed-english-v3',
-                provider_name='bedrock',
-                input_tokens=5,
-            )
+            handler.parse_response(response_body)
 
     def test_nova_handler_parse_response_empty_embeddings(self):
         """Test Nova handler raises error when embeddings list is empty."""
@@ -992,14 +959,7 @@ class TestBedrockHandlers:
         handler = NovaEmbeddingHandler()
         response_body: dict[str, Any] = {'embeddings': []}  # Empty list
         with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
-            handler.parse_response(
-                response_body=response_body,
-                inputs=['hello'],
-                input_type='query',
-                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
-                provider_name='bedrock',
-                input_tokens=5,
-            )
+            handler.parse_response(response_body)
 
     def test_nova_handler_parse_response_missing_embedding(self):
         """Test Nova handler raises error when embedding field is missing in response item."""
@@ -1009,14 +969,7 @@ class TestBedrockHandlers:
         handler = NovaEmbeddingHandler()
         response_body = {'embeddings': [{'embeddingType': 'TEXT'}]}  # Missing 'embedding' key
         with pytest.raises(UnexpectedModelBehavior, match='did not have an `embedding` field'):
-            handler.parse_response(
-                response_body=response_body,
-                inputs=['hello'],
-                input_type='query',
-                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
-                provider_name='bedrock',
-                input_tokens=5,
-            )
+            handler.parse_response(response_body)
 
     async def test_invoke_model_client_error_with_status_code(self, bedrock_provider: BedrockProvider):
         """Test error handling when ClientError is raised with HTTP status code."""

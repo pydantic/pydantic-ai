@@ -155,21 +155,14 @@ class BedrockEmbeddingHandler(ABC):
     def parse_response(
         self,
         response_body: dict[str, Any],
-        inputs: list[str],
-        input_type: EmbedInputType,
-        model_name: str,
-        provider_name: str,
-        input_tokens: int,
-    ) -> EmbeddingResult:
+    ) -> tuple[list[Sequence[float]], str | None]:
         """Parse the response from the embedding model.
 
         Args:
             response_body: The parsed JSON response body.
-            inputs: The input texts that were embedded.
-            input_type: The type of input (document or query).
-            model_name: The name of the model.
-            provider_name: The name of the provider.
-            input_tokens: The input token count from HTTP headers.
+
+        Returns:
+            A tuple of (embeddings, response_id). response_id may be None.
         """
         raise NotImplementedError
 
@@ -209,22 +202,9 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
     def parse_response(
         self,
         response_body: dict[str, Any],
-        inputs: list[str],
-        input_type: EmbedInputType,
-        model_name: str,
-        provider_name: str,
-        input_tokens: int,
-    ) -> EmbeddingResult:
+    ) -> tuple[list[Sequence[float]], str | None]:
         embedding = response_body['embedding']
-
-        return EmbeddingResult(
-            embeddings=[embedding],
-            inputs=inputs,
-            input_type=input_type,
-            usage=RequestUsage(input_tokens=input_tokens),
-            model_name=model_name,
-            provider_name=provider_name,
-        )
+        return [embedding], None
 
 
 class CohereEmbeddingHandler(BedrockEmbeddingHandler):
@@ -263,15 +243,9 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
     def parse_response(
         self,
         response_body: dict[str, Any],
-        inputs: list[str],
-        input_type: EmbedInputType,
-        model_name: str,
-        provider_name: str,
-        input_tokens: int,
-    ) -> EmbeddingResult:
-        # Cohere returns embeddings in different formats based on embedding_types
-        # Default is float embeddings (when embedding_types not specified)
-        # When embedding_types is specified, returns a dict with keys like 'float', 'int8', etc.
+    ) -> tuple[list[Sequence[float]], str | None]:
+        # Cohere returns embeddings in different formats based on embedding_types parameter.
+        # We always request float embeddings (the default when embedding_types is not specified).
         embeddings: list[Sequence[float]] | None = None
         if 'embeddings' in response_body:
             raw_embeddings = response_body['embeddings']
@@ -289,15 +263,7 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
                 str(response_body),
             )
 
-        return EmbeddingResult(
-            embeddings=embeddings,
-            inputs=inputs,
-            input_type=input_type,
-            usage=RequestUsage(input_tokens=input_tokens),
-            model_name=model_name,
-            provider_name=provider_name,
-            provider_response_id=response_body.get('id'),
-        )
+        return embeddings, response_body.get('id')
 
 
 class NovaEmbeddingHandler(BedrockEmbeddingHandler):
@@ -364,12 +330,7 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
     def parse_response(
         self,
         response_body: dict[str, Any],
-        inputs: list[str],
-        input_type: EmbedInputType,
-        model_name: str,
-        provider_name: str,
-        input_tokens: int,
-    ) -> EmbeddingResult:
+    ) -> tuple[list[Sequence[float]], str | None]:
         # Nova returns embeddings in format: {"embeddings": [{"embeddingType": "TEXT", "embedding": [...]}]}
         embeddings_list = response_body.get('embeddings', [])
         if not embeddings_list:
@@ -386,14 +347,7 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
                 str(response_body),
             )
 
-        return EmbeddingResult(
-            embeddings=[embedding],
-            inputs=inputs,
-            input_type=input_type,
-            usage=RequestUsage(input_tokens=input_tokens),
-            model_name=model_name,
-            provider_name=provider_name,
-        )
+        return [embedding], None
 
 
 def _get_handler_for_model(model_name: str) -> BedrockEmbeddingHandler:
@@ -532,14 +486,16 @@ class BedrockEmbeddingModel(EmbeddingModel):
         """Embed all inputs in a single batch request."""
         body = self._handler.prepare_request(inputs, input_type, settings)
         response, input_tokens = await self._invoke_model(body)
+        embeddings, response_id = self._handler.parse_response(response)
 
-        return self._handler.parse_response(
-            response,
-            inputs,
-            input_type,
-            self.model_name,
-            self.system,
-            input_tokens,
+        return EmbeddingResult(
+            embeddings=embeddings,
+            inputs=inputs,
+            input_type=input_type,
+            usage=RequestUsage(input_tokens=input_tokens),
+            model_name=self.model_name,
+            provider_name=self.system,
+            provider_response_id=response_id,
         )
 
     async def _embed_sequential(
@@ -555,16 +511,8 @@ class BedrockEmbeddingModel(EmbeddingModel):
         for text in inputs:
             body = self._handler.prepare_request([text], input_type, settings)
             response, input_tokens = await self._invoke_model(body)
-
-            result = self._handler.parse_response(
-                response,
-                [text],
-                input_type,
-                self.model_name,
-                self.system,
-                input_tokens,
-            )
-            all_embeddings.extend(result.embeddings)
+            embeddings, _ = self._handler.parse_response(response)
+            all_embeddings.extend(embeddings)
             total_input_tokens += input_tokens
 
         return EmbeddingResult(
