@@ -60,11 +60,12 @@ with try_import() as imports_successful:
     from openai.types.responses import (
         ResponseCreatedEvent,
         ResponseFunctionWebSearch,
+        ResponseOutputTextAnnotationAddedEvent,
         ResponseTextDeltaEvent,
         ResponseTextDoneEvent,
     )
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
-    from openai.types.responses.response_output_text import Logprob, ResponseOutputText
+    from openai.types.responses.response_output_text import AnnotationURLCitation, Logprob, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -574,6 +575,13 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
 
 
 async def test_openai_responses_stream_logprobs(allow_model_requests: None):
+    annotation = AnnotationURLCitation(
+        type='url_citation',
+        start_index=0,
+        end_index=5,
+        title='Example',
+        url='https://example.com',
+    )
     logprob = Logprob.model_construct(
         token='Paris',
         bytes=[80, 97, 114, 105, 115],
@@ -593,6 +601,15 @@ async def test_openai_responses_stream_logprobs(allow_model_requests: None):
             content_index=0,
             delta='Paris',
         ),
+        ResponseOutputTextAnnotationAddedEvent.model_construct(
+            type='response.output_text.annotation.added',
+            sequence_number=1,
+            item_id='msg_1',
+            output_index=0,
+            content_index=0,
+            annotation_index=0,
+            annotation=annotation,
+        ),
         ResponseTextDoneEvent.model_construct(
             type='response.output_text.done',
             item_id='msg_1',
@@ -604,7 +621,10 @@ async def test_openai_responses_stream_logprobs(allow_model_requests: None):
     ]
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_logprobs=True))
+    agent = Agent(
+        model=model,
+        model_settings=OpenAIResponsesModelSettings(openai_logprobs=True, openai_include_raw_annotations=True),
+    )
 
     async with agent.run_stream('What is the capital of France?') as result:
         async for response, is_last in result.stream_responses(debounce_by=None):
@@ -618,6 +638,17 @@ async def test_openai_responses_stream_logprobs(allow_model_requests: None):
                             'bytes': [80, 97, 114, 105, 115],
                             'logprob': -0.1,
                             'top_logprobs': [],
+                        }
+                    ]
+                )
+                assert text_part.provider_details['annotations'] == snapshot(
+                    [
+                        {
+                            'type': 'url_citation',
+                            'start_index': 0,
+                            'end_index': 5,
+                            'title': 'Example',
+                            'url': 'https://example.com',
                         }
                     ]
                 )
