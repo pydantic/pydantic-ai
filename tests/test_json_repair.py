@@ -135,3 +135,32 @@ async def test_dict_args_still_work():
         ToolCallPart(tool_name='subtract', args={'a': 10, 'b': 3}),
     )
     assert result == 7
+
+
+async def test_repair_doesnt_help_validation_error():
+    """Test that validation errors are raised when repair doesn't help.
+
+    When JSON is syntactically valid but semantically wrong (e.g., wrong types),
+    repair won't change it, so the original validation error should be raised.
+    """
+    pytest.importorskip('fast_json_repair')
+
+    from pydantic_ai.exceptions import ToolRetryError
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool
+    def typed_func(count: int) -> int:
+        """A function that expects an int."""
+        return count * 2
+
+    context = build_run_context()
+    tool_manager = await ToolManager[None](toolset).for_run_step(context)
+
+    # Valid JSON syntax, but wrong type - repair won't change this
+    invalid_type_json = '{"count": "not_an_integer"}'
+
+    with pytest.raises(ToolRetryError):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='typed_func', args=invalid_type_json),
+        )
