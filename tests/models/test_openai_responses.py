@@ -57,7 +57,12 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
-    from openai.types.responses import ResponseFunctionWebSearch, ResponseTextDeltaEvent, ResponseTextDoneEvent
+    from openai.types.responses import (
+        ResponseCreatedEvent,
+        ResponseFunctionWebSearch,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+    )
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_text import Logprob, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
@@ -576,6 +581,11 @@ async def test_openai_responses_stream_logprobs(allow_model_requests: None):
         top_logprobs=[],
     )
     stream = [
+        ResponseCreatedEvent.model_construct(
+            type='response.created',
+            sequence_number=0,
+            response=response_message([]),
+        ),
         ResponseTextDeltaEvent.model_construct(
             type='response.output_text.delta',
             item_id='msg_1',
