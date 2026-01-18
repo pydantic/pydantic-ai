@@ -29,9 +29,9 @@ try:
         # repair_json returns str when return_objects=False
         return str(result)
 
-except ImportError:
+except ImportError as _import_error:
 
-    def _maybe_repair_json(json_string: str) -> str:  # pragma: no cover
+    def _maybe_repair_json(json_string: str) -> str:
         """Fallback when fast_json_repair is not available - returns input unchanged."""
         return json_string
 
