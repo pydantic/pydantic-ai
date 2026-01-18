@@ -99,7 +99,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     """
 
     bedrock_cohere_truncate: Literal['NONE', 'START', 'END']
-    """The truncation strategy for Cohere models.
+    """The truncation strategy for Cohere models. Overrides base `truncate` setting.
 
     - `'NONE'` (default): Raise an error if input exceeds max tokens.
     - `'START'`: Truncate the start of the input.
@@ -109,7 +109,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     # ==================== Amazon Nova Settings ====================
 
     bedrock_nova_truncate: Literal['NONE', 'START', 'END']
-    """The truncation strategy for Nova models.
+    """The truncation strategy for Nova models. Overrides base `truncate` setting.
 
     - `'NONE'` (default): Raise an error if input exceeds max tokens.
     - `'START'`: Truncate the start of the input.
@@ -120,10 +120,6 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
         'GENERIC_INDEX',
         'GENERIC_RETRIEVAL',
         'TEXT_RETRIEVAL',
-        'IMAGE_RETRIEVAL',
-        'VIDEO_RETRIEVAL',
-        'DOCUMENT_RETRIEVAL',
-        'AUDIO_RETRIEVAL',
         'CLASSIFICATION',
         'CLUSTERING',
     ]
@@ -133,8 +129,11 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     - `'query'` maps to `'GENERIC_RETRIEVAL'` (optimized for search)
     - `'document'` maps to `'GENERIC_INDEX'` (optimized for indexing)
 
-    Other options: `'TEXT_RETRIEVAL'`, `'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`,
-    `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
+    Other options: `'TEXT_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
+
+    Note: Multimodal-specific purposes (`'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`,
+    `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`) are not supported as this
+    embedding model only accepts text input.
     """
 
 

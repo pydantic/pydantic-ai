@@ -433,7 +433,7 @@ embedder = Embedder(
 **Nova-specific settings:**
 
 - `bedrock_nova_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`. Overrides the base `truncate` setting if provided.
-- `bedrock_nova_embedding_purpose` — Embedding purpose. Defaults to `'GENERIC_RETRIEVAL'` for `embed_query()` and `'GENERIC_INDEX'` for `embed_documents()`. Other options: `'TEXT_RETRIEVAL'`, `'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`, `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
+- `bedrock_nova_embedding_purpose` — Embedding purpose. Defaults to `'GENERIC_RETRIEVAL'` for `embed_query()` and `'GENERIC_INDEX'` for `embed_documents()`. Other options: `'TEXT_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
 
 ```python {title="bedrock_nova.py"}
 from pydantic_ai import Embedder
