@@ -323,9 +323,11 @@ fallback_model = FallbackModel(
 agent = Agent(fallback_model)
 
 # If Google's web_fetch fails, automatically falls back to Anthropic
-result = agent.run_sync('Summarize https://example.com')
+result = agent.run_sync('Summarize https://ai.pydantic.dev')
 print(result.output)
-#> Example.com is a reserved domain used for illustrative examples in documents.
+"""
+Pydantic AI is a Python agent framework for building production-grade LLM applications.
+"""
 ```
 
 Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
