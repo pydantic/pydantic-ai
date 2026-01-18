@@ -268,6 +268,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     * Google
+    * OpenRouter
     """
 
     background: Literal['transparent', 'opaque', 'auto'] = 'auto'
@@ -345,6 +346,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * Google image-generation models (Gemini)
+    * OpenRouter image-generation models (Gemini, Flux)
     * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
     """
 
