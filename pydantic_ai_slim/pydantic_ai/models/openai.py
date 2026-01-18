@@ -1257,6 +1257,11 @@ class OpenAIResponsesModel(Model):
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
+
+        # Handle ModelResponse
+        if isinstance(response, ModelResponse):
+            return response
+
         return self._process_response(
             response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
