@@ -1129,7 +1129,7 @@ async def test_web_fetch_scenario() -> None:
                 continue  # pragma: lax no cover
             if not isinstance(result.content, list):
                 continue  # pragma: lax no cover
-            for item in cast(list[UrlMetadataDict], result.content):  # pyright: ignore[reportUnknownMemberType]  # pragma: no branch
+            for item in cast(list[UrlMetadataDict], result.content):  # pragma: no branch  # pyright: ignore[reportUnknownMemberType]
                 if item['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':
                     return True
         return False
