@@ -716,13 +716,8 @@ class XaiStreamedResponse(StreamedResponse):
 
         if response.encrypted_content and response.encrypted_content != prev_encrypted_content:
             prev_encrypted_content = response.encrypted_content
-            # We want the final `ThinkingPart` (used in message history and `PartEndEvent`) to include the signature,
-            # but streaming-wise we avoid emitting the signature twice (once on `PartStartEvent` and again on
-            # `PartEndEvent`) in cases where xAI provides the signature as a single accumulated field.
-            #
-            # So we:
-            # - ensure a thinking part exists (emitting a `PartStartEvent` if needed), but WITHOUT the signature
-            # - update the signature in the parts manager WITHOUT emitting a delta event
+            # Ensure the thinking part exists first (without signature), then emit signature as delta.
+            # This ensures PartStartEvent has no signature, and signature appears only in PartDeltaEvent.
             if not self._parts_manager.has_vendor_part('reasoning'):
                 events.extend(
                     self._parts_manager.handle_thinking_delta(
@@ -731,13 +726,14 @@ class XaiStreamedResponse(StreamedResponse):
                         provider_name=self.system,
                     )
                 )
-
-            for _ in self._parts_manager.handle_thinking_delta(
-                vendor_part_id='reasoning',
-                signature=response.encrypted_content,
-                provider_name=self.system,
-            ):
-                pass
+            # Now emit signature as a delta
+            events.extend(
+                self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning',
+                    signature=response.encrypted_content,
+                    provider_name=self.system,
+                )
+            )
 
         return prev_reasoning_content, prev_encrypted_content, events
 

@@ -49,6 +49,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -1655,7 +1656,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                     ),
                     ThinkingPart(
                         content='',
-                        signature='Q6enYseda6glbObZ3kvu0ucqotfntHKDrZnZuM1dQ6JDVj8MSTv7u2FOYklYuZ4VOHeNDd8Ae1jjuFyPwR/KZPa8diO4ABTsZk+0oqnETR+Ky4xcdYjM80wMos0N958JEuGVyJUt439iFclhgaH4rMbegHFx2a+17RevvMJsJJ19XtvBGcQlYURkXAGIzJrWlNEKUG4sW1xwUdDmY0HuKlzNW/e8JFFcJ1HTcaLjbfxzJnnbYEQDNq9urClr1W0aHpJWNlVz/1UDsiRxp+49+kCSGJqa+SscNnmaUpWB11dNJU3lxu2Agv1TEHhvrRf4LCTuMih2w8OXiZ05VKBGUxY9HNAJBeaoTCp0erDUGzCQ/lqMw4+i5US1/j7mkI/zEQsEJAmvupfC1O7HwU78vICVurQnU1y+yBQWqSm0hMqp1Zmnmh9VyNuzUKqZm5m4bMOp7cCPM6XtOXljP6Cy6eWXLp5lsI4djA',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
@@ -1667,7 +1668,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                     ),
                     ThinkingPart(
                         content='',
-                        signature='hRHeKXB8bdRZl9r6b6TVRxc7naVa1qspWfYh393FYN1THpUVetMFyIT3xEskg07JU22Q45QlWr+773ohtRarMMIOfMar2bIFWDI+gHtXOcT7bWhKyX09tOP/k06WpFG9exgdo5wgOaQw79+SG9UiOwnVwCxb/ZfcqWSiuPnM96KJ1IHq9TAx2RgCpyLhY3V4d+t0G+YRUFI/6p6vP1cL++uDSztPMk5pRH1sMj1bfhRQKstsKXAASXiuqolVuxYWZ79wzQVhDKEptEggscKh/Ek3rq/SGowJ6xfVxqy0jxMnldGJsy4z2zrSrDLz8jfjKqzGpgSPaXZtxLIBs9qaBUbc9V3KzJYJqYmcVUQQXt+tSEF9tiImSUc8O6Aszfq6I/CuIdS/ZpVhsW0sAnUzyQQf7vonBVl62pGoYFSycMSP',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
                     BuiltinToolCallPart(
@@ -2417,7 +2418,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
                 parts=[
                     ThinkingPart(
                         content='',
-                        signature='qynidRAxOaQsb+Ua8ZIc6a4NGi7li4jd5tydyFKRweot7PB3gCiCK+H7zOKTxzjx4wfm4WvEHqLitpSmEYdZAbr1hzf3WIRmWH+uKlG4/XwhwDnFeRDjjBOcmAhTR1oDF/Vv7mr73ReEvl6XQHESgBiGxphQIRazfskTGs3iP931RHi8k7hrGbTchOJs5NI/20sNX0VtoeL7AEuXXilr9L1ASCseS9x5jL4y7efI6XMRg9Xo2JRPpxlMv4u/JfxJHqr/ku5WgShUsNkIim0/SC2PrEL9/QxyQBxkUZBFyOU0fP3uPCcAYfXvtg10NPF6GtgzIBE04eNc5NpijSMHVX7nQDqntohSk7lHHJfN2qGMXmkh7y3CZywaWwewm3XzfgbEKy0Y1MvAG+2L1v5QXo6yh9MyuaIQdueijxiiTKkkgL8GilsbEhds/tXX7nc2hPS/ieO/S/1PBkFLSedKqVkM9omu2F1mg7fnGnSfU2iUn1JJd5pgDdBoguoB6o8KpCK91dpk9+J1MlghjFqqUvlVPqEbiYT6DX8mCs0a317cs+CSFOJvaM8VKNwK1WSIvt7P3iUmmbds3tc55Y8',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
                     BuiltinToolCallPart(
@@ -2483,7 +2484,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                     ),
                     ThinkingPart(
                         content='',
-                        signature='wC3KzkkKI+h4XnEAMmhFmyo5/g5h92L7Fm8/k+8EGw5G43jR0Fyqe9F2dY4sENFmqNSKLE43qLRUBm6YWivVT+5SDNU05wjSl4qasTOJMvdzLg+u/sjancAduWZvmOfXuqXOuq8kUw0LeQ5HG0AA8OL6m+kBpHe0yrs3/E7bUxKC6RmeGG3OMV5bEOwIS8iYERmO3U2IGen3G6EG8E/5RYgJA9vZRSN6p3lkMA/rhT+cxOf0dBh0ZykMj/Xz+Q7dzmkM1kDyzuArtUkxCfEZhklaEiXj6ojEpLzHAk+9NgkZTdsgzyZe1Vz8mSmElCs78m4HBbq1FYCU5/J9kvaXPwugM5JyanLMcIuJAloDpyMX9LA8Wt8QZzYM+IAGvPuTy/+q+FNZq/jrmJatmu6zrx3W1fZKK5DsFcAV7voj6bhhcF5anMOHR8gobunGswr7cxnT56t8VdvIphwnOEyRN+kA5tWqwlsNBtoPnIreb80+KuPAMPHujf1JvvDTcSCmcflSesg6MH6GjeFIvGzm5j8d4u4xIPDzQQH8pzL9R/H6NOiC3wUMMMV5HgpnTCmb3QaoQpfHHe2ZoS99KEp3IP6S2tYxoA2KtBBsTUfCpAel7kH5VVv0TgaLGP1lXCWT1ayTX3WqtvWpzIod',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
                     TextPart(
@@ -2557,7 +2558,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                 parts=[
                     ThinkingPart(
                         content='',
-                        signature='nAARcuG1WrrOihjyhaPpVRYnz2tyTOiZ4uCSybvcYy0gk2HXRvtRj5InGSI5zGKbv7Wq6ht2scPbFguvb/a+fCQlHqs7EojklFK7VQdd61WS92PUXQ0c/poPXRYSgK5oUlgl79LF/Iji1wjyYSNuC5O8AwCpNsIG0l+WGVa1uVXg2S/hzGQgJed0Gx9wRksxVhf/uTCPaUnaPBgaVvqJKx3slXdTxeqCPNqRIBbJQQON16f040d3JmVtX5fNk2xUjYDrrz5+djSalxk7kItObuta+KgStN3sk9RuTerKW31nYP1OA1G9/+Sg3txT8GggUrV8MmW6LkLg9YuKjjBlzOBRID45LLuw2g5w7nd+8TvA1B2I7ChInwMDSHI+ztt6mtREoSqSpKCTfqkndS3qvfL3G+NAcA4GvRji8BjFGdyF4kPY44qnVDHh+1xh/xc8sp6t1+qNS6MsttXR4A/owsMJNk/Zx0eBgCxe7jcCy44xg2j8g/IqIgNa9qgRYptO/4GbxakdEQ',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
                     BuiltinToolCallPart(
@@ -2622,11 +2623,18 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
     assert event_parts == snapshot(
         [
             PartStartEvent(index=0, part=ThinkingPart(content='', provider_name='xai')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta=IsStr(),
+                    provider_name='xai',
+                ),
+            ),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
                     content='',
-                    signature='eCdVeTLLYaF7HG9GmhBKf6p76gkTy50E+FwuV07Q38ygY210aSxYB4SrWRxFQv9FmHfIGTl8z3lXpLbLMLSNMjBhnCZd6Xg7EivOKgBeQqxuZpOtvduu18UKq+Jq/P3Ug6l5lOxJhrhRvVIT51iFEhfzF+y9aeZLGXJ5S/mA9rJSydrjjpZb9S+5515cC/KQrEoa9fdkFNC5zUlVkY0JZ6MHQcHADmUIqXWzIXH3Ia+awbAIL5IyLOBvec9Yk0D91XSNgTLvRWz7pVeyIqeF//GqcvkfdVurkLjZaNivhdO+D9k/p70oq7D/b1PgaIHB0suenDK9Sxt04F+e+r/vyBF+55ZTPotDxmLpkRbtcTTmyzW6vO/PgP7rJNoi3F8hIgbi0quPGI+zMF6UW3Mw090nrEXWCyOXQlvt3q+7iG5sq0E7cQdkArO9xVqU6qn1mxvC+6mzqwbhJ/jGqrOJ8GwvODnHIE2+5VoUPG4qV4hW01fIdHYcXRhSpRoBKC1EXKkVqTorHRNoV0a6AE+6Rwoil/KOZ+u6rHanj5qw71ANJ/Qffi/RQxjWmKD8P/hwR+UaK/PAEHKlz1qc4YCTNq3T1i+ZIwiRPJ1xcpmkhksyh6+Mn1rIDdpJPD/pbPgJ1tQ/crCdE8X5nzZWJgL9KlTC7C4CIxDlOSEniwZVqYBaSHtFsBAssrJq4QN1mQwwKxkmnpcm1Q7aCVky/0OaaLv8TziwalE2EefIwSU6W2KPpW2RTAT5fdKqTfH1RfUdUb3ZjVEu9508//mrUg3siddU8EBWLoX5JN64hL7kzrYSsqXWv8M5SeKOHPHWvmV6BrE5oPOS+btri+kXQeSXtP0S/y/1fl2mbh8feZD5crE5ChZ86Pq/dhaNEp8jx7415l+tw81r+FvHXr56JXNru1sFu64GZRv067dpluFd48FhgOENdW/iek7TSMqNAUEDH43wiGnxgB4HeXSzPE9EOe8iQeZyyICGUZHmym8jaQkNjdZaf7w0R8nnN5iqz2pAF5AjlHKpWAiTebt+j+hDrlhuzPXIqKoULcc5xEcLrWzdH6qGvK83hOUQUljRQHowIcV7Xv/QsiicJudIRzemkIs',
+                    signature=IsStr(),
                     provider_name='xai',
                 ),
                 next_part_kind='builtin-tool-call',
@@ -2691,6 +2699,13 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                     provider_name='xai',
                 ),
                 previous_part_kind='builtin-tool-call',
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta=IsStr(),
+                    provider_name='xai',
+                ),
             ),
             PartStartEvent(index=3, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
@@ -3076,9 +3091,13 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(
+            PartStartEvent(index=0, part=ThinkingPart(content='', provider_name='xai')),
+            PartDeltaEvent(
                 index=0,
-                part=ThinkingPart(content='', signature=None, provider_name='xai'),
+                delta=ThinkingPartDelta(
+                    signature_delta=IsStr(),
+                    provider_name='xai',
+                ),
             ),
             PartEndEvent(
                 index=0,
