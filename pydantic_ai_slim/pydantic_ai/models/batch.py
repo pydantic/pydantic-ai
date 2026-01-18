@@ -43,7 +43,7 @@ class BatchModel(Model):
 
     Example usage pattern::
 
-        async with BatchModel('openai:gpt-4o-mini', batch_size=100) as batch_model:
+        async with BatchModel('openai:gpt-5-mini', batch_size=100) as batch_model:
             agent = Agent(model=batch_model)
             tasks = [agent.run(prompt) for prompt in prompts]
             await batch_model.submit()

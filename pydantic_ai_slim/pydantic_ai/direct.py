@@ -440,7 +440,7 @@ async def model_request_batch(
     **Cancellation**: To cancel a running batch, use `asyncio.create_task(...).cancel()`.
     The function will attempt to cancel the batch on the API before raising `CancelledError`.
 
-    ```py {title="model_request_batch_example.py" test="skip"}
+    ```py title="model_request_batch_example.py"
     from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_batch
 
@@ -449,10 +449,9 @@ async def model_request_batch(
         requests = [
             ('question-1', [ModelRequest.user_text_prompt('What is 2+2?')]),
             ('question-2', [ModelRequest.user_text_prompt('What is 3+3?')]),
-            ('question-3', [ModelRequest.user_text_prompt('What is the capital of France?')]),
         ]
 
-        results = await model_request_batch('openai:gpt-4o-mini', requests, poll_interval=30.0)
+        results = await model_request_batch('openai:gpt-5-mini', requests, poll_interval=30.0)
 
         for result in results:
             if result.is_successful:
@@ -605,7 +604,7 @@ async def batch_create(
 
     See the [OpenAI Batch API docs](https://platform.openai.com/docs/guides/batch) for details.
 
-    ```py {title="batch_create_example.py" test="skip"}
+    ```py title="batch_create_example.py"
     from pydantic_ai import ModelRequest
     from pydantic_ai.direct import batch_create
 
@@ -616,7 +615,7 @@ async def batch_create(
             ('req-1', [ModelRequest.user_text_prompt('What is 2+2?')]),
             ('req-2', [ModelRequest.user_text_prompt('What is 3+3?')]),
         ]
-        batch = await batch_create('openai:gpt-4o-mini', requests)
+        batch = await batch_create('openai:gpt-5-mini', requests)
         print(f'Batch {batch.id} created with status: {batch.status}')
     ```
 

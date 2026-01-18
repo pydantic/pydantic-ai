@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import re
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -51,6 +51,10 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
+    Batch,
+    BatchError,
+    BatchResult,
+    BatchStatus,
     Model,
     ModelRequestParameters,
     StreamedResponse,
@@ -58,6 +62,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._batch_utils import parse_batch_datetime
 
 try:
     from google.genai import Client, errors
@@ -192,6 +197,54 @@ class GoogleModelSettings(ModelSettings, total=False):
 
     See <https://ai.google.dev/gemini-api/docs/caching> for more information.
     """
+
+
+@dataclass
+class GoogleBatch(Batch):
+    """Google-specific batch job information.
+
+    Extends the base Batch class with Google-specific fields.
+    Use this with `GoogleModel.batch_create()` to submit batch requests
+    at 50% reduced cost.
+
+    Example:
+        ```python
+        from pydantic_ai.messages import ModelRequest
+        from pydantic_ai.models import ModelRequestParameters
+        from pydantic_ai.models.google import GoogleModel
+
+
+        async def main():
+            model = GoogleModel('gemini-2.0-flash')
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ]
+            batch = await model.batch_create(requests)
+            print(f'Batch {batch.id} created with {batch.request_count} requests')
+        ```
+    """
+
+    name: str | None = None
+    """Full resource name of the batch job."""
+
+    display_name: str | None = None
+    """User-friendly display name for the batch."""
+
+    state: str | None = None
+    """Raw Google JOB_STATE_* value."""
+
+
+# Mapping from Google job state to BatchStatus
+_GOOGLE_BATCH_STATUS_MAP: dict[str, BatchStatus] = {
+    'JOB_STATE_PENDING': BatchStatus.PENDING,
+    'JOB_STATE_RUNNING': BatchStatus.IN_PROGRESS,
+    'JOB_STATE_SUCCEEDED': BatchStatus.COMPLETED,
+    'JOB_STATE_FAILED': BatchStatus.FAILED,
+    'JOB_STATE_CANCELLED': BatchStatus.CANCELLED,
+    'JOB_STATE_CANCELLING': BatchStatus.CANCELLING,
+    'JOB_STATE_EXPIRED': BatchStatus.EXPIRED,
+}
 
 
 @dataclass(init=False)
@@ -745,6 +798,280 @@ class GoogleModel(Model):
             response_schema['description'] = o.description
 
         return response_schema
+
+    # --- Batch Processing Methods ---
+
+    async def batch_create(
+        self,
+        requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
+        model_settings: ModelSettings | None = None,
+    ) -> GoogleBatch:
+        """Submit a batch of requests to Google for asynchronous processing.
+
+        Batch processing offers 50% cost reduction compared to regular API calls.
+        Google batches can contain up to 200,000 requests.
+
+        See [Google Batch Prediction docs](https://ai.google.dev/gemini-api/docs/batch) for details.
+
+        Args:
+            requests: List of (custom_id, messages, parameters) tuples.
+                - custom_id: Unique identifier to match results to requests
+                - messages: Message history for this request
+                - parameters: Tool definitions, output schema, etc.
+            model_settings: Settings applied to all requests in batch.
+
+        Returns:
+            GoogleBatch with job information.
+
+        Raises:
+            ValueError: If batch contains fewer than 2 requests.
+
+        Example:
+            ```python
+            from pydantic_ai.messages import ModelRequest
+            from pydantic_ai.models import ModelRequestParameters
+            from pydantic_ai.models.google import GoogleModel
+
+
+            async def main():
+                model = GoogleModel('gemini-2.0-flash')
+                requests = [
+                    ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                    ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+                ]
+                batch = await model.batch_create(requests)
+                return batch
+            ```
+        """
+        check_allow_model_requests()
+
+        if len(requests) < 2:
+            raise ValueError('Batch must contain at least 2 requests')
+
+        # Prepare model settings once
+        base_settings = cast(GoogleModelSettings, model_settings or {})
+
+        # Build batch requests inline (Google uses src array, not file upload)
+        batch_requests: list[dict[str, Any]] = []
+        for custom_id, messages, params in requests:
+            # Prepare request parameters using the same logic as regular requests
+            prepared_settings, prepared_params = self.prepare_request(base_settings, params)
+
+            # Build content and config using existing method
+            contents, config = await self._build_content_and_config(
+                messages,
+                cast(GoogleModelSettings, prepared_settings or {}),
+                prepared_params,
+            )
+
+            # Format as batch request
+            batch_request = {
+                'custom_id': custom_id,
+                'request': {
+                    'contents': contents,
+                    'config': config,
+                },
+            }
+            batch_requests.append(batch_request)
+
+        try:
+            # Submit batch via Google's batch API
+            batch_response = await self.client.aio.batches.create(
+                model=self._model_name,
+                src=batch_requests,  # type: ignore[arg-type]
+            )
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=e.details,  # type: ignore[arg-type]
+                ) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+
+        return self._parse_batch_response(batch_response)
+
+    async def batch_status(self, batch: Batch) -> GoogleBatch:
+        """Get current status of a Google batch job.
+
+        Args:
+            batch: Batch object from batch_create() or previous batch_status().
+
+        Returns:
+            Updated GoogleBatch object with current status.
+        """
+        check_allow_model_requests()
+
+        if not isinstance(batch, GoogleBatch):  # pragma: no cover
+            raise TypeError(f'Expected GoogleBatch, got {type(batch).__name__}')
+
+        try:
+            batch_response = await self.client.aio.batches.get(name=batch.name or batch.id)
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=e.details,  # type: ignore[arg-type]
+                ) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+
+        return self._parse_batch_response(batch_response)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        """Retrieve results from a completed Google batch.
+
+        This method retrieves results from a completed batch job and converts
+        each response using the same `_process_response()` logic used for
+        regular API calls.
+
+        Args:
+            batch: Batch object that has is_complete=True.
+
+        Returns:
+            List of BatchResult objects, one per request in the batch.
+
+        Raises:
+            ValueError: If batch is not complete.
+            TypeError: If batch is not a GoogleBatch.
+        """
+        check_allow_model_requests()
+
+        if not batch.is_complete:
+            raise ValueError(f'Batch {batch.id} is not complete (status: {batch.status})')
+
+        if not isinstance(batch, GoogleBatch):  # pragma: no cover
+            raise TypeError(f'Expected GoogleBatch, got {type(batch).__name__}')
+
+        results: list[BatchResult] = []
+
+        try:
+            # Google returns results as part of the batch response or via a separate endpoint
+            batch_response: Any = await self.client.aio.batches.get(name=batch.name or batch.id)
+
+            # Process each result in the batch
+            if hasattr(batch_response, 'responses') and batch_response.responses:
+                item: Any
+                for item in batch_response.responses:
+                    custom_id: str = str(getattr(item, 'custom_id', '') or '')
+                    try:
+                        if hasattr(item, 'error') and item.error:
+                            item_error: Any = item.error
+                            error_type: str = str(getattr(item_error, 'code', 'unknown_error'))
+                            error_message: str = str(getattr(item_error, 'message', str(item_error)))
+                            results.append(
+                                BatchResult(
+                                    custom_id=custom_id,
+                                    error=BatchError(code=error_type, message=error_message),
+                                )
+                            )
+                        elif hasattr(item, 'response') and item.response:
+                            # Convert the response using existing _process_response logic
+                            item_response: GenerateContentResponse = cast(GenerateContentResponse, item.response)
+                            model_response = self._process_response(item_response)
+                            results.append(BatchResult(custom_id=custom_id, response=model_response))
+                        else:
+                            results.append(
+                                BatchResult(
+                                    custom_id=custom_id,
+                                    error=BatchError(code='no_response', message='No response in batch result'),
+                                )
+                            )
+                    except Exception as e:
+                        results.append(
+                            BatchResult(
+                                custom_id=custom_id,
+                                error=BatchError(code='processing_error', message=str(e)),
+                            )
+                        )
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=e.details,  # type: ignore[arg-type]
+                ) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+
+        return results
+
+    async def batch_cancel(self, batch: Batch) -> GoogleBatch:
+        """Cancel a Google batch job.
+
+        Args:
+            batch: Batch object to cancel.
+
+        Returns:
+            Updated GoogleBatch object with cancellation status.
+        """
+        check_allow_model_requests()
+
+        if not isinstance(batch, GoogleBatch):  # pragma: no cover
+            raise TypeError(f'Expected GoogleBatch, got {type(batch).__name__}')
+
+        try:
+            batch_response = await self.client.aio.batches.cancel(name=batch.name or batch.id)
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=e.details,  # type: ignore[arg-type]
+                ) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+
+        return self._parse_batch_response(batch_response)
+
+    def _parse_batch_response(self, response: Any) -> GoogleBatch:
+        """Convert Google batch response to GoogleBatch object."""
+        # Extract state from response
+        state: Any = getattr(response, 'state', None)
+        if isinstance(state, str):
+            state_str = state
+        elif state is not None and hasattr(state, 'name'):
+            state_str = cast(str, state.name)
+        elif state is not None and hasattr(state, 'value'):
+            state_str = cast(str, state.value)
+        else:
+            state_str = str(state) if state else 'JOB_STATE_PENDING'
+
+        # Map Google state to BatchStatus
+        status = _GOOGLE_BATCH_STATUS_MAP.get(state_str, BatchStatus.PENDING)
+
+        # Extract timestamps using shared utility
+        created_at = parse_batch_datetime(getattr(response, 'create_time', None)) or _utils.now_utc()
+        completed_at = parse_batch_datetime(getattr(response, 'end_time', None))
+
+        # Extract counts
+        request_count = 0
+        completed_count = 0
+        failed_count = 0
+
+        if hasattr(response, 'request_counts'):
+            counts = response.request_counts
+            request_count = getattr(counts, 'total', 0) or 0
+            completed_count = getattr(counts, 'succeeded', 0) or 0
+            failed_count = getattr(counts, 'failed', 0) or 0
+        elif hasattr(response, 'responses') and response.responses:
+            request_count = len(response.responses)
+            for item in response.responses:
+                if hasattr(item, 'error') and item.error:
+                    failed_count += 1
+                else:
+                    completed_count += 1
+
+        return GoogleBatch(
+            id=getattr(response, 'name', '') or str(uuid4()),
+            status=status,
+            created_at=created_at,
+            completed_at=completed_at,
+            request_count=request_count,
+            completed_count=completed_count,
+            failed_count=failed_count,
+            name=getattr(response, 'name', None),
+            display_name=getattr(response, 'display_name', None),
+            state=state_str,
+        )
 
 
 @dataclass

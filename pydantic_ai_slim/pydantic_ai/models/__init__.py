@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, get_args, overload
+from typing import Any, Generic, Literal, Protocol, TypeVar, get_args, overload, runtime_checkable
 
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
@@ -707,6 +707,88 @@ class BatchResult:
     def is_successful(self) -> bool:
         """Whether this individual request succeeded."""
         return self.response is not None and self.error is None
+
+
+@runtime_checkable
+class BatchCapable(Protocol):
+    """Protocol for models that support batch processing.
+
+    Models implementing this protocol provide all four batch methods:
+    - `batch_create`: Submit a batch of requests for async processing
+    - `batch_status`: Check current status of a batch job
+    - `batch_results`: Retrieve results from a completed batch
+    - `batch_cancel`: Cancel a pending/in-progress batch
+
+    Use [`supports_batch(model)`][pydantic_ai.models.supports_batch] to check
+    if a model supports batching at runtime.
+
+    Example:
+        ```python
+        from pydantic_ai.models import supports_batch
+        from pydantic_ai.models.openai import OpenAIChatModel
+
+        model = OpenAIChatModel('gpt-4o-mini')
+        if supports_batch(model):
+            batch = await model.batch_create(requests)
+        ```
+    """
+
+    async def batch_create(
+        self,
+        requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
+        model_settings: ModelSettings | None = None,
+    ) -> Batch: ...
+
+    async def batch_status(self, batch: Batch) -> Batch: ...
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]: ...
+
+    async def batch_cancel(self, batch: Batch) -> Batch: ...
+
+
+def supports_batch(model: Model) -> bool:
+    """Check if a model supports batch processing.
+
+    Performs a runtime check that the model implements all four
+    batch methods (not just the base class NotImplementedError stubs).
+
+    This is the recommended way to check for batch support before
+    calling batch methods.
+
+    Args:
+        model: The model instance to check.
+
+    Returns:
+        True if the model supports batch processing, False otherwise.
+
+    Example:
+        ```python
+        from pydantic_ai.models import supports_batch
+        from pydantic_ai.models.openai import OpenAIChatModel
+
+        model = OpenAIChatModel('gpt-4o-mini')
+        if supports_batch(model):
+            batch = await model.batch_create(requests)
+        else:
+            # Fall back to regular requests
+            ...
+        ```
+    """
+    model_class = model.__class__
+
+    for method_name in ('batch_create', 'batch_status', 'batch_results', 'batch_cancel'):
+        # Check if the model class has overridden the method
+        model_method = getattr(model_class, method_name, None)
+        base_method = getattr(Model, method_name, None)
+
+        if model_method is None:
+            return False
+
+        # If the method is the same as the base Model class method, it's a stub
+        if model_method is base_method:
+            return False
+
+    return True
 
 
 class Model(ABC):

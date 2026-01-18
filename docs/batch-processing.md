@@ -38,7 +38,7 @@ async def main():
     # Submit batch and wait for completion (50% cost savings!)
     # This handles polling internally - no manual status checks needed
     results = await model_request_batch(
-        'openai:gpt-4o-mini',
+        'openai:gpt-5-mini',
         requests,
         poll_interval=60.0,  # Check status every 60 seconds
     )
@@ -83,7 +83,7 @@ async def main():
 
     # Use timeout parameter for automatic cancellation
     results = await model_request_batch(
-        'openai:gpt-4o-mini',
+        'openai:gpt-5-mini',
         requests,
         timeout=1800.0,  # Cancel if not complete within 30 minutes
     )
@@ -115,7 +115,7 @@ async def main():
     ]
 
     task = asyncio.create_task(
-        model_request_batch('openai:gpt-4o-mini', requests)
+        model_request_batch('openai:gpt-5-mini', requests)
     )
 
     try:
@@ -172,7 +172,7 @@ async def main():
     ]
 
     results = await model_request_batch(
-        'openai:gpt-4o-mini',
+        'openai:gpt-5-mini',
         requests,
         model_request_parameters=params,
     )
@@ -202,22 +202,22 @@ Batch processing is supported by multiple providers:
 |----------|--------|-------|
 | OpenAI | ✅ Supported | 50% discount, 24-hour processing window |
 | Anthropic | ✅ Supported | 50% discount, 24-hour expiration |
-| Google | 🔮 Planned | Batch prediction support coming |
+| Google | ✅ Supported | 50% discount, inline array submission |
 
 Other providers will raise `NotImplementedError` when calling batch methods.
 
 ### Provider Differences
 
-| Capability | OpenAI | Anthropic |
-|------------|--------|-----------|
-| Different model per request | ❌ | ✅ |
-| Different tools per request | ✅ | ✅ |
-| Different temperature per request | ✅ | ✅ |
-| Different max_tokens per request | ✅ | ✅ |
-| Different response_format per request | ✅ | ✅ |
+| Capability | OpenAI | Anthropic | Google |
+|------------|--------|-----------|--------|
+| Different model per request | ❌ | ✅ | ❌ |
+| Different tools per request | ✅ | ✅ | ✅ |
+| Different temperature per request | ✅ | ✅ | ✅ |
+| Different max_tokens per request | ✅ | ✅ | ✅ |
+| Different response_format per request | ✅ | ✅ | ✅ |
 
 !!! note "Submission Format"
-    OpenAI uses JSONL file upload internally, while Anthropic uses direct JSON array submission. This is handled automatically by pydantic-ai.
+    OpenAI uses JSONL file upload internally, while Anthropic and Google use direct JSON array submission. This is handled automatically by pydantic-ai.
 
 ## Batch Status and Results
 
@@ -236,7 +236,7 @@ async def main():
         ('request-2', [ModelRequest.user_text_prompt('World')]),
     ]
 
-    results = await model_request_batch('openai:gpt-4o-mini', requests)
+    results = await model_request_batch('openai:gpt-5-mini', requests)
 
     for result in results:
         # custom_id matches your original request identifier
@@ -293,7 +293,7 @@ async def main():
     ]
 
     # Submit batch
-    batch = await batch_create('openai:gpt-4o-mini', requests)
+    batch = await batch_create('openai:gpt-5-mini', requests)
     print(f'Batch {batch.id} submitted with {batch.request_count} requests')
     #> Batch batch_mock_123 submitted with 2 requests
 
@@ -302,12 +302,12 @@ async def main():
     while not batch.is_complete:
         print(f'Status: {batch.status} - waiting {wait_time}s...')
         await asyncio.sleep(wait_time)
-        batch = await batch_status('openai:gpt-4o-mini', batch)
+        batch = await batch_status('openai:gpt-5-mini', batch)
         wait_time = min(wait_time * 1.5, 300)  # Cap at 5 minutes
 
     # Retrieve and process results
     if batch.is_successful:
-        results = await batch_results('openai:gpt-4o-mini', batch)
+        results = await batch_results('openai:gpt-5-mini', batch)
         for result in results:
             if result.is_successful:
                 print(f'{result.custom_id}: {result.response.parts[0].content}')
@@ -337,7 +337,7 @@ async def main():
         ('q1', [ModelRequest.user_text_prompt('Hello')]),
     ]
 
-    batch = await batch_create('openai:gpt-4o-mini', requests)
+    batch = await batch_create('openai:gpt-5-mini', requests)
 
     # Check if batch has finished (successfully or not)
     print(f'Is complete: {batch.is_complete}')
@@ -379,7 +379,7 @@ async def main():
     # Instrumentation can be enabled for batch processing
     # by passing instrument=True (requires logfire configured)
     results = await model_request_batch(
-        'openai:gpt-4o-mini',
+        'openai:gpt-5-mini',
         requests,
     )
 

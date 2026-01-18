@@ -61,6 +61,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._batch_utils import parse_batch_datetime
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'end_turn': 'stop',
@@ -1447,8 +1448,6 @@ class AnthropicModel(Model):
 
     def _parse_batch_response(self, response: Any) -> AnthropicBatch:
         """Convert Anthropic batch response to AnthropicBatch object."""
-        from datetime import timezone
-
         # Map Anthropic processing_status to our normalized enum
         # Anthropic uses: in_progress, canceling, ended
         processing_status = getattr(response, 'processing_status', 'in_progress')
@@ -1491,32 +1490,19 @@ class AnthropicModel(Model):
         completed_count = succeeded_count
         failed_count = errored_count + canceled_count + expired_count
 
-        # Parse datetime fields
-        def parse_datetime(value: str | None) -> datetime | None:
-            if not value:
-                return None
-            # Handle RFC 3339 format
-            try:
-                # Try parsing with timezone
-                return datetime.fromisoformat(value.replace('Z', '+00:00'))
-            except (ValueError, AttributeError):
-                return None
-
-        created_at = parse_datetime(getattr(response, 'created_at', None))
-        if created_at is None:
-            created_at = datetime.now(tz=timezone.utc)
+        created_at = parse_batch_datetime(getattr(response, 'created_at', None)) or _utils.now_utc()
 
         return AnthropicBatch(
             id=response.id,
             status=status,
             created_at=created_at,
-            completed_at=parse_datetime(getattr(response, 'ended_at', None)),
+            completed_at=parse_batch_datetime(getattr(response, 'ended_at', None)),
             request_count=request_count,
             completed_count=completed_count,
             failed_count=failed_count,
             results_url=getattr(response, 'results_url', None),
-            expires_at=parse_datetime(getattr(response, 'expires_at', None)),
-            cancel_initiated_at=parse_datetime(getattr(response, 'cancel_initiated_at', None)),
+            expires_at=parse_batch_datetime(getattr(response, 'expires_at', None)),
+            cancel_initiated_at=parse_batch_datetime(getattr(response, 'cancel_initiated_at', None)),
             processing_count=processing_count,
             succeeded_count=succeeded_count,
             errored_count=errored_count,

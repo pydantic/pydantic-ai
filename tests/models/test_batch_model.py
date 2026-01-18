@@ -77,9 +77,9 @@ class TestBatchModelBasics:
             mock_model = create_mock_model()
             mock_infer.return_value = mock_model
 
-            batch_model = BatchModel('openai:gpt-4o-mini', batch_size=10)
+            batch_model = BatchModel('openai:gpt-5-mini', batch_size=10)
 
-            mock_infer.assert_called_once_with('openai:gpt-4o-mini')
+            mock_infer.assert_called_once_with('openai:gpt-5-mini')
             assert batch_model.wrapped == mock_model
             assert batch_model.batch_size == 10
 

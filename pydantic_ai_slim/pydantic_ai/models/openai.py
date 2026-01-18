@@ -8,7 +8,7 @@ import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, cast, overload
 
@@ -76,6 +76,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._batch_utils import BatchResultBuilder, parse_batch_datetime
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
@@ -1394,23 +1395,22 @@ class OpenAIChatModel(Model):
         if not isinstance(batch, OpenAIBatch):  # pragma: no cover
             raise TypeError(f'Expected OpenAIBatch, got {type(batch).__name__}')
 
-        results: list[BatchResult] = []
-        processed_ids: set[str] = set()
+        builder = BatchResultBuilder()
 
         # Download and parse output file
         if batch.output_file_id:
             content = await self._fetch_batch_file(batch.output_file_id)
-            self._parse_batch_output_content(content, results, processed_ids)
+            self._parse_batch_output_content(content, builder)
 
         # Check error file for requests that failed validation/processing.
         # OpenAI may include errors in the output file (inline with results) OR in a separate
-        # error file. We track processed_ids to avoid duplicates when both files exist.
+        # error file. BatchResultBuilder tracks processed_ids to avoid duplicates when both files exist.
         # See: https://platform.openai.com/docs/guides/batch#4-check-the-status-of-a-batch
         if batch.error_file_id:  # pragma: lax no cover
             error_content = await self._fetch_batch_file(batch.error_file_id)
-            self._parse_batch_error_content(error_content, results, processed_ids)
+            self._parse_batch_error_content(error_content, builder)
 
-        return results
+        return builder.results
 
     async def _fetch_batch_file(self, file_id: str) -> str:
         """Fetch content of a batch file from OpenAI."""
@@ -1424,8 +1424,8 @@ class OpenAIChatModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _parse_batch_output_content(self, content: str, results: list[BatchResult], processed_ids: set[str]) -> None:
-        """Parse batch output file content and append results."""
+    def _parse_batch_output_content(self, content: str, builder: BatchResultBuilder) -> None:
+        """Parse batch output file content and add results to builder."""
         for line in content.strip().split('\n'):
             if not line:
                 continue
@@ -1433,40 +1433,31 @@ class OpenAIChatModel(Model):
             try:
                 result_data = json.loads(line)
             except json.JSONDecodeError as e:
-                results.append(
-                    BatchResult(
-                        custom_id=f'parse_error_{len(results)}',
-                        error=BatchError(code='json_parse_error', message=f'Failed to parse result line: {e}'),
-                    )
+                builder.add_error(
+                    f'parse_error_{len(builder.results)}',
+                    BatchError(code='json_parse_error', message=f'Failed to parse result line: {e}'),
+                    skip_duplicate=False,  # Parse errors always get added
                 )
                 continue
 
             custom_id = str(result_data.get('custom_id', ''))
-            processed_ids.add(custom_id)
 
             if result_data.get('error'):
-                results.append(BatchResult(custom_id=custom_id, error=self._extract_batch_error(result_data)))
+                builder.add_error_from_dict(custom_id, result_data)
             else:
                 response_body = result_data.get('response', {}).get('body', {})
                 try:
                     chat_completion = chat.ChatCompletion.model_validate(response_body)
                     model_response = self._process_response(chat_completion)
-                    results.append(BatchResult(custom_id=custom_id, response=model_response))
+                    builder.add_success(custom_id, model_response)
                 except ValidationError as e:
-                    results.append(
-                        BatchResult(
-                            custom_id=custom_id,
-                            error=BatchError(
-                                code='validation_error',
-                                message=f'Failed to validate response: {e}',
-                            ),
-                        )
+                    builder.add_error(
+                        custom_id,
+                        BatchError(code='validation_error', message=f'Failed to validate response: {e}'),
                     )
 
-    def _parse_batch_error_content(
-        self, content: str, results: list[BatchResult], processed_ids: set[str]
-    ) -> None:  # pragma: lax no cover
-        """Parse batch error file content and append results for unprocessed IDs."""
+    def _parse_batch_error_content(self, content: str, builder: BatchResultBuilder) -> None:  # pragma: lax no cover
+        """Parse batch error file content and add results for unprocessed IDs."""
         for line in content.strip().split('\n'):
             if not line:
                 continue
@@ -1477,25 +1468,8 @@ class OpenAIChatModel(Model):
                 continue  # Skip malformed error lines
 
             custom_id = str(error_data.get('custom_id', ''))
-
-            if custom_id not in processed_ids:
-                processed_ids.add(custom_id)
-                results.append(BatchResult(custom_id=custom_id, error=self._extract_batch_error(error_data)))
-
-    def _extract_batch_error(self, data: dict[str, Any]) -> BatchError:
-        """Extract error information from batch result data.
-
-        Handles both output file format (error at top level) and error file format
-        (error nested under 'error' key).
-        """
-        error = data.get('error', {})
-        if isinstance(error, dict):
-            error_dict = cast(dict[str, Any], error)
-            code = str(error_dict.get('code') or 'unknown')
-            message = str(error_dict.get('message') or 'Unknown error')
-            return BatchError(code=code, message=message)
-        # Fallback for unexpected format
-        return BatchError(code='unknown', message=str(error) if error else 'Unknown error')  # pragma: no cover
+            # BatchResultBuilder handles duplicate detection automatically
+            builder.add_error_from_dict(custom_id, error_data)
 
     async def batch_cancel(self, batch: Batch) -> OpenAIBatch:
         """Cancel an OpenAI batch job.
@@ -1542,10 +1516,8 @@ class OpenAIChatModel(Model):
         return OpenAIBatch(
             id=response.id,
             status=status_map.get(response.status, BatchStatus.PENDING),
-            created_at=datetime.fromtimestamp(response.created_at, tz=timezone.utc),
-            completed_at=(
-                datetime.fromtimestamp(response.completed_at, tz=timezone.utc) if response.completed_at else None
-            ),
+            created_at=parse_batch_datetime(response.created_at) or _now_utc(),
+            completed_at=parse_batch_datetime(response.completed_at),
             request_count=request_count,
             completed_count=completed_count,
             failed_count=failed_count,

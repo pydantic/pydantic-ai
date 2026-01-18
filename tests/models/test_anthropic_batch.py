@@ -41,7 +41,7 @@ def create_beta_message(text: str = 'Hello there!') -> BetaMessage:
     return BetaMessage(
         id='msg_123',
         content=[BetaTextBlock(text=text, type='text')],
-        model='claude-sonnet-4-5-20250929',
+        model='claude-sonnet-4-5',
         role='assistant',
         stop_reason='end_turn',
         type='message',
@@ -132,6 +132,13 @@ class MockAnthropicBatchClient:
     batch_create_calls: list[dict[str, Any]] = field(default_factory=list)
     results_entries: list[MockBatchResultEntry] = field(default_factory=list)
     base_url: str = 'https://api.anthropic.com'
+
+    def create_model(self) -> AnthropicModel:
+        """Create an AnthropicModel using this mock as the client."""
+        return AnthropicModel(
+            'claude-sonnet-4-5',
+            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, self)),
+        )
 
     @classmethod
     def create_mock(cls) -> AsyncAnthropic:  # pragma: no cover
@@ -285,10 +292,7 @@ class TestAnthropicModelBatch:
         """Test that batch_create builds proper requests array."""
         mock_client = MockAnthropicBatchClient()
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
@@ -321,10 +325,7 @@ class TestAnthropicModelBatch:
     async def test_batch_create_minimum_requests(self, allow_model_requests: None):
         """Test that batch_create requires at least 2 requests."""
         mock_client = MockAnthropicBatchClient()
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         requests = [
@@ -346,10 +347,7 @@ class TestAnthropicModelBatch:
             )
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         initial_batch = AnthropicBatch(
             id='msgbatch_123',
@@ -372,10 +370,7 @@ class TestAnthropicModelBatch:
             ),
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -407,10 +402,7 @@ class TestAnthropicModelBatch:
             ),
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -443,10 +435,7 @@ class TestAnthropicModelBatch:
             ),
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -472,10 +461,7 @@ class TestAnthropicModelBatch:
             ),
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -494,10 +480,7 @@ class TestAnthropicModelBatch:
     async def test_batch_results_incomplete_raises(self, allow_model_requests: None):
         """Test batch_results raises if batch not complete."""
         mock_client = MockAnthropicBatchClient()
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -511,10 +494,7 @@ class TestAnthropicModelBatch:
     async def test_batch_cancel(self, allow_model_requests: None):
         """Test batch_cancel sends cancel request."""
         mock_client = MockAnthropicBatchClient()
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -544,10 +524,7 @@ class TestAnthropicBatchStatusMapping:
             )
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -568,10 +545,7 @@ class TestAnthropicBatchStatusMapping:
             )
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -594,10 +568,7 @@ class TestAnthropicBatchStatusMapping:
             )
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -620,10 +591,7 @@ class TestAnthropicBatchStatusMapping:
             )
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -646,10 +614,7 @@ class TestAnthropicBatchStatusMapping:
             )
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -672,10 +637,7 @@ class TestAnthropicBatchStatusMapping:
             )
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -698,10 +660,7 @@ class TestAnthropicBatchStatusMapping:
             )
         ]
 
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -729,6 +688,13 @@ class TestAnthropicBatchAPIErrorHandling:
         error_type: str = 'status'  # 'status' or 'connection'
         error_on: str = 'batches.create'
         base_url: str = 'https://api.anthropic.com'
+
+        def create_model(self) -> AnthropicModel:
+            """Create an AnthropicModel using this mock as the client."""
+            return AnthropicModel(
+                'claude-sonnet-4-5',
+                provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, self)),
+            )
 
         @property
         def messages(self) -> Any:
@@ -798,10 +764,7 @@ class TestAnthropicBatchAPIErrorHandling:
     async def test_batch_create_api_status_error(self, allow_model_requests: None):
         """Test batch_create raises ModelHTTPError on APIStatusError."""
         mock_client = self.MockAnthropicWithAPIError(error_type='status', error_on='batches.create')
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
@@ -818,10 +781,7 @@ class TestAnthropicBatchAPIErrorHandling:
     async def test_batch_create_api_connection_error(self, allow_model_requests: None):
         """Test batch_create raises ModelAPIError on APIConnectionError."""
         mock_client = self.MockAnthropicWithAPIError(error_type='connection', error_on='batches.create')
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
@@ -838,10 +798,7 @@ class TestAnthropicBatchAPIErrorHandling:
     async def test_batch_status_api_status_error(self, allow_model_requests: None):
         """Test batch_status raises ModelHTTPError on APIStatusError."""
         mock_client = self.MockAnthropicWithAPIError(error_type='status', error_on='batches.retrieve')
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -857,10 +814,7 @@ class TestAnthropicBatchAPIErrorHandling:
     async def test_batch_status_api_connection_error(self, allow_model_requests: None):
         """Test batch_status raises ModelAPIError on APIConnectionError."""
         mock_client = self.MockAnthropicWithAPIError(error_type='connection', error_on='batches.retrieve')
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -876,10 +830,7 @@ class TestAnthropicBatchAPIErrorHandling:
     async def test_batch_cancel_api_status_error(self, allow_model_requests: None):
         """Test batch_cancel raises ModelHTTPError on APIStatusError."""
         mock_client = self.MockAnthropicWithAPIError(error_type='status', error_on='batches.cancel')
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -895,10 +846,7 @@ class TestAnthropicBatchAPIErrorHandling:
     async def test_batch_cancel_api_connection_error(self, allow_model_requests: None):
         """Test batch_cancel raises ModelAPIError on APIConnectionError."""
         mock_client = self.MockAnthropicWithAPIError(error_type='connection', error_on='batches.cancel')
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -914,10 +862,7 @@ class TestAnthropicBatchAPIErrorHandling:
     async def test_batch_results_api_status_error(self, allow_model_requests: None):
         """Test batch_results raises ModelHTTPError on APIStatusError."""
         mock_client = self.MockAnthropicWithAPIError(error_type='status', error_on='batches.results')
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
@@ -933,10 +878,7 @@ class TestAnthropicBatchAPIErrorHandling:
     async def test_batch_results_api_connection_error(self, allow_model_requests: None):
         """Test batch_results raises ModelAPIError on APIConnectionError."""
         mock_client = self.MockAnthropicWithAPIError(error_type='connection', error_on='batches.results')
-        model = AnthropicModel(
-            'claude-sonnet-4-5-20250929',
-            provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, mock_client)),
-        )
+        model = mock_client.create_model()
 
         batch = AnthropicBatch(
             id='msgbatch_123',
