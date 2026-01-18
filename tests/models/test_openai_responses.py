@@ -654,6 +654,41 @@ async def test_openai_responses_stream_logprobs(allow_model_requests: None):
                 )
 
 
+async def test_openai_include_raw_annotations_streaming(allow_model_requests: None, openai_api_key: str):
+    prompt = 'What is the tallest mountain in Alberta? Provide one sentence with a citation.'
+    instructions = 'Use web search and include citations in your answer.'
+
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=instructions, builtin_tools=[WebSearchTool()])
+
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+
+    async with agent.run_stream(prompt, model_settings=settings) as result:
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                text_part = next(part for part in response.parts if isinstance(part, TextPart))
+                assert text_part.provider_details is not None
+                assert text_part.provider_details['annotations'] == IsInstance(list)
+                json.dumps(text_part.provider_details)
+
+    model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
+    async with agent2.run_stream(prompt) as result2:
+        async for response, is_last in result2.stream_responses(debounce_by=None):
+            if is_last:
+                text_part2 = next(part for part in response.parts if isinstance(part, TextPart))
+                assert text_part2.provider_details is None or 'annotations' not in text_part2.provider_details
+
+    model3 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent3 = Agent(model3, instructions='Answer directly.')
+    settings3 = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+    async with agent3.run_stream('What is 2+2?', model_settings=settings3) as result3:
+        async for response, is_last in result3.stream_responses(debounce_by=None):
+            if is_last:
+                text_part3 = next(part for part in response.parts if isinstance(part, TextPart))
+                assert text_part3.provider_details is None or 'annotations' not in text_part3.provider_details
+
+
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
     """Set temperature to -1 to trigger an error, given only values between 0 and 1 are allowed."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
@@ -9166,3 +9201,8 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
             ),
         ]
     )
+
+    response_msg2 = result2.all_messages()[1]
+    assert isinstance(response_msg2, ModelResponse)
+    text_part2 = next(part for part in response_msg2.parts if isinstance(part, TextPart))
+    assert text_part2.provider_details is None or 'annotations' not in text_part2.provider_details

@@ -1336,11 +1336,10 @@ class OpenAIResponsesModel(Model):
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
                         if model_settings.get('openai_include_raw_annotations') and content.annotations:
-                            if part_provider_details is None:
-                                part_provider_details = {}
+                            part_provider_details = part_provider_details or {}
                             part_provider_details['annotations'] = TypeAdapter(
                                 list[responses.response_output_text.Annotation]
-                            ).dump_python(list(content.annotations))
+                            ).dump_python(list(content.annotations), warnings=False)
                         items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
@@ -2454,9 +2453,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                 # Collect annotations if the setting is enabled
                 if self._model_settings.get('openai_include_raw_annotations'):
-                    if chunk.item_id not in _annotations_by_item:
-                        _annotations_by_item[chunk.item_id] = []
-                    _annotations_by_item[chunk.item_id].append(
+                    _annotations_by_item.setdefault(chunk.item_id, []).append(
                         cast(responses.response_output_text.Annotation, chunk.annotation)
                     )
 
@@ -2472,8 +2469,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 if part is not None and isinstance(part, TextPart):
                     # Add logprobs if available
                     if chunk.logprobs:
-                        if part.provider_details is None:
-                            part.provider_details = {}
+                        part.provider_details = part.provider_details or {}
                         part.provider_details['logprobs'] = _map_logprobs(
                             cast(Sequence[responses.response_output_text.Logprob], chunk.logprobs)
                         )
@@ -2482,11 +2478,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     if self._model_settings.get('openai_include_raw_annotations'):
                         annotations = _annotations_by_item.get(chunk.item_id)
                         if annotations:
-                            if part.provider_details is None:
-                                part.provider_details = {}
+                            part.provider_details = part.provider_details or {}
                             part.provider_details['annotations'] = TypeAdapter(
                                 list[responses.response_output_text.Annotation]
-                            ).dump_python(list(annotations))
+                            ).dump_python(list(annotations), warnings=False)
 
             elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
                 pass  # there's nothing we need to do here
