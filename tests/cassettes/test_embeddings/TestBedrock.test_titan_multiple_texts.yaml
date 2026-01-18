@@ -7,7 +7,7 @@ interactions:
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        YTMzNGUzNjctNTg5MS00YzE4LTkxMWMtNzg4MDFhNmJhYzlk
+        NWMzODdhMjEtZDE5YS00MTg0LWI0YzQtMjVlOTJiY2Y5Yjk1
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -23,9 +23,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '43384'
+      - '45490'
       content-type:
       - application/json
+      x-amzn-bedrock-input-token-count:
+      - '2'
+      x-amzn-bedrock-invocation-latency:
+      - '97'
     parsed_body:
       embedding:
       - -0.0538589172065258
@@ -2090,7 +2094,7 @@ interactions:
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        NGY1OTZkZjgtMjY1ZC00ZTdkLTkxYTMtYmNiNTYwMzVjYTg2
+        YzNlMTVlZjgtNGI5Yy00MTRmLTllMWYtMTIxMmVhY2E2NTRl
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -2106,9 +2110,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '43472'
+      - '45588'
       content-type:
       - application/json
+      x-amzn-bedrock-input-token-count:
+      - '2'
+      x-amzn-bedrock-invocation-latency:
+      - '101'
     parsed_body:
       embedding:
       - -0.007851720787584782

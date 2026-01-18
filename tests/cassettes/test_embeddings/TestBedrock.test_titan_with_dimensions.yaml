@@ -1,18 +1,18 @@
 interactions:
 - request:
-    body: '{"inputText": "Test embedding dimensions", "dimensions": 256, "normalize": true}'
+    body: '{"inputText": "Test embedding dimensions", "dimensions": 256}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        MDEwMWIzYmYtY2Q1YS00ZmVkLTk2NTMtZjVkNzVhZmU3YmYy
+        NzFkYTBjYzQtNzM5MC00MmEwLWE4N2EtM2QyNDk2NmMxNjZl
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '80'
+      - '61'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -23,9 +23,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '10738'
+      - '11268'
       content-type:
       - application/json
+      x-amzn-bedrock-input-token-count:
+      - '4'
+      x-amzn-bedrock-invocation-latency:
+      - '82'
     parsed_body:
       embedding:
       - -0.1208660751581192

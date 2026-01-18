@@ -315,19 +315,6 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
 
 
-@pytest.fixture(autouse=True)
-def mock_vcr_botocore_content_length(mocker: MockerFixture):
-    # VCR doesn't properly handle botocore's content-length verification when replaying responses.
-    # This causes IncompleteReadError when the recorded response body length doesn't match the Content-Length header.
-    # This happens because VCR decodes compressed responses but doesn't update the Content-Length header.
-    try:
-        import botocore.response
-    except ImportError:  # pragma: lax no cover
-        return
-
-    mocker.patch.object(botocore.response.StreamingBody, '_verify_content_length')
-
-
 @pytest.fixture(scope='module')
 def vcr_config():
     return {

@@ -362,10 +362,10 @@ class TestBedrock:
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.titan-embed-text-v2:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
             )
         )
 
@@ -381,10 +381,10 @@ class TestBedrock:
                 embeddings=IsList(IsList(IsFloat(), length=256), length=1),
                 inputs=['Test embedding dimensions'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.titan-embed-text-v2:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
             )
         )
 
@@ -400,10 +400,10 @@ class TestBedrock:
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
                 inputs=['Test normalization'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.titan-embed-text-v2:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=3),
             )
         )
 
@@ -417,10 +417,10 @@ class TestBedrock:
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
                 inputs=['hello', 'world'],
                 input_type='document',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.titan-embed-text-v2:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
             )
         )
 
@@ -436,10 +436,10 @@ class TestBedrock:
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='cohere.embed-english-v3',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
                 provider_response_id=IsStr(),
             )
         )
@@ -448,18 +448,18 @@ class TestBedrock:
         """Test Cohere with bedrock_cohere_truncate setting."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
-        model = BedrockEmbeddingModel('cohere.embed-v4', provider=bedrock_provider)
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='END'))
         result = await embedder.embed_query('Test truncation setting')
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
                 inputs=['Test truncation setting'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
-                model_name='cohere.embed-v4',
-                timestamp=IsDatetime(),
+                model_name='cohere.embed-v4:0',
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
                 provider_response_id=IsStr(),
             )
         )
@@ -468,7 +468,7 @@ class TestBedrock:
         """Test Cohere with base truncate=True setting (maps to END)."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
-        model = BedrockEmbeddingModel('cohere.embed-v4', provider=bedrock_provider)
+        model = BedrockEmbeddingModel('cohere.embed-multilingual-v3', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(truncate=True))
         result = await embedder.embed_query('Test base truncate setting')
         assert result == snapshot(
@@ -476,10 +476,10 @@ class TestBedrock:
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
                 inputs=['Test base truncate setting'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
-                model_name='cohere.embed-v4',
-                timestamp=IsDatetime(),
+                model_name='cohere.embed-multilingual-v3',
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=6),
                 provider_response_id=IsStr(),
             )
         )
@@ -488,7 +488,7 @@ class TestBedrock:
         """Test Cohere with bedrock_cohere_input_type setting."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
-        model = BedrockEmbeddingModel('cohere.embed-v4', provider=bedrock_provider)
+        model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_input_type='classification'))
         result = await embedder.embed_query('Test input type setting')
         assert result == snapshot(
@@ -496,28 +496,28 @@ class TestBedrock:
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
                 inputs=['Test input type setting'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
-                model_name='cohere.embed-v4',
-                timestamp=IsDatetime(),
+                model_name='cohere.embed-english-v3',
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
                 provider_response_id=IsStr(),
             )
         )
 
     async def test_cohere_batch_documents(self, bedrock_provider: BedrockProvider):
         """Test Cohere batch embedding (multiple texts in single request)."""
-        model = BedrockEmbeddingModel('cohere.embed-v4', provider=bedrock_provider)
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
         embedder = Embedder(model)
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=2),
                 inputs=['hello', 'world'],
                 input_type='document',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
-                model_name='cohere.embed-v4',
-                timestamp=IsDatetime(),
+                model_name='cohere.embed-v4:0',
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=2),
                 provider_response_id=IsStr(),
             )
         )
@@ -531,13 +531,13 @@ class TestBedrock:
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.nova-2-multimodal-embeddings-v1:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=19),
             )
         )
 
@@ -553,13 +553,13 @@ class TestBedrock:
         result = await embedder.embed_query('Test Nova settings')
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
                 inputs=['Test Nova settings'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.nova-2-multimodal-embeddings-v1:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=22),
             )
         )
 
@@ -575,13 +575,13 @@ class TestBedrock:
         result = await embedder.embed_query('Test Nova truncate')
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
                 inputs=['Test Nova truncate'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.nova-2-multimodal-embeddings-v1:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=19),
             )
         )
 
@@ -594,13 +594,13 @@ class TestBedrock:
         result = await embedder.embed_query('Test base truncate')
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
                 inputs=['Test base truncate'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.nova-2-multimodal-embeddings-v1:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=19),
             )
         )
 
@@ -616,10 +616,10 @@ class TestBedrock:
                 embeddings=IsList(IsList(IsFloat(), length=256), length=1),
                 inputs=['Test Nova dimensions'],
                 input_type='query',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.nova-2-multimodal-embeddings-v1:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=18),
             )
         )
 
@@ -630,13 +630,13 @@ class TestBedrock:
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=2),
                 inputs=['hello', 'world'],
                 input_type='document',
-                usage=RequestUsage(input_tokens=IsInt(ge=1)),
                 model_name='amazon.nova-2-multimodal-embeddings-v1:0',
-                timestamp=IsDatetime(),
                 provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=6),
             )
         )
 
