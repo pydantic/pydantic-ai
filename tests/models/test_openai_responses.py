@@ -52,20 +52,14 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsStr, TestEnv, try_import
-from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
-
-with try_import() as imports_successful:
-    from openai.types.responses import ResponseFunctionWebSearch, ResponseTextDeltaEvent, ResponseTextDoneEvent
-    from openai.types.responses.response_output_message import Content, ResponseOutputMessage
-    from openai.types.responses.response_output_text import Logprob, ResponseOutputText
-from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
-    from openai.types.responses import ResponseFunctionWebSearch
-    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses import ResponseFunctionWebSearch, ResponseTextDeltaEvent, ResponseTextDoneEvent
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage
+    from openai.types.responses.response_output_text import Logprob, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,

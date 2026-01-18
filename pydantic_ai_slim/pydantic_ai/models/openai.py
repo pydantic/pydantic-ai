@@ -11,8 +11,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, cast, overload
 
-from pydantic import TypeAdapter, ValidationError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
@@ -2238,14 +2237,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _provider_name: str
     _provider_url: str
-
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        # Track annotations by item_id and content_index
-        _annotations_by_item: dict[str, list[responses.response_output_text.Annotation]] = {}
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        # Track annotations by item_id and content_index
+        _annotations_by_item: dict[str, list[responses.response_output_text.Annotation]] = {}
+
         if self._provider_timestamp is not None:  # pragma: no branch
             self.provider_details = {'timestamp': self._provider_timestamp}
 
