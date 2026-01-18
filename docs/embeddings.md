@@ -356,22 +356,13 @@ pip/uv-add "pydantic-ai-slim[bedrock]"
 
 #### Configuration
 
-Authentication with AWS Bedrock uses standard AWS credentials. You can configure credentials via:
-
-- **Environment variables**:
-  ```bash
-  export AWS_ACCESS_KEY_ID='your-access-key'
-  export AWS_SECRET_ACCESS_KEY='your-secret-key'
-  export AWS_REGION='us-east-1'
-  ```
-- **AWS credentials file** (`~/.aws/credentials`)
-- **IAM roles** (when running on AWS infrastructure)
+Authentication with AWS Bedrock uses standard AWS credentials. See the [Bedrock provider documentation](models/bedrock.md#environment-variables) for details on configuring credentials via environment variables, AWS credentials file, or IAM roles.
 
 Ensure your AWS account has access to the Bedrock embedding models you want to use. See [AWS Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) for details.
 
 #### Basic Usage
 
-```python {title="bedrock_embeddings.py" test="skip"}
+```python {title="bedrock_embeddings.py"}
 from pydantic_ai import Embedder
 
 # Using Amazon Titan
@@ -388,117 +379,98 @@ _(This example requires AWS credentials configured)_
 
 #### Supported Models
 
-Bedrock supports three families of embedding models:
+Bedrock supports three families of embedding models via [`BedrockEmbeddingSettings`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings]. See the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models.
 
-**Amazon Titan Embeddings**
+##### Amazon Titan
 
 - `amazon.titan-embed-text-v1` — 1536 dimensions, 8K tokens
 - `amazon.titan-embed-text-v2:0` — 256/384/1024 dimensions (configurable), 8K tokens
 
-```python {title="bedrock_titan.py" test="skip"}
-from pydantic_ai import Embedder
-from pydantic_ai.embeddings import EmbeddingSettings
+**Titan-specific settings:**
 
-# Titan v2 with custom dimensions
+- `bedrock_titan_normalize` — Normalize embedding vectors for direct similarity calculations.
+
+```python {title="bedrock_titan.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
 embedder = Embedder(
     'bedrock:amazon.titan-embed-text-v2:0',
-    settings=EmbeddingSettings(dimensions=256),
+    settings=BedrockEmbeddingSettings(
+        bedrock_titan_normalize=True,
+    ),
 )
 ```
 
-**Cohere Embed on Bedrock**
+##### Cohere Embed
 
 - `cohere.embed-english-v3` — English-only, 512 tokens
 - `cohere.embed-multilingual-v3` — Multilingual, 512 tokens
 - `cohere.embed-v4:0` — Latest Cohere model, 128K tokens
 
-```python {title="bedrock_cohere.py" test="skip"}
-from pydantic_ai import Embedder
+**Cohere-specific settings:**
 
-embedder = Embedder('bedrock:cohere.embed-english-v3')
+- `bedrock_cohere_max_tokens` — Maximum number of tokens to embed.
+- `bedrock_cohere_input_type` — Input type: `'search_query'`, `'search_document'`, `'classification'`, or `'clustering'`. Defaults to `'search_query'` for `embed_query()` and `'search_document'` for `embed_documents()`.
+- `bedrock_cohere_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`.
+
+```python {title="bedrock_cohere.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+embedder = Embedder(
+    'bedrock:cohere.embed-english-v3',
+    settings=BedrockEmbeddingSettings(
+        bedrock_cohere_truncate='END',
+    ),
+)
 ```
 
-**Amazon Nova Embeddings**
+##### Amazon Nova
 
 - `amazon.nova-2-multimodal-embeddings-v1:0` — Multimodal embeddings, 8K tokens
 
-```python {title="bedrock_nova.py" test="skip"}
+**Nova-specific settings:**
+
+- `bedrock_nova_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`.
+- `bedrock_nova_embedding_purpose` — Embedding purpose. Defaults to `'GENERIC_RETRIEVAL'` for `embed_query()` and `'GENERIC_INDEX'` for `embed_documents()`. Other options: `'TEXT_RETRIEVAL'`, `'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`, `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
+
+Nova also supports S3 URIs as input (e.g., `s3://bucket/key`) for embedding files stored in S3.
+
+```python {title="bedrock_nova.py"}
 from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
-embedder = Embedder('bedrock:amazon.nova-2-multimodal-embeddings-v1:0')
+embedder = Embedder(
+    'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
+    settings=BedrockEmbeddingSettings(
+        bedrock_nova_embedding_purpose='TEXT_RETRIEVAL',
+    ),
+)
 ```
-
-See the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models.
 
 #### Regional Prefixes (Cross-Region Inference)
 
-Bedrock supports cross-region inference using geographic prefixes. You can use prefixes like `us.`, `eu.`, or `apac.` to route requests:
+Bedrock supports cross-region inference using geographic prefixes like `us.`, `eu.`, or `apac.`:
 
-```python {title="bedrock_regional.py" test="skip"}
+```python {title="bedrock_regional.py"}
 from pydantic_ai import Embedder
 
-# Use US cross-region inference
 embedder = Embedder('bedrock:us.amazon.titan-embed-text-v2:0')
-
-# Use EU cross-region inference
-embedder = Embedder('bedrock:eu.cohere.embed-english-v3')
 ```
-
-The model automatically normalizes these prefixes when looking up `max_input_tokens()`.
 
 !!! note "Token Counting"
     Bedrock embedding models do not support the `count_tokens()` method because AWS Bedrock's token counting API only works with text generation models (Claude, Llama, etc.), not embedding models. Calling `count_tokens()` will raise `NotImplementedError`.
 
-#### Bedrock-Specific Settings
-
-
-Bedrock models support additional settings via [`BedrockEmbeddingSettings`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings]. All settings are optional — if not specified, model defaults are used.
-
-```python {title="bedrock_settings.py" test="skip"}
-from pydantic_ai import Embedder
-from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
-
-# Use model defaults (recommended for most cases)
-embedder = Embedder('bedrock:amazon.titan-embed-text-v2:0')
-
-# Titan with normalization
-embedder = Embedder(
-    'bedrock:amazon.titan-embed-text-v2:0',
-    settings=BedrockEmbeddingSettings(
-        dimensions=512,
-        bedrock_titan_normalize=True,  # Normalize vectors for similarity calculations
-    ),
-)
-
-# Cohere with truncation
-embedder = Embedder(
-    'bedrock:cohere.embed-english-v3',
-    settings=BedrockEmbeddingSettings(
-        bedrock_cohere_truncate='END',  # Truncate long inputs instead of erroring
-    ),
-)
-
-# Nova with custom embedding purpose
-embedder = Embedder(
-    'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
-    settings=BedrockEmbeddingSettings(
-        bedrock_nova_embedding_purpose='TEXT_RETRIEVAL',  # Optimized for text retrieval
-    ),
-)
-```
-
 #### Using a Custom Provider
 
-For advanced configuration, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly:
+For advanced configuration like explicit credentials or a custom boto3 client, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly. See the [Bedrock provider documentation](models/bedrock.md#provider-argument) for more details.
 
-```python {title="bedrock_provider.py" test="skip"}
-import boto3
-
+```python {title="bedrock_provider.py"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
 from pydantic_ai.providers.bedrock import BedrockProvider
 
-# Using explicit credentials
 provider = BedrockProvider(
     region_name='us-west-2',
     aws_access_key_id='your-access-key',
@@ -506,14 +478,6 @@ provider = BedrockProvider(
 )
 
 model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=provider)
-embedder = Embedder(model)
-
-
-# Using an existing boto3 client
-bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
-provider = BedrockProvider(bedrock_client=bedrock_client)
-
-model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=provider)
 embedder = Embedder(model)
 ```
 
