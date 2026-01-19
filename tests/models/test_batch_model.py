@@ -481,6 +481,13 @@ class TestBatchModelErrorHandling:
         with pytest.raises(RuntimeError, match='Batch failed'):
             await asyncio.wait_for(task, timeout=1.0)
 
+        # Ensure batch task is properly cleaned up to avoid teardown errors
+        if batch_model._batch_task:
+            try:
+                await batch_model._batch_task
+            except Exception:
+                pass
+
     @pytest.mark.anyio
     async def test_individual_request_error_in_result(self) -> None:
         """Test that individual request errors are propagated correctly."""
