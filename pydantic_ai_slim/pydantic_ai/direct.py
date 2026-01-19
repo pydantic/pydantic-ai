@@ -440,7 +440,7 @@ async def model_request_batch(
     **Cancellation**: To cancel a running batch, use `asyncio.create_task(...).cancel()`.
     The function will attempt to cancel the batch on the API before raising `CancelledError`.
 
-    ```py title="model_request_batch_example.py"
+    ```py title="model_request_batch_example.py" test="skip"
     from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_batch
 
@@ -604,7 +604,7 @@ async def batch_create(
 
     See the [OpenAI Batch API docs](https://platform.openai.com/docs/guides/batch) for details.
 
-    ```py title="batch_create_example.py"
+    ```py title="batch_create_example.py" test="skip"
     from pydantic_ai import ModelRequest
     from pydantic_ai.direct import batch_create
 

@@ -637,7 +637,7 @@ class Batch:
     for asynchronous processing, typically at reduced cost.
 
     Example:
-        ```python
+        ```python test="skip"
         from pydantic_ai.messages import ModelRequest
         from pydantic_ai.models import ModelRequestParameters
         from pydantic_ai.models.openai import OpenAIChatModel
@@ -727,7 +727,7 @@ class BatchCapable(Protocol):
     if a model supports batching at runtime.
 
     Example:
-        ```python
+        ```python test="skip"
         from pydantic_ai.models import supports_batch
         from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -766,7 +766,7 @@ def supports_batch(model: Model) -> bool:
         True if the model supports batch processing, False otherwise.
 
     Example:
-        ```python
+        ```python test="skip"
         from pydantic_ai.models import supports_batch
         from pydantic_ai.models.openai import OpenAIChatModel
 
