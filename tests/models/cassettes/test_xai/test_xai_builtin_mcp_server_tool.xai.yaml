@@ -2,31 +2,29 @@ version: 2
 interactions:
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-reasoning
-        messages:
-        - content:
-          - text: You are a helpful assistant.
-          role: ROLE_SYSTEM
-        - content:
-          - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your
-              answer short
-          role: ROLE_USER
-        tools:
-        - mcp:
-            server_label: deepwiki
-            server_description: DeepWiki MCP server
-            server_url: https://mcp.deepwiki.com/mcp
-            allowed_tool_names:
-            - ask_question
-            extra_headers:
-              custom-header-key: custom-header-value
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: true
-        include:
-        - 6
+      messages:
+      - content:
+        - text: You are a helpful assistant.
+        role: ROLE_SYSTEM
+      - content:
+        - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your
+            answer short
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - mcp:
+          server_label: deepwiki
+          server_description: DeepWiki MCP server
+          server_url: https://mcp.deepwiki.com/mcp
+          allowed_tool_names:
+          - ask_question
+          extra_headers:
+            custom-header-key: custom-header-value
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      use_encrypted_content: true
+      include:
+      - INCLUDE_OPTION_MCP_CALL_OUTPUT
     raw: !!binary |
       CiIKHgocWW91IGFyZSBhIGhlbHBmdWwgYXNzaXN0YW50LhADClYKUgpQQ2FuIHlvdSB0ZWxsIG1l
       IG1vcmUgYWJvdXQgdGhlIHB5ZGFudGljL3B5ZGFudGljLWFpIHJlcG8/IEtlZXAgeW91ciBhbnN3

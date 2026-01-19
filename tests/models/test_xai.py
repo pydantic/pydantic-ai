@@ -2027,9 +2027,9 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                     TextPart(content='-428330955.97745'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1847,
+                    input_tokens=1889,
                     output_tokens=52,
-                    details={'reasoning_tokens': 126, 'cache_read_tokens': 499, 'server_side_tools_code_execution': 1},
+                    details={'reasoning_tokens': 161, 'cache_read_tokens': 1347, 'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),

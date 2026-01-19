@@ -2,21 +2,19 @@ version: 2
 interactions:
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-reasoning
-        messages:
-        - content:
-          - text: Return just the day of week for the date of Jan 1 in 2026?
-          role: ROLE_USER
-        tools:
-        - web_search:
-            enable_image_understanding: false
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: true
-        include:
-        - 1
+      messages:
+      - content:
+        - text: Return just the day of week for the date of Jan 1 in 2026?
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - web_search:
+          enable_image_understanding: false
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      use_encrypted_content: true
+      include:
+      - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
     raw: !!binary |
       CkAKPAo6UmV0dXJuIGp1c3QgdGhlIGRheSBvZiB3ZWVrIGZvciB0aGUgZGF0ZSBvZiBKYW4gMSBp
       biAyMDI2PxABEhVncm9rLTQtZmFzdC1yZWFzb25pbmeKAQQaAhgAkgECCAHAAQHSAQEB

@@ -43,20 +43,8 @@ with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     import yaml
     from google.protobuf.json_format import MessageToDict
-    from google.protobuf.message import Message
     from xai_sdk import AsyncClient
     from xai_sdk.proto import chat_pb2
-
-
-def _serialize_for_cassette(o: Any) -> Any:
-    """Best-effort conversion of protobuf messages (and nested structures) to JSON-like dicts."""
-    if isinstance(o, dict):
-        return {str(k): _serialize_for_cassette(v) for k, v in cast(dict[str, Any], o).items()}
-    if isinstance(o, list | tuple):
-        return [_serialize_for_cassette(v) for v in cast(list[Any] | tuple[Any, ...], o)]
-    if isinstance(o, Message):
-        return MessageToDict(o, preserving_proto_field_name=True)
-    return o
 
 
 # ---------------------------------------------------------------------------
@@ -397,14 +385,6 @@ class XaiProtoCassetteHybridClient:
     def _chat_create(self, *args: Any, **kwargs: Any) -> Any:
         inner_chat = self._inner.chat.create(*args, **kwargs)
         include_debug_json = self.include_debug_json
-
-        request_json: dict[str, Any] | None = None
-        if include_debug_json:
-            request_json = {
-                'args': _serialize_for_cassette(list(args)),
-                'kwargs': _serialize_for_cassette(kwargs),
-            }
-
         client = self
 
         class _HybridChatInstance:
@@ -420,6 +400,10 @@ class XaiProtoCassetteHybridClient:
 
                 # Otherwise record a new episode.
                 request_raw = inner_chat.proto.SerializeToString()
+                request_json: dict[str, Any] | None = None
+                if include_debug_json:
+                    request_json = MessageToDict(inner_chat.proto, preserving_proto_field_name=True)
+
                 response = await inner_chat.sample()
                 response_raw = response.proto.SerializeToString()
 
@@ -457,6 +441,10 @@ class XaiProtoCassetteHybridClient:
 
                     # Otherwise record a new streaming episode.
                     request_raw = inner_chat.proto.SerializeToString()
+                    request_json: dict[str, Any] | None = None
+                    if include_debug_json:
+                        request_json = MessageToDict(inner_chat.proto, preserving_proto_field_name=True)
+
                     chunks_raw: list[bytes] = []
                     chunks_json: list[dict[str, Any]] = []
                     try:
@@ -523,16 +511,13 @@ class XaiProtoRecorder:
         recorder = self
         include_debug_json = recorder.include_debug_json
 
-        request_json: dict[str, Any] | None = None
-        if include_debug_json:
-            request_json = {
-                'args': _serialize_for_cassette(list(args)),
-                'kwargs': _serialize_for_cassette(kwargs),
-            }
-
         class _RecorderChatInstance:
             async def sample(self) -> chat_types.Response:
                 request_raw = inner_chat.proto.SerializeToString()
+                # Use MessageToDict for request JSON to get proper enum names
+                request_json: dict[str, Any] | None = None
+                if include_debug_json:
+                    request_json = MessageToDict(inner_chat.proto, preserving_proto_field_name=True)
                 response = await inner_chat.sample()
                 response_raw = response.proto.SerializeToString()
 
@@ -553,6 +538,10 @@ class XaiProtoRecorder:
             def stream(self) -> Any:
                 async def _aiter():
                     request_raw = inner_chat.proto.SerializeToString()
+                    # Use MessageToDict for request JSON to get proper enum names
+                    request_json: dict[str, Any] | None = None
+                    if include_debug_json:
+                        request_json = MessageToDict(inner_chat.proto, preserving_proto_field_name=True)
                     chunks_raw: list[bytes] = []
                     chunks_json: list[dict[str, Any]] = []
                     try:
@@ -569,7 +558,7 @@ class XaiProtoRecorder:
                                 )
                             yield response, chunk
                     finally:
-                        # Ensure data is persisted even if the consumer stops early and closes the generator.
+                        # Ensure data is persisted even if the consumer stops early.
                         recorder.cassette.interactions.append(
                             StreamInteraction(
                                 request_raw=request_raw,

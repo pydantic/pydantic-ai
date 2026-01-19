@@ -2,33 +2,30 @@ version: 2
 interactions:
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-non-reasoning
-        messages:
-        - content:
-          - text: You are a helpful assistant.
-          role: ROLE_SYSTEM
-        - content:
-          - text: 'You MUST do these steps in order:
+      messages:
+      - content:
+        - text: You are a helpful assistant.
+        role: ROLE_SYSTEM
+      - content:
+        - text: 'You MUST do these steps in order:
 
-              1) Use the builtin tool `web_search` to find the release year of Python
-              3.0.
+            1) Use the builtin tool `web_search` to find the release year of Python
+            3.0.
 
-              2) Use the builtin tool `code_execution` to compute (year + 1).
+            2) Use the builtin tool `code_execution` to compute (year + 1).
 
-              Return just the final number with no other text.'
-          role: ROLE_USER
-        tools:
-        - web_search:
-            enable_image_understanding: false
-        - code_execution: {}
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: false
-        include:
-        - 3
-        - 1
+            Return just the final number with no other text.'
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - web_search:
+          enable_image_understanding: false
+      - code_execution: {}
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      include:
+      - INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT
+      - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
     raw: !!binary |
       CiIKHgocWW91IGFyZSBhIGhlbHBmdWwgYXNzaXN0YW50LhADCucBCuIBCt8BWW91IE1VU1QgZG8g
       dGhlc2Ugc3RlcHMgaW4gb3JkZXI6CjEpIFVzZSB0aGUgYnVpbHRpbiB0b29sIGB3ZWJfc2VhcmNo

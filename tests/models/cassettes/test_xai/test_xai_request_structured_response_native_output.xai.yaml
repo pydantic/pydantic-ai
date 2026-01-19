@@ -2,26 +2,21 @@ version: 2
 interactions:
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-non-reasoning
-        messages:
-        - content:
-          - text: What is the largest city in the user country?
-          role: ROLE_USER
-        tools:
-        - function:
-            name: get_user_country
-            parameters: '{"additionalProperties": false, "properties": {}, "type":
-              "object"}'
-        tool_choice: auto
-        response_format:
-          format_type: FORMAT_TYPE_JSON_SCHEMA
-          schema: '{"properties": {"city": {"type": "string"}, "country": {"type":
-            "string"}}, "required": ["city", "country"], "title": "CityLocation",
-            "type": "object"}'
-        use_encrypted_content: false
-        include: []
+      messages:
+      - content:
+        - text: What is the largest city in the user country?
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      response_format:
+        format_type: FORMAT_TYPE_JSON_SCHEMA
+        schema: '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}},
+          "required": ["city", "country"], "title": "CityLocation", "type": "object"}'
+      tools:
+      - function:
+          name: get_user_country
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
     raw: !!binary |
       CjMKLwotV2hhdCBpcyB0aGUgbGFyZ2VzdCBjaXR5IGluIHRoZSB1c2VyIGNvdW50cnk/EAESGWdy
       b2stNC1mYXN0LW5vbi1yZWFzb25pbmdSnAEIAxKXAXsicHJvcGVydGllcyI6IHsiY2l0eSI6IHsi
@@ -77,39 +72,34 @@ interactions:
       aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-non-reasoning
-        messages:
-        - content:
-          - text: What is the largest city in the user country?
-          role: ROLE_USER
-        - content:
-          - text: ''
-          role: ROLE_ASSISTANT
-          tool_calls:
-          - id: call_83554006
-            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: get_user_country
-              arguments: '{}'
-        - content:
-          - text: Mexico
-          role: ROLE_TOOL
-        tools:
-        - function:
+      messages:
+      - content:
+        - text: What is the largest city in the user country?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_83554006
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
             name: get_user_country
-            parameters: '{"additionalProperties": false, "properties": {}, "type":
-              "object"}'
-        tool_choice: auto
-        response_format:
-          format_type: FORMAT_TYPE_JSON_SCHEMA
-          schema: '{"properties": {"city": {"type": "string"}, "country": {"type":
-            "string"}}, "required": ["city", "country"], "title": "CityLocation",
-            "type": "object"}'
-        use_encrypted_content: false
-        include: []
+            arguments: '{}'
+      - content:
+        - text: Mexico
+        role: ROLE_TOOL
+      model: grok-4-fast-non-reasoning
+      response_format:
+        format_type: FORMAT_TYPE_JSON_SCHEMA
+        schema: '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}},
+          "required": ["city", "country"], "title": "CityLocation", "type": "object"}'
+      tools:
+      - function:
+          name: get_user_country
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
     raw: !!binary |
       CjMKLwotV2hhdCBpcyB0aGUgbGFyZ2VzdCBjaXR5IGluIHRoZSB1c2VyIGNvdW50cnk/EAEKMwoC
       CgAQAiIrCg1jYWxsXzgzNTU0MDA2EAEYAVIWChBnZXRfdXNlcl9jb3VudHJ5EgJ7fQoMCggKBk1l

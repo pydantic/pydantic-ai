@@ -2,32 +2,29 @@ version: 2
 interactions:
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-reasoning
-        messages:
-        - content:
-          - text: Use tools to get the users city and then use the web search tool
-              to find a famous landmark in that city.
-          role: ROLE_SYSTEM
-        - content:
-          - text: I am thinking of a city, can you tell me about a famours landmark
-              in this city?
-          role: ROLE_USER
-        tools:
-        - web_search:
-            enable_image_understanding: false
-        - function:
-            name: guess_city
-            description: The city to guess
-            parameters: '{"additionalProperties": false, "properties": {}, "type":
-              "object"}'
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: true
-        include:
-        - 1
-        parallel_tool_calls: false
+      messages:
+      - content:
+        - text: Use tools to get the users city and then use the web search tool to
+            find a famous landmark in that city.
+        role: ROLE_SYSTEM
+      - content:
+        - text: I am thinking of a city, can you tell me about a famours landmark
+            in this city?
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - web_search:
+          enable_image_understanding: false
+      - function:
+          name: guess_city
+          description: The city to guess
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      parallel_tool_calls: false
+      use_encrypted_content: true
+      include:
+      - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
     raw: !!binary |
       Cm4KagpoVXNlIHRvb2xzIHRvIGdldCB0aGUgdXNlcnMgY2l0eSBhbmQgdGhlbiB1c2UgdGhlIHdl
       YiBzZWFyY2ggdG9vbCB0byBmaW5kIGEgZmFtb3VzIGxhbmRtYXJrIGluIHRoYXQgY2l0eS4QAwpV
@@ -134,49 +131,46 @@ interactions:
       aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9aAFyAQE=
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-reasoning
-        messages:
-        - content:
-          - text: Use tools to get the users city and then use the web search tool
-              to find a famous landmark in that city.
-          role: ROLE_SYSTEM
-        - content:
-          - text: I am thinking of a city, can you tell me about a famours landmark
-              in this city?
-          role: ROLE_USER
-        - content:
-          - text: ''
-          role: ROLE_ASSISTANT
-          encrypted_content: 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
-        - content:
-          - text: ''
-          role: ROLE_ASSISTANT
-          tool_calls:
-          - id: call_64728645
-            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: guess_city
-              arguments: '{}'
-        - content:
-          - text: Chicago
-          role: ROLE_TOOL
-        tools:
-        - web_search:
-            enable_image_understanding: false
-        - function:
+      messages:
+      - content:
+        - text: Use tools to get the users city and then use the web search tool to
+            find a famous landmark in that city.
+        role: ROLE_SYSTEM
+      - content:
+        - text: I am thinking of a city, can you tell me about a famours landmark
+            in this city?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        encrypted_content: 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
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_64728645
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
             name: guess_city
-            description: The city to guess
-            parameters: '{"additionalProperties": false, "properties": {}, "type":
-              "object"}'
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: true
-        include:
-        - 1
-        parallel_tool_calls: false
+            arguments: '{}'
+      - content:
+        - text: Chicago
+        role: ROLE_TOOL
+      model: grok-4-fast-reasoning
+      tools:
+      - web_search:
+          enable_image_understanding: false
+      - function:
+          name: guess_city
+          description: The city to guess
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      parallel_tool_calls: false
+      use_encrypted_content: true
+      include:
+      - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
     raw: !!binary |
       Cm4KagpoVXNlIHRvb2xzIHRvIGdldCB0aGUgdXNlcnMgY2l0eSBhbmQgdGhlbiB1c2UgdGhlIHdl
       YiBzZWFyY2ggdG9vbCB0byBmaW5kIGEgZmFtb3VzIGxhbmRtYXJrIGluIHRoYXQgY2l0eS4QAwpV

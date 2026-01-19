@@ -2,19 +2,13 @@ version: 2
 interactions:
 - request_stream:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-reasoning
-        messages:
-        - content:
-          - text: What is the 10th prime number?
-          role: ROLE_USER
-        tools: null
-        tool_choice: null
-        response_format: null
-        use_encrypted_content: true
-        include: []
-        max_tokens: 100
+      messages:
+      - content:
+        - text: What is the 10th prime number?
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      max_tokens: 100
+      use_encrypted_content: true
     raw: !!binary |
       CiQKIAoeV2hhdCBpcyB0aGUgMTB0aCBwcmltZSBudW1iZXI/EAESFWdyb2stNC1mYXN0LXJlYXNv
       bmluZzhkwAEB

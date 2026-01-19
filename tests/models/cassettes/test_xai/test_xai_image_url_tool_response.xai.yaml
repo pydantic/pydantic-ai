@@ -2,22 +2,17 @@ version: 2
 interactions:
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-non-reasoning
-        messages:
-        - content:
-          - text: What food is in the image you can get from the get_image tool?
-          role: ROLE_USER
-        tools:
-        - function:
-            name: get_image
-            parameters: '{"additionalProperties": false, "properties": {}, "type":
-              "object"}'
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: false
-        include: []
+      messages:
+      - content:
+        - text: What food is in the image you can get from the get_image tool?
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - function:
+          name: get_image
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
     raw: !!binary |
       CkQKQAo+V2hhdCBmb29kIGlzIGluIHRoZSBpbWFnZSB5b3UgY2FuIGdldCBmcm9tIHRoZSBnZXRf
       aW1hZ2UgdG9vbD8QARIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZ4oBUgpQCglnZXRfaW1hZ2Ui
@@ -63,41 +58,36 @@ interactions:
       Ijoge30sICJ0eXBlIjogIm9iamVjdCJ9
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-non-reasoning
-        messages:
-        - content:
-          - text: What food is in the image you can get from the get_image tool?
-          role: ROLE_USER
-        - content:
-          - text: ''
-          role: ROLE_ASSISTANT
-          tool_calls:
-          - id: call_37730393
-            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: get_image
-              arguments: '{}'
-        - content:
-          - text: See file bd38f5
-          role: ROLE_TOOL
-        - content:
-          - text: 'This is file bd38f5:'
-          - image_url:
-              image_url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
-              detail: DETAIL_AUTO
-          role: ROLE_USER
-        tools:
-        - function:
+      messages:
+      - content:
+        - text: What food is in the image you can get from the get_image tool?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_37730393
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
             name: get_image
-            parameters: '{"additionalProperties": false, "properties": {}, "type":
-              "object"}'
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: false
-        include: []
+            arguments: '{}'
+      - content:
+        - text: See file bd38f5
+        role: ROLE_TOOL
+      - content:
+        - text: 'This is file bd38f5:'
+        - image_url:
+            image_url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
+            detail: DETAIL_AUTO
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - function:
+          name: get_image
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
     raw: !!binary |
       CkQKQAo+V2hhdCBmb29kIGlzIGluIHRoZSBpbWFnZSB5b3UgY2FuIGdldCBmcm9tIHRoZSBnZXRf
       aW1hZ2UgdG9vbD8QAQosCgIKABACIiQKDWNhbGxfMzc3MzAzOTMQARgBUg8KCWdldF9pbWFnZRIC

@@ -2,21 +2,18 @@ version: 2
 interactions:
 - request_stream:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-non-reasoning
-        messages:
-        - content:
-          - text: Use the builtin tool `code_execution` to compute 2 + 2. Return just
-              the numeric result and nothing else.
-          role: ROLE_USER
-        tools:
-        - code_execution: {}
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: false
-        include:
-        - 3
+      messages:
+      - content:
+        - text: Use the builtin tool `code_execution` to compute 2 + 2. Return just
+            the numeric result and nothing else.
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - code_execution: {}
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      include:
+      - INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT
     raw: !!binary |
       Cm4KagpoVXNlIHRoZSBidWlsdGluIHRvb2wgYGNvZGVfZXhlY3V0aW9uYCB0byBjb21wdXRlIDIg
       KyAyLiBSZXR1cm4ganVzdCB0aGUgbnVtZXJpYyByZXN1bHQgYW5kIG5vdGhpbmcgZWxzZS4QARIZ

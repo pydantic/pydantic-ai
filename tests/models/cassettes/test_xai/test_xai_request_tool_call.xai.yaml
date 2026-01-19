@@ -2,22 +2,18 @@ version: 2
 interactions:
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-reasoning
-        messages:
-        - content:
-          - text: What is the location of Lodon and London?
-          role: ROLE_USER
-        tools:
-        - function:
-            name: get_location
-            parameters: '{"additionalProperties": false, "properties": {"loc_name":
-              {"type": "string"}}, "required": ["loc_name"], "type": "object"}'
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: false
-        include: []
+      messages:
+      - content:
+        - text: What is the location of Lodon and London?
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - function:
+          name: get_location
+          parameters: '{"additionalProperties": false, "properties": {"loc_name":
+            {"type": "string"}}, "required": ["loc_name"], "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
     raw: !!binary |
       Ci8KKwopV2hhdCBpcyB0aGUgbG9jYXRpb24gb2YgTG9kb24gYW5kIExvbmRvbj8QARIVZ3Jvay00
       LWZhc3QtcmVhc29uaW5nigGOAQqLAQoMZ2V0X2xvY2F0aW9uInt7ImFkZGl0aW9uYWxQcm9wZXJ0
@@ -73,47 +69,43 @@ interactions:
       dHJpbmcifX0sICJyZXF1aXJlZCI6IFsibG9jX25hbWUiXSwgInR5cGUiOiAib2JqZWN0In0=
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-reasoning
-        messages:
-        - content:
-          - text: What is the location of Lodon and London?
-          role: ROLE_USER
-        - content:
-          - text: ''
-          role: ROLE_ASSISTANT
-          tool_calls:
-          - id: call_56494531
-            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: get_location
-              arguments: '{"loc_name":"Lodon"}'
-          - id: call_28585237
-            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: get_location
-              arguments: '{"loc_name":"London"}'
-        - content:
-          - text: 'Wrong location, I only know about "London".
-
-
-              Fix the errors and try again.'
-          role: ROLE_TOOL
-        - content:
-          - text: '{"lat": 51, "lng": 0}'
-          role: ROLE_TOOL
-        tools:
-        - function:
+      messages:
+      - content:
+        - text: What is the location of Lodon and London?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_56494531
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
             name: get_location
-            parameters: '{"additionalProperties": false, "properties": {"loc_name":
-              {"type": "string"}}, "required": ["loc_name"], "type": "object"}'
-        tool_choice: auto
-        response_format: null
-        use_encrypted_content: false
-        include: []
+            arguments: '{"loc_name":"Lodon"}'
+        - id: call_28585237
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_location
+            arguments: '{"loc_name":"London"}'
+      - content:
+        - text: 'Wrong location, I only know about "London".
+
+
+            Fix the errors and try again.'
+        role: ROLE_TOOL
+      - content:
+        - text: '{"lat": 51, "lng": 0}'
+        role: ROLE_TOOL
+      model: grok-4-fast-reasoning
+      tools:
+      - function:
+          name: get_location
+          parameters: '{"additionalProperties": false, "properties": {"loc_name":
+            {"type": "string"}}, "required": ["loc_name"], "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
     raw: !!binary |
       Ci8KKwopV2hhdCBpcyB0aGUgbG9jYXRpb24gb2YgTG9kb24gYW5kIExvbmRvbj8QAQp9CgIKABAC
       IjkKDWNhbGxfNTY0OTQ1MzEQARgBUiQKDGdldF9sb2NhdGlvbhIUeyJsb2NfbmFtZSI6IkxvZG9u

@@ -2,34 +2,29 @@ version: 2
 interactions:
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-non-reasoning
-        messages:
-        - content:
-          - text: Call `get_user_country` first, then call `final_result` with the
-              JSON result.
-          role: ROLE_SYSTEM
-        - content:
-          - text: What is the largest city in the user country?
-          role: ROLE_USER
-        tools:
-        - function:
-            name: get_user_country
-            parameters: '{"additionalProperties": false, "properties": {}, "type":
-              "object"}'
-        - function:
-            name: final_result
-            description: The final response which ends this conversation
-            parameters: '{"properties": {"city": {"type": "string"}, "country": {"type":
-              "string"}}, "required": ["city", "country"], "title": "CityLocation",
-              "type": "object"}'
-        tool_choice: required
-        response_format: null
-        use_encrypted_content: false
-        include: []
-        parallel_tool_calls: false
-        max_tokens: 80
+      messages:
+      - content:
+        - text: Call `get_user_country` first, then call `final_result` with the JSON
+            result.
+        role: ROLE_SYSTEM
+      - content:
+        - text: What is the largest city in the user country?
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      max_tokens: 80
+      tools:
+      - function:
+          name: get_user_country
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      - function:
+          name: final_result
+          description: The final response which ends this conversation
+          parameters: '{"properties": {"city": {"type": "string"}, "country": {"type":
+            "string"}}, "required": ["city", "country"], "title": "CityLocation",
+            "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_REQUIRED
+      parallel_tool_calls: false
     raw: !!binary |
       ClMKTwpNQ2FsbCBgZ2V0X3VzZXJfY291bnRyeWAgZmlyc3QsIHRoZW4gY2FsbCBgZmluYWxfcmVz
       dWx0YCB3aXRoIHRoZSBKU09OIHJlc3VsdC4QAwozCi8KLVdoYXQgaXMgdGhlIGxhcmdlc3QgY2l0
@@ -90,47 +85,42 @@ interactions:
       ICJDaXR5TG9jYXRpb24iLCAidHlwZSI6ICJvYmplY3QifQ==
 - request_sample:
     json:
-      args: []
-      kwargs:
-        model: grok-4-fast-non-reasoning
-        messages:
-        - content:
-          - text: Call `get_user_country` first, then call `final_result` with the
-              JSON result.
-          role: ROLE_SYSTEM
-        - content:
-          - text: What is the largest city in the user country?
-          role: ROLE_USER
-        - content:
-          - text: ''
-          role: ROLE_ASSISTANT
-          tool_calls:
-          - id: call_18585244
-            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: get_user_country
-              arguments: '{}'
-        - content:
-          - text: Mexico
-          role: ROLE_TOOL
-        tools:
-        - function:
+      messages:
+      - content:
+        - text: Call `get_user_country` first, then call `final_result` with the JSON
+            result.
+        role: ROLE_SYSTEM
+      - content:
+        - text: What is the largest city in the user country?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_18585244
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
             name: get_user_country
-            parameters: '{"additionalProperties": false, "properties": {}, "type":
-              "object"}'
-        - function:
-            name: final_result
-            description: The final response which ends this conversation
-            parameters: '{"properties": {"city": {"type": "string"}, "country": {"type":
-              "string"}}, "required": ["city", "country"], "title": "CityLocation",
-              "type": "object"}'
-        tool_choice: required
-        response_format: null
-        use_encrypted_content: false
-        include: []
-        parallel_tool_calls: false
-        max_tokens: 80
+            arguments: '{}'
+      - content:
+        - text: Mexico
+        role: ROLE_TOOL
+      model: grok-4-fast-non-reasoning
+      max_tokens: 80
+      tools:
+      - function:
+          name: get_user_country
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      - function:
+          name: final_result
+          description: The final response which ends this conversation
+          parameters: '{"properties": {"city": {"type": "string"}, "country": {"type":
+            "string"}}, "required": ["city", "country"], "title": "CityLocation",
+            "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_REQUIRED
+      parallel_tool_calls: false
     raw: !!binary |
       ClMKTwpNQ2FsbCBgZ2V0X3VzZXJfY291bnRyeWAgZmlyc3QsIHRoZW4gY2FsbCBgZmluYWxfcmVz
       dWx0YCB3aXRoIHRoZSBKU09OIHJlc3VsdC4QAwozCi8KLVdoYXQgaXMgdGhlIGxhcmdlc3QgY2l0
