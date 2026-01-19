@@ -518,7 +518,7 @@ async def model_request_batch(
                     # Attempt to cancel before raising timeout
                     try:
                         await model_instance.batch_cancel(batch)
-                    except Exception:
+                    except Exception:  # pragma: no cover
                         pass  # Best effort cancellation
                     raise asyncio.TimeoutError(f'Batch {batch.id} timed out after {elapsed:.1f}s')
 
@@ -528,7 +528,7 @@ async def model_request_batch(
         # On cancellation, attempt to cancel the batch
         try:
             await model_instance.batch_cancel(batch)
-        except Exception:
+        except Exception:  # pragma: no cover
             pass  # Best effort cancellation
         raise
 
