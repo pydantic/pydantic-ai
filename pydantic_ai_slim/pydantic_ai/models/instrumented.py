@@ -263,11 +263,7 @@ class InstrumentationSettings:
                     GEN_AI_SYSTEM_ATTRIBUTE: system,
                     **(event.attributes or {}),
                 }
-            request_model = span.attributes.get(GEN_AI_REQUEST_MODEL_ATTRIBUTE)
-            response_model = getattr(response, 'model_name', None) or request_model
-            if response_model is not None:
-                span.set_attributes({'gen_ai.response.model': response_model})
-
+            
             self._emit_events(span, events)
         else:
             output_messages = self.messages_to_otel_messages([response])
@@ -295,11 +291,6 @@ class InstrumentationSettings:
                     }
                 ),
             }
-
-            request_model = span.attributes.get(GEN_AI_REQUEST_MODEL_ATTRIBUTE)
-            response_model = getattr(response, 'model_name', None) or request_model
-            if response_model is not None:
-                attributes['gen_ai.response.model'] = response_model
 
             span.set_attributes(attributes)
 
