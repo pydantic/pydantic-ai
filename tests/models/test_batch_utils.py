@@ -9,13 +9,13 @@ import pytest
 
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models import Batch, BatchCapable, BatchError, BatchResult, BatchStatus, supports_batch
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.models._batch_utils import (
     BatchResultBuilder,
     extract_batch_error,
     parse_batch_datetime,
     validate_batch_complete,
 )
+from pydantic_ai.settings import ModelSettings
 
 
 class TestExtractBatchError:
