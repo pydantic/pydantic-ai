@@ -468,25 +468,18 @@ class TestBatchModelErrorHandling:
         mock_model.batch_status = AsyncMock(return_value=batch_failed)
         mock_model.batch_results = AsyncMock(side_effect=RuntimeError('Batch failed'))
 
-        batch_model = BatchModel(mock_model, poll_interval=0.01)
-
         messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         params = ModelRequestParameters()
 
-        task = asyncio.create_task(batch_model.request(messages, None, params))
-        await asyncio.sleep(0.01)
+        # Use context manager to ensure proper cleanup of batch task
+        async with BatchModel(mock_model, poll_interval=0.01) as batch_model:
+            task = asyncio.create_task(batch_model.request(messages, None, params))
+            await asyncio.sleep(0.01)
 
-        await batch_model.submit()
+            await batch_model.submit()
 
-        with pytest.raises(RuntimeError, match='Batch failed'):
-            await asyncio.wait_for(task, timeout=1.0)
-
-        # Ensure batch task is properly cleaned up to avoid teardown errors
-        if batch_model._batch_task:
-            try:
-                await batch_model._batch_task
-            except Exception:
-                pass
+            with pytest.raises(RuntimeError, match='Batch failed'):
+                await asyncio.wait_for(task, timeout=1.0)
 
     @pytest.mark.anyio
     async def test_individual_request_error_in_result(self) -> None:
