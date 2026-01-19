@@ -49,16 +49,28 @@ class DbTextContent(BaseModel):
     text: str
 
 
+class DbSummaryText(BaseModel):
+    """Inner model for summary text blocks found in reasoning."""
+
+    type: Literal['summary_text']
+    text: str
+
+
 class DbReasoningContent(BaseModel):
     """Represents a reasoning block (e.g. R1 models)."""
 
     type: Literal['reasoning']
-    # Handle variations: sometimes 'text', sometimes 'content'
     text: str | None = None
     content: str | None = None
+    summary: list[DbSummaryText] | None = None
 
     def get_value(self) -> str:
-        return self.text or self.content or ''
+        """Centralized logic to extract the actual content string."""
+        if val := (self.text or self.content):
+            return val
+        if self.summary:
+            return ''.join(s.text for s in self.summary)
+        return ''
 
 
 DbContentBlock = Annotated[DbTextContent | DbReasoningContent, Field(discriminator='type')]
@@ -90,9 +102,7 @@ class DatabricksModel(OpenAIChatModel):
         self,
         model_name: str,
         *,
-        provider: OpenAIChatCompatibleProvider
-        | Literal['databricks', 'gateway']
-        | Provider[AsyncOpenAI] = 'databricks',
+        provider: OpenAIChatCompatibleProvider | Literal['databricks'] | Provider[AsyncOpenAI] = 'databricks',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -214,6 +224,7 @@ class DatabricksModel(OpenAIChatModel):
         """Normalizes Databricks responses to the strict OpenAI schema."""
         data = response.model_dump(mode='json', warnings=False)
 
+        # gemini 2.5 pro doesn't return a chat id
         if data.get('id') is None:
             data['id'] = 'databricks-placeholder-id'
 
@@ -318,43 +329,28 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
 
     @override
     def _map_part_delta(self, choice: chat.chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
-        """Override to handle Databricks' structured content (list of blocks) instead of just plain strings."""
-        content = cast(list[dict[str, Any]] | str | None, choice.delta.content)
+        """Override to handle Databricks' structured content using Pydantic validation."""
+        content = choice.delta.content
 
-        # Databricks specific: Content is a list of blocks (reasoning/text)
         if isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
+            try:
+                blocks = TypeAdapter(list[DbContentBlock]).validate_python(content)
 
-                block_type = cast(str | None, block.get('type'))
-
-                if block_type == 'reasoning':
-                    val = cast(str | None, block.get('text') or block.get('content'))
-
-                    # e.g. {'summary': [{'type': 'summary_text', 'text': 'The'}]}
-                    if not val:
-                        summary_list = cast(list[dict[str, Any]] | None, block.get('summary'))
-                        if summary_list:
-                            val = ''.join(
-                                cast(str, s.get('text', ''))
-                                for s in summary_list
-                                if isinstance(s, dict) and s.get('type') == 'summary_text'
+                for block in blocks:
+                    if isinstance(block, DbReasoningContent):
+                        if val := block.get_value():
+                            yield from self._parts_manager.handle_thinking_delta(
+                                vendor_part_id='reasoning',
+                                content=val,
                             )
-
-                    if val:
-                        yield from self._parts_manager.handle_thinking_delta(
-                            vendor_part_id='reasoning',
-                            content=val,
-                        )
-
-                elif block_type == 'text':
-                    val = block.get('text')
-                    if isinstance(val, str):
+                    elif isinstance(block, DbTextContent):
                         yield from self._parts_manager.handle_text_delta(
                             vendor_part_id='content',
-                            content=val,
+                            content=block.text,
                         )
+
+            except ValidationError:
+                pass
 
             yield from self._map_tool_call_delta(choice)
 

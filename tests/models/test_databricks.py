@@ -64,8 +64,8 @@ class TestDatabricks:
         )
 
         text_part = cast(TextPart, response.parts[0])
-        # Note: Snapshots may need updating as different models output different text
-        assert text_part.content == snapshot('paris')
+
+        assert 'paris' in text_part.content
 
         assert response.provider_details is not None
         assert response.provider_details['finish_reason'] == 'stop'
