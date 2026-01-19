@@ -323,7 +323,9 @@ class TestSupportsBatch:
                 requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
                 model_settings: ModelSettings | None = None,
             ) -> Batch:
-                return Batch(id='test', status=BatchStatus.PENDING, created_at=datetime.now(tz=timezone.utc))  # pragma: no cover
+                return Batch(
+                    id='test', status=BatchStatus.PENDING, created_at=datetime.now(tz=timezone.utc)
+                )  # pragma: no cover
 
             async def batch_status(self, batch: Batch) -> Batch:
                 return batch  # pragma: no cover
