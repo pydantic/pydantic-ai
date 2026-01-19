@@ -1030,7 +1030,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
 class MockBatch(Batch):
     """A mock Batch that stores request custom_ids for later result generation."""
 
-    _custom_ids: list[str] = field(default_factory=list, repr=False)
+    custom_ids: list[str] = field(default_factory=list, repr=False)
 
 
 class MockBatchModel(FunctionModel):
@@ -1052,7 +1052,7 @@ class MockBatchModel(FunctionModel):
             request_count=len(requests),
             completed_count=len(requests),
             failed_count=0,
-            _custom_ids=custom_ids,
+            custom_ids=custom_ids,
         )
 
     async def batch_status(self, batch: Batch) -> Batch:
@@ -1063,8 +1063,8 @@ class MockBatchModel(FunctionModel):
         """Mock batch_results that returns successful results."""
         results: list[BatchResult] = []
         # Use stored custom_ids if available (MockBatch), otherwise generate generic ids
-        if isinstance(batch, MockBatch) and batch._custom_ids:
-            for custom_id in batch._custom_ids:
+        if isinstance(batch, MockBatch) and batch.custom_ids:
+            for custom_id in batch.custom_ids:
                 results.append(
                     BatchResult(
                         custom_id=custom_id,

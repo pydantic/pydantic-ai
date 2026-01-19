@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models import Batch, BatchCapable, BatchError, BatchResult, BatchStatus, supports_batch
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.models._batch_utils import (
     BatchResultBuilder,
     extract_batch_error,
@@ -319,7 +321,7 @@ class TestSupportsBatch:
             async def batch_create(
                 self,
                 requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
-                model_settings=None,
+                model_settings: ModelSettings | None = None,
             ) -> Batch:
                 return Batch(id='test', status=BatchStatus.PENDING, created_at=datetime.now(tz=timezone.utc))
 
@@ -333,15 +335,15 @@ class TestSupportsBatch:
                 return batch
 
             # Required abstract methods
-            async def request(self, *args, **kwargs):
+            async def request(self, *args: Any, **kwargs: Any) -> Any:
                 raise NotImplementedError
 
             @property
-            def model_name(self):
+            def model_name(self) -> str:
                 return 'test'
 
             @property
-            def system(self):
+            def system(self) -> str:
                 return 'test'
 
         model = BatchCapableModel()

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models import Batch, BatchError, BatchResult, BatchStatus, ModelRequestParameters
 from pydantic_ai.models.batch import BatchModel
 from pydantic_ai.usage import RequestUsage
@@ -136,7 +136,7 @@ class TestBatchModelRequest:
         mock_model = create_mock_model()
         batch_model = BatchModel(mock_model)
 
-        messages = [ModelRequest.user_text_prompt('Hello')]
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         params = ModelRequestParameters()
 
         # Start the request but don't await it
@@ -184,8 +184,8 @@ class TestBatchModelRequest:
 
         batch_model = BatchModel(mock_model, batch_size=2, poll_interval=0.01)
 
-        messages1 = [ModelRequest.user_text_prompt('Hello 1')]
-        messages2 = [ModelRequest.user_text_prompt('Hello 2')]
+        messages1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello 1')]
+        messages2: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello 2')]
         params = ModelRequestParameters()
 
         # Queue two requests - should trigger auto-submit
@@ -202,7 +202,9 @@ class TestBatchModelRequest:
         response1 = await asyncio.wait_for(task1, timeout=1.0)
         response2 = await asyncio.wait_for(task2, timeout=1.0)
 
+        assert isinstance(response1.parts[0], TextPart)
         assert response1.parts[0].content == 'Response 1'
+        assert isinstance(response2.parts[0], TextPart)
         assert response2.parts[0].content == 'Response 2'
         mock_model.batch_create.assert_called_once()
 
@@ -245,8 +247,8 @@ class TestBatchModelSubmit:
         batch_model = BatchModel(mock_model, poll_interval=0.01)
 
         # Queue some requests
-        messages1 = [ModelRequest.user_text_prompt('Hello 1')]
-        messages2 = [ModelRequest.user_text_prompt('Hello 2')]
+        messages1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello 1')]
+        messages2: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello 2')]
         params = ModelRequestParameters()
 
         task1 = asyncio.create_task(batch_model.request(messages1, None, params))
@@ -264,7 +266,9 @@ class TestBatchModelSubmit:
         response1 = await asyncio.wait_for(task1, timeout=1.0)
         response2 = await asyncio.wait_for(task2, timeout=1.0)
 
+        assert isinstance(response1.parts[0], TextPart)
         assert 'Response for' in response1.parts[0].content
+        assert isinstance(response2.parts[0], TextPart)
         assert 'Response for' in response2.parts[0].content
 
 
@@ -294,7 +298,7 @@ class TestBatchModelContextManager:
         mock_model.batch_results = AsyncMock(side_effect=get_results)
 
         async with BatchModel(mock_model, poll_interval=0.01) as batch_model:
-            messages = [ModelRequest.user_text_prompt('Hello')]
+            messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
             params = ModelRequestParameters()
 
             task = asyncio.create_task(batch_model.request(messages, None, params))
@@ -304,6 +308,7 @@ class TestBatchModelContextManager:
 
         # After context exits, the task should complete
         response = await asyncio.wait_for(task, timeout=1.0)
+        assert isinstance(response.parts[0], TextPart)
         assert 'Response for' in response.parts[0].content
         mock_model.batch_create.assert_called_once()
 
@@ -333,7 +338,7 @@ class TestBatchModelContextManager:
 
         # Enter context, submit, then exit - should wait for batch
         async with batch_model:
-            messages = [ModelRequest.user_text_prompt('Hello')]
+            messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
             params = ModelRequestParameters()
             task = asyncio.create_task(batch_model.request(messages, None, params))
             await asyncio.sleep(0.01)
@@ -342,6 +347,7 @@ class TestBatchModelContextManager:
 
         # Task should have completed during __aexit__
         response = await asyncio.wait_for(task, timeout=1.0)
+        assert isinstance(response.parts[0], TextPart)
         assert 'Response for' in response.parts[0].content
 
     @pytest.mark.anyio
@@ -359,7 +365,7 @@ class TestBatchModelContextManager:
 
         batch_model = BatchModel(mock_model, poll_interval=0.01)
 
-        messages = [ModelRequest.user_text_prompt('Hello')]
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         params = ModelRequestParameters()
 
         # Enter context, submit, then exit - should catch exception in __aexit__
@@ -413,7 +419,7 @@ class TestBatchModelProperties:
         # Initially not processing
         assert batch_model.is_processing is False
 
-        messages = [ModelRequest.user_text_prompt('Hello')]
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         params = ModelRequestParameters()
 
         task = asyncio.create_task(batch_model.request(messages, None, params))
@@ -439,7 +445,7 @@ class TestBatchModelStreaming:
         mock_model = create_mock_model()
         batch_model = BatchModel(mock_model)
 
-        messages = [ModelRequest.user_text_prompt('Hello')]
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         params = ModelRequestParameters()
 
         with pytest.raises(NotImplementedError, match='Streaming is not supported'):
@@ -464,7 +470,7 @@ class TestBatchModelErrorHandling:
 
         batch_model = BatchModel(mock_model, poll_interval=0.01)
 
-        messages = [ModelRequest.user_text_prompt('Hello')]
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         params = ModelRequestParameters()
 
         task = asyncio.create_task(batch_model.request(messages, None, params))
@@ -507,8 +513,8 @@ class TestBatchModelErrorHandling:
 
         batch_model = BatchModel(mock_model, poll_interval=0.01)
 
-        messages1 = [ModelRequest.user_text_prompt('Hello 1')]
-        messages2 = [ModelRequest.user_text_prompt('Hello 2')]
+        messages1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello 1')]
+        messages2: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello 2')]
         params = ModelRequestParameters()
 
         task1 = asyncio.create_task(batch_model.request(messages1, None, params))
@@ -519,6 +525,7 @@ class TestBatchModelErrorHandling:
 
         # First should succeed
         response1 = await asyncio.wait_for(task1, timeout=1.0)
+        assert isinstance(response1.parts[0], TextPart)
         assert response1.parts[0].content == 'Success'
 
         # Second should fail
@@ -538,7 +545,7 @@ class TestBatchModelErrorHandling:
 
         batch_model = BatchModel(mock_model, poll_interval=0.5)
 
-        messages = [ModelRequest.user_text_prompt('Hello')]
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         params = ModelRequestParameters()
 
         # Queue first request and submit
@@ -589,11 +596,12 @@ class TestBatchModelShouldSubmitCallback:
 
         batch_model = BatchModel(mock_model, should_submit=always_submit, poll_interval=0.01)
 
-        messages = [ModelRequest.user_text_prompt('Hello')]
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
         params = ModelRequestParameters()
 
         # Queue a request - should trigger auto-submit via callback
         response = await asyncio.wait_for(batch_model.request(messages, None, params), timeout=1.0)
 
+        assert isinstance(response.parts[0], TextPart)
         assert 'Response for' in response.parts[0].content
         mock_model.batch_create.assert_called_once()
