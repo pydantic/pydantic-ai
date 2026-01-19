@@ -1587,6 +1587,10 @@ class OpenAIResponsesModel(Model):
                     web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
                         type='approximate', **tool.user_location
                     )
+                if tool.allowed_domains:
+                    web_search_tool['filters'] = responses.web_search_tool_param.Filters(
+                        allowed_domains=tool.allowed_domains
+                    )
                 tools.append(web_search_tool)
             elif isinstance(tool, FileSearchTool):
                 file_search_tool = cast(

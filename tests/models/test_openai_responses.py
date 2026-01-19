@@ -8964,3 +8964,36 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+async def test_openai_responses_web_search_tool_allowed_domains(allow_model_requests: None):
+    """Test that allowed_domains is properly passed to the OpenAI API via filters."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(
+                    list[Content], [ResponseOutputText(text='Search result', type='output_text', annotations=[])]
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        builtin_tools=[WebSearchTool(allowed_domains=['example.com', 'test.org'])],
+    )
+
+    result = await agent.run('Search for something')
+    assert result.output == 'Search result'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    # Verify that the tools parameter includes the web_search tool with filters
+    tools = response_kwargs[0].get('tools', [])
+    web_search_tools = [t for t in tools if t.get('type') == 'web_search']
+    assert len(web_search_tools) == 1
+    assert web_search_tools[0]['filters'] == {'allowed_domains': ['example.com', 'test.org']}
