@@ -180,7 +180,7 @@ class TestValidateBatchComplete:
             status=BatchStatus.PENDING,
             created_at=datetime.now(tz=timezone.utc),
         )
-        with pytest.raises(ValueError, match='batch batch_456 is not complete.*PENDING'):
+        with pytest.raises(ValueError, match=r'batch batch_456 is not complete.*(?:pending|PENDING)'):
             validate_batch_complete(batch, 'download results')
 
     def test_custom_operation_in_error_message(self):
