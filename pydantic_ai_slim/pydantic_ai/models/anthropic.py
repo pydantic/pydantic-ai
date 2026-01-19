@@ -149,6 +149,8 @@ try:
         Content as WebFetchToolResultBlockParamContent,
     )
     from anthropic.types.beta.beta_web_search_tool_20250305_param import UserLocation
+    from anthropic.types.beta.messages import BetaMessageBatch
+    from anthropic.types.beta.messages.batch_create_params import Request as BetaBatchRequest
     from anthropic.types.model_param import ModelParam
 
 except ImportError as _import_error:
@@ -1245,18 +1247,21 @@ class AnthropicModel(Model):
         base_settings = cast(AnthropicModelSettings, model_settings or {})
 
         # Build batch requests array
-        batch_requests: list[dict[str, Any]] = []
+        batch_requests: list[BetaBatchRequest] = []
         for custom_id, messages, params in requests:
             request_params = await self._build_batch_request_params(messages, params, base_settings)
             batch_requests.append(
-                {
-                    'custom_id': custom_id,
-                    'params': request_params,
-                }
+                BetaBatchRequest(
+                    custom_id=custom_id,
+                    params=request_params,  # pyright: ignore[reportArgumentType]
+                )
             )
 
         try:
-            batch_response = await self.client.messages.batches.create(requests=batch_requests)
+            # SDK type stubs don't expose beta.messages.batches properly
+            batch_response: BetaMessageBatch = await self.client.beta.messages.batches.create(  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportUnknownVariableType]
+                requests=batch_requests
+            )
         except APIStatusError as e:
             if e.status_code >= 400:
                 raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
@@ -1264,7 +1269,7 @@ class AnthropicModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        return self._parse_batch_response(batch_response)
+        return self._parse_batch_response(batch_response)  # pyright: ignore[reportUnknownArgumentType]
 
     async def _build_batch_request_params(
         self,
@@ -1334,7 +1339,10 @@ class AnthropicModel(Model):
         check_allow_model_requests()
 
         try:
-            batch_response = await self.client.messages.batches.retrieve(batch.id)
+            # SDK type stubs don't expose beta.messages.batches properly
+            batch_response: BetaMessageBatch = await self.client.beta.messages.batches.retrieve(  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportUnknownVariableType]
+                batch.id
+            )
         except APIStatusError as e:
             if e.status_code >= 400:
                 raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
@@ -1342,7 +1350,7 @@ class AnthropicModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        return self._parse_batch_response(batch_response)
+        return self._parse_batch_response(batch_response)  # pyright: ignore[reportUnknownArgumentType]
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
         """Retrieve results from a completed Anthropic batch.
@@ -1373,46 +1381,47 @@ class AnthropicModel(Model):
 
         try:
             # Stream results from the API
-            result_stream = await self.client.messages.batches.results(batch.id)
-            async for entry in result_stream:
-                custom_id = entry.custom_id
+            # SDK type stubs don't expose beta.messages.batches properly
+            result_stream = await self.client.beta.messages.batches.results(batch.id)  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportUnknownVariableType]
+            async for entry in result_stream:  # pyright: ignore[reportUnknownVariableType]
+                custom_id: str = entry.custom_id  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
                 # Check result type
-                result = entry.result
-                if result.type == 'succeeded':
+                result = entry.result  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                if result.type == 'succeeded':  # pyright: ignore[reportUnknownMemberType]
                     # Parse successful response using existing logic
-                    model_response = self._process_response(result.message)
-                    results.append(BatchResult(custom_id=custom_id, response=model_response))
-                elif result.type == 'errored':
-                    error = result.error
+                    model_response = self._process_response(result.message)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                    results.append(BatchResult(custom_id=custom_id, response=model_response))  # pyright: ignore[reportUnknownArgumentType]
+                elif result.type == 'errored':  # pyright: ignore[reportUnknownMemberType]
+                    error = result.error  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
                     results.append(
                         BatchResult(
-                            custom_id=custom_id,
+                            custom_id=custom_id,  # pyright: ignore[reportUnknownArgumentType]
                             error=BatchError(
-                                code=getattr(error, 'type', 'unknown'),
-                                message=getattr(error, 'message', str(error)),
+                                code=getattr(error, 'type', 'unknown'),  # pyright: ignore[reportUnknownArgumentType]
+                                message=getattr(error, 'message', str(error)),  # pyright: ignore[reportUnknownArgumentType]
                             ),
                         )
                     )
-                elif result.type == 'canceled':
+                elif result.type == 'canceled':  # pyright: ignore[reportUnknownMemberType]
                     results.append(
                         BatchResult(
-                            custom_id=custom_id,
+                            custom_id=custom_id,  # pyright: ignore[reportUnknownArgumentType]
                             error=BatchError(code='canceled', message='Request was canceled'),
                         )
                     )
-                elif result.type == 'expired':
+                elif result.type == 'expired':  # pyright: ignore[reportUnknownMemberType]
                     results.append(
                         BatchResult(
-                            custom_id=custom_id,
+                            custom_id=custom_id,  # pyright: ignore[reportUnknownArgumentType]
                             error=BatchError(code='expired', message='Request expired'),
                         )
                     )
                 else:  # pragma: no cover
                     results.append(
                         BatchResult(
-                            custom_id=custom_id,
-                            error=BatchError(code='unknown', message=f'Unknown result type: {result.type}'),
+                            custom_id=custom_id,  # pyright: ignore[reportUnknownArgumentType]
+                            error=BatchError(code='unknown', message=f'Unknown result type: {result.type}'),  # pyright: ignore[reportUnknownMemberType]
                         )
                     )
         except APIStatusError as e:
@@ -1436,7 +1445,10 @@ class AnthropicModel(Model):
         check_allow_model_requests()
 
         try:
-            batch_response = await self.client.messages.batches.cancel(batch.id)
+            # SDK type stubs don't expose beta.messages.batches properly
+            batch_response: BetaMessageBatch = await self.client.beta.messages.batches.cancel(  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportUnknownVariableType]
+                batch.id
+            )
         except APIStatusError as e:
             if e.status_code >= 400:
                 raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
@@ -1444,9 +1456,9 @@ class AnthropicModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        return self._parse_batch_response(batch_response)
+        return self._parse_batch_response(batch_response)  # pyright: ignore[reportUnknownArgumentType]
 
-    def _parse_batch_response(self, response: Any) -> AnthropicBatch:
+    def _parse_batch_response(self, response: BetaMessageBatch) -> AnthropicBatch:
         """Convert Anthropic batch response to AnthropicBatch object."""
         # Map Anthropic processing_status to our normalized enum
         # Anthropic uses: in_progress, canceling, ended

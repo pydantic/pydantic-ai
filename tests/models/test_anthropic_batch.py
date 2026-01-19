@@ -183,6 +183,11 @@ class MockAnthropicBatchClient:
             mock.input_tokens = 10
             return mock
 
+        @property
+        def batches(self) -> Any:
+            """Expose batches under beta.messages for batch processing."""
+            return MockAnthropicBatchClient._BatchesNamespace(self.parent)
+
     @dataclass
     class _BatchesNamespace:
         parent: MockAnthropicBatchClient
@@ -736,6 +741,11 @@ class TestAnthropicBatchAPIErrorHandling:
 
             async def create(self, **kwargs: Any) -> BetaMessage:
                 return create_beta_message()
+
+            @property
+            def batches(self) -> Any:
+                """Expose batches under beta.messages for batch processing."""
+                return TestAnthropicBatchAPIErrorHandling.MockAnthropicWithAPIError._BatchesNamespace(self.parent)
 
         @dataclass
         class _BatchesNamespace:

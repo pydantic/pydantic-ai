@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from . import BatchError, BatchResult
 
@@ -76,13 +76,18 @@ def extract_batch_error(error_data: dict[str, Any] | Any) -> BatchError:
     if not isinstance(error_data, dict):
         return BatchError(code='unknown', message=str(error_data) if error_data else 'Unknown error')
 
+    # Cast to help pyright understand the type after isinstance check
+    error_dict = cast(dict[str, Any], error_data)
+
     # Handle nested error structures: {"error": {...}}
-    error = error_data.get('error', error_data)
+    error = error_dict.get('error', error_dict)
     if isinstance(error, dict):
+        # Cast again after isinstance check
+        nested_error = cast(dict[str, Any], error)
         # Try common field names for code: code, type
-        code = str(error.get('code') or error.get('type') or 'unknown')
+        code = str(nested_error.get('code') or nested_error.get('type') or 'unknown')
         # Try common field names for message: message, detail
-        message = str(error.get('message') or error.get('detail') or 'Unknown error')
+        message = str(nested_error.get('message') or nested_error.get('detail') or 'Unknown error')
         return BatchError(code=code, message=message)
 
     # error is a string or other primitive
