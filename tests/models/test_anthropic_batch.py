@@ -261,28 +261,26 @@ class TestAnthropicBatch:
 
     def test_anthropic_batch_status_mapping(self):
         """Test AnthropicBatch status mapping for terminal states."""
-        base = dict(
-            id='msgbatch_123',
-            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        )
+        batch_id = 'msgbatch_123'
+        created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
         # Completed batch
-        completed = AnthropicBatch(**base, status=BatchStatus.COMPLETED)
+        completed = AnthropicBatch(id=batch_id, created_at=created_at, status=BatchStatus.COMPLETED)
         assert completed.is_complete is True
         assert completed.is_successful is True
 
         # Failed batch
-        failed = AnthropicBatch(**base, status=BatchStatus.FAILED)
+        failed = AnthropicBatch(id=batch_id, created_at=created_at, status=BatchStatus.FAILED)
         assert failed.is_complete is True
         assert failed.is_successful is False
 
         # Cancelled batch
-        cancelled = AnthropicBatch(**base, status=BatchStatus.CANCELLED)
+        cancelled = AnthropicBatch(id=batch_id, created_at=created_at, status=BatchStatus.CANCELLED)
         assert cancelled.is_complete is True
         assert cancelled.is_successful is False
 
         # Expired batch
-        expired = AnthropicBatch(**base, status=BatchStatus.EXPIRED)
+        expired = AnthropicBatch(id=batch_id, created_at=created_at, status=BatchStatus.EXPIRED)
         assert expired.is_complete is True
         assert expired.is_successful is False
 
