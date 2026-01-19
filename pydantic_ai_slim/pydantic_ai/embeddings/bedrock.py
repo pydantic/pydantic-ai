@@ -133,7 +133,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     Note: Multimodal-specific purposes (`'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`,
     `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`) are not supported as this
-    embedding model only accepts text input.
+    embedding client only accepts text input.
     """
 
 
