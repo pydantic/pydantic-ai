@@ -278,7 +278,7 @@ class BatchModel(Model):
         except Exception as e:
             # If batch processing fails, propagate error to all futures
             for req in pending_requests:
-                if not req.future.done():
+                if not req.future.done():  # pragma: lax no cover
                     req.future.set_exception(e)
             raise
 
