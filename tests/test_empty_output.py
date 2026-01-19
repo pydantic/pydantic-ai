@@ -11,7 +11,7 @@ async def test_agent_allows_none_output_empty_response():
     async def empty_model(messages, settings, params):
         return ModelResponse(parts=[])
 
-    model = FunctionModel(request_function=empty_model)
+    model = FunctionModel(function=empty_model)
     agent = Agent(model, output_type=str | None)
     
     result = await agent.run("hello")
@@ -28,7 +28,7 @@ async def test_agent_allows_none_output_after_tool():
             return ModelResponse(parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')])
         return ModelResponse(parts=[])
 
-    model = FunctionModel(request_function=tool_then_empty_model)
+    model = FunctionModel(function=tool_then_empty_model)
     agent = Agent(model, output_type=str | None)
     
     @agent.tool_plain
@@ -45,7 +45,7 @@ async def test_agent_still_fails_if_none_not_allowed():
     async def empty_model(messages, settings, params):
         return ModelResponse(parts=[])
 
-    model = FunctionModel(request_function=empty_model)
+    model = FunctionModel(function=empty_model)
     agent = Agent(model, output_type=str)
     
     # It should raise an error after retries. 
