@@ -605,3 +605,68 @@ class TestBatchModelShouldSubmitCallback:
         assert isinstance(response.parts[0], TextPart)
         assert 'Response for' in response.parts[0].content
         mock_model.batch_create.assert_called_once()
+
+
+class TestBatchModelEdgeCases:
+    """Tests for edge cases and branch coverage."""
+
+    @pytest.mark.anyio
+    async def test_context_manager_exit_without_batch_task(self) -> None:
+        """Test that context manager exits cleanly when no batch task was created.
+
+        This tests the branch where `self._batch_task` is None at exit time.
+        """
+        mock_model = create_mock_model()
+        batch_model = BatchModel(mock_model, poll_interval=0.01)
+
+        # Enter and exit without queuing any requests
+        async with batch_model:
+            # No requests queued, no submit called
+            pass
+
+        # Should exit cleanly without any errors
+        assert batch_model.queue_size == 0
+        assert not batch_model.is_processing
+
+    @pytest.mark.anyio
+    async def test_error_handling_when_some_futures_already_done(self) -> None:
+        """Test that error handling skips futures that are already done.
+
+        This tests the branch where `req.future.done()` returns True in the
+        exception handler loop.
+        """
+        mock_model = create_mock_model()
+
+        batch_in_progress = create_mock_batch(status=BatchStatus.IN_PROGRESS)
+
+        call_count = 0
+
+        async def batch_status_with_error(batch: Batch) -> Batch:
+            nonlocal call_count
+            call_count += 1
+            # Fail on second call
+            if call_count >= 2:
+                raise RuntimeError('Simulated API failure')
+            return batch_in_progress
+
+        mock_model.batch_create = AsyncMock(return_value=batch_in_progress)
+        mock_model.batch_status = AsyncMock(side_effect=batch_status_with_error)
+
+        batch_model = BatchModel(mock_model, poll_interval=0.01)
+
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        params = ModelRequestParameters()
+
+        # Queue multiple requests
+        async with batch_model:
+            task1 = asyncio.create_task(batch_model.request(messages, None, params))
+            task2 = asyncio.create_task(batch_model.request(messages, None, params))
+            await asyncio.sleep(0.01)
+            await batch_model.submit()
+
+            # Both tasks should fail with the same error
+            with pytest.raises(RuntimeError, match='Simulated API failure'):
+                await asyncio.wait_for(task1, timeout=1.0)
+
+            with pytest.raises(RuntimeError, match='Simulated API failure'):
+                await asyncio.wait_for(task2, timeout=1.0)

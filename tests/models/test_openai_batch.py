@@ -1705,3 +1705,137 @@ class TestBatchResultsValidationError:
         assert result_map['req-invalid'].is_successful is False
         assert result_map['req-invalid'].error is not None
         assert result_map['req-invalid'].error.code == 'validation_error'
+
+
+class TestModelRequestBatchPolling:
+    """Tests for model_request_batch polling loop coverage."""
+
+    async def test_model_request_batch_without_timeout_polls_until_complete(
+        self, allow_model_requests: None
+    ):
+        """Test model_request_batch polls correctly when no timeout is set.
+
+        This exercises the branch in direct.py where timeout is None,
+        ensuring the polling loop runs without checking timeout condition.
+        """
+        from pydantic_ai.direct import model_request_batch
+
+        # Track status check calls
+        status_check_count = 0
+
+        # Create a custom mock that transitions from in_progress to completed
+        class TransitioningMock(MockOpenAIBatch):
+            @property
+            def batches(self) -> Any:
+                return self._TransitioningBatchesNamespace(self)
+
+            @dataclass
+            class _TransitioningBatchesNamespace:
+                parent: TransitioningMock
+
+                async def create(self, **kwargs: Any) -> OpenAIBatchResponse:
+                    self.parent.batch_create_calls.append(kwargs)
+                    return OpenAIBatchResponse(
+                        id='batch_polling',
+                        completion_window='24h',
+                        created_at=1704067200,
+                        endpoint='/v1/chat/completions',
+                        input_file_id=kwargs.get('input_file_id', 'file_xyz'),
+                        object='batch',
+                        status='in_progress',  # Start as in_progress
+                    )
+
+                async def retrieve(self, batch_id: str) -> OpenAIBatchResponse:
+                    nonlocal status_check_count
+                    status_check_count += 1
+                    # Transition to completed on second call
+                    if status_check_count >= 2:
+                        return OpenAIBatchResponse(
+                            id=batch_id,
+                            completion_window='24h',
+                            created_at=1704067200,
+                            endpoint='/v1/chat/completions',
+                            input_file_id='file_xyz',
+                            object='batch',
+                            status='completed',
+                            output_file_id='file_output',
+                            request_counts=BatchRequestCounts(completed=2, failed=0, total=2),
+                        )
+                    return OpenAIBatchResponse(
+                        id=batch_id,
+                        completion_window='24h',
+                        created_at=1704067200,
+                        endpoint='/v1/chat/completions',
+                        input_file_id='file_xyz',
+                        object='batch',
+                        status='in_progress',
+                    )
+
+        mock_client = TransitioningMock()
+
+        # Set up results for when completed
+        output_lines = [
+            {
+                'id': 'resp_1',
+                'custom_id': 'req-poll-1',
+                'response': {
+                    'status_code': 200,
+                    'body': {
+                        'id': 'chatcmpl-poll-1',
+                        'object': 'chat.completion',
+                        'created': 1704067200,
+                        'model': 'gpt-5-mini',
+                        'choices': [
+                            {
+                                'index': 0,
+                                'message': {'role': 'assistant', 'content': 'Polled response 1'},
+                                'finish_reason': 'stop',
+                            }
+                        ],
+                    },
+                },
+            },
+            {
+                'id': 'resp_2',
+                'custom_id': 'req-poll-2',
+                'response': {
+                    'status_code': 200,
+                    'body': {
+                        'id': 'chatcmpl-poll-2',
+                        'object': 'chat.completion',
+                        'created': 1704067200,
+                        'model': 'gpt-5-mini',
+                        'choices': [
+                            {
+                                'index': 0,
+                                'message': {'role': 'assistant', 'content': 'Polled response 2'},
+                                'finish_reason': 'stop',
+                            }
+                        ],
+                    },
+                },
+            },
+        ]
+        mock_client.file_content_responses['file_output'] = '\n'.join(
+            json.dumps(line) for line in output_lines
+        )
+
+        model = mock_client.create_model()
+
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Test polling')]
+        requests: list[tuple[str, list[ModelMessage]]] = [
+            ('req-poll-1', messages),
+            ('req-poll-2', messages),
+        ]
+
+        # Call without timeout - should poll until complete
+        results = await model_request_batch(model, requests, poll_interval=0.01)
+
+        # Verify polling happened
+        assert status_check_count >= 2, 'Should have checked status at least twice'
+
+        # Verify results
+        assert len(results) == 2
+        result_map = {r.custom_id: r for r in results}
+        assert result_map['req-poll-1'].is_successful is True
+        assert result_map['req-poll-2'].is_successful is True
