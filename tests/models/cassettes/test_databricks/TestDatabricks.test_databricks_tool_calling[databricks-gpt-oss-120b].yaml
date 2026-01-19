@@ -12,7 +12,7 @@ interactions:
         content-type:
           - application/json
         host:
-          - <DATABRICKS_BASE_URL>
+          - mock.databricks.com
       method: POST
       parsed_body:
         messages:
@@ -43,7 +43,7 @@ interactions:
                 title: GetWeather
                 type: object
             type: function
-      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
     response:
       headers:
         alt-svc:

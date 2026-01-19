@@ -12,7 +12,7 @@ interactions:
         content-type:
           - application/json
         host:
-          - <DATABRICKS_BASE_URL>
+          - mock.databricks.com
       method: POST
       parsed_body:
         messages:
@@ -20,7 +20,7 @@ interactions:
             role: user
         model: databricks-gpt-oss-120b
         stream: true
-      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
     response:
       body:
         string: |+

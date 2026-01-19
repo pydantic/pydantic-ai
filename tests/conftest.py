@@ -323,7 +323,7 @@ def vcr_config():
         'filter_headers': ['authorization', 'x-api-key'],
         'decode_compressed_response': True,
         'filter_sensitive_data': [
-            ('<DATABRICKS_BASE_URL>', os.environ.get('DATABRICKS_BASE_URL')),
+            (os.environ.get('DATABRICKS_BASE_URL'), 'https://mock.databricks.com'),
         ],
     }
 
@@ -430,7 +430,7 @@ def databricks_api_key() -> str:
 
 @pytest.fixture(scope='session')
 def databricks_base_url():
-    return os.getenv('DATABRICKS_BASE_URL', '<DATABRICKS_BASE_URL>')
+    return os.getenv('DATABRICKS_BASE_URL', 'https://mock.databricks.com')
 
 
 @pytest.fixture(scope='session')
