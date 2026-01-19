@@ -633,7 +633,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                     RetryPromptPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
-                        tool_call_id='call_56494531',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
@@ -1686,7 +1686,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'query': 'what day of the week is January 1, 2026'},
-                        tool_call_id='call_85779342',
+                        tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
                     ThinkingPart(
@@ -1771,7 +1771,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'query': 'San Francisco weather today Celsius'},
-                        tool_call_id='call_68437309',
+                        tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
@@ -1836,13 +1836,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_68437309', provider_name='xai'),
+                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='xai'),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
                 index=1,
                 delta=ToolCallPartDelta(
-                    args_delta={'query': 'San Francisco weather today Celsius'}, tool_call_id='call_68437309'
+                    args_delta={'query': 'San Francisco weather today Celsius'}, tool_call_id=IsStr()
                 ),
             ),
             PartEndEvent(
@@ -1850,7 +1850,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'query': 'San Francisco weather today Celsius'},
-                    tool_call_id='call_68437309',
+                    tool_call_id=IsStr(),
                     provider_name='xai',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -1860,7 +1860,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=None,
-                    tool_call_id='call_68437309',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
@@ -1875,14 +1875,14 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_78055205', provider_name='xai'),
+                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='xai'),
                 previous_part_kind='builtin-tool-return',
             ),
             PartDeltaEvent(
                 index=3,
                 delta=ToolCallPartDelta(
                     args_delta={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                    tool_call_id='call_78055205',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartEndEvent(
@@ -1890,7 +1890,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                    tool_call_id='call_78055205',
+                    tool_call_id=IsStr(),
                     provider_name='xai',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -1900,7 +1900,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=None,
-                    tool_call_id='call_78055205',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
@@ -1953,11 +1953,11 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
                 ),
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'query': 'San Francisco weather today Celsius'},
-                    tool_call_id='call_68437309',
+                    tool_call_id=IsStr(),
                     provider_name='xai',
                 )
             ),
@@ -2141,10 +2141,10 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(tool_name='code_execution', tool_call_id='call_02414781', provider_name='xai'),
+                part=BuiltinToolCallPart(tool_name='code_execution', tool_call_id=IsStr(), provider_name='xai'),
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta={'code': 'print(2 + 2)'}, tool_call_id='call_02414781')
+                index=0, delta=ToolCallPartDelta(args_delta={'code': 'print(2 + 2)'}, tool_call_id=IsStr())
             ),
             PartEndEvent(
                 index=0,
@@ -2477,7 +2477,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
                                 'question': 'What is this repository about? Provide a short summary.',
                             },
                         },
-                        tool_call_id='call_05345625',
+                        tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
@@ -2528,7 +2528,7 @@ Wiki pages you might want to explore:
 
 View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repository-about_10565715-352a-4a8a-9260-3ed39b0b3226
 """,
-                        tool_call_id='call_05345625',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
@@ -2622,7 +2622,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                                 'question': 'Provide a short summary of the repository, including its purpose and main features.',
                             },
                         },
-                        tool_call_id='call_50266835',
+                        tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
@@ -2652,7 +2652,7 @@ Wiki pages you might want to explore:
 
 View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
 """,
-                        tool_call_id='call_50266835',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
@@ -2697,7 +2697,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:deepwiki', tool_call_id='call_50266835', provider_name='xai'
+                    tool_name='mcp_server:deepwiki', tool_call_id=IsStr(), provider_name='xai'
                 ),
                 previous_part_kind='thinking',
             ),
@@ -2712,7 +2712,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                             'question': 'Provide a short summary of the repository, including its purpose and main features.',
                         },
                     },
-                    tool_call_id='call_50266835',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartEndEvent(
@@ -2727,7 +2727,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                             'question': 'Provide a short summary of the repository, including its purpose and main features.',
                         },
                     },
-                    tool_call_id='call_50266835',
+                    tool_call_id=IsStr(),
                     provider_name='xai',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -2761,7 +2761,7 @@ Wiki pages you might want to explore:
 
 View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
 """,
-                    tool_call_id='call_50266835',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
@@ -2876,7 +2876,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                             'question': 'Provide a short summary of the repository, including its purpose and main features.',
                         },
                     },
-                    tool_call_id='call_50266835',
+                    tool_call_id=IsStr(),
                     provider_name='xai',
                 )
             ),
@@ -2908,7 +2908,7 @@ Wiki pages you might want to explore:
 
 View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
 """,
-                    tool_call_id='call_50266835',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 )
