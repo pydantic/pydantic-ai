@@ -1710,9 +1710,7 @@ class TestBatchResultsValidationError:
 class TestModelRequestBatchPolling:
     """Tests for model_request_batch polling loop coverage."""
 
-    async def test_model_request_batch_without_timeout_polls_until_complete(
-        self, allow_model_requests: None
-    ):
+    async def test_model_request_batch_without_timeout_polls_until_complete(self, allow_model_requests: None):
         """Test model_request_batch polls correctly when no timeout is set.
 
         This exercises the branch in direct.py where timeout is None,
@@ -1816,9 +1814,7 @@ class TestModelRequestBatchPolling:
                 },
             },
         ]
-        mock_client.file_content_responses['file_output'] = '\n'.join(
-            json.dumps(line) for line in output_lines
-        )
+        mock_client.file_content_responses['file_output'] = '\n'.join(json.dumps(line) for line in output_lines)
 
         model = mock_client.create_model()
 
