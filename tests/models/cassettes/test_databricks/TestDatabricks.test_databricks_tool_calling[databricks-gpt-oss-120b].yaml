@@ -49,11 +49,11 @@ interactions:
         alt-svc:
           - h3=":443"; ma=86400, h3-29=":443"; ma=86400
         content-length:
-          - "484"
+          - "510"
         content-type:
           - application/json; charset=utf-8
         server-timing:
-          - request_id;dur=0;desc="73e1be9e-30d5-4930-b7f2-2d74b3b8c843", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="938837ad-e8d4-46d1-b138-a8379225e65f", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -72,19 +72,20 @@ interactions:
                 - function:
                     arguments: |-
                       {
-                        "location": "London"
+                        "location": "London",
+                        "unit": "celsius"
                       }
                     name: get_weather
-                  id: call_efce4ca8-9381-4bb7-9cbb-52c466b79a0d
+                  id: call_fdaff64f-9cb4-496e-8a5b-f3608c1bc1aa
                   type: function
-        created: 1768789171
-        id: chatcmpl_56350d41-43a7-49b0-9541-168ddf59359f
+        created: 1768819950
+        id: chatcmpl_5127ba2a-1400-46dc-b655-aa1b1297a7ff
         model: gpt-oss-120b-080525
         object: chat.completion
         usage:
-          completion_tokens: 68
+          completion_tokens: 61
           prompt_tokens: 163
-          total_tokens: 231
+          total_tokens: 224
       status:
         code: 200
         message: OK

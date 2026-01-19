@@ -1,5 +1,5 @@
 import base64
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,10 +12,10 @@ from pydantic_ai import (
     ModelHTTPError,
     ModelRequest,
     ModelResponse,
-    RunUsage,
     TextPart,
     ToolCallPart,
     ToolDefinition,
+    UserPromptPart,
 )
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
@@ -191,17 +191,25 @@ class TestDatabricks:
         model = DatabricksModel(model_name, provider=provider)
 
         fake_image_data = b'fake_image_bytes'
-        inputs = [
-            'What is in this image?',
-            BinaryContent(data=fake_image_data, media_type='image/png'),
-        ]
 
-        message = ModelRequest.user_text_prompt(inputs)
+        message = ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'What is in this image?',
+                        BinaryContent(data=fake_image_data, media_type='image/png'),
+                    ]
+                )
+            ]
+        )
 
         mapped_messages = await model._map_messages([message], None)  # type: ignore[reportPrivateUsage]
 
         assert len(mapped_messages) == 1
-        content = mapped_messages[0]['content']
+
+        message_param = mapped_messages[0]
+        assert 'content' in message_param
+        content = message_param['content']
 
         assert isinstance(content, list)
         assert len(content) == 2
@@ -229,8 +237,8 @@ class TestDatabricks:
         settings = DatabricksModelSettings(openai_reasoning_effort='high')
 
         with patch.object(model.client.chat.completions, 'create', new_callable=MagicMock) as mock_create:
-
-            async def async_return(*args, **kwargs):
+            # FIX: Add types for args and kwargs
+            async def async_return(*args: Any, **kwargs: Any):
                 from openai.types.chat import ChatCompletion, ChatCompletionMessage
                 from openai.types.chat.chat_completion import Choice
 

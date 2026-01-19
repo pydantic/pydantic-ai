@@ -30,7 +30,7 @@ interactions:
         content-type:
           - application/json; charset=utf-8
         server-timing:
-          - request_id;dur=0;desc="6169c5dd-21df-4502-9e52-053474361de3", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="9838c73d-b792-4fb6-984b-a827b5944574", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         vary:
@@ -39,7 +39,7 @@ interactions:
           - Bearer realm="DatabricksRealm"
       parsed_body:
         error_code: 401
-        message: "Credential was not sent or was of an unsupported type for this API. [ReqId: 6169c5dd-21df-4502-9e52-053474361de3]"
+        message: "Credential was not sent or was of an unsupported type for this API. [ReqId: 9838c73d-b792-4fb6-984b-a827b5944574]"
       status:
         code: 401
         message: Unauthorized

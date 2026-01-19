@@ -53,7 +53,7 @@ interactions:
         content-type:
           - application/json
         server-timing:
-          - request_id;dur=0;desc="89af9400-5372-4976-b897-55f612a7d0fd", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="8fefc558-7227-4393-9f68-99f2b224afcd", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -71,10 +71,10 @@ interactions:
                 - function:
                     arguments: '{"location":"London"}'
                     name: get_weather
-                  id: toolu_bdrk_013eqYiqS4gX1tQjimsmEqvG
+                  id: toolu_bdrk_018kP5sK8XDckst4J9n3wfbH
                   type: function
-        created: 1768789170
-        id: msg_bdrk_01XuKue78MduSR8qDrCL2H2p
+        created: 1768819949
+        id: msg_bdrk_01U2xaUKSPo558fMKySgHDha
         model: us.anthropic.claude-opus-4-5-20251101-v1:0
         object: chat.completion
         usage:

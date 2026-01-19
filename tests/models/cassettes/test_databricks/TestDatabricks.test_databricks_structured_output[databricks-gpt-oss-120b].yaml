@@ -50,7 +50,7 @@ interactions:
         content-type:
           - application/json; charset=utf-8
         server-timing:
-          - request_id;dur=0;desc="b2f1e8a3-ad4f-406e-baf6-eab79284b516", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="c0137de9-e955-470c-bb76-c471cfcab0f5", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -74,16 +74,16 @@ interactions:
                         "population_approx": 14000000
                       }
                     name: final_result
-                  id: call_bb0f9669-8e8b-4923-9579-896312dfb49c
+                  id: call_b4a43ab4-1bef-4b2e-aa5c-c3a6fac3af3e
                   type: function
-        created: 1768789179
-        id: chatcmpl_c2867ae8-08f7-408f-85a5-74413e35839b
+        created: 1768819958
+        id: chatcmpl_73b3365c-c321-4c63-b706-ebfb3e284a3b
         model: gpt-oss-120b-080525
         object: chat.completion
         usage:
-          completion_tokens: 198
+          completion_tokens: 187
           prompt_tokens: 150
-          total_tokens: 348
+          total_tokens: 337
       status:
         code: 200
         message: OK

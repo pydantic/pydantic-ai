@@ -55,13 +55,13 @@ interactions:
         openai-organization:
           - databricks-serverless
         openai-processing-ms:
-          - "697"
+          - "516"
         openai-project:
           - proj_XWG0smJyU1OZznEnXiHbHa7z
         openai-version:
           - "2020-10-01"
         server-timing:
-          - request_id;dur=0;desc="e7c754ea-df4d-4160-833c-0785f7773020", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="fe9ac26b-ef1a-48a2-803b-c35756645665", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -81,10 +81,10 @@ interactions:
                 - function:
                     arguments: '{"city":"Tokyo","country":"Japan","population_approx":14000000}'
                     name: final_result
-                  id: call_jMA6IwhvfgXmdw7a6lM2d3C3
+                  id: call_ZbNYyCYmHzVTkYom32i829y4
                   type: function
-        created: 1768789173
-        id: chatcmpl-CzZ9ZvmfIkXsfm2L4gFeLqjwkI10b
+        created: 1768819952
+        id: chatcmpl-CzhA0H1xx3en560fQ16fD1PYxyRto
         model: gpt-5.2-2025-12-11
         object: chat.completion
         service_tier: default

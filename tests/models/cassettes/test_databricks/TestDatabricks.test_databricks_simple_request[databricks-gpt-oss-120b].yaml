@@ -26,11 +26,11 @@ interactions:
         alt-svc:
           - h3=":443"; ma=86400, h3-29=":443"; ma=86400
         content-length:
-          - "562"
+          - "581"
         content-type:
           - application/json; charset=utf-8
         server-timing:
-          - request_id;dur=0;desc="2af8120f-86c3-4eb4-9926-271ae83d7f4d", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="185151b1-7deb-4126-8a7e-cfbbb978e042", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -45,22 +45,23 @@ interactions:
             message:
               content:
                 - summary:
-                    - text:
-                        We need to respond with lowercase, one word, no punctuation. The answer is "paris". Must be lowercase,
-                        one word, no punctuation. Provide just "paris".
+                    - text: |-
+                        The user wants: "What is the capital of France? lowercase, one word reply, no punctuation."
+
+                        We must comply. Answer: "paris". It's lowercase, one word, no punctuation.
                       type: summary_text
                   type: reasoning
                 - text: paris
                   type: text
               role: assistant
-        created: 1768789159
-        id: chatcmpl_4b32b938-45da-46d5-9218-cbf964480501
+        created: 1768819938
+        id: chatcmpl_84cd52ca-a3c7-4bfd-903c-f53620967819
         model: gpt-oss-120b-080525
         object: chat.completion
         usage:
-          completion_tokens: 48
+          completion_tokens: 52
           prompt_tokens: 101
-          total_tokens: 149
+          total_tokens: 153
       status:
         code: 200
         message: OK

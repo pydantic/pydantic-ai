@@ -30,7 +30,7 @@ interactions:
         content-type:
           - application/json
         server-timing:
-          - request_id;dur=0;desc="9b805de7-4e15-4356-8f8c-bc95664f1c4d", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="3ec5734f-dd72-47fc-838e-7a65f56f574f", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -44,8 +44,8 @@ interactions:
             message:
               content: Hello! How are you doing today? Is there something I can help you with?
               role: assistant
-        created: 1768789185
-        id: msg_bdrk_01YNd8je3unpcuJgW2QNBfKg
+        created: 1768819963
+        id: msg_bdrk_01W6hVi16t4kGntdgyKt7SzW
         model: us.anthropic.claude-opus-4-5-20251101-v1:0
         object: chat.completion
         usage:

@@ -1,18 +1,22 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass, replace
-from typing import Annotated, Any, Iterable, Literal
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Annotated, Any, Literal, cast, overload
 
-from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncStream
+from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncStream, Omit
 from openai.types import chat
+
+# Import this specific type to fix the assignment error in create()
+from openai.types.chat import ChatCompletionStreamOptionsParam
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from typing_extensions import override
 
 from pydantic_ai import ModelAPIError, ModelHTTPError, ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.profiles import ModelProfileSpec
+from pydantic_ai.profiles.databricks import DatabricksModelProfile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 
-from ..profiles.databricks import DatabricksModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
@@ -23,7 +27,6 @@ from .openai import (
     OpenAIChatModel,
     OpenAIChatModelSettings,
     OpenAIStreamedResponse,
-    _check_azure_content_filter,
     get_user_agent,
 )
 
@@ -61,6 +64,15 @@ class DbReasoningContent(BaseModel):
 DbContentBlock = Annotated[DbTextContent | DbReasoningContent, Field(discriminator='type')]
 
 
+class DatabricksUsage(BaseModel):
+    """Explicit definition of Databricks usage to satisfy type checkers."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    reasoning_tokens: int | None = None
+
+
 class DatabricksModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for a Databricks model request."""
 
@@ -91,7 +103,24 @@ class DatabricksModel(OpenAIChatModel):
             settings=settings,
         )
 
-    @override
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncStream[chat.ChatCompletionChunk]: ...
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | ModelResponse: ...
+
     async def _completions_create(
         self,
         messages: list[ModelMessage],
@@ -101,6 +130,8 @@ class DatabricksModel(OpenAIChatModel):
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk] | ModelResponse:
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
+
+        self.profile = cast(DatabricksModelProfile, self.profile)
 
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
@@ -121,13 +152,12 @@ class DatabricksModel(OpenAIChatModel):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        # Fetch unsupported settings from the profile we set in __init__
         unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
 
-        # 1. Remove unsupported settings from the generic model_settings dict
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
 
+        stream_options: ChatCompletionStreamOptionsParam | Omit
         if stream and self.profile.databricks_stream_options:
             stream_options = {'include_usage': True}
         else:
@@ -136,6 +166,7 @@ class DatabricksModel(OpenAIChatModel):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
+
             return await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=openai_messages,
@@ -143,7 +174,7 @@ class DatabricksModel(OpenAIChatModel):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 stream=stream,
-                stream_options=stream_options,  # Pass the calculated variable
+                stream_options=stream_options,
                 stop=model_settings.get('stop_sequences', OMIT),
                 max_completion_tokens=model_settings.get('max_tokens', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
@@ -167,8 +198,6 @@ class DatabricksModel(OpenAIChatModel):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
-                return model_response
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -185,7 +214,6 @@ class DatabricksModel(OpenAIChatModel):
         """Normalizes Databricks responses to the strict OpenAI schema."""
         data = response.model_dump(mode='json', warnings=False)
 
-        # For certain models, (gemini 2.5 pro) id was missing in response.
         if data.get('id') is None:
             data['id'] = 'databricks-placeholder-id'
 
@@ -230,16 +258,20 @@ class DatabricksModel(OpenAIChatModel):
         if not response.usage:
             return RequestUsage()
 
+        usage_obj = cast(DatabricksUsage, response.usage)
+
         request_usage = RequestUsage(
-            input_tokens=response.usage.prompt_tokens,
-            output_tokens=response.usage.completion_tokens,
+            input_tokens=usage_obj.prompt_tokens,
+            output_tokens=usage_obj.completion_tokens,
             details={},
         )
 
-        reasoning_tokens = getattr(response.usage, 'reasoning_tokens', None)
+        reasoning_tokens = getattr(usage_obj, 'reasoning_tokens', None)
 
-        if reasoning_tokens is None and response.usage.model_extra:
-            reasoning_tokens = response.usage.model_extra.get('reasoning_tokens')
+        if reasoning_tokens is None and hasattr(usage_obj, 'model_extra'):
+            model_extra = getattr(usage_obj, 'model_extra', {})
+            if model_extra:
+                reasoning_tokens = cast(int | None, model_extra.get('reasoning_tokens'))
 
         if reasoning_tokens is not None:
             request_usage.details['reasoning_tokens'] = reasoning_tokens
@@ -247,11 +279,7 @@ class DatabricksModel(OpenAIChatModel):
         return request_usage
 
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
-        """Capture Databricks-specific details.
-
-        This ensures raw usage data (including unique Databricks fields)
-        is available in `response.provider_details`.
-        """
+        """Capture Databricks-specific details."""
         details = super()._process_provider_details(response) or {}
 
         if response.usage:
@@ -273,14 +301,18 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
         if not self._usage:
             return RequestUsage()
 
+        usage_obj = cast(DatabricksUsage, self._usage)
+
         usage = RequestUsage(
-            input_tokens=self._usage.prompt_tokens, output_tokens=self._usage.completion_tokens, requests=1, details={}
+            input_tokens=usage_obj.prompt_tokens,
+            output_tokens=usage_obj.completion_tokens,
+            details={},
         )
 
-        # Handle Databricks specific flat 'reasoning_tokens'
-        reasoning_tokens = getattr(self._usage, 'reasoning_tokens', None)
-        if reasoning_tokens is None and hasattr(self._usage, 'model_extra'):
-            reasoning_tokens = (self._usage.model_extra or {}).get('reasoning_tokens')
+        reasoning_tokens = getattr(usage_obj, 'reasoning_tokens', None)
+        if reasoning_tokens is None:
+            model_extra = getattr(usage_obj, 'model_extra', {}) or {}
+            reasoning_tokens = model_extra.get('reasoning_tokens')
 
         if reasoning_tokens is not None:
             usage.details['reasoning_tokens'] = reasoning_tokens
@@ -290,7 +322,7 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
     @override
     def _map_part_delta(self, choice: chat.chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Override to handle Databricks' structured content (list of blocks) instead of just plain strings."""
-        content = choice.delta.content
+        content = cast(list[dict[str, Any]] | str | None, choice.delta.content)
 
         # Databricks specific: Content is a list of blocks (reasoning/text)
         if isinstance(content, list):
@@ -298,17 +330,18 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
                 if not isinstance(block, dict):
                     continue
 
-                block_type = block.get('type')
+                block_type = cast(str | None, block.get('type'))
 
                 if block_type == 'reasoning':
-                    val = block.get('text') or block.get('content')
+                    val = cast(str | None, block.get('text') or block.get('content'))
 
                     # e.g. {'summary': [{'type': 'summary_text', 'text': 'The'}]}
-                    if not val and (summary := block.get('summary')):
-                        if isinstance(summary, list):
+                    if not val:
+                        summary_list = cast(list[dict[str, Any]] | None, block.get('summary'))
+                        if summary_list:
                             val = ''.join(
-                                s.get('text', '')
-                                for s in summary
+                                cast(str, s.get('text', ''))
+                                for s in summary_list
                                 if isinstance(s, dict) and s.get('type') == 'summary_text'
                             )
 
@@ -320,7 +353,7 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
 
                 elif block_type == 'text':
                     val = block.get('text')
-                    if val:
+                    if isinstance(val, str):
                         yield from self._parts_manager.handle_text_delta(
                             vendor_part_id='content',
                             content=val,

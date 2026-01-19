@@ -53,7 +53,7 @@ interactions:
         content-type:
           - application/json; charset=utf-8
         server-timing:
-          - request_id;dur=0;desc="022bfdfb-2ffc-470a-8dc3-fea8d14ce3c4", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="49d72629-e29e-41c9-9f3a-b5b3d791a53c", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -72,10 +72,10 @@ interactions:
                 - function:
                     arguments: '{"location": "London"}'
                     name: get_weather
-                  id: call_929017de-f8d0-40f6-8fc0-5cc2f8192034
+                  id: call_5ed908f0-14d9-4c43-aa2a-ea2609018e80
                   type: function
-        created: 1768789172
-        id: chatcmpl_db5827bc-1bee-4582-815f-9827213b3241
+        created: 1768819951
+        id: chatcmpl_fed4cc07-581f-45c7-a915-a2010ad566b7
         model: qwen3-next-instruct-091725
         object: chat.completion
         usage:

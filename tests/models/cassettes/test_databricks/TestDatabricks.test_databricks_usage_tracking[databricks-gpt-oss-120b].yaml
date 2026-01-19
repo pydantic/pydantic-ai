@@ -26,11 +26,11 @@ interactions:
         alt-svc:
           - h3=":443"; ma=86400, h3-29=":443"; ma=86400
         content-length:
-          - "586"
+          - "552"
         content-type:
           - application/json; charset=utf-8
         server-timing:
-          - request_id;dur=0;desc="59e1984a-570c-4a31-a903-f5806d1d4b54", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="5f811443-28ef-41d0-a371-f2b2612a2aec", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -46,21 +46,21 @@ interactions:
               content:
                 - summary:
                     - text:
-                        The user just says "Hello". We need to respond appropriately, friendly greeting, ask how can help. No
-                        special instructions, we can respond politely.
+                        The user says "Hello". We need to respond appropriately. The conversation is simple greeting. Just respond
+                        friendly.
                       type: summary_text
                   type: reasoning
-                - text: Hello! How can I assist you today?
+                - text: Hello! How can I help you today?
                   type: text
               role: assistant
-        created: 1768789186
-        id: chatcmpl_04d598ae-e00a-40df-bc59-b865dee958e2
+        created: 1768819963
+        id: chatcmpl_8345451c-0ed4-4deb-8863-9b4b6ca01f38
         model: gpt-oss-120b-080525
         object: chat.completion
         usage:
-          completion_tokens: 49
+          completion_tokens: 41
           prompt_tokens: 86
-          total_tokens: 135
+          total_tokens: 127
       status:
         code: 200
         message: OK

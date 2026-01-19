@@ -29,19 +29,19 @@ interactions:
           - h3=":443"; ma=86400
           - h3=":443"; ma=86400, h3-29=":443"; ma=86400
         content-length:
-          - "805"
+          - "800"
         content-type:
           - application/json
         openai-organization:
           - databricks-serverless
         openai-processing-ms:
-          - "546"
+          - "394"
         openai-project:
           - proj_XWG0smJyU1OZznEnXiHbHa7z
         openai-version:
           - "2020-10-01"
         server-timing:
-          - request_id;dur=0;desc="1c81d635-a0e6-4881-a69f-57b3726a1897", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="070d4f93-92a9-45ce-b151-66db983644af", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -54,17 +54,17 @@ interactions:
             index: 0
             message:
               annotations: []
-              content: Hello! What can I help you with today?
+              content: Hello--how can I help you today?
               refusal: null
               role: assistant
-        created: 1768789181
-        id: chatcmpl-CzZ9h14FVbLZ2uPu5O8lnri4Vfmax
+        created: 1768819960
+        id: chatcmpl-CzhA8vZRkFZiZYABE2XcqEVClQLRw
         model: gpt-5.2-2025-12-11
         object: chat.completion
         service_tier: default
         system_fingerprint: null
         usage:
-          completion_tokens: 13
+          completion_tokens: 12
           completion_tokens_details:
             accepted_prediction_tokens: 0
             audio_tokens: 0
@@ -74,7 +74,7 @@ interactions:
           prompt_tokens_details:
             audio_tokens: 0
             cached_tokens: 0
-          total_tokens: 20
+          total_tokens: 19
       status:
         code: 200
         message: OK

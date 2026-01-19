@@ -50,7 +50,7 @@ interactions:
         content-type:
           - application/json
         server-timing:
-          - request_id;dur=0;desc="6abca5b0-6afa-4aaf-b033-2a743ec9ea58", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="ae7bc7ec-8f46-469a-b517-ae30958f5286", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -68,10 +68,10 @@ interactions:
                 - function:
                     arguments: '{"city":"Tokyo","country":"Japan","population_approx":14000000}'
                     name: final_result
-                  id: toolu_bdrk_018QHyhZgDgofJt5CR9JTxJX
+                  id: toolu_bdrk_01C5NPZUsNtS8Es2cJNgJFqs
                   type: function
-        created: 1768789177
-        id: msg_bdrk_01YCvaFDY4vYyXcYn68Juty3
+        created: 1768819956
+        id: msg_bdrk_017u7nu5r2GJT1pzXp877Ayp
         model: us.anthropic.claude-opus-4-5-20251101-v1:0
         object: chat.completion
         usage:

@@ -30,7 +30,7 @@ interactions:
         content-type:
           - application/json
         server-timing:
-          - request_id;dur=0;desc="1b8a3c8f-a0a1-413d-b6df-d6fb37ac160a", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="1b89009b-c9eb-413f-8083-227b0fa9ef61", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -44,8 +44,8 @@ interactions:
             message:
               content: paris
               role: assistant
-        created: 1768789158
-        id: msg_bdrk_01UPpSkXTEkSn2uqVebT8fhT
+        created: 1768819937
+        id: msg_bdrk_01GSEza4UirT1sfKnTmo7xdJ
         model: us.anthropic.claude-opus-4-5-20251101-v1:0
         object: chat.completion
         usage:
