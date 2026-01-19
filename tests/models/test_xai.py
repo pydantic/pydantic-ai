@@ -51,6 +51,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
@@ -845,6 +846,7 @@ def test_xai_tool_chunk_empty_params():
 
 
 async def test_xai_stream_structured(allow_model_requests: None):
+    """Test structured output streaming, verifying args come as deltas (not repeated PartStartEvents)."""
     stream = [
         get_grok_tool_chunk('final_result', None, accumulated_args=''),
         get_grok_tool_chunk(None, '{"first": "One', accumulated_args='{"first": "One'),
@@ -855,18 +857,38 @@ async def test_xai_stream_structured(allow_model_requests: None):
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=MyTypedDict)
 
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+    # Capture events while streaming, then verify both output and event types
+    events: list[Any] = []
+    async with agent.iter(user_prompt='') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        events.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot({'first': 'One', 'second': 'Two'})
+    assert agent_run.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=1))
+
+    # Verify event types: one PartStartEvent, then PartDeltaEvents for args
+    # (UI adapters like Vercel AI and AG-UI expect deltas, not repeated starts)
+    tool_events = [
+        e
+        for e in events
+        if isinstance(e, (PartStartEvent, PartDeltaEvent))
+        and (
+            isinstance(getattr(e, 'part', None), ToolCallPart)
+            or isinstance(getattr(e, 'delta', None), ToolCallPartDelta)
         )
-        assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=1))
+    ]
+    assert tool_events == snapshot(
+        [
+            PartStartEvent(index=0, part=ToolCallPart(tool_name='final_result', tool_call_id='tool-123')),
+            PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{"first": "One', tool_call_id='tool-123')),
+            PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='", "second": "Two"', tool_call_id='tool-123')),
+            PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='}', tool_call_id='tool-123')),
+        ]
+    )
 
 
 async def test_xai_stream_structured_finish_reason(allow_model_requests: None):

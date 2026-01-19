@@ -801,6 +801,8 @@ class XaiStreamedResponse(StreamedResponse):
         seen_tool_call_ids: set[str] = set()
         seen_tool_return_ids: set[str] = set()
         last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
+        # Track previous tool call args to compute deltas (like we do for reasoning content).
+        prev_tool_call_args: dict[str, str] = {}
 
         async for response, chunk in self._response:
             self._update_response_state(response)
@@ -845,21 +847,35 @@ class XaiStreamedResponse(StreamedResponse):
                         if maybe_event is not None:
                             yield maybe_event
                     else:
-                        # Client-side tools: xAI provides tool-call argument deltas per chunk, but pydantic-ai
-                        # expects *accumulated* JSON for validation (especially for streamed output tools).
-                        # Prefer accumulated args from `response.tool_calls` when available.
+                        # Client-side tools: emit args as deltas so UI adapters receive PartDeltaEvents
+                        # (not repeated PartStartEvents). Use accumulated args from response.tool_calls
+                        # and compute the delta like we do for reasoning content.
                         accumulated = next((tc for tc in response.tool_calls if tc.id == tool_call.id), None)
-                        tool_call_for_part = (
-                            accumulated if accumulated is not None and accumulated.function.arguments else tool_call
+                        accumulated_args = (
+                            accumulated.function.arguments
+                            if accumulated is not None and accumulated.function.arguments
+                            else tool_call.function.arguments
                         )
-                        tool_result_content = _get_tool_result_content(delta.content)
-                        vendor_part_id, part = _create_tool_call_part(
-                            tool_call_for_part,
-                            tool_result_content,
-                            self.system,
-                            message_role=delta.role,
-                        )
-                        yield self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=part)
+                        prev_args = prev_tool_call_args.get(tool_call.id, '')
+                        is_new_tool_call = tool_call.id not in prev_tool_call_args
+                        args_changed = accumulated_args != prev_args
+
+                        if is_new_tool_call or args_changed:
+                            # Compute delta: if accumulated starts with prev, extract the new portion.
+                            if accumulated_args.startswith(prev_args):
+                                args_delta = accumulated_args[len(prev_args) :] or None
+                            else:
+                                args_delta = accumulated_args or None
+                            prev_tool_call_args[tool_call.id] = accumulated_args
+                            maybe_event = self._parts_manager.handle_tool_call_delta(
+                                vendor_part_id=tool_call.id,
+                                # Only pass tool_name on the first call; it would be appended otherwise.
+                                tool_name=tool_call.function.name if is_new_tool_call else None,
+                                args=args_delta,
+                                tool_call_id=tool_call.id,
+                            )
+                            if maybe_event is not None:
+                                yield maybe_event
 
     @property
     def model_name(self) -> str:
