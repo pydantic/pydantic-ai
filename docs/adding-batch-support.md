@@ -22,7 +22,7 @@ Batch processing allows submitting multiple requests at once for asynchronous pr
 
 Create a dataclass that extends the base `Batch` class with provider-specific fields:
 
-```python
+```python {test="skip" lint="skip"}
 from dataclasses import dataclass
 from pydantic_ai.models import Batch
 
@@ -45,7 +45,7 @@ class ProviderBatch(Batch):
 
 Create a mapping from provider-specific status strings to the normalized `BatchStatus` enum:
 
-```python
+```python {test="skip" lint="skip"}
 from pydantic_ai.models import BatchStatus
 
 _PROVIDER_STATUS_MAP: dict[str, BatchStatus] = {
@@ -67,7 +67,7 @@ _PROVIDER_STATUS_MAP: dict[str, BatchStatus] = {
 
 Submit a batch of requests to the provider:
 
-```python
+```python {test="skip" lint="skip"}
 from collections.abc import Sequence
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelRequestParameters, check_allow_model_requests
@@ -108,7 +108,7 @@ async def batch_create(
 
 Check the current status of a batch job:
 
-```python
+```python {test="skip" lint="skip"}
 async def batch_status(self, batch: Batch) -> ProviderBatch:
     """Get current status of a batch job."""
     check_allow_model_requests()
@@ -125,7 +125,7 @@ async def batch_status(self, batch: Batch) -> ProviderBatch:
 
 Retrieve results from a completed batch:
 
-```python
+```python {test="skip" lint="skip"}
 from pydantic_ai.models import BatchResult
 from pydantic_ai.models._batch_utils import BatchResultBuilder, extract_batch_error
 
@@ -168,7 +168,7 @@ async def batch_results(self, batch: Batch) -> list[BatchResult]:
 
 Cancel a pending or in-progress batch:
 
-```python
+```python {test="skip" lint="skip"}
 async def batch_cancel(self, batch: Batch) -> ProviderBatch:
     """Cancel a batch job."""
     check_allow_model_requests()
@@ -185,7 +185,7 @@ async def batch_cancel(self, batch: Batch) -> ProviderBatch:
 
 Use the shared utilities for datetime parsing:
 
-```python
+```python {test="skip" lint="skip"}
 from pydantic_ai.models._batch_utils import parse_batch_datetime
 from pydantic_ai import _utils
 
@@ -225,7 +225,7 @@ The `_batch_utils` module provides several utilities to reduce code duplication:
 
 Handles multiple datetime formats (Unix timestamps, ISO strings, datetime objects):
 
-```python
+```python {test="skip" lint="skip"}
 from pydantic_ai.models._batch_utils import parse_batch_datetime
 
 # Handles all these formats automatically:
@@ -239,7 +239,7 @@ parse_batch_datetime(None)                 # Returns None
 
 Extracts error information from various provider formats:
 
-```python
+```python {test="skip" lint="skip"}
 from pydantic_ai.models._batch_utils import extract_batch_error
 
 # Handles nested and flat error structures:
@@ -252,7 +252,7 @@ extract_batch_error('Plain error message')
 
 Tracks processed IDs to prevent duplicates (important when results come from multiple sources):
 
-```python
+```python {test="skip" lint="skip"}
 from pydantic_ai.models._batch_utils import BatchResultBuilder
 
 builder = BatchResultBuilder()
@@ -270,7 +270,7 @@ return builder.results
 
 Validates batch completion before result retrieval:
 
-```python
+```python {test="skip" lint="skip"}
 from pydantic_ai.models._batch_utils import validate_batch_complete
 
 # Raises ValueError if batch not complete
@@ -281,7 +281,7 @@ validate_batch_complete(batch, 'retrieve results')
 
 Create tests in `tests/models/test_<provider>_batch.py`:
 
-```python
+```python {test="skip" lint="skip"}
 import pytest
 from pydantic_ai.models.<provider> import ProviderModel, ProviderBatch
 from pydantic_ai.models import BatchStatus, supports_batch
