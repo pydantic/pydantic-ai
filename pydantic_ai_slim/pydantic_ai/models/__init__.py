@@ -736,6 +736,7 @@ class BatchCapable(Protocol):
             model = OpenAIChatModel('gpt-4o-mini')
             if supports_batch(model):
                 batch = await model.batch_create(requests)
+                return batch
         ```
     """
 
@@ -777,6 +778,7 @@ def supports_batch(model: Model) -> bool:
             model = OpenAIChatModel('gpt-4o-mini')
             if supports_batch(model):
                 batch = await model.batch_create(requests)
+                return batch
             else:
                 # Fall back to regular requests
                 ...
