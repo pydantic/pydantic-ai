@@ -42,27 +42,27 @@ except ImportError as _import_error:
 __all__ = ('DatabricksModel',)
 
 
-class DbTextContent(BaseModel):
+class DatabricksTextContent(BaseModel):
     """Represents a text block in a Databricks response."""
 
     type: Literal['text']
     text: str
 
 
-class DbSummaryText(BaseModel):
+class DatabricksSummaryText(BaseModel):
     """Inner model for summary text blocks found in reasoning."""
 
     type: Literal['summary_text']
     text: str
 
 
-class DbReasoningContent(BaseModel):
+class DatabricksReasoningContent(BaseModel):
     """Represents a reasoning block (e.g. R1 models)."""
 
     type: Literal['reasoning']
     text: str | None = None
     content: str | None = None
-    summary: list[DbSummaryText] | None = None
+    summary: list[DatabricksSummaryText] | None = None
 
     def get_value(self) -> str:
         """Centralized logic to extract the actual content string."""
@@ -73,7 +73,7 @@ class DbReasoningContent(BaseModel):
         return ''
 
 
-DbContentBlock = Annotated[DbTextContent | DbReasoningContent, Field(discriminator='type')]
+DatabricksContentBlock = Annotated[DatabricksTextContent | DatabricksReasoningContent, Field(discriminator='type')]
 
 
 class DatabricksUsage(BaseModel):
@@ -237,13 +237,13 @@ class DatabricksModel(OpenAIChatModel):
 
         if isinstance(raw_content, list):
             try:
-                adapter = TypeAdapter(list[DbContentBlock])
+                adapter = TypeAdapter(list[DatabricksContentBlock])
                 parsed_blocks = adapter.validate_python(raw_content)
 
-                text_parts = [b.text for b in parsed_blocks if isinstance(b, DbTextContent)]
+                text_parts = [b.text for b in parsed_blocks if isinstance(b, DatabricksTextContent)]
                 full_text = ''.join(text_parts)
 
-                reasoning_parts = [b.get_value() for b in parsed_blocks if isinstance(b, DbReasoningContent)]
+                reasoning_parts = [b.get_value() for b in parsed_blocks if isinstance(b, DatabricksReasoningContent)]
                 full_reasoning = ''.join(reasoning_parts)
 
                 message_payload['content'] = full_text
@@ -334,16 +334,16 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
 
         if isinstance(content, list):
             try:
-                blocks = TypeAdapter(list[DbContentBlock]).validate_python(content)
+                blocks = TypeAdapter(list[DatabricksContentBlock]).validate_python(content)
 
                 for block in blocks:
-                    if isinstance(block, DbReasoningContent):
+                    if isinstance(block, DatabricksReasoningContent):
                         if val := block.get_value():
                             yield from self._parts_manager.handle_thinking_delta(
                                 vendor_part_id='reasoning',
                                 content=val,
                             )
-                    elif isinstance(block, DbTextContent):
+                    elif isinstance(block, DatabricksTextContent):
                         yield from self._parts_manager.handle_text_delta(
                             vendor_part_id='content',
                             content=block.text,
