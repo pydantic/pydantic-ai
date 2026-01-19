@@ -16,6 +16,7 @@ from pydantic_ai import ModelMessage, ModelResponse, ModelResponseStreamEvent, m
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.providers import Provider
@@ -24,6 +25,21 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RequestUsage
 
 from ._run_context import TemporalRunContext
+from ._toolset import rehydrate_binary_content
+
+
+def _rehydrate_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Rehydrate `BinaryContent` in `ToolReturnPart.content` after Temporal deserialization.
+
+    After Temporal deserializes messages, any `BinaryContent` objects in `ToolReturnPart.content`
+    become plain dicts. This function walks through messages and reconstructs `BinaryContent`
+    objects where appropriate.
+    """
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart):
+                part.content = rehydrate_binary_content(part.content)
+    return messages
 
 
 @dataclass
@@ -114,8 +130,9 @@ class TemporalModel(WrapperModel):
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             model_for_request = self._resolve_model_id(params.model_id, run_context)
+            messages = _rehydrate_messages(params.messages)
             return await model_for_request.request(
-                params.messages,
+                messages,
                 cast(ModelSettings | None, params.model_settings),
                 params.model_request_parameters,
             )
@@ -129,8 +146,9 @@ class TemporalModel(WrapperModel):
             assert self.event_stream_handler is not None
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             model_for_request = self._resolve_model_id(params.model_id, run_context)
+            messages = _rehydrate_messages(params.messages)
             async with model_for_request.request_stream(
-                params.messages,
+                messages,
                 cast(ModelSettings | None, params.model_settings),
                 params.model_request_parameters,
                 run_context,
