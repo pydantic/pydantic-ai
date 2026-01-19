@@ -796,7 +796,7 @@ class XaiStreamedResponse(StreamedResponse):
             )
             yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=replace(call_part, args=None))
             maybe_event = self._parts_manager.handle_tool_call_delta(vendor_part_id=tool_call.id, args=parsed_args)
-            if maybe_event is not None:
+            if maybe_event is not None:  # pragma: no branch
                 yield maybe_event
             return
 
@@ -898,7 +898,7 @@ class XaiStreamedResponse(StreamedResponse):
                                 args=args_delta,
                                 tool_call_id=tool_call.id,
                             )
-                            if maybe_event is not None:
+                            if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
 
     @property

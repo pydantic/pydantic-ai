@@ -2143,9 +2143,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                 index=0,
                 part=BuiltinToolCallPart(tool_name='code_execution', tool_call_id=IsStr(), provider_name='xai'),
             ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta={'code': 'print(2 + 2)'}, tool_call_id=IsStr())
-            ),
+            PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': 'print(2 + 2)'}, tool_call_id=IsStr())),
             PartEndEvent(
                 index=0,
                 part=BuiltinToolCallPart(
@@ -2696,9 +2694,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:deepwiki', tool_call_id=IsStr(), provider_name='xai'
-                ),
+                part=BuiltinToolCallPart(tool_name='mcp_server:deepwiki', tool_call_id=IsStr(), provider_name='xai'),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
@@ -4406,6 +4402,44 @@ async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_m
     tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
     assert tool_calls, 'expected at least one client-side ToolCallPart'
     assert any(p.tool_name == 'final_result' and p.args == '{"first": "One"}' for p in tool_calls)
+
+
+async def test_xai_stream_client_tool_args_non_prefix_path(allow_model_requests: None):
+    """Force the client-side tool args fallback path where accumulated args reset mid-stream.
+
+    This tests when accumulated_args doesn't start with prev_args, we use the
+    full accumulated_args as the delta. This is a defensive fallback for edge cases where
+    the server's accumulated view changes unexpectedly (e.g., corrections/resets).
+    """
+    # Frame 1: Tool call with initial args 'ABC'
+    # Frame 2: Same tool call but accumulated args change to 'XYZ' (not a prefix of 'ABC')
+    # This triggers: args_delta = accumulated_args or None
+
+    stream = [
+        # Frame 1: New tool call starts with args 'ABC'
+        get_grok_tool_chunk('final_result', 'ABC', accumulated_args='ABC'),
+        # Frame 2: Accumulated args reset to 'XYZ' (doesn't start with 'ABC')
+        get_grok_tool_chunk(None, 'XYZ', accumulated_args='XYZ'),
+        # Frame 3: Final text response to finish
+        get_grok_text_chunk('done', finish_reason='stop'),
+    ]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    # Use plain agent (no output_type) to avoid JSON validation on the tool args
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        final_response: ModelResponse | None = None
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                final_response = response
+
+    assert final_response is not None
+    # The tool call part should have args that include both delta applications
+    # (the behavior is to concatenate, so we get 'ABCXYZ')
+    tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
+    assert tool_calls, 'expected at least one client-side ToolCallPart'
+    assert any(p.tool_name == 'final_result' and p.args == 'ABCXYZ' for p in tool_calls)
 
 
 async def test_xai_stream_reasoning_delta_non_prefix_path(allow_model_requests: None):
