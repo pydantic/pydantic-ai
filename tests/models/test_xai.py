@@ -1743,7 +1743,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
 
 async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xai_provider: XaiProvider):
     """Test xAI's built-in web_search tool with streaming (recorded via proto cassette)."""
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
 
     # Create an agent that includes encrypted content and web search output
     agent = Agent(
@@ -1779,10 +1779,15 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             ModelResponse(
                 parts=[
+                    ThinkingPart(
+                        content='',
+                        signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
+                        provider_name='xai',
+                    ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
-                        tool_call_id='call_14437098',
+                        args={'query': 'San Francisco weather today Celsius'},
+                        tool_call_id='call_68437309',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
@@ -1794,7 +1799,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
+                        args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
@@ -1806,15 +1811,15 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         provider_name='xai',
                     ),
                     TextPart(
-                        content='The current weather in San Francisco is mostly sunny with a temperature of 12°C. It feels like 14°C.'
+                        content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=3971,
-                    output_tokens=153,
-                    details={'cache_read_tokens': 2042, 'server_side_tools_web_search': 2},
+                    input_tokens=4441,
+                    output_tokens=135,
+                    details={'reasoning_tokens': 631, 'cache_read_tokens': 2530, 'server_side_tools_web_search': 2},
                 ),
-                model_name='grok-4-fast-non-reasoning',
+                model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_url='https://api.x.ai/v1',
@@ -1828,107 +1833,147 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
     # Verify we got the expected builtin tool call events with snapshot.
     assert event_parts == snapshot(
         [
-            PartStartEvent(
-                index=0,
-                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_14437098', provider_name='xai'),
-            ),
+            PartStartEvent(index=0, part=ThinkingPart(content='', provider_name='xai')),
             PartDeltaEvent(
                 index=0,
-                delta=ToolCallPartDelta(
-                    args_delta={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
-                    tool_call_id='call_14437098',
+                delta=ThinkingPartDelta(
+                    signature_delta='qBsbOpXt0iGLuYsVE7NyapPz/aM46HSgPDWPirBkao7k1PC/Kr8cCkd8X7kIKzvoyNsXaXRuUlaX/HIeSWM+Z1WX4D7zkUugOj+9wpiI3yuOVvpcgH9ZR8jHXDVl2l3wOuJ1MJLN3ksDfzEe8jXdp2eFqjphqMe4L2F+0CztjBAA8t3JrChA5WOMNCi+7J/ilrMj/Vb5ziC2OYdnoZgKo0tw5g8MD79sSBZI4gccCkyWtepj/Tq5raR5HZbXVXKLbPJSHBe2OHbN3QNnm8Kru+D268Y4g0FviU0FfVGF+VaQvkbHyfj0khheg/e0haj7AssXkH5b6YYOVbxe2qCtQOCSUAw37gAW77nqG9EQc74kk4eobmi8eoeDCVMnQ1C2TqhMaL7bvJ1/YIEQoQ9MZKIMyHSYgsrn6GsEZXza01NAqKrO8tK03UFGR19TphM7ybDzs9dB5VMyg0OhlS+4ZJFTSNg0mrz578hqhp3/iNfgAMD04L8EOA5HdoCS60khfF+LHir0syt+4aN6Dxotm5UK3SMtbnAf26kPLAp/C1TIIBoC2cU+rHOyylXY47w7VrgQVPrYDmuOnt4C2bqGb3W/HYcgg/f4c9pG1nqWdEu8CgvyNtOsHGFilTJJ/7wnZYeA48YtV5yP1GpWKmK1ukSod6YuAjyHFiguBIbLnqVN/c1gJcSm40COikR9B87vzOawR0IgdQjf04ASyucZpTW7MJ3DM+NT5FOHMIg6bqQt2xdkwtPaQSrTMvvFBpIO4FMip103f/1DrFpW+8sQqR7GXcpJi824jHQmb+rqIEjQ1BgsyQNtZuInhXNx31snZgpTkG5cFVl9W/2DaH9PTZkhQP1xibQqpQaPgF83c7j+o2fWYH39kgbEMZMlfxa4BIjHqm2ryFwzhLByfoafpnAyS4u2IRenO3CRr3mFatUGssLs0GjB/sG7zJjqfn7aORhBK4M03uQaW4UaAW4H+p9dbZRomOsh2mubWZG3rrDnjQoMoJv9YqvE78IhNkfInhP98IaFxHRTQpWMTzIkAlBdXyYlz/zxKfV4N4/4ZwQ4kwk1PhH769O7xiQa0PiNSg5dK28LULR0Z8WHz1KMSC6F3IA',
+                    provider_name='xai',
                 ),
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
-                    tool_call_id=IsStr(),
+                part=ThinkingPart(
+                    content='',
+                    signature='qBsbOpXt0iGLuYsVE7NyapPz/aM46HSgPDWPirBkao7k1PC/Kr8cCkd8X7kIKzvoyNsXaXRuUlaX/HIeSWM+Z1WX4D7zkUugOj+9wpiI3yuOVvpcgH9ZR8jHXDVl2l3wOuJ1MJLN3ksDfzEe8jXdp2eFqjphqMe4L2F+0CztjBAA8t3JrChA5WOMNCi+7J/ilrMj/Vb5ziC2OYdnoZgKo0tw5g8MD79sSBZI4gccCkyWtepj/Tq5raR5HZbXVXKLbPJSHBe2OHbN3QNnm8Kru+D268Y4g0FviU0FfVGF+VaQvkbHyfj0khheg/e0haj7AssXkH5b6YYOVbxe2qCtQOCSUAw37gAW77nqG9EQc74kk4eobmi8eoeDCVMnQ1C2TqhMaL7bvJ1/YIEQoQ9MZKIMyHSYgsrn6GsEZXza01NAqKrO8tK03UFGR19TphM7ybDzs9dB5VMyg0OhlS+4ZJFTSNg0mrz578hqhp3/iNfgAMD04L8EOA5HdoCS60khfF+LHir0syt+4aN6Dxotm5UK3SMtbnAf26kPLAp/C1TIIBoC2cU+rHOyylXY47w7VrgQVPrYDmuOnt4C2bqGb3W/HYcgg/f4c9pG1nqWdEu8CgvyNtOsHGFilTJJ/7wnZYeA48YtV5yP1GpWKmK1ukSod6YuAjyHFiguBIbLnqVN/c1gJcSm40COikR9B87vzOawR0IgdQjf04ASyucZpTW7MJ3DM+NT5FOHMIg6bqQt2xdkwtPaQSrTMvvFBpIO4FMip103f/1DrFpW+8sQqR7GXcpJi824jHQmb+rqIEjQ1BgsyQNtZuInhXNx31snZgpTkG5cFVl9W/2DaH9PTZkhQP1xibQqpQaPgF83c7j+o2fWYH39kgbEMZMlfxa4BIjHqm2ryFwzhLByfoafpnAyS4u2IRenO3CRr3mFatUGssLs0GjB/sG7zJjqfn7aORhBK4M03uQaW4UaAW4H+p9dbZRomOsh2mubWZG3rrDnjQoMoJv9YqvE78IhNkfInhP98IaFxHRTQpWMTzIkAlBdXyYlz/zxKfV4N4/4ZwQ4kwk1PhH769O7xiQa0PiNSg5dK28LULR0Z8WHz1KMSC6F3IA',
                     provider_name='xai',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(
-                index=2,
-                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_94058854', provider_name='xai'),
-                previous_part_kind='builtin-tool-return',
+                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_68437309', provider_name='xai'),
+                previous_part_kind='thinking',
             ),
             PartDeltaEvent(
-                index=2,
+                index=1,
                 delta=ToolCallPartDelta(
-                    args_delta={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
-                    tool_call_id='call_94058854',
+                    args_delta={'query': 'San Francisco weather today Celsius'}, tool_call_id='call_68437309'
                 ),
             ),
             PartEndEvent(
-                index=2,
+                index=1,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
-                    tool_call_id=IsStr(),
+                    args={'query': 'San Francisco weather today Celsius'},
+                    tool_call_id='call_68437309',
                     provider_name='xai',
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=3,
+                index=2,
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=None,
-                    tool_call_id=IsStr(),
+                    tool_call_id='call_68437309',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' current')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' weather')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' San')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Francisco')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' mostly')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' sunny')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' temperature')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='12')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' It')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' feels')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' like')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='14')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
-            PartEndEvent(
-                index=4,
-                part=TextPart(
-                    content='The current weather in San Francisco is mostly sunny with a temperature of 12°C. It feels like 14°C.'
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc',
+                    provider_name='xai',
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_78055205', provider_name='xai'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(
+                    args_delta={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
+                    tool_call_id='call_78055205',
+                ),
+            ),
+            PartEndEvent(
+                index=3,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
-                    tool_call_id='call_14437098',
+                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
+                    tool_call_id='call_78055205',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=4,
+                part=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=None,
+                    tool_call_id='call_78055205',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
+                    provider_name='xai',
+                ),
+            ),
+            PartStartEvent(index=5, part=TextPart(content='Today'), previous_part_kind='builtin-tool-return'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' San')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Francisco')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' current')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' temperature')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='7')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Expect')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' high')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='16')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' low')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='7')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' partly')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' cloudy')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' conditions')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=5,
+                part=TextPart(
+                    content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
+                ),
+            ),
+            BuiltinToolCallEvent(
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'San Francisco weather today Celsius'},
+                    tool_call_id='call_68437309',
                     provider_name='xai',
                 )
             ),
@@ -1944,7 +1989,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
+                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
                 )
