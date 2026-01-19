@@ -728,12 +728,16 @@ class BatchCapable(Protocol):
 
     Example:
         ```python test="skip"
-        from pydantic_ai.models import supports_batch
+        from pydantic_ai.messages import ModelRequest
+        from pydantic_ai.models import ModelRequestParameters, supports_batch
         from pydantic_ai.models.openai import OpenAIChatModel
 
 
         async def main():
             model = OpenAIChatModel('gpt-4o-mini')
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+            ]
             if supports_batch(model):
                 batch = await model.batch_create(requests)
                 return batch
@@ -770,12 +774,16 @@ def supports_batch(model: Model) -> bool:
 
     Example:
         ```python test="skip"
-        from pydantic_ai.models import supports_batch
+        from pydantic_ai.messages import ModelRequest
+        from pydantic_ai.models import ModelRequestParameters, supports_batch
         from pydantic_ai.models.openai import OpenAIChatModel
 
 
         async def main():
             model = OpenAIChatModel('gpt-4o-mini')
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+            ]
             if supports_batch(model):
                 batch = await model.batch_create(requests)
                 return batch
