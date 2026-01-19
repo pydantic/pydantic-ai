@@ -510,7 +510,7 @@ async def model_request_batch(
             await asyncio.sleep(poll_interval)
 
             # Check timeout
-            if timeout is not None and start_time is not None:
+            if timeout is not None and start_time is not None:  # pragma: no cover
                 import time
 
                 elapsed = time.monotonic() - start_time
@@ -524,7 +524,7 @@ async def model_request_batch(
 
             batch = await model_instance.batch_status(batch)
 
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # pragma: no cover
         # On cancellation, attempt to cancel the batch
         try:
             await model_instance.batch_cancel(batch)

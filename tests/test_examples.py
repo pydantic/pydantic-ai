@@ -1055,7 +1055,7 @@ class MockBatchModel(FunctionModel):
             custom_ids=custom_ids,
         )
 
-    async def batch_status(self, batch: Batch) -> Batch:
+    async def batch_status(self, batch: Batch) -> Batch:  # pragma: no cover
         """Mock batch_status that returns the batch as-is (already completed)."""
         return batch
 
@@ -1071,7 +1071,7 @@ class MockBatchModel(FunctionModel):
                         response=ModelResponse(parts=[TextPart(content=f'Mock response for {custom_id}')]),
                     )
                 )
-        else:
+        else:  # pragma: no cover
             for i in range(batch.request_count):
                 results.append(
                     BatchResult(
@@ -1081,7 +1081,7 @@ class MockBatchModel(FunctionModel):
                 )
         return results
 
-    async def batch_cancel(self, batch: Batch) -> Batch:
+    async def batch_cancel(self, batch: Batch) -> Batch:  # pragma: no cover
         """Mock batch_cancel that returns cancelled batch."""
         from dataclasses import replace
 

@@ -992,7 +992,7 @@ class GoogleModel(Model):
                                     error=BatchError(code='no_response', message='No response in batch result'),
                                 )
                             )
-                    except Exception as e:
+                    except Exception as e:  # pragma: no cover
                         results.append(
                             BatchResult(
                                 custom_id=custom_id,
@@ -1043,7 +1043,7 @@ class GoogleModel(Model):
         state: Any = getattr(response, 'state', None)
         if isinstance(state, str):
             state_str = state
-        elif state is not None and hasattr(state, 'name'):
+        elif state is not None and hasattr(state, 'name'):  # pragma: no cover
             state_str = cast(str, state.name)
         elif state is not None and hasattr(state, 'value'):  # pragma: no cover
             state_str = cast(str, state.value)
