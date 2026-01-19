@@ -466,17 +466,17 @@ def xai_api_key() -> str:
     return os.getenv('XAI_API_KEY', 'mock-api-key')
 
 
-@pytest.fixture
+@pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
 def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
     """xAI provider fixture backed by protobuf cassettes.
 
     Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
     """
 
-    from pydantic_ai.providers.xai import XaiProvider
-    from tests.models.xai_proto_cassettes import xai_proto_cassette_session, xai_sdk_available
-
-    if not xai_sdk_available():  # pragma: no cover
+    try:
+        from pydantic_ai.providers.xai import XaiProvider
+        from tests.models.xai_proto_cassettes import xai_proto_cassette_session
+    except ImportError:  # pragma: no cover
         pytest.skip('xai_sdk not installed')
 
     cassette_name = sanitize_filename(request.node.name, 240)

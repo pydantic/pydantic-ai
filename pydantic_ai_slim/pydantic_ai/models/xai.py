@@ -139,6 +139,24 @@ class XaiModelSettings(ModelSettings, total=False):
     """
 
 
+# Mapping of XaiModelSettings keys to xAI SDK parameter names.
+# Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
+_XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
+    'temperature': 'temperature',
+    'top_p': 'top_p',
+    'max_tokens': 'max_tokens',
+    'stop_sequences': 'stop',
+    'parallel_tool_calls': 'parallel_tool_calls',
+    'presence_penalty': 'presence_penalty',
+    'frequency_penalty': 'frequency_penalty',
+    'xai_logprobs': 'logprobs',
+    'xai_top_logprobs': 'top_logprobs',
+    'xai_user': 'user',
+    'xai_store_messages': 'store_messages',
+    'xai_previous_response_id': 'previous_response_id',
+}
+
+
 class XaiModel(Model):
     """A model that uses the xAI SDK to interact with xAI models."""
 
@@ -607,7 +625,7 @@ class XaiModel(Model):
                 parts.append(part)
 
         # Convert usage with detailed token information
-        usage = _extract_usage(response)
+        usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
 
         # Map finish reason.
         #
@@ -627,6 +645,7 @@ class XaiModel(Model):
             model_name=self._model_name,
             timestamp=response.created,
             provider_name=self.system,
+            provider_url=self._provider.base_url,
             provider_response_id=response.id,
             finish_reason=finish_reason,
         )
@@ -675,7 +694,7 @@ class XaiStreamedResponse(StreamedResponse):
     def _update_response_state(self, response: chat_types.Response) -> None:
         """Update response state including usage, response ID, and finish reason."""
         # Update usage (SDK Response always provides a usage object)
-        self._usage = _extract_usage(response)
+        self._usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
 
         # Set provider response ID (only set once)
         if response.id and self.provider_response_id is None:
@@ -902,40 +921,23 @@ def _map_json_object() -> chat_pb2.ResponseFormat:
 
 def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
     """Map pydantic_ai ModelSettings to xAI SDK parameters."""
-    # Mapping of pydantic_ai setting keys to xAI SDK parameter names
-    # Most default keys are the same, but 'stop' maps to 'stop_sequences'
-    # Xai specific keys are prefixed with 'xai_'
-    setting_mapping = {
-        'temperature': 'temperature',
-        'top_p': 'top_p',
-        'max_tokens': 'max_tokens',
-        'stop_sequences': 'stop',
-        'parallel_tool_calls': 'parallel_tool_calls',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'xai_logprobs': 'logprobs',
-        'xai_top_logprobs': 'top_logprobs',
-        'xai_user': 'user',
-        'xai_store_messages': 'store_messages',
-        'xai_previous_response_id': 'previous_response_id',
+    return {
+        _XAI_MODEL_SETTINGS_MAPPING[key]: value
+        for key, value in model_settings.items()
+        if key in _XAI_MODEL_SETTINGS_MAPPING
     }
-
-    # Build the settings dict, only including keys that are present in the input
-    # TypedDict is just a dict at runtime, so we can iterate over it directly
-    return {setting_mapping[key]: value for key, value in model_settings.items() if key in setting_mapping}
 
 
 def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
     """Convert pydantic_ai tool definitions to xAI SDK tools."""
-    tools: list[chat_types.chat_pb2.Tool] = []
-    for tool_def in model_request_parameters.tool_defs.values():
-        xai_tool = tool(
+    return [
+        tool(
             name=tool_def.name,
             description=tool_def.description or '',
             parameters=tool_def.parameters_json_schema,
         )
-        tools.append(xai_tool)
-    return tools
+        for tool_def in model_request_parameters.tool_defs.values()
+    ]
 
 
 def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
@@ -1029,7 +1031,12 @@ def _map_server_side_tools_used_to_name(server_side_tool: usage_pb2.ServerSideTo
     return mapping.get(server_side_tool, 'unknown')
 
 
-def _extract_usage(response: chat_types.Response) -> RequestUsage:
+def _extract_usage(
+    response: chat_types.Response,
+    model: str,
+    provider: str,
+    provider_url: str,
+) -> RequestUsage:
     """Extract usage information from xAI SDK response.
 
     Extracts token counts and additional usage details including:
@@ -1039,19 +1046,19 @@ def _extract_usage(response: chat_types.Response) -> RequestUsage:
     """
     usage_obj = response.usage
 
-    prompt_tokens = usage_obj.prompt_tokens or 0
-    completion_tokens = usage_obj.completion_tokens or 0
-
-    # Build details dict for additional usage metrics
-    details: dict[str, int] = {}
+    # Build usage data dict with all integer fields for genai-prices extraction
+    usage_data: dict[str, int] = {
+        'prompt_tokens': usage_obj.prompt_tokens or 0,
+        'completion_tokens': usage_obj.completion_tokens or 0,
+    }
 
     # Add reasoning tokens if available (optional attribute)
     if usage_obj.reasoning_tokens:
-        details['reasoning_tokens'] = usage_obj.reasoning_tokens
+        usage_data['reasoning_tokens'] = usage_obj.reasoning_tokens
 
     # Add cached prompt tokens if available (optional attribute)
     if usage_obj.cached_prompt_text_tokens:
-        details['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
+        usage_data['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
 
     # Aggregate server-side tools used by PydanticAI builtin tool name
     if usage_obj.server_side_tools_used:
@@ -1061,19 +1068,26 @@ def _extract_usage(response: chat_types.Response) -> RequestUsage:
             tool_counts[tool_name] += 1
         # Add each tool as a separate details entry (server_side_tools must be flattened to comply with details being dict[str, int])
         for tool_name, count in tool_counts.items():
-            details[f'server_side_tools_{tool_name}'] = count
+            usage_data[f'server_side_tools_{tool_name}'] = count
 
-    if details:
-        return RequestUsage(
-            input_tokens=prompt_tokens,
-            output_tokens=completion_tokens,
-            details=details,
-        )
-    else:
-        return RequestUsage(
-            input_tokens=prompt_tokens,
-            output_tokens=completion_tokens,
-        )
+    # Build details from non-standard fields
+    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'completion_tokens'}}
+
+    extracted = RequestUsage.extract(
+        dict(model=model, usage=usage_data),
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='x_ai',  # Pricing file is defined as x_ai.yml
+        details=details or None,
+    )
+
+    # Ensure token counts are set even if genai-prices extraction failed
+    if extracted.input_tokens == 0 and usage_data['prompt_tokens']:
+        extracted.input_tokens = usage_data['prompt_tokens']
+    if extracted.output_tokens == 0 and usage_data['completion_tokens']:
+        extracted.output_tokens = usage_data['completion_tokens']
+
+    return extracted
 
 
 def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:

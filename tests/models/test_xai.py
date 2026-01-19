@@ -18,6 +18,7 @@ from __future__ import annotations as _annotations
 
 import json
 from datetime import timezone
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -174,6 +175,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id='grok-123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -188,6 +190,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id='grok-123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -207,13 +210,27 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
-        RunUsage(
-            requests=1,
-            input_tokens=2,
-            output_tokens=1,
-        )
+    assert result.usage() == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+
+
+async def test_xai_cost_calculation(allow_model_requests: None):
+    """Test that cost calculation works with genai-prices for xAI models."""
+    response = create_response(
+        content='world',
+        usage=create_usage(prompt_tokens=100, completion_tokens=50),
     )
+    mock_client = MockXai.create_mock([response])
+    # Use grok-4-1-fast as grok-4-fast is not supported by genai-prices yet
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+
+    # Verify cost is calculated via genai-prices
+    last_message = result.all_messages()[-1]
+    assert isinstance(last_message, ModelResponse)
+    assert last_message.cost().total_price == snapshot(Decimal('0.000045'))
 
 
 async def test_xai_request_structured_response_tool_output(allow_model_requests: None, xai_provider: XaiProvider):
@@ -256,6 +273,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -285,6 +303,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -557,6 +576,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -579,6 +599,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -618,6 +639,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -652,6 +674,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -795,7 +818,7 @@ async def test_xai_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
+        assert result.usage() == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
 
 
 async def test_xai_stream_text_finish_reason(allow_model_requests: None):
@@ -868,7 +891,7 @@ async def test_xai_stream_structured(allow_model_requests: None):
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot({'first': 'One', 'second': 'Two'})
-    assert agent_run.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=1))
+    assert agent_run.usage() == snapshot(RunUsage(input_tokens=20, output_tokens=1, requests=1))
 
     # Verify event types: one PartStartEvent, then PartDeltaEvents for args
     # (UI adapters like Vercel AI and AG-UI expect deltas, not repeated starts)
@@ -976,7 +999,7 @@ async def test_xai_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
+        assert result.usage() == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
 
 
 async def test_xai_none_delta(allow_model_requests: None):
@@ -993,7 +1016,7 @@ async def test_xai_none_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
+        assert result.usage() == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
@@ -1061,6 +1084,7 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1096,6 +1120,7 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1216,6 +1241,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1247,6 +1273,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1287,6 +1314,7 @@ async def test_xai_image_as_binary_content_tool_response(
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1316,6 +1344,7 @@ async def test_xai_image_as_binary_content_tool_response(
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1726,6 +1755,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2045,6 +2075,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2259,6 +2290,7 @@ Return just the final number with no other text.\
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2334,6 +2366,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -2393,6 +2426,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2523,6 +2557,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2996,6 +3031,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3026,6 +3062,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3214,9 +3251,9 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     assert result.output == '42'
     assert result.usage() == snapshot(
         RunUsage(
-            requests=1,
             input_tokens=10,
             output_tokens=2,
+            requests=1,
             details={'reasoning_tokens': 7},
         )
     )
@@ -3318,6 +3355,7 @@ async def test_xai_logprobs(allow_model_requests: None) -> None:
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3363,6 +3401,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3408,6 +3447,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3465,6 +3505,7 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3623,6 +3664,7 @@ First reasoning
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3652,6 +3694,7 @@ First reasoning
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3736,6 +3779,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3751,6 +3795,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3830,6 +3875,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3845,6 +3891,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3938,6 +3985,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3952,6 +4000,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3999,6 +4048,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4110,6 +4160,7 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4522,6 +4573,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4537,6 +4589,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4599,6 +4652,7 @@ async def test_xai_unknown_tool_type_in_response(allow_model_requests: None):
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4644,6 +4698,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
                 usage=RequestUsage(),  # Empty usage
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4711,6 +4766,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4881,6 +4937,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4895,6 +4952,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4992,6 +5050,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5006,6 +5065,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5084,6 +5144,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
+                provider_url='https://api.x.ai/v1',
                 provider_name='xai',
                 provider_response_id=IsStr(),
                 finish_reason='stop',
