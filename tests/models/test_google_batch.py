@@ -600,7 +600,9 @@ class TestGoogleBatchAPIErrorHandling:
 
             @property
             def models(self) -> Any:
-                return TestGoogleBatchAPIErrorHandling.MockGoogleWithAPIError._ModelsNamespace(self.parent)  # pragma: no cover
+                return TestGoogleBatchAPIErrorHandling.MockGoogleWithAPIError._ModelsNamespace(
+                    self.parent
+                )  # pragma: no cover
 
         @dataclass
         class _ModelsNamespace:

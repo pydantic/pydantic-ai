@@ -723,7 +723,9 @@ class TestAnthropicBatchAPIErrorHandling:
 
             @property
             def batches(self) -> Any:
-                return TestAnthropicBatchAPIErrorHandling.MockAnthropicWithAPIError._BatchesNamespace(self.parent)  # pragma: no cover
+                return TestAnthropicBatchAPIErrorHandling.MockAnthropicWithAPIError._BatchesNamespace(
+                    self.parent
+                )  # pragma: no cover
 
         @dataclass
         class _BetaNamespace:
