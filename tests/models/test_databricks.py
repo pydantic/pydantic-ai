@@ -33,28 +33,52 @@ pytestmark = [
     pytest.mark.anyio,
 ]
 
+DATABRICKS_MODELS = [
+    'databricks-gpt-5-2',
+    'databricks-claude-opus-4-5',
+    'databricks-gpt-oss-120b',
+    'databricks-qwen3-next-80b-a3b-instruct',
+]
+
 
 @pytest.mark.vcr(match_on=['method', 'scheme', 'path', 'query'])
+@pytest.mark.parametrize('model_name', DATABRICKS_MODELS)
 class TestDatabricks:
     async def test_databricks_simple_request(
-        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+        self,
+        allow_model_requests: None,
+        databricks_api_key: str,
+        databricks_base_url: str,
+        model_name: str,
     ) -> None:
         provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
-        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        model = DatabricksModel(model_name, provider=provider)
 
-        response = await model_request(model, [ModelRequest.user_text_prompt('What is the capital of France?')])
+        response = await model_request(
+            model,
+            [
+                ModelRequest.user_text_prompt(
+                    'What is the capital of France? lowercase, one word reply, no punctuation.'
+                )
+            ],
+        )
 
         text_part = cast(TextPart, response.parts[0])
-        assert text_part.content == snapshot('Paris.')
+        # Note: Snapshots may need updating as different models output different text
+        assert text_part.content == snapshot('paris')
 
         assert response.provider_details is not None
         assert response.provider_details['finish_reason'] == 'stop'
 
     async def test_databricks_stream(
-        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+        self,
+        allow_model_requests: None,
+        databricks_api_key: str,
+        databricks_base_url: str,
+        model_name: str,
     ) -> None:
         provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
-        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        model = DatabricksModel(model_name, provider=provider)
 
         async with model_request_stream(model, [ModelRequest.user_text_prompt('Count to 3')]) as stream:
             assert stream.provider_details == snapshot({'usage': RequestUsage()})
@@ -67,7 +91,11 @@ class TestDatabricks:
             assert 'usage' in stream.provider_details
 
     async def test_databricks_tool_calling(
-        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+        self,
+        allow_model_requests: None,
+        databricks_api_key: str,
+        databricks_base_url: str,
+        model_name: str,
     ) -> None:
         provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
 
@@ -77,7 +105,7 @@ class TestDatabricks:
             location: str
             unit: Literal['celsius', 'fahrenheit'] = 'celsius'
 
-        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        model = DatabricksModel(model_name, provider=provider)
 
         response = await model_request(
             model,
@@ -99,13 +127,17 @@ class TestDatabricks:
         assert tool_call_part.tool_name == 'get_weather'
 
         assert 'location' in tool_call_part.args_as_dict()
-        assert tool_call_part.args_as_dict()['location'] == 'London'
+        assert 'London' in tool_call_part.args_as_dict()['location']
 
     async def test_databricks_structured_output(
-        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+        self,
+        allow_model_requests: None,
+        databricks_api_key: str,
+        databricks_base_url: str,
+        model_name: str,
     ) -> None:
         provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
-        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        model = DatabricksModel(model_name, provider=provider)
 
         class CityInfo(BaseModel):
             city: str
@@ -114,7 +146,7 @@ class TestDatabricks:
 
         agent = Agent(model, output_type=CityInfo)
 
-        result = await agent.run('Tell me about Tokyo.')
+        result = await agent.run('Tell me about Tokyo. Provide a structured response.')
 
         assert isinstance(result.output, CityInfo)
         assert result.output.city == 'Tokyo'
@@ -122,31 +154,41 @@ class TestDatabricks:
         assert result.output.population_approx > 1000000
 
     async def test_databricks_usage_tracking(
-        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+        self,
+        allow_model_requests: None,
+        databricks_api_key: str,
+        databricks_base_url: str,
+        model_name: str,
     ) -> None:
         provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
-        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        model = DatabricksModel(model_name, provider=provider)
         agent = Agent(model)
 
         result = await agent.run('Hello')
 
-        assert result.usage() == snapshot(RunUsage(input_tokens=7, output_tokens=13, requests=1))
+        usage = result.usage()
+        assert usage.requests == 1
+        assert usage.input_tokens > 0
+        assert usage.output_tokens > 0
 
         last_msg = result.all_messages()[-1]
         assert isinstance(last_msg, ModelResponse)
         assert last_msg.provider_details is not None
-        # Verify raw Databricks usage fields are preserved
         assert 'usage' in last_msg.provider_details
 
     async def test_databricks_multimodal_content_structure(
-        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+        self,
+        allow_model_requests: None,
+        databricks_api_key: str,
+        databricks_base_url: str,
+        model_name: str,
     ) -> None:
         """
         Test that multimodal inputs (Text + Image) are correctly mapped to the
         List[ContentItem] schema required by Databricks, using _map_messages inspection.
         """
         provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
-        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        model = DatabricksModel(model_name, provider=provider)
 
         fake_image_data = b'fake_image_bytes'
         inputs = [
@@ -173,14 +215,17 @@ class TestDatabricks:
         }
 
     async def test_databricks_reasoning_effort_setting(
-        self, allow_model_requests: None, databricks_api_key: str, databricks_base_url: str
+        self,
+        allow_model_requests: None,
+        databricks_api_key: str,
+        databricks_base_url: str,
+        model_name: str,
     ) -> None:
         """
         Test that the 'reasoning_effort' parameter is correctly passed to the client.
-        We use standard unittest.mock.patch since we cannot use respx.
         """
         provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
-        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        model = DatabricksModel(model_name, provider=provider)
         settings = DatabricksModelSettings(openai_reasoning_effort='high')
 
         with patch.object(model.client.chat.completions, 'create', new_callable=MagicMock) as mock_create:
@@ -192,7 +237,7 @@ class TestDatabricks:
                 return ChatCompletion(
                     id='test-id',
                     created=123,
-                    model='databricks-gpt-5-2',
+                    model=model_name,
                     object='chat.completion',
                     choices=[
                         Choice(
@@ -210,10 +255,15 @@ class TestDatabricks:
             call_kwargs = mock_create.call_args.kwargs
             assert call_kwargs.get('reasoning_effort') == 'high'
 
-    async def test_databricks_error_handling(self, allow_model_requests: None, databricks_base_url: str) -> None:
+    async def test_databricks_error_handling(
+        self,
+        allow_model_requests: None,
+        databricks_base_url: str,
+        model_name: str,
+    ) -> None:
         """Test error handling using standard VCR or by verifying behavior on failure."""
         provider = DatabricksProvider(api_key='invalid-key', base_url=databricks_base_url)
-        model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+        model = DatabricksModel(model_name, provider=provider)
 
         with pytest.raises(ModelHTTPError) as exc_info:
             await model_request(model, [ModelRequest.user_text_prompt('Hello')])

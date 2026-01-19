@@ -8,7 +8,7 @@ interactions:
         connection:
           - keep-alive
         content-length:
-          - "92"
+          - "515"
         content-type:
           - application/json
         host:
@@ -16,10 +16,33 @@ interactions:
       method: POST
       parsed_body:
         messages:
-          - content: Hello
+          - content: What is the weather in London?
             role: user
         model: databricks-gpt-5-2
         stream: false
+        tool_choice: auto
+        tools:
+          - function:
+              description: Get the current weather.
+              name: get_weather
+              parameters:
+                description: Get the current weather.
+                properties:
+                  location:
+                    title: Location
+                    type: string
+                  unit:
+                    default: celsius
+                    enum:
+                      - celsius
+                      - fahrenheit
+                    title: Unit
+                    type: string
+                required:
+                  - location
+                title: GetWeather
+                type: object
+            type: function
       uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
     response:
       headers:
@@ -29,19 +52,19 @@ interactions:
           - h3=":443"; ma=86400
           - h3=":443"; ma=86400, h3-29=":443"; ma=86400
         content-length:
-          - "805"
+          - "1073"
         content-type:
           - application/json
         openai-organization:
           - databricks-serverless
         openai-processing-ms:
-          - "367"
+          - "572"
         openai-project:
           - proj_XWG0smJyU1OZznEnXiHbHa7z
         openai-version:
           - "2020-10-01"
         server-timing:
-          - request_id;dur=0;desc="dbcde021-233b-445d-bb78-a1a5390fc071", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="81dc67ce-bb25-40f6-9524-c392092d8bc8", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -50,31 +73,37 @@ interactions:
           - Accept-Encoding
       parsed_body:
         choices:
-          - finish_reason: stop
+          - finish_reason: tool_calls
             index: 0
             message:
               annotations: []
-              content: Hello! What can I help you with today?
+              content: null
               refusal: null
               role: assistant
-        created: 1768775229
-        id: chatcmpl-CzVWfzm9TG1jmh8rcenbi7vLLglix
+              tool_calls:
+                - function:
+                    arguments: '{"location":"London","unit":"celsius"}'
+                    name: get_weather
+                  id: call_s1QcztosXIJiDhbBCRWDiShY
+                  type: function
+        created: 1768789167
+        id: chatcmpl-CzZ9T5700GrFW80ki5xp1aUmi99Ne
         model: gpt-5.2-2025-12-11
         object: chat.completion
         service_tier: default
         system_fingerprint: null
         usage:
-          completion_tokens: 13
+          completion_tokens: 22
           completion_tokens_details:
             accepted_prediction_tokens: 0
             audio_tokens: 0
             reasoning_tokens: 0
             rejected_prediction_tokens: 0
-          prompt_tokens: 7
+          prompt_tokens: 163
           prompt_tokens_details:
             audio_tokens: 0
             cached_tokens: 0
-          total_tokens: 20
+          total_tokens: 185
       status:
         code: 200
         message: OK

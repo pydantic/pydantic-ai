@@ -1,0 +1,93 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "519"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: Tell me about Tokyo. Provide a structured response.
+            role: user
+        model: databricks-qwen3-next-80b-a3b-instruct
+        stream: false
+        tool_choice: required
+        tools:
+          - function:
+              description: The final response which ends this conversation
+              name: final_result
+              parameters:
+                properties:
+                  city:
+                    type: string
+                  country:
+                    type: string
+                  population_approx:
+                    type: integer
+                required:
+                  - city
+                  - country
+                  - population_approx
+                title: CityInfo
+                type: object
+            type: function
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "556"
+        content-type:
+          - application/json; charset=utf-8
+        server-timing:
+          - request_id;dur=0;desc="5483222a-0931-4f01-b5e2-07d6586fd3c4", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: tool_calls
+            index: 0
+            logprobs: null
+            message:
+              content: null
+              role: assistant
+              tool_calls:
+                - function:
+                    arguments: |-
+                      {
+
+
+                        "city": "Tokyo",
+                        "country": "Japan",
+                        "population_approx": 37400000
+
+                      }
+                    name: final_result
+                  id: call_bce2124d-d4f5-41ef-bd22-f6d72456ce41
+                  type: function
+        created: 1768789180
+        id: chatcmpl_e6ff79ea-62c1-48e6-8da9-3817117a9ca2
+        model: qwen3-next-instruct-091725
+        object: chat.completion
+        usage:
+          completion_tokens: 33
+          prompt_tokens: 196
+          total_tokens: 229
+      status:
+        code: 200
+        message: OK
+version: 1

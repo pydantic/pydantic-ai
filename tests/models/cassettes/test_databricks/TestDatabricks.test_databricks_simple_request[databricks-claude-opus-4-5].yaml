@@ -1,0 +1,60 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "168"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: What is the capital of France? lowercase, one word reply, no punctuation.
+            role: user
+        model: databricks-claude-opus-4-5
+        stream: false
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "368"
+        content-type:
+          - application/json
+        server-timing:
+          - request_id;dur=0;desc="1b8a3c8f-a0a1-413d-b6df-d6fb37ac160a", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            message:
+              content: paris
+              role: assistant
+        created: 1768789158
+        id: msg_bdrk_01UPpSkXTEkSn2uqVebT8fhT
+        model: us.anthropic.claude-opus-4-5-20251101-v1:0
+        object: chat.completion
+        usage:
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          completion_tokens: 4
+          prompt_tokens: 24
+          total_tokens: 28
+      status:
+        code: 200
+        message: OK
+version: 1

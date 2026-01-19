@@ -1,0 +1,61 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "112"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: Hello
+            role: user
+        model: databricks-qwen3-next-80b-a3b-instruct
+        stream: false
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "457"
+        content-type:
+          - application/json; charset=utf-8
+        server-timing:
+          - request_id;dur=0;desc="d24e893d-3102-44c3-b68a-0c7df5bc0546", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            logprobs: null
+            message:
+              content:
+                "Hi there! \U0001F60A How can I help you today? Whether you have a question, need assistance with something,
+                or just want to chat--I'm here for you!"
+              role: assistant
+        created: 1768789187
+        id: chatcmpl_a893bbfd-d878-4e61-911a-ff807b23bb33
+        model: qwen3-next-instruct-091725
+        object: chat.completion
+        usage:
+          completion_tokens: 35
+          prompt_tokens: 9
+          total_tokens: 44
+      status:
+        code: 200
+        message: OK
+version: 1

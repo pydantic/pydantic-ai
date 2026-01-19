@@ -1,0 +1,67 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "97"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: Hello
+            role: user
+        model: databricks-gpt-oss-120b
+        stream: false
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "586"
+        content-type:
+          - application/json; charset=utf-8
+        server-timing:
+          - request_id;dur=0;desc="59e1984a-570c-4a31-a903-f5806d1d4b54", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            logprobs: null
+            message:
+              content:
+                - summary:
+                    - text:
+                        The user just says "Hello". We need to respond appropriately, friendly greeting, ask how can help. No
+                        special instructions, we can respond politely.
+                      type: summary_text
+                  type: reasoning
+                - text: Hello! How can I assist you today?
+                  type: text
+              role: assistant
+        created: 1768789186
+        id: chatcmpl_04d598ae-e00a-40df-bc59-b865dee958e2
+        model: gpt-oss-120b-080525
+        object: chat.completion
+        usage:
+          completion_tokens: 49
+          prompt_tokens: 86
+          total_tokens: 135
+      status:
+        code: 200
+        message: OK
+version: 1

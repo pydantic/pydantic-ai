@@ -1,0 +1,52 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "144"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: Count to 3
+            role: user
+        model: databricks-claude-opus-4-5
+        stream: true
+        stream_options:
+          include_usage: true
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      body:
+        string: |+
+          data: {"model":"us.anthropic.claude-opus-4-5-20251101-v1:0","choices":[{"delta":{"role":"assistant","content":"1,"},"index":0,"finish_reason":null}],"usage":{"cache_read_input_tokens":0,"completion_tokens":null,"prompt_tokens":11,"total_tokens":null,"cache_creation_input_tokens":0},"object":"chat.completion.chunk","id":"msg_bdrk_01VkkRVLhMj1e8Yc7b9F52rr","created":1768789164}
+
+          data: {"model":"us.anthropic.claude-opus-4-5-20251101-v1:0","choices":[{"delta":{"role":"assistant","content":" 2, 3"},"index":0,"finish_reason":null}],"usage":{"cache_read_input_tokens":0,"completion_tokens":null,"prompt_tokens":11,"total_tokens":null,"cache_creation_input_tokens":0},"object":"chat.completion.chunk","id":"msg_bdrk_01VkkRVLhMj1e8Yc7b9F52rr","created":1768789164}
+
+          data: {"model":"us.anthropic.claude-opus-4-5-20251101-v1:0","choices":[{"delta":{"role":"assistant","content":""},"index":0,"finish_reason":"stop"}],"usage":{"cache_read_input_tokens":0,"completion_tokens":11,"prompt_tokens":11,"total_tokens":22,"cache_creation_input_tokens":0},"object":"chat.completion.chunk","id":"msg_bdrk_01VkkRVLhMj1e8Yc7b9F52rr","created":1768789164}
+
+          data: [DONE]
+
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-type:
+          - text/event-stream
+        server-timing:
+          - request_id;dur=0;desc="7b3fec26-6dbc-4c19-9346-cd898b6799ae", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+      status:
+        code: 200
+        message: OK
+version: 1
+...

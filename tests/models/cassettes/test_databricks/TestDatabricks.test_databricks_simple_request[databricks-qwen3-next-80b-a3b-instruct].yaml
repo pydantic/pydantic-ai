@@ -1,0 +1,59 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "180"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: What is the capital of France? lowercase, one word reply, no punctuation.
+            role: user
+        model: databricks-qwen3-next-80b-a3b-instruct
+        stream: false
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "320"
+        content-type:
+          - application/json; charset=utf-8
+        server-timing:
+          - request_id;dur=0;desc="6a48bf8d-2456-489c-bd2a-2cedb2993405", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            logprobs: null
+            message:
+              content: paris
+              role: assistant
+        created: 1768789160
+        id: chatcmpl_d70bf4d0-7f09-4831-ad51-919d2110410d
+        model: qwen3-next-instruct-091725
+        object: chat.completion
+        usage:
+          completion_tokens: 3
+          prompt_tokens: 24
+          total_tokens: 27
+      status:
+        code: 200
+        message: OK
+version: 1

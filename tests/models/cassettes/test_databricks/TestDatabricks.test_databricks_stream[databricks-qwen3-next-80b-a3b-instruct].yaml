@@ -1,0 +1,60 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "116"
+        content-type:
+          - application/json
+        host:
+          - <DATABRICKS_BASE_URL>
+      method: POST
+      parsed_body:
+        messages:
+          - content: Count to 3
+            role: user
+        model: databricks-qwen3-next-80b-a3b-instruct
+        stream: true
+      uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
+    response:
+      body:
+        string: |+
+          data: {"id":"chatcmpl_7b4e5f6a-add7-48f4-85d4-df07767a3c7c","object":"chat.completion.chunk","created":1768789166,"model":"qwen3-next-instruct-091725","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null,"logprobs":null}],"usage":{"prompt_tokens":12,"completion_tokens":1,"total_tokens":13}}
+
+          data: {"id":"chatcmpl_7b4e5f6a-add7-48f4-85d4-df07767a3c7c","object":"chat.completion.chunk","created":1768789166,"model":"qwen3-next-instruct-091725","choices":[{"index":0,"delta":{"content":"1"},"finish_reason":null,"logprobs":null}],"usage":{"prompt_tokens":12,"completion_tokens":1,"total_tokens":13}}
+
+          data: {"id":"chatcmpl_7b4e5f6a-add7-48f4-85d4-df07767a3c7c","object":"chat.completion.chunk","created":1768789166,"model":"qwen3-next-instruct-091725","choices":[{"index":0,"delta":{"content":"  \n"},"finish_reason":null,"logprobs":null}],"usage":{"prompt_tokens":12,"completion_tokens":2,"total_tokens":14}}
+
+          data: {"id":"chatcmpl_7b4e5f6a-add7-48f4-85d4-df07767a3c7c","object":"chat.completion.chunk","created":1768789166,"model":"qwen3-next-instruct-091725","choices":[{"index":0,"delta":{"content":"2"},"finish_reason":null,"logprobs":null}],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}
+
+          data: {"id":"chatcmpl_7b4e5f6a-add7-48f4-85d4-df07767a3c7c","object":"chat.completion.chunk","created":1768789166,"model":"qwen3-next-instruct-091725","choices":[{"index":0,"delta":{"content":"  \n"},"finish_reason":null,"logprobs":null}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}
+
+          data: {"id":"chatcmpl_7b4e5f6a-add7-48f4-85d4-df07767a3c7c","object":"chat.completion.chunk","created":1768789166,"model":"qwen3-next-instruct-091725","choices":[{"index":0,"delta":{"content":"3"},"finish_reason":null,"logprobs":null}],"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}
+
+          data: {"id":"chatcmpl_7b4e5f6a-add7-48f4-85d4-df07767a3c7c","object":"chat.completion.chunk","created":1768789166,"model":"qwen3-next-instruct-091725","choices":[{"index":0,"delta":{"content":""},"finish_reason":null,"logprobs":null}],"usage":{"prompt_tokens":12,"completion_tokens":6,"total_tokens":18}}
+
+          data: {"id":"chatcmpl_7b4e5f6a-add7-48f4-85d4-df07767a3c7c","object":"chat.completion.chunk","created":1768789166,"model":"qwen3-next-instruct-091725","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop","logprobs":null}],"usage":{"prompt_tokens":12,"completion_tokens":6,"total_tokens":18}}
+
+          data: [DONE]
+
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-type:
+          - text/event-stream; charset=utf-8
+        server-timing:
+          - request_id;dur=0;desc="17514f28-c2fd-4790-bf69-8a80b88cc54d", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+      status:
+        code: 200
+        message: OK
+version: 1
+...

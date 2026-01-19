@@ -8,7 +8,7 @@ interactions:
         connection:
           - keep-alive
         content-length:
-          - "515"
+          - "520"
         content-type:
           - application/json
         host:
@@ -18,7 +18,7 @@ interactions:
         messages:
           - content: What is the weather in London?
             role: user
-        model: databricks-gpt-5-2
+        model: databricks-gpt-oss-120b
         stream: false
         tool_choice: auto
         tools:
@@ -46,25 +46,14 @@ interactions:
       uri: https://<DATABRICKS_BASE_URL>/serving-endpoints/chat/completions
     response:
       headers:
-        access-control-expose-headers:
-          - X-Request-ID
         alt-svc:
-          - h3=":443"; ma=86400
           - h3=":443"; ma=86400, h3-29=":443"; ma=86400
         content-length:
-          - "1073"
+          - "484"
         content-type:
-          - application/json
-        openai-organization:
-          - databricks-serverless
-        openai-processing-ms:
-          - "475"
-        openai-project:
-          - proj_XWG0smJyU1OZznEnXiHbHa7z
-        openai-version:
-          - "2020-10-01"
+          - application/json; charset=utf-8
         server-timing:
-          - request_id;dur=0;desc="62240a6a-0da4-4bf8-bfb0-64d1eff94154", client_protocol;dur=0;desc="HTTP/1.1"
+          - request_id;dur=0;desc="73e1be9e-30d5-4930-b7f2-2d74b3b8c843", client_protocol;dur=0;desc="HTTP/1.1"
         strict-transport-security:
           - max-age=31536000; includeSubDomains; preload
         transfer-encoding:
@@ -75,35 +64,27 @@ interactions:
         choices:
           - finish_reason: tool_calls
             index: 0
+            logprobs: null
             message:
-              annotations: []
               content: null
-              refusal: null
               role: assistant
               tool_calls:
                 - function:
-                    arguments: '{"location":"London","unit":"celsius"}'
+                    arguments: |-
+                      {
+                        "location": "London"
+                      }
                     name: get_weather
-                  id: call_4gC5hql9jzqxMCPCHBxyNfCA
+                  id: call_efce4ca8-9381-4bb7-9cbb-52c466b79a0d
                   type: function
-        created: 1768775227
-        id: chatcmpl-CzVWd0qvwVFY2GPv1MndL6FfAgElp
-        model: gpt-5.2-2025-12-11
+        created: 1768789171
+        id: chatcmpl_56350d41-43a7-49b0-9541-168ddf59359f
+        model: gpt-oss-120b-080525
         object: chat.completion
-        service_tier: default
-        system_fingerprint: null
         usage:
-          completion_tokens: 22
-          completion_tokens_details:
-            accepted_prediction_tokens: 0
-            audio_tokens: 0
-            reasoning_tokens: 0
-            rejected_prediction_tokens: 0
+          completion_tokens: 68
           prompt_tokens: 163
-          prompt_tokens_details:
-            audio_tokens: 0
-            cached_tokens: 0
-          total_tokens: 185
+          total_tokens: 231
       status:
         code: 200
         message: OK
