@@ -18,6 +18,8 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
+from pydantic import BeforeValidator, PlainSerializer
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import deprecated
 
 from . import _otel_messages, _utils
@@ -462,11 +464,15 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(init=False, repr=False)
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
-    data: bytes
+    data: Annotated[
+        bytes,
+        BeforeValidator(lambda v: base64.b64decode(v) if isinstance(v, str) else v),
+        PlainSerializer(lambda v: base64.b64encode(v).decode('ascii'), return_type=str),
+    ]
     """The binary file data.
 
     Use `.base64` to get the base64-encoded string.

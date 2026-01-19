@@ -82,10 +82,8 @@ try:
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import (
-        SerializableBinaryContent,
         _ToolReturn,  # pyright: ignore[reportPrivateUsage]
-        from_serializable,
-        to_serializable,
+        rehydrate_binary_content,
     )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -3118,40 +3116,23 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
 # Tests for BinaryContent serialization in Temporal (#3702)
 
 
-def test_binary_content_to_serializable():
-    """Test that BinaryContent is converted to SerializableBinaryContent."""
+def test_binary_content_serializes_to_base64():
+    """Test that BinaryContent serializes bytes as base64 via Pydantic."""
     # PNG magic bytes - non-UTF8 binary data
     binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     bc = BinaryContent(data=binary_data, media_type='image/png')
 
-    result = to_serializable(bc)
+    # BinaryContent now serializes directly without wrapper
+    serialized = to_json(bc)
+    deserialized = json.loads(serialized)
 
-    assert isinstance(result, SerializableBinaryContent)
-    assert result.data == binary_data
-    assert result.media_type == 'image/png'
-    assert result.identifier == bc.identifier
-    assert result.kind == 'binary'
-
-
-def test_binary_content_from_serializable():
-    """Test that SerializableBinaryContent is converted back to BinaryContent."""
-    binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-    sbc = SerializableBinaryContent(
-        data=binary_data,
-        media_type='image/png',
-        identifier='test-id',
-    )
-
-    result = from_serializable(sbc)
-
-    assert isinstance(result, BinaryContent)
-    assert result.data == binary_data
-    assert result.media_type == 'image/png'
-    assert result.identifier == 'test-id'
+    assert deserialized['data'] == base64.b64encode(binary_data).decode('ascii')
+    assert deserialized['media_type'] == 'image/png'
+    assert deserialized['kind'] == 'binary'
 
 
-def test_binary_content_from_dict():
-    """Test that a dict with kind='binary' is converted back to BinaryContent."""
+def test_rehydrate_binary_content_from_dict():
+    """Test that a dict with kind='binary' is rehydrated back to BinaryContent."""
     binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     # Simulate what Temporal deserialization produces
     dict_result = {
@@ -3162,9 +3143,47 @@ def test_binary_content_from_dict():
         'kind': 'binary',
     }
 
-    result = from_serializable(dict_result)
+    result = rehydrate_binary_content(dict_result)
 
-    assert result == snapshot()
+    assert result == snapshot(BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png', _identifier='test-id'))
+
+
+def test_rehydrate_binary_content_nested_in_dict():
+    """Test that nested BinaryContent in dicts is recursively rehydrated."""
+    binary_data = bytes([0x89, 0x50, 0x4E, 0x47])
+    nested = {
+        'image': {
+            'data': base64.b64encode(binary_data).decode('ascii'),
+            'media_type': 'image/png',
+            'kind': 'binary',
+        },
+        'other': 'value',
+    }
+
+    result = rehydrate_binary_content(nested)
+
+    assert isinstance(result['image'], BinaryContent)
+    assert result['image'].data == binary_data
+    assert result['other'] == 'value'
+
+
+def test_rehydrate_binary_content_nested_in_list():
+    """Test that BinaryContent in lists is recursively rehydrated."""
+    binary_data = bytes([0x89, 0x50, 0x4E, 0x47])
+    nested = [
+        {
+            'data': base64.b64encode(binary_data).decode('ascii'),
+            'media_type': 'image/png',
+            'kind': 'binary',
+        },
+        'plain_string',
+    ]
+
+    result = rehydrate_binary_content(nested)
+
+    assert isinstance(result[0], BinaryContent)
+    assert result[0].data == binary_data
+    assert result[1] == 'plain_string'
 
 
 def test_binary_content_serialization_round_trip():
@@ -3174,8 +3193,7 @@ def test_binary_content_serialization_round_trip():
     bc = BinaryContent(data=binary_data, media_type='image/png', identifier='test-file')
 
     # Wrap in _ToolReturn like Temporal toolset does
-    serializable_result = to_serializable(bc)
-    wrapped = _ToolReturn(result=serializable_result)
+    wrapped = _ToolReturn(result=bc)
 
     # Serialize with to_json (what Temporal uses internally)
     serialized = to_json(wrapped)
@@ -3184,6 +3202,6 @@ def test_binary_content_serialization_round_trip():
     deserialized = json.loads(serialized)
 
     # The result field will be a dict after JSON deserialization
-    result = from_serializable(deserialized['result'])
+    result = rehydrate_binary_content(deserialized['result'])
 
-    assert result == snapshot()
+    assert result == snapshot(BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png', _identifier='test-file'))

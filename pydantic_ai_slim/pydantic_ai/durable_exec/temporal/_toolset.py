@@ -6,8 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import BeforeValidator, ConfigDict, Discriminator, PlainSerializer, TypeAdapter, with_config
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic import ConfigDict, Discriminator, with_config
 from temporalio import workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self, assert_never
@@ -66,60 +65,30 @@ CallToolResult = Annotated[
 ]
 
 
-@pydantic_dataclass
-class SerializableBinaryContent:
-    """Temporal-serializable version of BinaryContent with base64-encoded data."""
+def rehydrate_binary_content(value: Any) -> Any:
+    """Recursively convert dicts with kind='binary' back to BinaryContent after Temporal deserialization.
 
-    data: Annotated[
-        bytes,
-        BeforeValidator(lambda v: base64.b64decode(v) if isinstance(v, str) else v),
-        PlainSerializer(lambda v: base64.b64encode(v).decode('ascii'), return_type=str),
-    ]
-    media_type: str
-    identifier: str | None = None
-    vendor_metadata: dict[str, Any] | None = None
-    kind: Literal['binary'] = 'binary'
-
-
-serializable_binary_content_ta = TypeAdapter(SerializableBinaryContent)
-
-
-def to_serializable(result: Any) -> Any:
-    """Convert BinaryContent to SerializableBinaryContent for Temporal serialization."""
-    if isinstance(result, BinaryContent):
-        return SerializableBinaryContent(
-            data=result.data,
-            media_type=result.media_type,
-            identifier=result.identifier,
-            vendor_metadata=result.vendor_metadata,
-        )
-    else:
-        return result
-
-
-def from_serializable(result: Any) -> BinaryContent | Any:
-    """Convert SerializableBinaryContent or dict back to BinaryContent after Temporal deserialization."""
-    if isinstance(result, SerializableBinaryContent):
-        return BinaryContent(
-            data=result.data,
-            media_type=result.media_type,
-            identifier=result.identifier,
-            vendor_metadata=result.vendor_metadata,
-        )
-    elif isinstance(result, dict):
-        result = cast(dict[str, Any], result)
-        if result.get('kind') != 'binary':
-            return result
-        else:
-            sbc = serializable_binary_content_ta.validate_python(result)
+    When tool results contain BinaryContent (either directly or nested in dicts/lists),
+    Temporal deserializes them as plain dicts. This function walks the structure and
+    reconstructs BinaryContent objects where appropriate.
+    """
+    if isinstance(value, dict):
+        d = cast(dict[str, Any], value)
+        if d.get('kind') == 'binary' and 'data' in d and 'media_type' in d:
+            data: bytes | str = d['data']
+            if isinstance(data, str):
+                data = base64.b64decode(data)
             return BinaryContent(
-                data=sbc.data,
-                media_type=sbc.media_type,
-                identifier=sbc.identifier,
-                vendor_metadata=sbc.vendor_metadata,
+                data=data,
+                media_type=d['media_type'],
+                identifier=d.get('identifier'),
+                vendor_metadata=d.get('vendor_metadata'),
             )
+        return {k: rehydrate_binary_content(v) for k, v in d.items()}
+    elif isinstance(value, list):
+        return [rehydrate_binary_content(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
     else:
-        return result
+        return value
 
 
 class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
@@ -153,7 +122,7 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     async def _wrap_call_tool_result(self, coro: Awaitable[Any]) -> CallToolResult:
         try:
             result = await coro
-            return _ToolReturn(result=to_serializable(result))
+            return _ToolReturn(result=result)
         except ApprovalRequired as e:
             return _ApprovalRequired(metadata=e.metadata)
         except CallDeferred as e:
@@ -163,7 +132,7 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
 
     def _unwrap_call_tool_result(self, result: CallToolResult) -> Any:
         if isinstance(result, _ToolReturn):
-            return from_serializable(result.result)
+            return rehydrate_binary_content(result.result)
         elif isinstance(result, _ApprovalRequired):
             raise ApprovalRequired(metadata=result.metadata)
         elif isinstance(result, _CallDeferred):
