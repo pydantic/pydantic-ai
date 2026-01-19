@@ -392,7 +392,7 @@ embedder = Embedder(
     'voyageai:voyage-3.5',
     settings=VoyageAIEmbeddingSettings(
         dimensions=512,  # Reduce output dimensions
-        truncate=True,  # Truncate input if it exceeds context length
+        voyageai_input_type='document',  # Override input type for all requests
     ),
 )
 ```
@@ -473,7 +473,10 @@ embedder = Embedder(model)
 
 ## Settings
 
-[`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] provides common configuration options that work across providers.
+[`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] provides common configuration options that work across providers:
+
+- `dimensions`: Reduce the output embedding dimensions (supported by OpenAI, Google, Cohere, VoyageAI)
+- `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, VoyageAI)
 
 Settings can be specified at the embedder level (applied to all calls) or per-call:
 

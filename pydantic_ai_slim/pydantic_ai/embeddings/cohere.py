@@ -76,6 +76,8 @@ class CohereEmbeddingSettings(EmbeddingSettings, total=False):
     - `'NONE'` (default): Raise an error if input exceeds max tokens.
     - `'END'`: Truncate the end of the input text.
     - `'START'`: Truncate the start of the input text.
+
+    Note: This setting overrides the standard `truncate` boolean setting when specified.
     """
 
 
