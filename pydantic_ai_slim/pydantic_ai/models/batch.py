@@ -122,7 +122,7 @@ class BatchModel(Model):
             await self.submit()
 
         # Wait for any pending batch to complete
-        if self._batch_task:  # pragma: no cover
+        if self._batch_task:
             try:
                 await self._batch_task
             except Exception:
@@ -278,7 +278,7 @@ class BatchModel(Model):
         except Exception as e:
             # If batch processing fails, propagate error to all futures
             for req in pending_requests:
-                if not req.future.done():  # pragma: no cover
+                if not req.future.done():
                     req.future.set_exception(e)
             raise
 
