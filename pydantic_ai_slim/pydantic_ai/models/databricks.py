@@ -241,9 +241,6 @@ class DatabricksModel(OpenAIChatModel):
                     message_payload['reasoning_content'] = full_reasoning
 
             except ValidationError:
-                # Fallback: If the list contains unknown types (e.g., 'image'),
-                # we leave it alone. The final validation below will raise a
-                # descriptive error about the specific invalid fields.
                 pass
 
         return chat.ChatCompletion.model_validate(data)

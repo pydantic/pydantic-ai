@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
 import httpx
 from openai import AsyncOpenAI
@@ -19,6 +19,14 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Databricks provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+DatabricksModelName = Literal[
+    'databricks-gpt-5-2',
+    'databricks-claude-opus-4-5',
+    'databricks-gpt-oss-120b',
+    'databricks-qwen3-next-80b-a3b-instruct',
+]
 
 
 class DatabricksProvider(Provider[AsyncOpenAI]):
