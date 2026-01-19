@@ -731,9 +731,11 @@ class BatchCapable(Protocol):
         from pydantic_ai.models import supports_batch
         from pydantic_ai.models.openai import OpenAIChatModel
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        if supports_batch(model):
-            batch = await model.batch_create(requests)
+
+        async def main():
+            model = OpenAIChatModel('gpt-4o-mini')
+            if supports_batch(model):
+                batch = await model.batch_create(requests)
         ```
     """
 
@@ -770,12 +772,14 @@ def supports_batch(model: Model) -> bool:
         from pydantic_ai.models import supports_batch
         from pydantic_ai.models.openai import OpenAIChatModel
 
-        model = OpenAIChatModel('gpt-4o-mini')
-        if supports_batch(model):
-            batch = await model.batch_create(requests)
-        else:
-            # Fall back to regular requests
-            ...
+
+        async def main():
+            model = OpenAIChatModel('gpt-4o-mini')
+            if supports_batch(model):
+                batch = await model.batch_create(requests)
+            else:
+                # Fall back to regular requests
+                ...
         ```
     """
     model_class = model.__class__

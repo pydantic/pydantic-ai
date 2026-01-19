@@ -247,13 +247,15 @@ class AnthropicBatch(Batch):
         from pydantic_ai.models import ModelRequestParameters
         from pydantic_ai.models.anthropic import AnthropicModel
 
-        model = AnthropicModel('claude-sonnet-4-5-20250929')
-        requests = [
-            ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
-            ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
-        ]
-        batch = await model.batch_create(requests)
-        print(f'Batch {batch.id} created with {batch.request_count} requests')
+
+        async def main():
+            model = AnthropicModel('claude-sonnet-4-5-20250929')
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ]
+            batch = await model.batch_create(requests)
+            print(f'Batch {batch.id} created with {batch.request_count} requests')
         ```
     """
 
@@ -1230,12 +1232,15 @@ class AnthropicModel(Model):
             from pydantic_ai.models import ModelRequestParameters
             from pydantic_ai.models.anthropic import AnthropicModel
 
-            model = AnthropicModel('claude-sonnet-4-5-20250929')
-            requests = [
-                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
-                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
-            ]
-            batch = await model.batch_create(requests)
+
+            async def main():
+                model = AnthropicModel('claude-sonnet-4-5-20250929')
+                requests = [
+                    ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                    ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+                ]
+                batch = await model.batch_create(requests)
+                return batch
             ```
         """
         check_allow_model_requests()
