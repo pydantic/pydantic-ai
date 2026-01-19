@@ -147,7 +147,7 @@ class MockAnthropicBatchClient:
 
     @property
     def messages(self) -> Any:
-        return self._MessagesNamespace(self)
+        return self._MessagesNamespace(self)  # pragma: no cover
 
     @property
     def beta(self) -> Any:
@@ -159,7 +159,7 @@ class MockAnthropicBatchClient:
 
         @property
         def batches(self) -> Any:
-            return MockAnthropicBatchClient._BatchesNamespace(self.parent)
+            return MockAnthropicBatchClient._BatchesNamespace(self.parent)  # pragma: no cover
 
     @dataclass
     class _BetaNamespace:
@@ -175,13 +175,13 @@ class MockAnthropicBatchClient:
 
         async def create(self, **kwargs: Any) -> BetaMessage:
             """Mock regular message creation (for prepare_request)."""
-            return create_beta_message()
+            return create_beta_message()  # pragma: no cover
 
         async def count_tokens(self, **kwargs: Any) -> Any:
             """Mock token counting."""
-            mock = MagicMock()
-            mock.input_tokens = 10
-            return mock
+            mock = MagicMock()  # pragma: no cover
+            mock.input_tokens = 10  # pragma: no cover
+            return mock  # pragma: no cover
 
         @property
         def batches(self) -> Any:
@@ -701,7 +701,7 @@ class TestAnthropicBatchAPIErrorHandling:
 
         @property
         def messages(self) -> Any:
-            return self._MessagesNamespace(self)
+            return self._MessagesNamespace(self)  # pragma: no cover
 
         @property
         def beta(self) -> Any:
@@ -723,7 +723,7 @@ class TestAnthropicBatchAPIErrorHandling:
 
             @property
             def batches(self) -> Any:
-                return TestAnthropicBatchAPIErrorHandling.MockAnthropicWithAPIError._BatchesNamespace(self.parent)
+                return TestAnthropicBatchAPIErrorHandling.MockAnthropicWithAPIError._BatchesNamespace(self.parent)  # pragma: no cover
 
         @dataclass
         class _BetaNamespace:
@@ -738,7 +738,7 @@ class TestAnthropicBatchAPIErrorHandling:
             parent: TestAnthropicBatchAPIErrorHandling.MockAnthropicWithAPIError
 
             async def create(self, **kwargs: Any) -> BetaMessage:
-                return create_beta_message()
+                return create_beta_message()  # pragma: no cover
 
             @property
             def batches(self) -> Any:

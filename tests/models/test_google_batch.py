@@ -130,7 +130,7 @@ class MockGoogleBatchClient:
 
         @property
         def models(self) -> Any:
-            return MockGoogleBatchClient._ModelsNamespace(self.parent)
+            return MockGoogleBatchClient._ModelsNamespace(self.parent)  # pragma: no cover
 
     @dataclass
     class _ModelsNamespace:
@@ -138,7 +138,7 @@ class MockGoogleBatchClient:
 
         async def generate_content(self, **kwargs: Any) -> GenerateContentResponse:
             """Mock regular content generation."""
-            return create_mock_response()
+            return create_mock_response()  # pragma: no cover
 
     @dataclass
     class _BatchesNamespace:
@@ -600,14 +600,14 @@ class TestGoogleBatchAPIErrorHandling:
 
             @property
             def models(self) -> Any:
-                return TestGoogleBatchAPIErrorHandling.MockGoogleWithAPIError._ModelsNamespace(self.parent)
+                return TestGoogleBatchAPIErrorHandling.MockGoogleWithAPIError._ModelsNamespace(self.parent)  # pragma: no cover
 
         @dataclass
         class _ModelsNamespace:
             parent: TestGoogleBatchAPIErrorHandling.MockGoogleWithAPIError
 
             async def generate_content(self, **kwargs: Any) -> GenerateContentResponse:
-                return create_mock_response()
+                return create_mock_response()  # pragma: no cover
 
         @dataclass
         class _BatchesNamespace:
