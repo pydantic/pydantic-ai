@@ -11,6 +11,7 @@ Pydantic AI supports the following built-in tools:
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
+- **[`TextEditorTool`][pydantic_ai.builtin_tools.TextEditorTool]**: Enables agents to view and edit text files
 - **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
 
@@ -547,6 +548,58 @@ Got it! I've recorded that you live in Mexico City. I'll remember this for futur
 result = agent.run_sync('Where do I live?')
 print(result.output)
 #> You live in Mexico City.
+```
+
+_(This example is complete, it can be run "as is")_
+
+## Text Editor Tool
+
+The [`TextEditorTool`][pydantic_ai.builtin_tools.TextEditorTool] enables your agent to view and edit text files.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| Anthropic | ✅ | Requires a tool named `str_replace_based_edit_tool` to be defined that implements the [text editor tool commands](https://platform.claude.com/docs/en/agents-and-tools/tool-use/text-editor-tool). |
+| Google | ❌ | |
+| OpenAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
+
+### Usage
+
+The text editor tool is client-side, so you need to implement a handler for the supported commands: `view`, `str_replace`, `create`, and `insert`. The Anthropic docs also list an `undo_edit` command, but it is only available in older tool versions and is not supported by the `text_editor_20250728` tool used here. The tool uses the `str_replace_based_edit_tool` name and supports an optional `max_characters` parameter to limit view results.
+
+The following example uses a minimal handler that returns canned responses. The bits specific to Pydantic AI are the `TextEditorTool` built-in tool and the `str_replace_based_edit_tool` definition that forwards command payloads to your handler.
+
+```py {title="anthropic_text_editor.py"}
+from typing import Any
+
+from pydantic_ai import Agent, TextEditorTool
+
+
+def fake_text_editor(**command: Any) -> str:
+    if command.get('command') == 'view':
+        return '1: print("Hello, world!")'
+    elif command.get('command') == 'str_replace':
+        return 'File updated.'
+    return 'OK'
+
+
+agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[TextEditorTool(max_characters=10_000)])
+
+
+@agent.tool_plain
+def str_replace_based_edit_tool(**command: Any) -> Any:
+    return fake_text_editor(**command)
+
+
+result = agent.run_sync('Update hello.py to print "Hello, world!"')
+print(result.output)
+#> Updated hello.py.
 ```
 
 _(This example is complete, it can be run "as is")_
