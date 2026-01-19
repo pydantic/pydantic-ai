@@ -84,6 +84,7 @@ from .mock_xai import (
     create_server_tool_call,
     create_stream_chunk,
     create_tool_call,
+    create_usage,
     create_web_search_response,
     get_grok_reasoning_text_chunk,
     get_grok_text_chunk,
@@ -114,23 +115,6 @@ pytestmark = [
 # Test model constants
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
 XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
-
-
-def create_usage(
-    prompt_tokens: int = 0,
-    completion_tokens: int = 0,
-    reasoning_tokens: int = 0,
-    cached_prompt_text_tokens: int = 0,
-    server_side_tools_used: list[usage_pb2.ServerSideTool] | None = None,
-) -> usage_pb2.SamplingUsage:
-    """Helper to create xAI SamplingUsage protobuf objects for tests with all required fields."""
-    return usage_pb2.SamplingUsage(
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        reasoning_tokens=reasoning_tokens,
-        cached_prompt_text_tokens=cached_prompt_text_tokens,
-        server_side_tools_used=server_side_tools_used or [],
-    )
 
 
 def test_xai_init():
@@ -2486,8 +2470,12 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
                     BuiltinToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={
-                            'repoName': 'pydantic/pydantic-ai',
-                            'question': 'What is this repository about? Provide a short summary.',
+                            'action': 'call_tool',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic-ai',
+                                'question': 'What is this repository about? Provide a short summary.',
+                            },
                         },
                         tool_call_id='call_05345625',
                         provider_name='xai',
@@ -2627,8 +2615,12 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                     BuiltinToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={
-                            'repoName': 'pydantic/pydantic-ai',
-                            'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                            'action': 'call_tool',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic-ai',
+                                'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                            },
                         },
                         tool_call_id='call_50266835',
                         provider_name='xai',
@@ -2713,8 +2705,12 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 index=1,
                 delta=ToolCallPartDelta(
                     args_delta={
-                        'repoName': 'pydantic/pydantic-ai',
-                        'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                        'action': 'call_tool',
+                        'tool_name': 'ask_question',
+                        'tool_args': {
+                            'repoName': 'pydantic/pydantic-ai',
+                            'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                        },
                     },
                     tool_call_id='call_50266835',
                 ),
@@ -2724,8 +2720,12 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     args={
-                        'repoName': 'pydantic/pydantic-ai',
-                        'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                        'action': 'call_tool',
+                        'tool_name': 'ask_question',
+                        'tool_args': {
+                            'repoName': 'pydantic/pydantic-ai',
+                            'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                        },
                     },
                     tool_call_id='call_50266835',
                     provider_name='xai',
@@ -2869,8 +2869,12 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     args={
-                        'repoName': 'pydantic/pydantic-ai',
-                        'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                        'action': 'call_tool',
+                        'tool_name': 'ask_question',
+                        'tool_args': {
+                            'repoName': 'pydantic/pydantic-ai',
+                            'question': 'Provide a short summary of the repository, including its purpose and main features.',
+                        },
                     },
                     tool_call_id='call_50266835',
                     provider_name='xai',
@@ -3485,7 +3489,10 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:linear', args={}, tool_call_id=IsStr(), provider_name='xai'
+                        tool_name='mcp_server:linear',
+                        args={'action': 'call_tool', 'tool_name': 'list_issues', 'tool_args': {}},
+                        tool_call_id=IsStr(),
+                        provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:linear',
@@ -5011,7 +5018,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                                 'id': 'mcp_001',
                                 'type': 'TOOL_CALL_TYPE_MCP_TOOL',
                                 'status': 'TOOL_CALL_STATUS_COMPLETED',
-                                'function': {'name': 'mcp_server:my-server', 'arguments': '{"param":"value"}'},
+                                'function': {'name': 'my-server.get_data', 'arguments': '{"param": "value"}'},
                             }
                         ],
                     },
@@ -5038,7 +5045,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server:my-server',
-                        args={'param': 'value'},
+                        args={'action': 'call_tool', 'tool_name': 'get_data', 'tool_args': {'param': 'value'}},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),

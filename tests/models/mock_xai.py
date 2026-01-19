@@ -718,3 +718,20 @@ def create_response_without_usage(
     )
     # Pass None for usage explicitly to get response without usage
     return _build_response_with_outputs('grok-123', [output], None)
+
+
+def create_usage(
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    reasoning_tokens: int = 0,
+    cached_prompt_text_tokens: int = 0,
+    server_side_tools_used: list[usage_pb2.ServerSideTool] | None = None,
+) -> usage_pb2.SamplingUsage:
+    """Helper to create xAI SamplingUsage protobuf objects for tests with all required fields."""
+    return usage_pb2.SamplingUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        reasoning_tokens=reasoning_tokens,
+        cached_prompt_text_tokens=cached_prompt_text_tokens,
+        server_side_tools_used=server_side_tools_used or [],
+    )

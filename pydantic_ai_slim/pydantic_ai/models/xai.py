@@ -387,13 +387,21 @@ class XaiModel(Model):
                 ),
             )
         elif item.tool_name.startswith(MCPServerTool.kind):
+            # Extract server label from tool_name (format: 'mcp_server:server_label')
+            server_label = item.tool_name.split(':', 1)[1] if ':' in item.tool_name else item.tool_name
+            args_dict = item.args_as_dict() or {}
+            # Extract tool_name and tool_args from the structured args (matches OpenAI/Anthropic pattern)
+            actual_tool_name = args_dict.get('tool_name', '')
+            tool_args = args_dict.get('tool_args', {})
+            # Construct the full function name in xAI's format: 'server_label.tool_name'
+            function_name = f'{server_label}.{actual_tool_name}' if actual_tool_name else server_label
             return chat_types.chat_pb2.ToolCall(
                 id=item.tool_call_id,
                 type=chat_types.chat_pb2.TOOL_CALL_TYPE_MCP_TOOL,
                 status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
                 function=chat_types.chat_pb2.FunctionCall(
-                    name=item.tool_name,
-                    arguments=item.args_as_json_str(),
+                    name=function_name,
+                    arguments=json.dumps(tool_args),
                 ),
             )
         return None
@@ -779,7 +787,10 @@ class XaiStreamedResponse(StreamedResponse):
             # (not just a PartStartEvent with full args), we:
             # 1. First emit a PartStartEvent with args=None via handle_part
             # 2. Then emit a PartDeltaEvent with the full args via handle_tool_call_delta
-            parsed_args = _parse_tool_args(tool_call.function.arguments)
+            if builtin_tool_name.startswith(MCPServerTool.kind):
+                parsed_args = _build_mcp_tool_call_args(tool_call)
+            else:
+                parsed_args = _parse_tool_args(tool_call.function.arguments)
             call_part = BuiltinToolCallPart(
                 tool_name=builtin_tool_name, args=parsed_args, tool_call_id=tool_call.id, provider_name=self.system
             )
@@ -1122,6 +1133,28 @@ def _parse_tool_args(arguments: str) -> dict[str, Any]:
         return {}
 
 
+def _build_mcp_tool_call_args(tool_call: chat_pb2.ToolCall) -> dict[str, Any]:
+    """Build args dict for MCP server tool calls.
+
+    Follows the same pattern as OpenAI and Anthropic for MCP tool calls,
+    including the actual tool name in the args dict.
+
+    Args:
+        tool_call: The xAI SDK tool call.
+
+    Returns:
+        Args dict with action, tool_name, and tool_args.
+    """
+    # xAI provides function name in "server_label.tool_name" format
+    function_name = tool_call.function.name
+    actual_tool_name = function_name.split('.', 1)[1] if '.' in function_name else function_name
+    return {
+        'action': 'call_tool',
+        'tool_name': actual_tool_name,
+        'tool_args': _parse_tool_args(tool_call.function.arguments),
+    }
+
+
 def _create_tool_call_part(
     tool_call: chat_pb2.ToolCall,
     tool_result_content: dict[str, Any] | str | None,
@@ -1171,11 +1204,15 @@ def _create_tool_call_part(
                 ),
             )
         else:
+            if builtin_tool_name.startswith(MCPServerTool.kind):
+                args = _build_mcp_tool_call_args(tool_call)
+            else:
+                args = _parse_tool_args(tool_call.function.arguments)
             return (
                 tool_call.id,
                 BuiltinToolCallPart(
                     tool_name=builtin_tool_name,
-                    args=_parse_tool_args(tool_call.function.arguments),
+                    args=args,
                     tool_call_id=tool_call.id,
                     provider_name=provider_name,
                 ),
