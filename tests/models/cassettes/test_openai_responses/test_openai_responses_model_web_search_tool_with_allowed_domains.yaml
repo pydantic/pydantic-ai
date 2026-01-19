@@ -1,0 +1,131 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '321'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of France?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - filters:
+          allowed_domains:
+          - wikipedia.org
+        search_context_size: medium
+        type: web_search
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3542'
+      content-type:
+      - application/json
+      openai-organization:
+      - sixfold-non-production-s6e6f6
+      openai-processing-ms:
+      - '8914'
+      openai-project:
+      - proj_OLzQ3QUqQtUg4asa4E4x2BPr
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1768858068
+      created_at: 1768858060
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0de036bcb0d5c52a00696ea1cc32ac81999778c913fa6432bc
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpbqHVa9WLjVos0AAdz9NZrPIXMvnAmYLI7h2nAEAf8aZsRNwnnd-j0f9LZoC4ZxrHMTEB3_LmIrSlK0Ye5OLCpT5ldy_xW0j9uIkEn9NyoCwP5oRo2SRKXbnNfEDvx_9ZyYW1M4XpW8NQbxfnBb1owYE-6G1f-7k0BIc6gB-a2x1u1PSO-nlw0fBN5xKM2-Ub0BoUGJGUY5j0vaVCtnc_iSnzCDFivBKGK4og6iN7h2Wag9-5mfKddVKyoadikbK-fhYV_heyqxOxDGZAZf8FKcOnDKkScPZpgjuEaXHw2-S6lmIGpRFeKYVV5HT37DAek9FBZetBZckJtZbH42cleqFyB6JOGFU9wYnPd_raEDZFVfssBBH0wIUm_y7TMM94DkqHtKem446INkbHIxPJOLousjVqlgc0-nP_E8omMRWYFLXUOosDKlJDOaE_U6QoZW-H6YGS0_uTYOG-LD1Yidd5pv-1M-aYzivefitn4vql3A951hmiYo1tx2_CL5pXeTGHpDYnj5nVwfhB-wIu2Dw1dHjpdhRyz24dthjNuKzdn8XYRuJbXjBIkJr0gwRyUknXOcP6WQB-dGXM2-3DNh81mJljtSzBxtinjw5SefUDhDKUQv0kor2p7OGWCyTzE_OYwJeWVLNF5RKHbivqZutdVj_d9BPE6ejwKreGCJaIawVWpyYFPIbyBXWmg5M3mUxRZTphchJWe1tsp0Bpl5LBomQeEuafjJoxHh2Ws6H1I3KJfOcmLINC9OBYDUoNe1IbpGUEeLpTul0biee3AMzSk-wlFrplK56xIWRcYee6pBJnN3Up_yEMq-Oud49FH8csUZ7Ja-6140EvcLD3vPR-THmfzYh--uxq88BH47rXdohaOlxovKtlqIWDhMU9dy753aQ3JywPlDUsHI4XM4-YV0c9-nkyyB4mxX1JVHdfEPHGD-Uu7bQE9eFNfVu-xS53OGUzjlBWzwQEIRUJw2sKrchUr2p1Hmfy2r52tYU94vRH6rCAxY_X1Bs4_knvz9KvY5qlcRAaNToW_TY45eIROaabNEqCFNGgJqONT1_jpG4NiDmPrP4vUm3ZhFSrV4NPuKJ3wzA7vwFOZhDNy5pscq3D_KaF3Bx901kz02U18omrDL-NN9EwuEhpsle5Qjaub8obLYCSGG8TG51neVWB-EYX7j7K8WG1TyVkWNVd4IH3oXplyo4EGjdi65RsenKAiKMSJAuAivmODYuRfLDxwySEVROh9j4N1SssbnqeeK2dcGw8MV9rHsfnldtbf-mtjAVkY87orBRqK1DxKZPG9w1YPS3DLL7Kvdapp9Wi8mjGJihonCHsMtaeTwhU3YEHtfp1qGxoiEQyLph9ybcjfPnPCpJiPyqHiK-cgiaH8svl9UdK2IGUW1Bw1dlixMiTnUercZbdpk1-Fd_erkgKRzo6i5JZpI9pk7SVw4Xe7XD4rrotaj8vi_4FGu17x9LQ
+        id: rs_0de036bcb0d5c52a00696ea1ccc4b48199a2433050a3786da7
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Paris.
+          type: output_text
+        id: msg_0de036bcb0d5c52a00696ea1d4be088199968dfcbac615c383
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters:
+          allowed_domains:
+          - wikipedia.org
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 4443
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 72
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 4515
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
