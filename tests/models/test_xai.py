@@ -5167,7 +5167,7 @@ async def test_xai_thinking_part_content_only_with_provider_in_history(allow_mod
     agent = Agent(m)
 
     # Manually construct history with ThinkingPart that has content and provider_name='xai' but NO signature
-    # This triggers the branch where item.signature is falsy at line 236 in xai.py
+    # This triggers the branch where item.signature is falsy
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='First question')]),
         ModelResponse(
@@ -5219,7 +5219,7 @@ async def test_xai_builtin_tool_failed_without_error_in_history(allow_model_requ
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     # Construct history with failed builtin tool but NO 'error' key in provider_details
-    # This triggers the branch at line 261 where error_msg is falsy
+    # This triggers the branch where error_msg is falsy
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Run code')]),
         ModelResponse(
