@@ -234,6 +234,13 @@ class GoogleBatch(Batch):
     state: str | None = None
     """Raw Google JOB_STATE_* value."""
 
+    custom_ids: list[str] = field(default_factory=list)
+    """List of custom_ids in request order for matching with responses.
+
+    Google's batch API returns responses in the same order as requests,
+    so we store custom_ids to match them back to the original request identifiers.
+    """
+
 
 # Mapping from Google job state to BatchStatus
 _GOOGLE_BATCH_STATUS_MAP: dict[str, BatchStatus] = {
@@ -850,9 +857,15 @@ class GoogleModel(Model):
         # Prepare model settings once
         base_settings = cast(GoogleModelSettings, model_settings or {})
 
-        # Build batch requests inline (Google uses src array, not file upload)
+        # Build batch requests inline (Google uses inlined_requests array)
+        # Google's InlinedRequest format: {contents, config, metadata}
+        # We store custom_ids separately since Google matches responses by order
         batch_requests: list[dict[str, Any]] = []
+        custom_ids: list[str] = []
         for custom_id, messages, params in requests:
+            # Track custom_ids in order for later matching with responses
+            custom_ids.append(custom_id)
+
             # Prepare request parameters using the same logic as regular requests
             prepared_settings, prepared_params = self.prepare_request(base_settings, params)
 
@@ -863,13 +876,10 @@ class GoogleModel(Model):
                 prepared_params,
             )
 
-            # Format as batch request
+            # Format as InlinedRequest: {contents, config, metadata (optional)}
             batch_request = {
-                'custom_id': custom_id,
-                'request': {
-                    'contents': contents,
-                    'config': config,
-                },
+                'contents': contents,
+                'config': config,
             }
             batch_requests.append(batch_request)
 
@@ -888,7 +898,9 @@ class GoogleModel(Model):
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
-        return self._parse_batch_response(batch_response)
+        # Parse response and attach custom_ids for matching responses later
+        batch = self._parse_batch_response(batch_response)
+        return replace(batch, custom_ids=custom_ids)
 
     async def batch_status(self, batch: Batch) -> GoogleBatch:
         """Get current status of a Google batch job.
@@ -915,7 +927,9 @@ class GoogleModel(Model):
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
-        return self._parse_batch_response(batch_response)
+        # Parse response and preserve custom_ids from original batch
+        updated_batch = self._parse_batch_response(batch_response)
+        return replace(updated_batch, custom_ids=batch.custom_ids)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
         """Retrieve results from a completed Google batch.
@@ -949,10 +963,12 @@ class GoogleModel(Model):
             batch_response: Any = await self.client.aio.batches.get(name=batch.name or batch.id)
 
             # Process each result in the batch
+            # Google returns responses in order - we match by index using stored custom_ids
             if hasattr(batch_response, 'responses') and batch_response.responses:
                 item: Any
-                for item in batch_response.responses:
-                    custom_id: str = str(getattr(item, 'custom_id', '') or '')
+                for idx, item in enumerate(batch_response.responses):
+                    # Get custom_id by position from our stored list
+                    custom_id = batch.custom_ids[idx] if idx < len(batch.custom_ids) else f'unknown_{idx}'
                     try:
                         if hasattr(item, 'error') and item.error:
                             item_error: Any = item.error

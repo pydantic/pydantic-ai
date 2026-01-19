@@ -59,9 +59,12 @@ class MockRequestCounts:
 
 @dataclass
 class MockBatchResultItem:
-    """Mock item in batch results."""
+    """Mock item in batch results.
 
-    custom_id: str
+    Google's InlinedResponse format only has 'response' and 'error' fields.
+    Unlike OpenAI/Anthropic, there is no custom_id - responses are matched by position.
+    """
+
     response: Any | None = None
     error: Any | None = None
 
@@ -249,18 +252,20 @@ class TestGoogleModelBatch:
         assert 'model' in batch_call
         assert batch_call['model'] == 'gemini-2.0-flash'
         assert len(batch_call['src']) == 2
-        assert batch_call['src'][0]['custom_id'] == 'req-1'
-        assert batch_call['src'][1]['custom_id'] == 'req-2'
 
-        # Verify each request has proper structure
+        # Verify each request has proper InlinedRequest structure (contents, config)
+        # Google's format does NOT include custom_id or 'request' wrapper
         for req in batch_call['src']:
-            assert 'request' in req
-            assert 'contents' in req['request']
-            assert 'config' in req['request']
+            assert 'contents' in req
+            assert 'config' in req
+            # Verify no custom_id in request (tracked separately)
+            assert 'custom_id' not in req
+            assert 'request' not in req
 
-        # Verify returned batch
+        # Verify returned batch tracks custom_ids separately
         assert 'batch_abc123' in batch.id
         assert batch.status == BatchStatus.IN_PROGRESS
+        assert batch.custom_ids == ['req-1', 'req-2']
 
     async def test_batch_create_minimum_requests(self, allow_model_requests: None):
         """Test that batch_create requires at least 2 requests."""
@@ -310,26 +315,27 @@ class TestGoogleModelBatch:
                 name='projects/test/locations/us-central1/batches/batch_123',
                 state='JOB_STATE_SUCCEEDED',
                 responses=[
-                    MockBatchResultItem(
-                        custom_id='req-1',
-                        response=create_mock_response(),
-                    ),
+                    # Google returns responses in order, no custom_id in response
+                    MockBatchResultItem(response=create_mock_response()),
                 ],
             )
         ]
 
         model = mock_client.create_model()
 
+        # GoogleBatch stores custom_ids for position-based matching
         batch = GoogleBatch(
             id='batch_123',
             status=BatchStatus.COMPLETED,
             created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
             name='projects/test/locations/us-central1/batches/batch_123',
+            custom_ids=['req-1'],  # custom_ids tracked separately
         )
 
         results = await model.batch_results(batch)
 
         assert len(results) == 1
+        # custom_id is matched by position from batch.custom_ids
         assert results[0].custom_id == 'req-1'
         assert results[0].is_successful is True
         assert results[0].response is not None
@@ -345,25 +351,22 @@ class TestGoogleModelBatch:
                 name='projects/test/locations/us-central1/batches/batch_123',
                 state='JOB_STATE_SUCCEEDED',
                 responses=[
-                    MockBatchResultItem(
-                        custom_id='req-1',
-                        response=create_mock_response(),
-                    ),
-                    MockBatchResultItem(
-                        custom_id='req-2',
-                        error=MockError(code='rate_limit', message='Rate limit exceeded'),
-                    ),
+                    # Google responses are ordered, no custom_id field
+                    MockBatchResultItem(response=create_mock_response()),
+                    MockBatchResultItem(error=MockError(code='rate_limit', message='Rate limit exceeded')),
                 ],
             )
         ]
 
         model = mock_client.create_model()
 
+        # GoogleBatch tracks custom_ids for position-based matching
         batch = GoogleBatch(
             id='batch_123',
             status=BatchStatus.COMPLETED,
             created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
             name='projects/test/locations/us-central1/batches/batch_123',
+            custom_ids=['req-1', 'req-2'],  # matched by position
         )
 
         results = await model.batch_results(batch)
