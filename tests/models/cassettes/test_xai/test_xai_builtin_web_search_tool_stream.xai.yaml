@@ -1,990 +1,776 @@
-version: 1
-stream_chunks:
-- - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASgwEKgAEQAhp8Cg1jYWxsXzQy
-    NzQ3NDU3EAJSaQoYd2ViX3NlYXJjaF93aXRoX3NuaXBwZXRzEk17InF1ZXJ5IjoiY3VycmVudCB3
-    ZWF0aGVyIGluIFNhbiBGcmFuY2lzY28gdG9kYXkgaW4gQ2Vsc2l1cyIsIm51bV9yZXN1bHRzIjo1
-    fRoMCLffqcsGEOn+2Y8BIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEz
-    MhIILhDwBBieBSDwBDi1AVjk0Uk=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASBgoCEAIYBBoMCLffqcsGELej
-    3I8BIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhIILhDwBBieBSDw
-    BDi1AVjk0Uk=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASjjMKiTMQBRp+Cg1jYWxsXzQy
-    NzQ3NDU3EAIYAVJpChh3ZWJfc2VhcmNoX3dpdGhfc25pcHBldHMSTXsicXVlcnkiOiJjdXJyZW50
-    IHdlYXRoZXIgaW4gU2FuIEZyYW5jaXNjbyB0b2RheSBpbiBDZWxzaXVzIiwibnVtX3Jlc3VsdHMi
-    OjV9KoQyVlVpSTU4bmJLYW1XaVc1emtCUlB4ZS9qZWV1czFONXR4SnRObXh0U2xVRTJhQ1o1c1kz
-    MUNNbHROYm5uYWVveWkxaXd1WDBPSXQ1SnRpbVJuRUloZmM1U1h3cVBXNTF4aHhvMWMwMkF3NS9Z
-    RnpSZFBEVEphZHJNRmc1RTFaRWdHKzlscTYraXdZdzVwRm1oYjZmQXppRlR1WVRZOWg5eGpMWXpv
-    M0k2dW1XbzcrRFEzN2p2UmRYS0o5MzBpbVpPOWNqVzd5MGt1ek9yeDdnS3AzZmsvS3plU0YwbDNh
-    Vmp1QTFoYzVlZXU1bDRrenFkSVpMYkU1VWdHTE1iNjRCWnhpSndUZGpyUnBrQ3A4MkJ3cUdodDR5
-    WDVETERTbkxPa1BqVm04dDJ4L05jVlVQeUQrSjR3L0ljMko5Wk1tNU9EaCtNNmc3VnhobWVac1Iv
-    MThVTThvdmsvWDI5MXJ1ZnNYYTRvaWdxR1RETkQrallKcFdTb0dWcE1TWGljcUptYStyVTI0dWdh
-    VGFYR3RqbElhVGhoTlZzQUUrR2VRbkdHU0dIM2k0RlZ5bk5qYUIyTHp6dFpITndKRi9aSVprbFk0
-    cmdMMS8vcUs1MTZzdERLeWt5Yk5RR1B5cW5MWHZvQmJ2ZGZPU1MwV3hRU1EzMERrSWlLVVo1NUZJ
-    UTkvNlBSQ3RIWEM5RkZyTGFOUEY1Y2hLZHMrV1VJbU03UTNFdmpOMzVLUjg1aXRYMXM4MXJpV0xu
-    dkthK3ZOV2l3Q21INmo2S0xhRUNNMExVL3ZOZDJDYkFVOG1lb3ZoS3drYmdyZ0ttRFY1ZFZiTDNx
-    ZGc4eFVyMllhbEh6c2VpeEtQRFk0czF5MjVNS2taS3RaMjZaUEh6VW1rNytmZTROWUlsVGkxemtN
-    Y1FBUVNGQjZyVUhJc1RpeXRiTklPaTRia2JXT0toNzBuU1BBRk41MFFHVVhyRFpVakQ2eXdMNWdw
-    ZndrTlRsbWZMczVaYmZMalY5MDBqS09kTUNta0Y3V2ZuMnZNT1NBVisveGhURldKdURwNDRFZGo5
-    QXNBS3hTemRiOWtqczdJZVFyUVg5VVNkMnlUMXZuMVBqWVNCNURHbzJENjBDTkVvMXVmSzU3OVBZ
-    RmlGMUlsQWdrL2N6OWFoQnpNMXpmZ3VHdy9sWVRSUVQvemZRV0svdVlnYXNQMWFvUDdsemtzV3d1
-    Wks1V2QxZVAwNzZVWmZKWC84UnZEck91M29COGpLZjFFSHZkN2twNHFNS0EzNXNoZ3U5V0xxd1dl
-    ZnROY3doV3B2Tmp4RW1JMWtFWXdWb0d2WWR4WmEvQStIT25zMHA1Szh1R1o1dVBtR3NYZ0RvMjk4
-    THVta3JqbEcwcWIyYnM4Ty9RMXQ1VnRkWW8zdVhReHFoN3lTZGRIOU1LWFFhUVRYVE9JSWFFcDAx
-    RVIySk9rV2VCaTRiczBBUDczUFV5cVdGN091VlQxTFdJeHRUUk5kRG03YzRrbi9vNDRER3BUQUNu
-    NTNzc2xCNm1kMS96TXdBSVBsWFgzQ09wS0NWMHRlRzhqRFh1bUNsTWJ3dzVudkhxQUhOdGFlM3NF
-    RGNxUFRhRGo5MWliZURYK3pyZUJZeThvY1M4TCthaFhKcDJycjN5Wlo0bVJ5Vm00TDRMSGlMRVVF
-    R0RTN0twdGdMR1J6QkpnakhSK3BZUGNGeUNhNEszVzhhbWxLZDVrSHkreGtVVDFMNUxKZzNpZ3ht
-    TzJvS0xuc1MwcHBoZ1QvV3l1MGFYSHBQTU03Z3JzRjE5RHVBbVp0RDhoT0NLVnBvd2RsbjY5cDNn
-    d3E1TGRFdkdYcTM5ZVNMNW1yMXVQVmh2YXZ0M2pHUnBSSEJDdXM5VzVCZnc3czg5dTJiN1ExZjlj
-    a28vT3ovRW1SR2FEaHlLQXhCamY2aE1QbzNmcStKK0xXbXpDOWlDM0hTWUxCNVNUbml2K2RybDRC
-    d0ZTT0dyVHc2UGNhMk1XOERhUm03UnVjajhPY2lvaWNlM2tFRTgxcjFncE1OaVRpMXdKNEtzMDBO
-    bFJqOUo5emdtK3pocHJxTklxcFQ4YysrWG51UVg3bFJSWS82enNYdXk4Ny9ZcmlhcWRKS1Z5WWx0
-    RElydnMxaUV4Zm9RUW5WaDNPazlhZUVZQVEyTHJyMHk5SkpXODRYRFVtbXhvdmdlMFN0K1hDT1ho
-    WU9FZ0FyODRNaUNSMVBlYTFPWHpscUZoNEVMS2ExbUNCOXNuTk1JYTNTM3RYL2JMcUNXZU1USlJR
-    OUJDb1V1Z3cyLytIemphQm5GOXMrUDlMeUlQZkYyUGdBL250RXpzVEI4OUp0Zk00MGUrRzJ4YnY2
-    UDA1WHNlWXh5ZVowUi9mVG8yQWRCNVF1dzQ0UVBrblNXVnRMN2YwczFNWGxZcTlDZHVZb05vOTRs
-    b1hYVDdnbnl6L1AreWhndENyTmoxTlp5UmZ6dmdwU05YbEs2SHNyclptWWZnNFQyTDFzWHJ5Y2hT
-    MjJmcGlOdU1GbVVIVGFwbG9GcG45Ykxsb0l3S0N6YXd0THdhaEZaaDRoTHM0Vi9mbFpxU1pGenUz
-    NXFnZ04vb1FOVldReDhsbGlTUTF2VzFpaFNGUU9aRUFFWXpaUTN6RkFrMUlMRk1BQVhvVlI3Y0Qr
-    VktaSWwrV091V3NIb1I4OEZkQ1FZRmVESmxXUnFNcE1YZVRLbkZVSWJ0S0IydkJCczZ1eEFrMHRE
-    dUF5STY4dVBMSFhFbS9QMk5mZzlLWWZ2SWY2bGpKZWh3N08wZlcxWjJ2U3pvVDNvM0pneHA3NlE2
-    bVplWEJJNWFSWEdidmFQK0pZMHgwaitVcE9MemFUeHJTdXpLMk9IOXY0ZzVDM2NkRjBuVWRqZURM
-    RVIzMWxGb3h2SVhEaHc0SDAxOWpLaVI0WHdYMjhFS1Nqem9kSGgyS1UxcXh6enhuS2d6YWQwcGk0
-    Q3BjVE5Vc1EvSzduay9MczlSK2dZZ2F0QWh4b2dkdkpycDdXa3M2RzhBWUJENmpLT3JpcDNhcXhN
-    bnF6eVE1UjBjMmdkd2ltYkpCaVlrd2tZUzhlWThsUStEZnJ1OFozbURoY1l1eTBWTmtRbzErOCto
-    QjlJTkZybXplNHRiUVBMRzVLWmd2bW9qYzA2OFE1YktKZGxZMFNWK1NUbG1sSmN4QlJWYXF4U3NE
-    UVpuMk82V2ZPb2dYVHMzZ0VxZlVOeUMzVDVhTFN3OVR6dlc4V09iODNQNXp3WHlDM3NxbDF4ZzUr
-    MUdnQ2Vvd1RHbzhTK0JybE1sVkVaTmp2N1Y0MVJFQ2drMEVKUVNBY2ZvRWNpWldqdjhHOVdBdHYy
-    ZDl0WnJvOTNOKzlWd1MrVEtLQUczTVR0YmtMRmZaKzRlNk1CcWhrL1dJUitlcWk2YkU2cW1Ccno3
-    VEQ2dzFlTUZtbUtIWTVoSDJic0JaNnk1VWJmc0VvZUUrd2crR2NYTVd6V3ZEa3dGQ00wektYWkpV
-    aCtiN0RyZ3dCYTh4bVdPWk1iSXBnN2JoYTRXRHFBT0pZQ25BdHhnU2lJUW5SL1BWOW5FbWFtcXV4
-    bEwybmNwZjBsbkJqRjhpQWp6TEt4bFJweEVjSURES2hocEkvM1pKOU5KNXBWaVlONVV2cUtFMVRa
-    YkVrWW1ZUkRrd0ZlNFcrV0I1dUtoMHNkdHU2Y1N3V1pBN0Vpa01wYzlEdjVnYXY4VGZDb3kwY2Ru
-    VDhrb0F6eXQ1TWtsSHFsMlBMYno5SkUyaVNKWm9mRmRvVXlTKzczVVUwakUxK1p6N3YxNDFJNXlw
-    WDZNd1ZxNzc3dytEbEF2cWx1SmlOcXE4bysyY0VwTGVPU2pMeWlpL1cwVHZHQWhaUGV3QmlGbS83
-    RUJ2YkVGTTYwMUlzaXRqdGIvNHQ0TS9MYVZwcHZHV3BCRjNnTGdWVmNuRDdEdGZVOGwvYkZYMWwy
-    M1JLOUVIeHA4dTVPM2YwcXNvWXBIRzQxMVI1Z2xPdmZXSmptWUVMUENkRGFpVTZ5alVUdnBNQ3ZV
-    YzRQNzRtZDhsMjU4bDhydkxwU2NyZjArbld5OXVxTUphK3lVTFprR3NvTjVLNFl4OE9PbFVFSi8z
-    YXVNaUxaTEN6cXZqNkxqSGZ0cDlhc2hSZFEvNlg2Qng1Umtsd0xrc2YyOXgxNjBoWDh0QmNuTzFm
-    cDY2VSt2cjFIRXlidnZpYkUyL2krZ2JaeTUvRVgxU1FsS3R2TTlBTUQzZ0loWDUySXJtRGZDZGFB
-    ZzQ2NkJkMmpPU2pJNEFzamg0V3dQY09ZTlBvL2s1M2pRRXhMOUlKZjQzcFhHMDN4V2lTZXJGbTJH
-    V0FRQm1XNDBaVjIxQ0QxMUxpOWR6VTNkejRGbzJSZVZiYnlHbTNWa1p2TnZQZ2JhTUltcnFtRFdT
-    TVBpaElDdmVWdm1SWmk0YTkrV0xMbUwrZnZZbGo2cmE1QkhZenpGMWR5VEorclk0RHIzTXRSU2Zx
-    bFZoN2M1UVFQNXE1QnZ2RERyWFBqMXZwV3hwNnpWV2JFUGJFTC9vam56UUdhM2lMT3JuNXhYV0s4
-    Q2xwaUF0WWxGZE5rK0dXT0doS25kRzZlNHhSRFRPbEd6Y1MzZS9CeUxFcEZuQzBRTkY2V3dTZ1BW
-    dWExeDRjTUM5ZnRrT0tKTGQzTjNKQURzNVBRV1UyS1JPZ1dEQkZYV0orYS9EWmx6dWZZV1ArK3c4
-    OStJRDBSZFZ1cUxlM2hPbHhadTdVNUVjQjE2WmVLQlZIYWtXY2Jpa0E4eVk5a0lVUExxdS9JNHEr
-    dTNDanhxSXBEMkcxVlZRUkdCUjMvTkpHVG0xUG1hUkpZbkx4VFZZby8xbHllQlNJZFA1MUZiVnNw
-    cmlLOFNNK3JTYjVJOG02NFdwc2tWcXlmM0pLWENJa0J1dnJMS1U0bkQ3cUNtNzE1ejcyNVRRSEha
-    R2FxUGVKUWVlanc3bDF4KytsY0s3c252dmJsWHpDdytDa2orcXFsVmhnVThtbTJCRFlxNUJIVExx
-    Qm9SeWtZalU4cVlZZC9CQ0JvNUlKQk5tMHphT0htUEh3d3RYMjF0UkljM2FURldvS3Z0d05sUGU5
-    TXRNZG52RXZOdFZWRkFENkhKVlhoQjZGS2FqZDZGbWxOdGN5RERwWEd2MWdqbXprRjBvMkJwZHg2
-    ZHExR2JRR0wvU1RKOG1laXRSRG5VZWFjVVRuay8rcWJyeS95dW94NC9CZUZySUdXK1JBZzJrRXQw
-    Q01UTXpCaHpFTkpkNmlsKzVKOWJ5Ulpqc3V0eDEzQjFSdTJPRGtWeTcvVGRGSng3amJBUjBVK0cv
-    dE0vL2FBOU5LZWwwZGM4ZDJheHRrQVJmMUd2cm5wZGJoakFIMC9WZFlwZ1hVQk8rRlJHTTI2dUY5
-    SjhRM052YUJBanlvb1dibGxZWjI1eEw2c1ZUSS9lMmFFTGtIYlh2V1FZSHNpNkJGRi9YMlczR2RU
-    RWpkRjdDNlh6bVVtY0ZGbEpnYlpNZ1dIOVFZZ25jTEwxb0QrMG01SnY1bG9jOG16MVNqQkllVGZ5
-    cGQxOUs4Yms1b0FiVUZwTGlGSjVsR0k3R3d4b3ZROGtMMG5LZy82OEZ5NXkranQreElRVUhyM2Rl
-    b1YwcHpQUWN3N1Y3WnlmdjRHeGthNzVtNWlmU2dCUlNtUHIrcnYyYjlSNHVmUGZwMHh4OUxDcE5I
-    SVRnWDd0T2tDQmYxYjNVRno1RVoxR3B6TzZQQXhoMGs3OW5ONXdhcE03RHNvVksrdHpDU08vdlNv
-    UnYreUtkQWppSy9JNXgwdU5HSGs4eDE3QmNrZ2p3ZlNCQ2NRMEh1SkREbXA2Sm4rNE5mVFZ2OXl5
-    dk56NGJ3K2VFWjdMWUhBMUU3ejNmbC9XTGRoOHZtektMazliMW1DVkdKK3RrVzdDY3gwU0lpU3FW
-    MStZQXlxVmJPOUhJZ1JKSDRteTBXejJwb09FS20xZFBxVFRjNkFaU1ZrdXg5bmFOYUJ2SEY4ZUw1
-    YUtWK1k5dlVhOGh5Tk16R3FxU1RJc1Q2b1EyTGpKUG10NGNUeSt5Q2M4ZUtrRVBPQXlTemhBQktn
-    bFg3TXVNT3dhMXZJcGw4anNKRGZXbDZ6cHlGLy9xQmpwSGxZLzBhSUFOL05BZkhFVTVlbVdMcFB2
-    THZHN0s0enlxQWNlRFh4dG83OUQ3SXJvUFZCTld2VG00TTNXbDV6elk5N3lxSFVVOExDMFZZSG1u
-    YXF0WWprazJCNWc5MkRYNzFybnE2UEJXSzROQ0d2dzUxL1hxNnhTQm84VEN2S1hjRnpORi8wd2gx
-    YXlwSnoxanVWYVcyQlNVMHRSUHdyeGNYZ3ZEZFlrNlFSWnhYUExzZENpRFdmY3RKY2x5OGJxQWFM
-    OHdUV2dTM2xuTDl6ZUFQTGxwb1NRKzlTSjJEZDc0OTRTYW1CTWtQckZTazlEUDhWMXpxaWNMS2tt
-    U3hXbXFYeHBxVUtxQzBBT3pwY2llajhVM3F3L2JZaHR4aGRDWHA4dmNLNTZYTmdEa2tCYzhIYVF1
-    dUxPN3d6ZzBLZWZyaTFsRlAydDFKWHpZTG16QkcrcmxoTnpleTVCRU9FVnNOZ3pIWExTMDVraThx
-    ZGNPZ0lZaFE4dFNqSEdPK2RhYTNPd0dKSXFLUm9rSHpacTkxZXg3ZDJRb2c5RTVpdE9FUWMrWkdj
-    L2VGNjIwQTZjR2dUTEVmOWdPRjFwK3l6ZTIvWm1GQlZKeTh0QlQvOGd5Z2lycG5nTXRYUUNIM1R6
-    Nk1YOTcrbkxOWmY3aVlsbEZVWmdyRW94NnBmazMxTUJJdEtMdFk2VDdMZ09nNHFxMlBSNk9MSE82
-    c2pWNW9Ga090T1M2eFlXbVZVTUJWMDlUdjRwekNwTlArTE9hekVncHpDSjg2SHlUUHNLcllCNnVN
-    TGhnRlNSL2E1ZS9OT0JTUGpSS05Xdnd6UUF3R05VeFBlZ2FXN0huRk1DZmRscVJndkk0M0VFdzJG
-    di8wajd6S2E3QUdQQWZSWDY4U04rSVk1MHZubERKOXZWNGorNGtQMEhvdE0vNDduNmNHSHdFcGMr
-    d3ZJN2wyclE4Z1U4WWUvdTZQNjhOSHFtOXBXWTlMbW1VMC9sL09nd0MvNUIzK0hJdEtPTllHQTlz
-    QmNXdmpmQVdSa2tva1RGa1BFNi85VXVVM2hlZzJVRWNZNmZmWktqSmQ1L0hYVExFMnUrV3YvQkwz
-    Q0svYklGSGo3b0t3cnFSREc2bzh4M0ROZUpYSUU1Zm91ZTVNTjFzY0NhNVFqaFhMRHhJRVRwQjdI
-    M21iU1h5N2FUcDluNnRUNWFkdCtjU1k0QjNtaCtFcmNuNGI3bzdidU9yMCtmYVdCMWNoc1QxbG93
-    N3g1NSs0dGFKKzdFRFRNbXRQY0s5MlpibEkvVmxzTkxnMTYyZjRtbGlpWExIcVlmZHJuNlNydjh3
-    UHNqc00wcDVKUnViVkdFMklpMTNaK08zQnZvRWgybHFMWXJ1Z0EzMFJDSWxwOUZld0RqL1JGVE01
-    UVBOQnMvUmllcDJSY1BMc2d2UkhwKzY3WGY2RE1KL05sT0cvcWc3RFN3R2dyQ0FYKzJWVjBhM2Ru
-    SmM0ZDRoaml1V2NkOEJMM3YxZ3Z0MUxuUHhwVlpON2V3QWRSWTNuSGFJbVZ6TUdvVitwV0pyUVcw
-    cFRhZmpFZFVQVmpWazNFbWVISnh6QzY1aDdlNmZCZUcxNVltYzhCZDI5OE9hTmZtZUtTYTFqNFlq
-    cGFtRUZsN3dhUkNTUlphRDloMXl6WDVHdEZrd0xuM2JLUksxdFRTUFl6K3lhTGlQQ21ScWhtSU5r
-    SS9GMitjMkNVWE4rbjZ2dmxVcTdhTWFnQXpqWmMyb0p3L0J5TzhCbG1IL0J0QTFQQTJGWVgwTjRl
-    dEZ3dkMzVXJBYVRzN0xOMExlZS9kTDNQVmlTQlNoZG9HTnU1MmhmWXM3OTE0N0pBeTZtSjdwd0dE
-    UUZaM2ZwNjJmY09OQlZ5NlhJdDlyd0VRcElWSkFaallVUG5vZzF5ajdKRWdRS2FzdW1YZ2VxTW8r
-    QzdZV3RXWnFOeW9MTXFMOG9rVjBVa080OGRBRGtVK2RZVC9adkZOV29tcU5pU2l6L0FybHhpOXo2
-    S3hlVlZGa2RNV2NKQ3JSSmZhSE9wdlMyUWU5Qm10S0JjVEZjdTJ2aDltb1BoUklDU1NXL0RRRStR
-    Q0RXZmZEZVl6VmhYbmJEbmk4cGt6bHErbXNpWlZUZ1h2YkNnbmFPV08rS0RVWmhYY1gybVB0RTJP
-    VnBGVGFndVpzSWJQZktENkx3WGNkMWt2ay9Hc0JZQmFYWHJlVUxtWm5adWpxRmNyZW1zZGVRYjBa
-    d0g0OFdndDIxUzhONXRLd1QyWHVSMEsvRlVmY3NjSVFlVy9UbWxvUkZRdVBUeGZHQXhWaTdFZ3BL
-    QllLRE9GTEdZWjQ0ekYyN2wxMXpFdzBNVUkyUGp4SkdTYUdHakpDdGV1TFk1REsydEZCRFRLSDEy
-    amlqSi81ejdCZ0lMZHlmVFN6M1JzYzc2ckkgATIEWOTRSQ==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASkQEKjAEQAhqHAQoNY2FsbF8y
-    ODIwOTkyNBACUnQKC2Jyb3dzZV9wYWdlEmV7InVybCI6ICJodHRwczovL3d3dy50aGV3ZWF0aGVy
-    bmV0d29yay5jb20vZW4vY2l0eS91cy9jYWxpZm9ybmlhL3Nhbi1mcmFuY2lzY28vY3VycmVudD9f
-    Z3VpZF9pc3NfPTEifSACGgwIuN+pywYQ0faYpQMiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcq
-    DWZwXzQ2MTZlNzY0MTMyFAiIARC3Exi/FCC3EzjTBlicl4sC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCAoCEAIYBCACGgwIuN+pywYQ
-    +bCcpQMiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiIARC3Exi/
-    FCC3EzjTBlicl4sC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjAS7QQK6AQQBRqJAQoNY2FsbF8y
-    ODIwOTkyNBACGAFSdAoLYnJvd3NlX3BhZ2USZXsidXJsIjogImh0dHBzOi8vd3d3LnRoZXdlYXRo
-    ZXJuZXR3b3JrLmNvbS9lbi9jaXR5L3VzL2NhbGlmb3JuaWEvc2FuLWZyYW5jaXNjby9jdXJyZW50
-    P19ndWlkX2lzc189MSJ9KtcDbi9ORVd4MDBCWnhkeURmMG1Wd3I4V0UreHZsaXgvd3k5cXZyaUxB
-    MkV2MkF1R3FVUDlvdEtSZWQrdWxGejhPUFBQeVBpaEthV2diVDVIYmVGb1g5OE16U0JGak0zeGRJ
-    azVBVW1OUDZsWFF1d1NyUCt2YVZSWDl2MTRsWVcyazdxdW5SSjdMTmpCSWoyNmRVYkhOTnFIUjE0
-    MlIyU2RpUHlXM2F0QzJ4SXlSWGN0c1V2QTNQQWc2eFJKdENmVGI0WXYzUFk0UkwrUjFvSFJwd1lV
-    Y2FEaVI1STZ3SkpoTzNOaUwrLzRWRkpMTWRyK3FMSElsUkpnWmpDOEJvVVk0ZnZiRjA4eUE2N2Vo
-    cDMxWUdOTVhac2pQWlN4ano0VnhRakNRRFVmS1IxeFVwSHVLZVEydnJETS8vMXdDbTRvMmFhdkZQ
-    S0xSVDdkaHdpOUxJUVNYTUhualEvcWl5Mm1SYVduQXVIRW9zZW5mMjJrOVJWRUg4R3NjeW9LSHFq
-    VVQ1eHlxbGVaMnlyZ1dwZ0x1N3gvbDFKUkVaSitzVE5OVGFUMnMzbFlvT3NoSng3MWQ2c0hvNVVo
-    M0p5L2Y0Y0FiREdHbFBjM3BKekxRUzkzL09kcXU1ZWdzIAMyBVicl4sC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgNUaGUQAiAEGgwIud+p
-    ywYQ6uCFswIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiJARC+
-    IxjHJCC+Izj0FVj4xNMC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASEAoMCgggY3VycmVudBACIAQa
-    DAi536nLBhDxsOG7AiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIU
-    CIoBEL4jGMgkIL4jOPQVWIDs0wI=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASEAoMCgggd2VhdGhlchACIAQa
-    DAi536nLBhDCl+K7AiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIU
-    CIsBEL4jGMkkIL4jOPQVWIiT1AI=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgMgaW4QAiAEGgwIud+p
-    ywYQ6MXiuwIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiMARC+
-    IxjKJCC+Izj0FViQutQC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASDAoICgQgU2FuEAIgBBoMCLnf
-    qcsGEKru4rsCIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIjQEQ
-    viMYyyQgviM49BVYmOHUAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASEgoOCgogRnJhbmNpc2NvEAIg
-    BBoMCLnfqcsGEOiT47sCIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEz
-    MhQIjgEQviMYzCQgviM49BVYoIjVAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgMgaXMQAiAEGgwIud+p
-    ywYQ5LbjuwIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiPARC+
-    IxjNJCC+Izj0FVior9UC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASDgoKCgYgY2xlYXIQAiAEGgwI
-    ud+pywYQn47yxAIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiQ
-    ARC+IxjOJCC+Izj0FViw1tUC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASDQoJCgUgd2l0aBACIAQaDAi5
-    36nLBhCohsXOAiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCJEB
-    EL4jGM8kIL4jOPQVWLj91QI=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCgoGCgIgYRACIAQaDAi536nL
-    BhDE7MXOAiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCJIBEL4j
-    GNAkIL4jOPQVWMCk1gI=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASFAoQCgwgdGVtcGVyYXR1cmUQ
-    AiAEGgwIud+pywYQxJzGzgIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0
-    MTMyFAiTARC+IxjRJCC+Izj0FVjIy9YC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgMgb2YQAiAEGgwIud+p
-    ywYQv43IzgIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiUARC+
-    IxjSJCC+Izj0FVjQ8tYC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCQoFCgEgEAIgBBoMCLnfqcsG
-    EOG0yM4CIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIlQEQviMY
-    0yQgviM49BVY2JnXAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCQoFCgE4EAIgBBoMCLnfqcsG
-    EKrYyM4CIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIlgEQviMY
-    1CQgviM49BVY4MDXAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgPCsEMQAiAEGgwIud+p
-    ywYQy4fk2AIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiXARC+
-    IxjVJCC+Izj0FVjo59cC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCQoFCgEuEAIgBBoMCLnfqcsG
-    EOeQ5dgCIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQImAEQviMY
-    1iQgviM49BVY8I7YAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASEAoMCgggVG9kYXkncxACIAQa
-    DAi536nLBhC4zOXYAiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIU
-    CJkBEL4jGNckIL4jOPQVWPi12AI=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASDQoJCgUgaGlnaBACIAQaDAi5
-    36nLBhCGoa3iAiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCJoB
-    EL4jGNgkIL4jOPQVWIDd2AI=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgMgaXMQAiAEGgwIud+p
-    ywYQmJGu4gIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAibARC+
-    IxjZJCC+Izj0FViIhNkC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASEQoNCgkgZXhwZWN0ZWQQAiAE
-    GgwIud+pywYQk8Gu4gIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMy
-    FAicARC+IxjaJCC+Izj0FViQq9kC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgMgdG8QAiAEGgwIud+p
-    ywYQ1fOu4gIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAidARC+
-    IxjbJCC+Izj0FViY0tkC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASDgoKCgYgcmVhY2gQAiAEGgwI
-    ud+pywYQkpuv4gIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAie
-    ARC+IxjcJCC+Izj0FVig+dkC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCQoFCgEgEAIgBBoMCLnfqcsG
-    EMXyjOwCIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQInwEQviMY
-    3SQgviM49BVYqKDaAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCgoGCgIxNhACIAQaDAi536nL
-    BhCjm47sAiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCKABEL4j
-    GN4kIL4jOPQVWLDH2gI=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgPCsEMQAiAEGgwIud+p
-    ywYQmdKO7AIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAihARC+
-    IxjfJCC+Izj0FVi47toC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCQoFCgEsEAIgBBoMCLnfqcsG
-    EIKKj+wCIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIogEQviMY
-    4CQgviM49BVYwJXbAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASDAoICgQgYW5kEAIgBBoMCLnf
-    qcsGEI62j+wCIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIowEQ
-    viMY4SQgviM49BVYyLzbAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASDAoICgQgdGhlEAIgBBoMCLnf
-    qcsGEKbfj+wCIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIpAEQ
-    viMY4iQgviM49BVY0OPbAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASDAoICgQgbG93EAIgBBoMCLnf
-    qcsGELDcjKUDIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIpQEQ
-    viMY4yQgviM49BVY2IrcAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgMgaXMQAiAEGgwIud+p
-    ywYQuLuNpQMiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAimARC+
-    IxjkJCC+Izj0FVjgsdwC
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCQoFCgEgEAIgBBoMCLnfqcsG
-    EMDmjaUDIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIpwEQviMY
-    5SQgviM49BVY6NjcAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCgoGCgIxMBACIAQaDAi536nL
-    BhDo1YywAyIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCKgBEL4j
-    GOYkIL4jOPQVWPD/3AI=
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCwoHCgPCsEMQAiAEGgwIud+p
-    ywYQkOGNsAMiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAipARC+
-    IxjnJCC+Izj0FVj4pt0C
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCQoFCgEuEAIgBBoMCLnfqcsG
-    EOKUjrADIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIqgEQviMY
-    6CQgviM49BVYgM7dAg==
-  - !!binary |
-    CiRkZTgyNGU1Ni1lNmY2LWEyMjgtOWYyMS03ZmYzNTVmOTNlNjASCAoCEAIYAyAEGgwIud+pywYQ
-    wOOOsAMiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyGAiqARC+Ixjo
-    JCC+Izj0FUoCAQFYgJC1MjpMaHR0cHM6Ly93d3cuYWNjdXdlYXRoZXIuY29tL2VuL3VzL3Nhbi1m
-    cmFuY2lzY28vOTQxMDMvY3VycmVudC13ZWF0aGVyLzM0NzYyOTo1aHR0cHM6Ly93d3cudGltZWFu
-    ZGRhdGUuY29tL3dlYXRoZXIvdXNhL3Nhbi1mcmFuY2lzY286TWh0dHBzOi8vd3d3LmFjY3V3ZWF0
-    aGVyLmNvbS9lbi91cy9zYW4tZnJhbmNpc2NvLzk0MTAzL3dlYXRoZXItZm9yZWNhc3QvMzQ3NjI5
-    OlpodHRwczovL3d3dy50aGV3ZWF0aGVybmV0d29yay5jb20vZW4vY2l0eS91cy9jYWxpZm9ybmlh
-    L3Nhbi1mcmFuY2lzY28vY3VycmVudD9fZ3VpZF9pc3NfPTE6OGh0dHBzOi8vd3d3Lnd1bmRlcmdy
-    b3VuZC5jb20vd2VhdGhlci91cy9jYS9zYW4tZnJhbmNpc2Nv
-stream_requests:
-- !!binary |
-  CjwKOAo2V2hhdCBpcyB0aGUgd2VhdGhlciBpbiBTYW4gRnJhbmNpc2NvIHRvZGF5IGluIGNlbHNp
-  dXM/EAESGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmeKAQQaAhgAkgECCAHSAQEB
-stream_requests_json:
-- args: []
-  kwargs:
-    model: grok-4-fast-non-reasoning
-    messages:
-    - content:
-      - text: What is the weather in San Francisco today in celsius?
-      role: ROLE_USER
-    tools:
-    - web_search:
-        enable_image_understanding: false
-    tool_choice: auto
-    response_format: null
-    use_encrypted_content: false
-    include:
-    - 1
-stream_chunks_json:
-- - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          role: ROLE_ASSISTANT
-          tool_calls:
-          - id: call_42747457
-            type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
-            function:
-              name: web_search_with_snippets
-              arguments: '{"query":"current weather in San Francisco today in Celsius","num_results":5}'
-      created: '2026-01-16T17:04:55.301367145Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 46
-        prompt_tokens: 624
-        total_tokens: 670
-        prompt_text_tokens: 624
-        cached_prompt_text_tokens: 181
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          role: ROLE_ASSISTANT
-        finish_reason: REASON_TOOL_CALLS
-      created: '2026-01-16T17:04:55.301404599Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 46
-        prompt_tokens: 624
-        total_tokens: 670
-        prompt_text_tokens: 624
-        cached_prompt_text_tokens: 181
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          role: ROLE_TOOL
-          tool_calls:
-          - id: call_42747457
-            type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: web_search_with_snippets
-              arguments: '{"query":"current weather in San Francisco today in Celsius","num_results":5}'
-          encrypted_content: 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
-        index: 1
-      usage: {}
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          role: ROLE_ASSISTANT
-          tool_calls:
-          - id: call_28209924
-            type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
-            function:
-              name: browse_page
-              arguments: '{"url": "https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1"}'
-        index: 2
-      created: '2026-01-16T17:04:56.883309393Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 136
-        prompt_tokens: 2487
-        total_tokens: 2623
-        prompt_text_tokens: 2487
-        cached_prompt_text_tokens: 851
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          role: ROLE_ASSISTANT
-        finish_reason: REASON_TOOL_CALLS
-        index: 2
-      created: '2026-01-16T17:04:56.883366009Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 136
-        prompt_tokens: 2487
-        total_tokens: 2623
-        prompt_text_tokens: 2487
-        cached_prompt_text_tokens: 851
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          role: ROLE_TOOL
-          tool_calls:
-          - id: call_28209924
-            type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: browse_page
-              arguments: '{"url": "https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1"}'
-          encrypted_content: n/NEWx00BZxdyDf0mVwr8WE+xvlix/wy9qvriLA2Ev2AuGqUP9otKRed+ulFz8OPPPyPihKaWgbT5HbeFoX98MzSBFjM3xdIk5AUmNP6lXQuwSrP+vaVRX9v14lYW2k7qunRJ7LNjBIj26dUbHNNqHR142R2SdiPyW3atC2xIyRXctsUvA3PAg6xRJtCfTb4Yv3PY4RL+R1oHRpwYUcaDiR5I6wJJhO3NiL+/4VFJLMdr+qLHIlRJgZjC8BoUY4fvbF08yA67ehp31YGNMXZsjPZSxjz4VxQjCQDUfKR1xUpHuKeQ2vrDM//1wCm4o2aavFPKLRT7dhwi9LIQSXMHnjQ/qiy2mRaWnAuHEosenf22k9RVEH8GscyoKHqjUT5xyqleZ2yrgWpgLu7x/l1JREZJ+sTNNTaT2s3lYoOshJx71d6sHo5Uh3Jy/f4cAbDGGlPc3pJzLQS93/Odqu5egs
-        index: 3
-      usage: {}
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: The
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.643919978Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 137
-        prompt_tokens: 4542
-        total_tokens: 4679
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' current'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.662198385Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 138
-        prompt_tokens: 4542
-        total_tokens: 4680
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' weather'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.662211522Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 139
-        prompt_tokens: 4542
-        total_tokens: 4681
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' in'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.662217448Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 140
-        prompt_tokens: 4542
-        total_tokens: 4682
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' San'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.662222634Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 141
-        prompt_tokens: 4542
-        total_tokens: 4683
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' Francisco'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.662227432Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 142
-        prompt_tokens: 4542
-        total_tokens: 4684
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' is'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.662231908Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 143
-        prompt_tokens: 4542
-        total_tokens: 4685
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' clear'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.681346847Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 144
-        prompt_tokens: 4542
-        total_tokens: 4686
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' with'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.701580072Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 145
-        prompt_tokens: 4542
-        total_tokens: 4687
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' a'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.701593156Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 146
-        prompt_tokens: 4542
-        total_tokens: 4688
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' temperature'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.701599300Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 147
-        prompt_tokens: 4542
-        total_tokens: 4689
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' of'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.701630143Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 148
-        prompt_tokens: 4542
-        total_tokens: 4690
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' '
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.701635169Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 149
-        prompt_tokens: 4542
-        total_tokens: 4691
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: '8'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.701639722Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 150
-        prompt_tokens: 4542
-        total_tokens: 4692
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: "\xB0C"
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.723059659Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 151
-        prompt_tokens: 4542
-        total_tokens: 4693
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: .
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.723077223Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 152
-        prompt_tokens: 4542
-        total_tokens: 4694
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' Today''s'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.723084856Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 153
-        prompt_tokens: 4542
-        total_tokens: 4695
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' high'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.743133318Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 154
-        prompt_tokens: 4542
-        total_tokens: 4696
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' is'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.743147672Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 155
-        prompt_tokens: 4542
-        total_tokens: 4697
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' expected'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.743153811Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 156
-        prompt_tokens: 4542
-        total_tokens: 4698
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' to'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.743160277Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 157
-        prompt_tokens: 4542
-        total_tokens: 4699
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' reach'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.743165330Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 158
-        prompt_tokens: 4542
-        total_tokens: 4700
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' '
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.763574597Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 159
-        prompt_tokens: 4542
-        total_tokens: 4701
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: '16'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.763596195Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 160
-        prompt_tokens: 4542
-        total_tokens: 4702
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: "\xB0C"
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.763603225Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 161
-        prompt_tokens: 4542
-        total_tokens: 4703
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ','
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.763610370Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 162
-        prompt_tokens: 4542
-        total_tokens: 4704
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' and'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.763616014Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 163
-        prompt_tokens: 4542
-        total_tokens: 4705
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' the'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.763621286Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 164
-        prompt_tokens: 4542
-        total_tokens: 4706
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' low'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.883109424Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 165
-        prompt_tokens: 4542
-        total_tokens: 4707
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' is'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.883121592Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 166
-        prompt_tokens: 4542
-        total_tokens: 4708
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: ' '
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.883127104Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 167
-        prompt_tokens: 4542
-        total_tokens: 4709
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: '10'
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.906177256Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 168
-        prompt_tokens: 4542
-        total_tokens: 4710
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: "\xB0C"
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.906195088Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 169
-        prompt_tokens: 4542
-        total_tokens: 4711
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          content: .
-          role: ROLE_ASSISTANT
-        index: 4
-      created: '2026-01-16T17:04:57.906201698Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 170
-        prompt_tokens: 4542
-        total_tokens: 4712
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-  - chunk:
-      id: de824e56-e6f6-a228-9f21-7ff355f93e60
-      outputs:
-      - delta:
-          role: ROLE_ASSISTANT
-        finish_reason: REASON_STOP
-        index: 4
-      created: '2026-01-16T17:04:57.906211776Z'
-      model: grok-4-fast-non-reasoning
-      system_fingerprint: fp_4616e76413
-      usage:
-        completion_tokens: 170
-        prompt_tokens: 4542
-        total_tokens: 4712
-        prompt_text_tokens: 4542
-        cached_prompt_text_tokens: 2804
-        server_side_tools_used:
-        - SERVER_SIDE_TOOL_WEB_SEARCH
-        - SERVER_SIDE_TOOL_WEB_SEARCH
-      citations:
-      - https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629
-      - https://www.timeanddate.com/weather/usa/san-francisco
-      - https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629
-      - https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1
-      - https://www.wunderground.com/weather/us/ca/san-francisco
+version: 2
+interactions:
+- request_stream:
+    json:
+      args: []
+      kwargs:
+        model: grok-4-fast-non-reasoning
+        messages:
+        - content:
+          - text: What is the weather in San Francisco today in celsius?
+          role: ROLE_USER
+        tools:
+        - web_search:
+            enable_image_understanding: false
+        tool_choice: auto
+        response_format: null
+        use_encrypted_content: true
+        include:
+        - 1
+    raw: !!binary |
+      CjwKOAo2V2hhdCBpcyB0aGUgd2VhdGhlciBpbiBTYW4gRnJhbmNpc2NvIHRvZGF5IGluIGNlbHNp
+      dXM/EAESGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmeKAQQaAhgAkgECCAHAAQHSAQEB
+  response_stream:
+    chunks_json:
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            tool_calls:
+            - id: call_14437098
+              type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+              function:
+                name: web_search_with_snippets
+                arguments: '{"query":"current weather in San Francisco in Celsius","num_results":5}'
+        created: '2026-01-19T17:39:19.417651596Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 45
+          prompt_tokens: 624
+          total_tokens: 669
+          prompt_text_tokens: 624
+          cached_prompt_text_tokens: 181
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+          finish_reason: REASON_TOOL_CALLS
+        created: '2026-01-19T17:39:19.417686825Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 45
+          prompt_tokens: 624
+          total_tokens: 669
+          prompt_text_tokens: 624
+          cached_prompt_text_tokens: 181
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            role: ROLE_TOOL
+            tool_calls:
+            - id: call_14437098
+              type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+              status: TOOL_CALL_STATUS_COMPLETED
+              function:
+                name: web_search_with_snippets
+                arguments: '{"query":"current weather in San Francisco in Celsius","num_results":5}'
+            encrypted_content: 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
+          index: 1
+        usage: {}
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            tool_calls:
+            - id: call_94058854
+              type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+              function:
+                name: browse_page
+                arguments: '{"url": "https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629"}'
+          index: 2
+        created: '2026-01-19T17:39:21.550872057Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 129
+          prompt_tokens: 2220
+          total_tokens: 2349
+          prompt_text_tokens: 2220
+          cached_prompt_text_tokens: 362
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+          finish_reason: REASON_TOOL_CALLS
+          index: 2
+        created: '2026-01-19T17:39:21.550912583Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 129
+          prompt_tokens: 2220
+          total_tokens: 2349
+          prompt_text_tokens: 2220
+          cached_prompt_text_tokens: 362
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            role: ROLE_TOOL
+            tool_calls:
+            - id: call_94058854
+              type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+              status: TOOL_CALL_STATUS_COMPLETED
+              function:
+                name: browse_page
+                arguments: '{"url": "https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629"}'
+            encrypted_content: Lkgskvs/tTeRvTyBKGcWYqZkNxjIgHZVZZv3CjYLaaFD95Y+nKEjIDP+7RCCxZlJTpYDAHOCwfwYdmm1/xTYB0ICLjoGP12pNYBTaw4bnUIwtyV3zFoBwt21MebHJS9Gz9B6S6NIG+3PwugRzfIeP/KrC/IiRGTj/NlNFCyiZCYEZWZFOMZm4qS02sLeYRGrMS/Q+YaToCrsCsqONlv92E0yxWezKGcGQv0hw7vSUzjLDuGY0ibBh5+fBYUnlct0/rZqnrIuCeUUfA3qJWt5Z16lUO8wB27QnmdB11fkUu0Qe8b420DNck2BrCx1/28lC/mZSoM
+          index: 3
+        usage: {}
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: The
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.091323794Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 130
+          prompt_tokens: 3971
+          total_tokens: 4101
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' current'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.112068672Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 131
+          prompt_tokens: 3971
+          total_tokens: 4102
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' weather'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.112086730Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 132
+          prompt_tokens: 3971
+          total_tokens: 4103
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' in'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.112092415Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 133
+          prompt_tokens: 3971
+          total_tokens: 4104
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' San'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.132003675Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 134
+          prompt_tokens: 3971
+          total_tokens: 4105
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' Francisco'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.132020628Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 135
+          prompt_tokens: 3971
+          total_tokens: 4106
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' is'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.132026715Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 136
+          prompt_tokens: 3971
+          total_tokens: 4107
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' mostly'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.157904686Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 137
+          prompt_tokens: 3971
+          total_tokens: 4108
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' sunny'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.173600165Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 138
+          prompt_tokens: 3971
+          total_tokens: 4109
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' with'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.173612360Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 139
+          prompt_tokens: 3971
+          total_tokens: 4110
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' a'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.173616886Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 140
+          prompt_tokens: 3971
+          total_tokens: 4111
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' temperature'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.173621755Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 141
+          prompt_tokens: 3971
+          total_tokens: 4112
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' of'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.173626593Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 142
+          prompt_tokens: 3971
+          total_tokens: 4113
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.173630487Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 143
+          prompt_tokens: 3971
+          total_tokens: 4114
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: '12'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.193995809Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 144
+          prompt_tokens: 3971
+          total_tokens: 4115
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: °C
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.194011864Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 145
+          prompt_tokens: 3971
+          total_tokens: 4116
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: .
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.194017887Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 146
+          prompt_tokens: 3971
+          total_tokens: 4117
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' It'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.212284149Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 147
+          prompt_tokens: 3971
+          total_tokens: 4118
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' feels'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.212298454Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 148
+          prompt_tokens: 3971
+          total_tokens: 4119
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' like'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.212305434Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 149
+          prompt_tokens: 3971
+          total_tokens: 4120
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.212312142Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 150
+          prompt_tokens: 3971
+          total_tokens: 4121
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: '14'
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.212317554Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 151
+          prompt_tokens: 3971
+          total_tokens: 4122
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: °C
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.212322807Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 152
+          prompt_tokens: 3971
+          total_tokens: 4123
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            content: .
+            role: ROLE_ASSISTANT
+          index: 4
+        created: '2026-01-19T17:39:22.234867459Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 153
+          prompt_tokens: 3971
+          total_tokens: 4124
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+    - chunk:
+        id: 52ec4087-47a5-efbe-c162-e4cbaab96249
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+          finish_reason: REASON_STOP
+          index: 4
+        created: '2026-01-19T17:39:22.234884698Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 153
+          prompt_tokens: 3971
+          total_tokens: 4124
+          prompt_text_tokens: 3971
+          cached_prompt_text_tokens: 2042
+          server_side_tools_used:
+          - SERVER_SIDE_TOOL_WEB_SEARCH
+          - SERVER_SIDE_TOOL_WEB_SEARCH
+        citations:
+        - https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629
+        - https://www.timeanddate.com/weather/usa/san-francisco
+        - https://www.timeanddate.com/weather/usa/san-francisco/ext
+        - https://www.wunderground.com/weather/us/ca/san-francisco
+        - https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629
+    chunks_raw:
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSfAp6EAIadgoNY2FsbF8xNDQz
+      NzA5OBACUmMKGHdlYl9zZWFyY2hfd2l0aF9zbmlwcGV0cxJHeyJxdWVyeSI6ImN1cnJlbnQgd2Vh
+      dGhlciBpbiBTYW4gRnJhbmNpc2NvIGluIENlbHNpdXMiLCJudW1fcmVzdWx0cyI6NX0aDAjH2LnL
+      BhCMt5PHASIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzISCC0Q8AQY
+      nQUg8AQ4tQFY3KpJ
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSBgoCEAIYBBoMCMfYucsGEKnK
+      lccBIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhIILRDwBBidBSDw
+      BDi1AVjcqkk=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSii0KhS0QBRp4Cg1jYWxsXzE0
+      NDM3MDk4EAIYAVJjChh3ZWJfc2VhcmNoX3dpdGhfc25pcHBldHMSR3sicXVlcnkiOiJjdXJyZW50
+      IHdlYXRoZXIgaW4gU2FuIEZyYW5jaXNjbyBpbiBDZWxzaXVzIiwibnVtX3Jlc3VsdHMiOjV9KoYs
+      Y1IyK2RxZ1NoZVlKajJTTzcrMkExR0d1UkRaay9zaU9YUVQ3RkVaK2ZSRUtwWjFUYUNjNE9UdXhy
+      U29lbmYvbm1ya3g0SGxVeUZLMGVoR2ZXNENHVXdBbERQUzQyQzJVdnFVN2d6U2VSYVlTSk4rVEhM
+      d0xXTTh5SHpldkZxeGZ2aWp3Mmo4M3hBNU01UGE2MTRGdFBaOGViR1V3RC9PRzl4NnB6T3RZTkx2
+      NTA1b2ZHZW8wZ0tWMmNMOEN6aHdNSFRFYkplNGo2UERadjdIRUdyRGhUWDdtSzJ4TGVZQXZzTXBP
+      bStkaHZ2cmlaNnE4aHJEVmN6b2t1NW55RjF3UmZtcEVhREt6UjJ0d3RYUTBMeVA0OXp3ZEd5UStX
+      ajNJbzJvQ2tkZGp2cmxpUjgvU2JQQUpjVkhQRVRaRjlsRW1nUzRXdDFIZFNFWUJvTVZhWTRGcWRH
+      VElHMVJOaFdkUTdEOTBlcWNBM3hyV0tzaS9rUThDVit1d2VqdUFoRDllWlpJMU1IVUowVXJNWUdt
+      aXpDcGlyUnVxZzhhZWJRUVN3bWxHeXVaZTRhRWxqUjRIMXJxTmF6R0dhem9rWmlLWERSOEN2Y005
+      ZW1XYmVLTFRwV3lFWWtERzRwZHowSklyVFl5WmFrdEhKZVZTcWEyc29HM2RlcUlpODVZb3BieWVz
+      QlZFM1hwcGRuL3NhQWlKQzdDeXBKdDVoMnh4MVdnNWk3WGRFSmNTM0MvcjZycnhSS1UrWkhPNW41
+      bzRyV0ZIMVdTOXIrRTZWb011T2dQbFdIOHg4OXE3bXZZNEViZmE1OFBPTUZkZDlCaTFUUDkrOGty
+      ZmgzcEdiTGVVZlZaUW9ra3laMHZadVYvTWx2Q3VQOWlwV2ZsSnp4WFBWZTZIWVZQMFV0Um1oUkE4
+      eWZKWnkzc1BDWGVnNm44YWRQQ1AxZlF1dTY2R1owTFVjaXhyUCt3bGV5Ryt6dGM3TERqRU5PR0lW
+      cCtXcE5zY1V4RzMxQXB1THY1MnFHYkJqMkw1b1h5cWlkOThWWWh5cFVsU2VZb1g5dHY4UXQxQlZm
+      NmsvNlp4U0ljbmRUTUZ1ZmdzRFZPVGdpMTFvdktnaXdYODhLd1Uxbk93WklkR1hUYnROWkxqQi9C
+      dFQzUFQ5NW4xSG1nQUYrN3RJNnA1OFhVUVVER0JnV2gwdFgwTC9UQXFlYU9QUUxiR1Q1Nm9maVBl
+      cktIaVowTk01amFQT1VPSkxEaDNUUUsxMUhPbGJES1BtUWsyb2YwYk5INU95SEluRk5QVHpMKzgx
+      NEpXRUZ1YmpKckpWUWdtcGIvUzRQWXNUeXJlcjZUZGpVd0pHSWYwL0Uyb3AxRHRsV2l6T2NrdDJx
+      a1c3V3pFVDdrbGcwL1BCQVVqem1rOGtsMkVJQ3JyTDl4b3RVcklBK2lHOEx4cXVJMnlob0lBaWNk
+      ZnNzYzdmK0JzVlE0UEdJb25GY2FUNGhPMjZwdVNCZElpZi9RcHlQL1IyTjBQRUhUMkwrTUZ6S2gr
+      ZWtWZ0tGRkFHajdOME5aSlp0YWI4VndlUitZSkFiZ3prQStYczB3Mk42UGhtTkJQbzdXM1BTRVY1
+      bEcxMGdjd005TEF5YmdhblFxYVQrV0VsQnB1SmMyaC9YZjArQ2p6MFlIQTZXMlVidis2UHlYb25r
+      OWk3eU9WcW5mSHFlZzU0Z0RweGs3Tkx3QlFqVVJOTnZ4SlJXUHd6LzJFaEpkT2J3c0VVdWFxSnJl
+      NGhDekFaV09FemVMZ0hLem1LTUFURStaOWRESThCWDRpekl1Y0ZQTFM5Rm9UZEtINlBFNy9HMG5a
+      VVp5WDhaMDNLVS9UTFBVdjA1NEcwV1JDNGluMHhwMXFFTnRLMVRHU0hiMnIzenR2UXNQc2MrSWZM
+      MnNKcytzSytVMkJ1RW12V05PaW9ZMTg5R1lubzE4aTZVc0xmSkM4a0dVWlZnWlRZelZScmZsTndB
+      Zm1GZnRaRWtmTjl3UnFrb1czMkYvZHozTlpHOWM2VnVyamJyeDlCU0taVzF3K1dkQytTOGNpbTVt
+      L0tsQXh0TkZza253dEtyeGVqYUNjV21YLzVZbnBmNmZhR3c2bE1KTFNaWTMvV3F1RmRTMmQ4MldR
+      cjdGUGFuM0l1MkRBSDFoMWlNV0o1Y05rdmdETHZSZkhwMUNSN2hGdjh4N2gzcGV5dE5iVkxXcmcz
+      NmwrVkZBQVRiRk4rdFpYMHRzYkMrRWZNdjFVM3pGcVVXVTE0RGdvc1UrK2pWa04rUktwbUk3emRh
+      MFdnZitpcEhzYTlONDNkK21jNE9GRWZ5cHU0RDlZbnVZWmw4Q2VFUEVjSWdMenY2R0RpTFMvOThi
+      eEsyQW5KU080eHI3TVV0TlB6Z3pxUG5yb2UzZW1XVVoyeEJyMnU2T09QRm9wSWp4ZkRuQ3A0V0No
+      S0JCTE1hc2tnWkFwK096d3dNeEh1ZFpLV1JqcXNqYldCNjlBeUpCemZENWVEb2FabzY2YTVrSE1t
+      VGFpNkZ4MHJGSW1qOWwxem9vRXVLelJmejJFekVGb3h1RStqcC85M3NtaHhsa0FyRnFEMFpnMlFh
+      YnNFUkF1bVlXd1QvVStXZFZuaEpnRlpFSHdXb0EvdzhjaDMxbkpDczRTOVg3RXVJbnVZR3R0L2kz
+      UFh6SStZNnprVjdEd2NMMHFMSll0UmFkUjRaZFN2KzZRcER2aDZLWHRucXIwTzZDUEdwMHk0Z2Rt
+      U1NhNzFJbGNNcGQ3ZWJVKzQ2OW5jOXlDVVR1R1pwOEsycmI2OVVKRUtCOXgwbDNpR29ZZXBDUS9x
+      MDVUZFh5Ti9RYytENXhwcjBMajR3NVZrUll1UE1pWmR0eDZkTmRjanRQemRZdTJpK0EzS1lMMjl1
+      eWFENTBZRTZ4Y2dSUlh4WHFIcE5CbVk3ODlUbkhTQ0tkUlM0SUg4Y0NZbFdxTTN6L2ZiNHhKNEtk
+      U3lhalV2Tjd1MVRCcHlERkhITnFubFpZUWl4MTlUd0loNnRqQXNJekdCYWVqVHBVYXgxYURTbFZI
+      ek1YdnYrc1pSVzF6Z2RaQW9ScmxuZFFFaU1TNzcwVDRVMlgvelBaN2xDdTQyVndPNnloajlPZ0dX
+      ZG94SUpmVWNWM2RuaWZxUG9vQlVBZW1IMSsrM3NDNHUwcG84NUtDeXcvMDRpWWNZVmNYQ1BML3Vw
+      Skw0UkpVdXJJT2hWem42SWhpd1ZjdW9vcFVlMHdmRmxCa3dGSGg2Y1drK2dXS3NEVTRlVFBEY2Yz
+      KytDQ1YxTkxCM3dIUEpUeVZwTXU4NGxQSDB0RWNNdG41U3V0MEV6UHhhSndFclB4ZmVMZUx6Y29V
+      Y3gvOWR5K3AzQ0p0cjJnMm1xSzEzRmRMSUZpanptTmNaZ2Zib25va3FIYm5oTDVZTnVZRW5CaGgw
+      dkhhc1puSFQ5T2NIYWp1LzNCUk03a202MnNaMjNBSzdFWkp2R1RLOWlyMmVyVFY4a0kwazB2Qjhp
+      SnFBM3dVREsvNm0rZXpiWkNVM2JnUHIrTlNVZjJZRmVOVTlaUmdlNHdyeUtpb3NoTHlzSFBON0Jn
+      dkJOQjdIdXdtdzdZaGlOVlh5RTJKUzFjQitjSzBubUQrb1k2by9HbUJHQ1BqaldRVC9QNlZlUFJr
+      VXc3TnhrUjNGRkt2LzZJcVVqUTdmQkhpalVxLzdXNSt2amtBeldsMXA0Z1p4Qnk2bzRvVHRBd3FT
+      Qi9vN0s2dlZmcDArZWhrcWp4a1d2bm54Mk93TDF3VUcwYnc5aU1hOWQ1V2tDcTNVZTFiSnlFTmNr
+      YzEwdzJKK3czNnYzamg4dnJiUThVTXVrZFd3Sit2d2dUVWJuY2pQWDZyV0lYamVSeVVGTGRoSGFU
+      VVlDZCtZTUFlV1M5Mkl4a05sNHRsK2UvZDh1ZERzNHV4SkhCOWRqNHpBcm43YzJDbkYzcHEzWjVT
+      Um9vZ2QwMXV5cFBSaDdtS0ZyeFhnU21kcjlTOWtqbDVnTHVuelBwdnljclBTSnMvUWtOejU5bWRx
+      U2FrTUVzeDRCSFMrcURYcVU4MzBWMVo5VnpOamhqNEZZaXVjRUJkdjJMcEpieUc5UUxPRkkyclIz
+      bFdZSXE0cklpa2xUQW93VjUvQjRndk9uK1dYMlQxeVQ4UmJUQnJZNTNGeXROSTJ2VWhVTkMxeG1k
+      S2QvYldva0ViUW4zS0I0SGlKZmlWbmx2cjlSRnppRkdxVWF0T0RmeldVcVZ4ekxJL3hBd2p5eGdN
+      RkdGWjV4S1RhWVMwR1NjeVFEMnRkTi8yNlQyMnRVOUhSSEJQUDJZc0JrV2dMVFpUZHhVWTN6aUVB
+      VzQ1SWZyZGFPYzR5NzlKL3hFSlM1L0RLYk5jVlZZMFdxd1hKMzZpejY1K1pmQS9VaXBPL0R0SEJm
+      SU1RZXVBTEdPdElqVzFwRXR5YXpuNjJNNmxiK0xlYzB0eEx1Y0F2MUhIVzJsMVR6Z3JCT2p6UGs0
+      c3NyRThwdWlLbW8rcHBVUkhnVzd6bElMVGxKcWNHalo2TG5BcWtyN0xGcDNjN09tNUtva3plWFFh
+      czZLb3JoSmlqUjBnTnlJalNua1BKVDZGdDA2V0NNdi9EU3diR2tzUWdNNXdGMkRydzIzcE9yd0hC
+      TVp2RWRadVRuYlJEYjBGcUtGWm85Y3lHckpqVHQzU1pKaDJZWWJSN0E3Mk1sb25IWmFBK0VmbFlj
+      b3RaTXdvWGp6d2d3SFpKeVdwbmdsVFQwb1h3Y2JBb0hMVGJyTVpaL0tlUjRQemd1Y2oxN0ZkVThk
+      SmkxM3VVSmpmNWRvUjE0bGJpdzhxTFVTZnpyVWVWTDdURXVISEM5c3BCUm80Y3ZQamRXZFUwclhm
+      VzFDc1V0dEQ0MHd1S2c2UDI2M2lzaGYyajFDZmNxSDR0ZGtMVjlLMGlBcmtNZVBKSk05OGdYS29j
+      a2NBT296c2lNSnJKNE5EMUJpV1BsTjJxNEZORm5iU1pDa1oyRldMWGtOYThDWE1EQWN3VDk3cm1m
+      aWpCUmFIeFZGaWpOM0NqUyt0V1I5YVJGeVQ5aXZvTlF4MkJTWHFxUjlhZjZvSU9EcnlROWtHU1pO
+      UU13cmNoMEFkZ1pXb2VVZGYrdEgzYzJITU9icVdFeVlQY2dXK1YyQmhtNG9lV3ZQMFgwTm5aUzFO
+      QnkzeHNwNWk2Mys5MFAzc3hNdDMwL2s2WlB2OVVoTzdTd3RrWE1FMjVvNUIyUVRuT0g0K1c0WHpM
+      endHMnh5YjhJd0hxOWpQdUdaNEJ4RHRRSjY0UE1MYzBNZnVGbkFRcEJjQm9RUVBpbitlWkM4M2R4
+      YXZUMFByWE5yS2pqTnA3bkNIVTd2SEdlNkFFRHBUMWVCb3lLaitxRXorMmlQNFVEOXBWekV3NDBj
+      MUpQa3lwaHpENkg5VjFvNXF3Mm9aWG95UURqQWoyVTZqU3pYZUZIVXhWeERCSDZKWFA0TkQrYkRo
+      UEYyajFlZDluMkVJS0cyNUg0UmcvZnpUVzNKdlNjeXdybS9QWTd0UDhZOHkwTEhaL1hlSE1UL1NM
+      TmhaT0h2T1MzSVhFMWJ6b1NMSkRPZERFMjFFUk5Lb0puYnI3MjRycmw0R1F4VXYzN0VKSHFJVklT
+      V2g4b2NJNlFqNUgzYTdEL2F5VjNTSXY5aWZMK1JOSXJPS0RtenZ1UFVzRGMrZlY1OFhHM3pldGdR
+      eXBTZVF4NU5QUzhCME9sY3JrVCt4YVZjSWlhcEtsVVFhZ2VSZStKTXFrc2JodWl0bFU0UjJNbU13
+      RFZGS3ZMeEI1VnJDYjYvTDRSSWxMbFhINGZ1RE9ycFJtU3A4N1lDZG9wOWQ2TlpnT2FuOWFoRFc3
+      RXRRNGFZOUJaaXJwZy9zOWgzbEdwcUFVMnQ2TnJBd2tRaTdSeTExSzNDMld2WlYwanFmN3VodXNU
+      VXQ2cjE1N0tJdHhwTXU3Nm9GWmVoN21OMUh4RnRSNzU0dFhVYTZUeEppQ0w4a2FZaXBlWjQxRzEy
+      OGZWeXRNY096SmNjQmg2ZVVBZDZCUzhlTm81Qk1adWFmbHBpSjhGZENzc0F0SUVTT3hWSEQwaWZm
+      YXVJUjEvK3RTWUNWTXU5NGlxejBCTXg5cWZyUXVDVSsxanoydWZvclBVb3BKYUk4SW44SXhyRFps
+      VW9reUZ4ODV1bjNraVdIUkk3dXdpRjJoQkZTL3puTlVMc1UzSVRTdXJSM05GWng2dnplRGpqc2Jp
+      ZmlVV3RPRzBmWTM3eGxBOTRYOThpV2tMWWc0dmYvWnhyRmR3Q0Z6Q0ZzYkVxR0RlZTBTQVp5eW5w
+      cnBTTStuTEJyVkt4WXM3Vi9WOHVadXYrQ0VMdWZGVE9CSnVoNHhnUFRmZmZxTmRLZzJnRHFzUWhV
+      R0FGSk9qdER2ck9aMjVNN3BIYzVwMzQyZ2xNUVRvd2cyVk4zQzNXWkN0aFhTbjRkSnV1elE2aHU3
+      MEdhb3VxR3Q1NjRVTzRVMU1hYmRGRklVeEFNUHF0WVpYeHUrcHVIdnNSNmpwcFI0Y25hNVpyRk56
+      d0N4TUYwSUtuNWowSzVSODh6RTYraVVyYThWdklhZk5iTFdOa2wwTVZnSG9XZVgxOHcxT3FwR2py
+      S0I4SnUxczFWcGk5QlhDM1NYUVpSaWJvMXpsUGYyck8zS3ZiRmd5YkNMc2pXTjRKVjEzSFkyKzN3
+      a28xTHV0QTlvelRCSnJ4ZExOVjd3bENUS3l3WUZublA1Q0RLYlZQTkVPM0lmNDZZL0pwQkpjUERj
+      b3JXamJVbldVcXA5WUw2Wmc2MWJtVlNHQjZ3NWFpUnlPdE9hc2VOa1ZtOHZRZFpjUXUrUmFFeDB6
+      LzlsRS9Gc2h0SEVQSzdPY3RpVDFvbUd1YzFlZ1gzTC9CcVVwdjBRdVB4Rk9kR2NLenNNMGZDcFY0
+      VWIwZzFScFFLN3U2T1FBd1F4U3V6QlBsTGdrTkk3WW1KM05qYjl5OUhhUDJYOU5CMzI5UVBHU2I1
+      NDNFM3pWS216Rm5RVmJtMWFONkFwd1l1Vmt1TWJXcTB0SDZLL0JQYUNCUmdnN0pMMmx1YnF2UEs3
+      TkRyRURraUpGWkgvNTBjWnpROUk5UXNCZnM0N3pMY3Y5eVJ3bDU5ekhDbzlUVHU3eDhRZ09ZY3I4
+      L2NvTnpMUHZKZDJ5dHg5Qmk2YVZNTHBRMkk3U3dCbmZNRlNrQlczTXlueXhGRmZrWmRmWHBMbnBv
+      alZJQ2RwQUlHUW4yZmZuaTZjYi9WMUN1V2lqVkE5RlVSMnUySmI4dHZLSmJVelNvdFN4c05yUXRv
+      UTIzWXJvVkFISS81YUhrQWhxcmZFV2RoMGkwSDZQRjlZQzE2b3NLK1BwL0o5MVIrK1lJKzZXMGM3
+      R1g4dHUzTWxUajNVQ1Urd3dDaXhaL21QcnF0VzZBSEw2eTBUUERmb2VNcnpCWnZWaGRCbzJGZVRE
+      dVFFTVpyWmVhTUV2OHM5d2hXM29GR0hDOFI3c29qL3RvbUVUdE9WNUUvRkgzT3Y4Qy9OZyABMgRY
+      3KpJ
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSgQEKfRACGnkKDWNhbGxfOTQw
+      NTg4NTQQAlJmCgticm93c2VfcGFnZRJXeyJ1cmwiOiAiaHR0cHM6Ly93d3cuYWNjdXdlYXRoZXIu
+      Y29tL2VuL3VzL3Nhbi1mcmFuY2lzY28vOTQxMDMvY3VycmVudC13ZWF0aGVyLzM0NzYyOSJ9IAIa
+      DAjJ2LnLBhD5x9aGAiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIU
+      CIEBEKwRGK0SIKwROOoCWLCclQI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCAoCEAIYBCACGgwIydi5ywYQ
+      x4TZhgIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiBARCsERit
+      EiCsETjqAliwnJUC
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSzgMKyQMQBRp7Cg1jYWxsXzk0
+      MDU4ODU0EAIYAVJmCgticm93c2VfcGFnZRJXeyJ1cmwiOiAiaHR0cHM6Ly93d3cuYWNjdXdlYXRo
+      ZXIuY29tL2VuL3VzL3Nhbi1mcmFuY2lzY28vOTQxMDMvY3VycmVudC13ZWF0aGVyLzM0NzYyOSJ9
+      KscCTGtnc2t2cy90VGVSdlR5QktHY1dZcVprTnhqSWdIWlZaWnYzQ2pZTGFhRkQ5NVkrbktFaklE
+      UCs3UkNDeFpsSlRwWURBSE9Dd2Z3WWRtbTEveFRZQjBJQ0xqb0dQMTJwTllCVGF3NGJuVUl3dHlW
+      M3pGb0J3dDIxTWViSEpTOUd6OUI2UzZOSUcrM1B3dWdSemZJZVAvS3JDL0lpUkdUai9ObE5GQ3lp
+      WkNZRVpXWkZPTVptNHFTMDJzTGVZUkdyTVMvUStZYVRvQ3JzQ3NxT05sdjkyRTB5eFdlektHY0dR
+      djBodzd2U1V6akxEdUdZMGliQmg1K2ZCWVVubGN0MC9yWnFuckl1Q2VVVWZBM3FKV3Q1WjE2bFVP
+      OHdCMjdRbm1kQjExZmtVdTBRZThiNDIwRE5jazJCckN4MS8yOGxDL21aU29NIAMyBViwnJUC
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCwoHCgNUaGUQAiAEGgsIyti5
+      ywYQkvvFKyIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCIIBEIMf
+      GIUgIIMfOPoPWKi70QI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSEAoMCgggY3VycmVudBACIAQa
+      CwjK2LnLBhDAkLg1Ihlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQI
+      gwEQgx8YhiAggx84+g9YsOLRAg==
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSEAoMCgggd2VhdGhlchACIAQa
+      CwjK2LnLBhDKnbk1Ihlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQI
+      hAEQgx8YhyAggx84+g9YuInSAg==
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCwoHCgMgaW4QAiAEGgsIyti5
+      ywYQ/8m5NSIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCIUBEIMf
+      GIggIIMfOPoPWMCw0gI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSDAoICgQgU2FuEAIgBBoLCMrY
+      ucsGENvu+D4iGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiGARCD
+      HxiJICCDHzj6D1jI19IC
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSEgoOCgogRnJhbmNpc2NvEAIg
+      BBoLCMrYucsGEJTz+T4iGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMy
+      FAiHARCDHxiKICCDHzj6D1jQ/tIC
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCwoHCgMgaXMQAiAEGgsIyti5
+      ywYQ26L6PiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCIgBEIMf
+      GIsgIIMfOPoPWNil0wI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSDwoLCgcgbW9zdGx5EAIgBBoL
+      CMrYucsGEK7epUsiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiJ
+      ARCDHxiMICCDHzj6D1jgzNMC
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSDgoKCgYgc3VubnkQAiAEGgsI
+      yti5ywYQpdvjUiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCIoB
+      EIMfGI0gIIMfOPoPWOjz0wI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSDQoJCgUgd2l0aBACIAQaCwjK
+      2LnLBhDIuuRSIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIiwEQ
+      gx8YjiAggx84+g9Y8JrUAg==
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCgoGCgIgYRACIAQaCwjK2LnL
+      BhD23eRSIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIjAEQgx8Y
+      jyAggx84+g9Y+MHUAg==
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSFAoQCgwgdGVtcGVyYXR1cmUQ
+      AiAEGgsIyti5ywYQ+4PlUiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQx
+      MzIUCI0BEIMfGJAgIIMfOPoPWIDp1AI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCwoHCgMgb2YQAiAEGgsIyti5
+      ywYQ4anlUiIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCI4BEIMf
+      GJEgIIMfOPoPWIiQ1QI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCQoFCgEgEAIgBBoLCMrYucsG
+      EJfI5VIiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiPARCDHxiS
+      ICCDHzj6D1iQt9UC
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCgoGCgIxMhACIAQaCwjK2LnL
+      BhChyMBcIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIkAEQgx8Y
+      kyAggx84+g9YmN7VAg==
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCwoHCgPCsEMQAiAEGgsIyti5
+      ywYQ2MXBXCIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCJEBEIMf
+      GJQgIIMfOPoPWKCF1gI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCQoFCgEuEAIgBBoLCMrYucsG
+      EN/0wVwiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiSARCDHxiV
+      ICCDHzj6D1iorNYC
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCwoHCgMgSXQQAiAEGgsIyti5
+      ywYQ9eWcZSIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCJMBEIMf
+      GJYgIIMfOPoPWLDT1gI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSDgoKCgYgZmVlbHMQAiAEGgsI
+      yti5ywYQ1tWdZSIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCJQB
+      EIMfGJcgIIMfOPoPWLj61gI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSDQoJCgUgbGlrZRACIAQaCwjK
+      2LnLBhCajJ5lIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIlQEQ
+      gx8YmCAggx84+g9YwKHXAg==
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCQoFCgEgEAIgBBoLCMrYucsG
+      EM7AnmUiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiWARCDHxiZ
+      ICCDHzj6D1jIyNcC
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCgoGCgIxNBACIAQaCwjK2LnL
+      BhDy6p5lIhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nKg1mcF80NjE2ZTc2NDEzMhQIlwEQgx8Y
+      miAggx84+g9Y0O/XAg==
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCwoHCgPCsEMQAiAEGgsIyti5
+      ywYQ95OfZSIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIUCJgBEIMf
+      GJsgIIMfOPoPWNiW2AI=
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCQoFCgEuEAIgBBoLCMrYucsG
+      EIOW/28iGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyFAiZARCDHxic
+      ICCDHzj6D1jgvdgC
+    - !!binary |
+      CiQ1MmVjNDA4Ny00N2E1LWVmYmUtYzE2Mi1lNGNiYWFiOTYyNDkSCAoCEAIYAyAEGgsIyti5ywYQ
+      2pyAcCIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIYCJkBEIMfGJwg
+      IIMfOPoPSgIBAVjg/68yOkxodHRwczovL3d3dy5hY2N1d2VhdGhlci5jb20vZW4vdXMvc2FuLWZy
+      YW5jaXNjby85NDEwMy9jdXJyZW50LXdlYXRoZXIvMzQ3NjI5OjVodHRwczovL3d3dy50aW1lYW5k
+      ZGF0ZS5jb20vd2VhdGhlci91c2Evc2FuLWZyYW5jaXNjbzo5aHR0cHM6Ly93d3cudGltZWFuZGRh
+      dGUuY29tL3dlYXRoZXIvdXNhL3Nhbi1mcmFuY2lzY28vZXh0OjhodHRwczovL3d3dy53dW5kZXJn
+      cm91bmQuY29tL3dlYXRoZXIvdXMvY2Evc2FuLWZyYW5jaXNjbzpNaHR0cHM6Ly93d3cuYWNjdXdl
+      YXRoZXIuY29tL2VuL3VzL3Nhbi1mcmFuY2lzY28vOTQxMDMvd2VhdGhlci1mb3JlY2FzdC8zNDc2
+      Mjk=

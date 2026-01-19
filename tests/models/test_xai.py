@@ -1677,7 +1677,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
     )
 
     result = await agent.run('Return just the day of week for the date of Jan 1 in 2026?')
-    assert result.output == snapshot('**Thursday**')
+    assert result.output == snapshot('Thursday')
 
     # Verify the builtin tool call and result appear in message history
     assert result.all_messages() == snapshot(
@@ -1701,31 +1701,8 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                     ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'what day of the week is January 1, 2026', 'num_results': 1},
-                        tool_call_id='call_86645084',
-                        provider_name='xai',
-                    ),
-                    ThinkingPart(
-                        content='',
-                        signature=IsStr(),
-                        provider_name='xai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='web_search',
-                        content=None,
-                        tool_call_id='call_86645084',
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                    ),
-                    ThinkingPart(
-                        content='',
-                        signature=IsStr(),
-                        provider_name='xai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
                         args={'query': 'what day of the week is January 1, 2026'},
-                        tool_call_id='call_82508960',
+                        tool_call_id='call_85779342',
                         provider_name='xai',
                     ),
                     ThinkingPart(
@@ -1745,12 +1722,12 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(content='**Thursday**'),
+                    TextPart(content='Thursday'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4789,
-                    output_tokens=91,
-                    details={'reasoning_tokens': 469, 'cache_read_tokens': 2958, 'server_side_tools_web_search': 2},
+                    input_tokens=2332,
+                    output_tokens=38,
+                    details={'reasoning_tokens': 310, 'cache_read_tokens': 1540, 'server_side_tools_web_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -1804,8 +1781,8 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
-                        tool_call_id='call_42747457',
+                        args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
+                        tool_call_id='call_14437098',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
@@ -1817,9 +1794,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={
-                            'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1'
-                        },
+                        args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
@@ -1831,13 +1806,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         provider_name='xai',
                     ),
                     TextPart(
-                        content="The current weather in San Francisco is clear with a temperature of 8°C. Today's high is expected to reach 16°C, and the low is 10°C."
+                        content='The current weather in San Francisco is mostly sunny with a temperature of 12°C. It feels like 14°C.'
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4542,
-                    output_tokens=170,
-                    details={'cache_read_tokens': 2804, 'server_side_tools_web_search': 2},
+                    input_tokens=3971,
+                    output_tokens=153,
+                    details={'cache_read_tokens': 2042, 'server_side_tools_web_search': 2},
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -1855,20 +1830,20 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_42747457', provider_name='xai'),
+                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_14437098', provider_name='xai'),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ToolCallPartDelta(
-                    args_delta={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
-                    tool_call_id='call_42747457',
+                    args_delta={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
+                    tool_call_id='call_14437098',
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
+                    args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
                     tool_call_id=IsStr(),
                     provider_name='xai',
                 ),
@@ -1887,25 +1862,21 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_28209924', provider_name='xai'),
+                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_94058854', provider_name='xai'),
                 previous_part_kind='builtin-tool-return',
             ),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1'
-                    },
-                    tool_call_id='call_28209924',
+                    args_delta={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
+                    tool_call_id='call_94058854',
                 ),
             ),
             PartEndEvent(
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={
-                        'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1'
-                    },
+                    args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
                 ),
@@ -1930,44 +1901,34 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' San')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Francisco')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' clear')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' mostly')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' sunny')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' with')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' temperature')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='8')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='12')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°C')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=" Today's")),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' high')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' expected')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' reach')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' It')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' feels')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' like')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='16')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' low')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='10')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='14')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°C')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(
                 index=4,
                 part=TextPart(
-                    content="The current weather in San Francisco is clear with a temperature of 8°C. Today's high is expected to reach 16°C, and the low is 10°C."
+                    content='The current weather in San Francisco is mostly sunny with a temperature of 12°C. It feels like 14°C.'
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
-                    tool_call_id='call_42747457',
+                    args={'query': 'current weather in San Francisco in Celsius', 'num_results': 5},
+                    tool_call_id='call_14437098',
                     provider_name='xai',
                 )
             ),
@@ -1983,9 +1944,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={
-                        'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1'
-                    },
+                    args={'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
                 )
@@ -2068,9 +2027,9 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                     TextPart(content='-428330955.97745'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1853,
+                    input_tokens=1847,
                     output_tokens=52,
-                    details={'reasoning_tokens': 144, 'cache_read_tokens': 1311, 'server_side_tools_code_execution': 1},
+                    details={'reasoning_tokens': 126, 'cache_read_tokens': 499, 'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),

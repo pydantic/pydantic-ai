@@ -9,6 +9,26 @@ This is intentionally minimal for now:
 - supports `chat.create(...).stream()` by recording only `chunk.proto` bytes and reconstructing the aggregated
   `Response` via `Response.process_chunk()` during replay
 - supports `files.upload(...)` with deterministic IDs for tests that pass `DocumentUrl`
+
+Cassette Format (v2):
+    The cassette stores an ordered list of request/response interactions for human readability.
+    Each interaction pairs a request with its response, using `_sample` or `_stream` suffixes
+    to align with the SDK methods (`chat.sample()` and `chat.stream()`).
+
+    version: 2
+    interactions:
+    - request_sample:
+        json: {...}    # Human-readable request (optional, for debugging)
+        raw: !!binary  # Protobuf bytes (lossless)
+      response_sample:
+        json: {...}    # Human-readable response (optional, for debugging)
+        raw: !!binary  # Protobuf bytes (lossless)
+    - request_stream:
+        json: {...}
+        raw: !!binary
+      response_stream:
+        chunks_json: [{...}, ...]  # Human-readable chunks (optional)
+        chunks_raw: [!!binary, ...]  # Protobuf chunk bytes (lossless)
 """
 
 from __future__ import annotations as _annotations
@@ -37,6 +57,35 @@ def _serialize_for_cassette(o: Any) -> Any:
     if isinstance(o, Message):
         return MessageToDict(o, preserving_proto_field_name=True)
     return o
+
+
+# ---------------------------------------------------------------------------
+# Interaction dataclasses for v2 cassette format
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SampleInteraction:
+    """A single `chat.sample()` request/response pair."""
+
+    request_raw: bytes
+    response_raw: bytes
+    request_json: dict[str, Any] | None = None
+    response_json: dict[str, Any] | None = None
+
+
+@dataclass
+class StreamInteraction:
+    """A single `chat.stream()` request/response pair."""
+
+    request_raw: bytes
+    chunks_raw: list[bytes]
+    request_json: dict[str, Any] | None = None
+    chunks_json: list[dict[str, Any]] | None = None
+
+
+# Union type for interactions (used for type hints in the ordered list)
+Interaction = SampleInteraction | StreamInteraction
 
 
 class XaiAsyncClientLike(Protocol):
@@ -109,111 +158,146 @@ def _proto_cassette_plan(
 
 
 @dataclass
-class XaiSampleProtoCassette:
-    """A simple cassette for a sequence of `chat.sample()` responses."""
+class XaiProtoCassette:
+    """Cassette storing an ordered list of request/response interactions.
 
-    responses: list[bytes]
-    # Recorded protobuf requests for `chat.create(...).sample()` calls (lossless).
-    # NOTE: this is a serialized `GetCompletionsRequest` from the xAI SDK chat object.
-    sample_requests: list[bytes] = field(default_factory=list)
-    # Optional debug representation of the request kwargs, only recorded when enabled.
-    sample_requests_json: list[dict[str, Any]] = field(default_factory=list)
-    # Optional debug representation (only recorded when enabled), ignored by replay.
-    responses_json: list[dict[str, Any]] = field(default_factory=list)
-    # Streaming format: store only chunk protos and reconstruct response via `Response.process_chunk`.
-    # Each entry corresponds to one `chat.stream()` call and contains the ordered chunks as serialized bytes.
-    stream_chunks: list[list[bytes]] = field(default_factory=list)
-    # Recorded protobuf requests for `chat.create(...).stream()` calls (lossless).
-    stream_requests: list[bytes] = field(default_factory=list)
-    # Optional debug representation of the request kwargs, only recorded when enabled.
-    stream_requests_json: list[dict[str, Any]] = field(default_factory=list)
-    # Optional debug representation (only recorded when enabled), ignored by replay.
-    stream_chunks_json: list[list[dict[str, Any]]] = field(default_factory=list)
-    version: int = 1
+    Each interaction pairs a request with its response, using `SampleInteraction`
+    for `chat.sample()` calls and `StreamInteraction` for `chat.stream()` calls.
+    """
+
+    interactions: list[Interaction] = field(default_factory=list)
+    version: int = 2
 
     @classmethod
-    def load(cls, path: Path) -> XaiSampleProtoCassette:
+    def load(cls, path: Path) -> XaiProtoCassette:
         data = yaml.safe_load(path.read_text(encoding='utf-8'))
         version = int(data.get('version', 1))
-        responses = cast(list[bytes], data.get('responses', []))
-        sample_requests = cast(list[bytes], data.get('sample_requests', []))
-        sample_requests_json = cast(list[dict[str, Any]], data.get('sample_requests_json', []))
-        responses_json = cast(list[dict[str, Any]], data.get('responses_json', []))
-        stream_chunks = cast(list[list[bytes]], data.get('stream_chunks', []))
-        stream_requests = cast(list[bytes], data.get('stream_requests', []))
-        stream_requests_json = cast(list[dict[str, Any]], data.get('stream_requests_json', []))
-        stream_chunks_json = cast(list[list[dict[str, Any]]], data.get('stream_chunks_json', []))
-        return cls(
-            responses=responses,
-            sample_requests=sample_requests,
-            sample_requests_json=sample_requests_json,
-            responses_json=responses_json,
-            stream_chunks=stream_chunks,
-            stream_requests=stream_requests,
-            stream_requests_json=stream_requests_json,
-            stream_chunks_json=stream_chunks_json,
-            version=version,
-        )
+        if version < 2:
+            raise ValueError(
+                f'Cassette format v{version} is no longer supported.\n'
+                f'Re-record with: XAI_API_KEY=... uv run pytest '
+                f'--record-mode=rewrite <test> -v'
+            )
+
+        interactions: list[Interaction] = []
+        for item in data.get('interactions', []):
+            if 'request_sample' in item:
+                req = item['request_sample']
+                resp = item['response_sample']
+                interactions.append(
+                    SampleInteraction(
+                        request_raw=req['raw'],
+                        response_raw=resp['raw'],
+                        request_json=req.get('json'),
+                        response_json=resp.get('json'),
+                    )
+                )
+            elif 'request_stream' in item:
+                req = item['request_stream']
+                resp = item['response_stream']
+                interactions.append(
+                    StreamInteraction(
+                        request_raw=req['raw'],
+                        chunks_raw=resp['chunks_raw'],
+                        request_json=req.get('json'),
+                        chunks_json=resp.get('chunks_json'),
+                    )
+                )
+        return cls(interactions=interactions)
 
     def dump(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        interactions_data: list[dict[str, Any]] = []
+
+        for interaction in self.interactions:
+            if isinstance(interaction, SampleInteraction):
+                # Build request_sample: json first (if present), then raw
+                req: dict[str, Any] = {}
+                if interaction.request_json:
+                    req['json'] = interaction.request_json
+                req['raw'] = interaction.request_raw
+
+                # Build response_sample: json first (if present), then raw
+                resp: dict[str, Any] = {}
+                if interaction.response_json:
+                    resp['json'] = interaction.response_json
+                resp['raw'] = interaction.response_raw
+
+                interactions_data.append(
+                    {
+                        'request_sample': req,
+                        'response_sample': resp,
+                    }
+                )
+
+            elif isinstance(interaction, StreamInteraction):
+                # Build request_stream: json first (if present), then raw
+                req = {}
+                if interaction.request_json:
+                    req['json'] = interaction.request_json
+                req['raw'] = interaction.request_raw
+
+                # Build response_stream: chunks_json first (if present), then chunks_raw
+                resp = {}
+                if interaction.chunks_json:
+                    resp['chunks_json'] = interaction.chunks_json
+                resp['chunks_raw'] = interaction.chunks_raw
+
+                interactions_data.append(
+                    {
+                        'request_stream': req,
+                        'response_stream': resp,
+                    }
+                )
+
         data: dict[str, Any] = {
             'version': self.version,
+            'interactions': interactions_data,
         }
-        # Only include non-streaming responses if present; most cassettes are streaming-only.
-        if self.responses:
-            data['responses'] = self.responses
-        if self.sample_requests:
-            data['sample_requests'] = self.sample_requests
-        if self.sample_requests_json:
-            data['sample_requests_json'] = self.sample_requests_json
-        # Streaming is the default/primary format.
-        if self.stream_chunks:
-            data['stream_chunks'] = self.stream_chunks
-        if self.stream_requests:
-            data['stream_requests'] = self.stream_requests
-        if self.stream_requests_json:
-            data['stream_requests_json'] = self.stream_requests_json
-        # Only include debug JSON fields if present to avoid bloating committed cassettes by default.
-        if self.responses_json:
-            data['responses_json'] = self.responses_json
-        if self.stream_chunks_json:
-            data['stream_chunks_json'] = self.stream_chunks_json
-        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding='utf-8')
+        path.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+            encoding='utf-8',
+        )
+
+
+# Backwards compatibility alias
+XaiSampleProtoCassette = XaiProtoCassette
 
 
 @dataclass
 class _CassetteChatInstance:
     _client: XaiProtoCassetteClient
+    _expected_type: Literal['sample', 'stream']
 
     async def sample(self) -> chat_types.Response:
-        try:
-            proto_bytes = self._client.cassette.responses[self._client.sample_idx]
-        except IndexError as e:  # pragma: no cover
-            raise IndexError(f'Cassette exhausted at index {self._client.sample_idx}') from e
-        self._client.sample_idx += 1
+        if self._expected_type != 'sample':
+            raise RuntimeError(
+                f'Cassette expects a stream() call at interaction {self._client.interaction_idx}, '
+                f'but sample() was called.'
+            )
+        interaction = self._client.next_interaction()
+        if not isinstance(interaction, SampleInteraction):  # pragma: no cover
+            raise RuntimeError(f'Expected SampleInteraction, got {type(interaction).__name__}')
 
         proto = chat_pb2.GetChatCompletionResponse()
-        proto.ParseFromString(proto_bytes)
+        proto.ParseFromString(interaction.response_raw)
         return chat_types.Response(proto, index=None)
 
     def stream(self) -> Any:
+        if self._expected_type != 'stream':
+            raise RuntimeError(
+                f'Cassette expects a sample() call at interaction {self._client.interaction_idx}, '
+                f'but stream() was called.'
+            )
+        interaction = self._client.next_interaction()
+
         async def _aiter():
-            if not self._client.cassette.stream_chunks:
-                raise RuntimeError(
-                    'xAI proto cassette is missing streaming data (`stream_chunks`).\n'
-                    'Re-record this cassette with:\n'
-                    '  XAI_API_KEY=... uv run pytest --record-mode=rewrite <test> -v'
-                )
-            try:
-                chunk_list = self._client.cassette.stream_chunks[self._client.stream_idx]
-            except IndexError as e:  # pragma: no cover
-                raise IndexError(f'Cassette stream exhausted at index {self._client.stream_idx}') from e
-            self._client.stream_idx += 1
+            if not isinstance(interaction, StreamInteraction):  # pragma: no cover
+                raise RuntimeError(f'Expected StreamInteraction, got {type(interaction).__name__}')
 
             # Reconstruct the aggregated response by applying each chunk, mirroring the SDK behavior.
             aggregated = chat_types.Response(chat_pb2.GetChatCompletionResponse(), index=None)
-            for chunk_bytes in chunk_list:
+            for chunk_bytes in interaction.chunks_raw:
                 chunk_proto = chat_pb2.GetChatCompletionChunk()
                 chunk_proto.ParseFromString(chunk_bytes)
                 aggregated.process_chunk(chunk_proto)
@@ -226,16 +310,35 @@ class _CassetteChatInstance:
 class XaiProtoCassetteClient:
     """Drop-in-ish xAI SDK client for replaying recorded protobuf responses."""
 
-    cassette: XaiSampleProtoCassette
-    # Important: these indices must be shared across `chat.create(...).sample()` calls,
-    # otherwise multi-step agent runs will keep replaying the first response and can
-    # get stuck in tool-call loops until `UsageLimits` fails (e.g. request_limit=50).
-    sample_idx: int = 0
-    stream_idx: int = 0
+    cassette: XaiProtoCassette
+    # Index into the ordered interactions list.
+    interaction_idx: int = 0
 
     @classmethod
     def from_path(cls, path: Path) -> XaiProtoCassetteClient:
-        return cls(cassette=XaiSampleProtoCassette.load(path))
+        return cls(cassette=XaiProtoCassette.load(path))
+
+    def next_interaction(self) -> Interaction:
+        if self.interaction_idx >= len(self.cassette.interactions):
+            raise IndexError(
+                f'Cassette exhausted at interaction {self.interaction_idx}.\n'
+                'Re-record this cassette with:\n'
+                '  XAI_API_KEY=... uv run pytest --record-mode=rewrite <test> -v'
+            )
+        interaction = self.cassette.interactions[self.interaction_idx]
+        self.interaction_idx += 1
+        return interaction
+
+    def peek_interaction_type(self) -> Literal['sample', 'stream']:
+        """Peek at the next interaction type without consuming it."""
+        if self.interaction_idx >= len(self.cassette.interactions):
+            raise IndexError(
+                f'Cassette exhausted at interaction {self.interaction_idx}.\n'
+                'Re-record this cassette with:\n'
+                '  XAI_API_KEY=... uv run pytest --record-mode=rewrite <test> -v'
+            )
+        interaction = self.cassette.interactions[self.interaction_idx]
+        return 'sample' if isinstance(interaction, SampleInteraction) else 'stream'
 
     @property
     def chat(self) -> Any:
@@ -247,7 +350,8 @@ class XaiProtoCassetteClient:
         return type('Files', (), {'upload': self._files_upload})
 
     def _chat_create(self, *_args: Any, **_kwargs: Any) -> _CassetteChatInstance:
-        return _CassetteChatInstance(self)
+        expected_type = self.peek_interaction_type()
+        return _CassetteChatInstance(self, expected_type)
 
     async def _files_upload(self, data: bytes, filename: str) -> Any:
         # Deterministic ID; good enough for replay since we don't actually call the backend.
@@ -261,11 +365,26 @@ class XaiProtoCassetteHybridClient:
     """Replay from an existing cassette but record "new episodes" when the cassette runs out."""
 
     _inner: AsyncClient
-    cassette: XaiSampleProtoCassette
+    cassette: XaiProtoCassette
     include_debug_json: bool = False
-    sample_idx: int = 0
-    stream_idx: int = 0
+    interaction_idx: int = 0
     dirty: bool = False
+
+    def _can_replay(self) -> bool:
+        """Check if there are more recorded interactions to replay."""
+        return self.interaction_idx < len(self.cassette.interactions)
+
+    def _peek_interaction(self) -> Interaction | None:
+        """Peek at the next interaction without consuming it."""
+        if self.interaction_idx < len(self.cassette.interactions):
+            return self.cassette.interactions[self.interaction_idx]
+        return None
+
+    def _consume_interaction(self) -> Interaction:
+        """Consume and return the next interaction."""
+        interaction = self.cassette.interactions[self.interaction_idx]
+        self.interaction_idx += 1
+        return interaction
 
     @property
     def chat(self) -> Any:
@@ -290,37 +409,46 @@ class XaiProtoCassetteHybridClient:
 
         class _HybridChatInstance:
             async def sample(self) -> chat_types.Response:
-                # Replay if we have a recorded response at this index.
-                if client.sample_idx < len(client.cassette.responses):
-                    proto_bytes = client.cassette.responses[client.sample_idx]
-                    client.sample_idx += 1
+                # Replay if we have a recorded SampleInteraction at this index.
+                peeked = client._peek_interaction()
+                if isinstance(peeked, SampleInteraction):
+                    interaction = client._consume_interaction()
+                    assert isinstance(interaction, SampleInteraction)
                     proto = chat_pb2.GetChatCompletionResponse()
-                    proto.ParseFromString(proto_bytes)
+                    proto.ParseFromString(interaction.response_raw)
                     return chat_types.Response(proto, index=None)
 
                 # Otherwise record a new episode.
-                client.cassette.sample_requests.append(inner_chat.proto.SerializeToString())
-                if request_json is not None:
-                    client.cassette.sample_requests_json.append(request_json)
+                request_raw = inner_chat.proto.SerializeToString()
                 response = await inner_chat.sample()
-                client.cassette.responses.append(response.proto.SerializeToString())
+                response_raw = response.proto.SerializeToString()
+
+                response_json: dict[str, Any] | None = None
                 if include_debug_json:
-                    client.cassette.responses_json.append(
-                        MessageToDict(response.proto, preserving_proto_field_name=True)
+                    response_json = MessageToDict(response.proto, preserving_proto_field_name=True)
+
+                client.cassette.interactions.append(
+                    SampleInteraction(
+                        request_raw=request_raw,
+                        response_raw=response_raw,
+                        request_json=request_json,
+                        response_json=response_json,
                     )
+                )
+                client.interaction_idx += 1
                 client.dirty = True
-                client.sample_idx += 1
                 return response
 
             def stream(self) -> Any:
                 async def _aiter():
-                    # Replay if we have recorded chunks at this index.
-                    if client.stream_idx < len(client.cassette.stream_chunks):
-                        chunk_list = client.cassette.stream_chunks[client.stream_idx]
-                        client.stream_idx += 1
+                    # Replay if we have a recorded StreamInteraction at this index.
+                    peeked = client._peek_interaction()
+                    if isinstance(peeked, StreamInteraction):
+                        interaction = client._consume_interaction()
+                        assert isinstance(interaction, StreamInteraction)
 
                         aggregated = chat_types.Response(chat_pb2.GetChatCompletionResponse(), index=None)
-                        for chunk_bytes in chunk_list:
+                        for chunk_bytes in interaction.chunks_raw:
                             chunk_proto = chat_pb2.GetChatCompletionChunk()
                             chunk_proto.ParseFromString(chunk_bytes)
                             aggregated.process_chunk(chunk_proto)
@@ -328,14 +456,12 @@ class XaiProtoCassetteHybridClient:
                         return
 
                     # Otherwise record a new streaming episode.
-                    chunks: list[bytes] = []
+                    request_raw = inner_chat.proto.SerializeToString()
+                    chunks_raw: list[bytes] = []
                     chunks_json: list[dict[str, Any]] = []
-                    client.cassette.stream_requests.append(inner_chat.proto.SerializeToString())
-                    if request_json is not None:
-                        client.cassette.stream_requests_json.append(request_json)
                     try:
                         async for response, chunk in inner_chat.stream():
-                            chunks.append(chunk.proto.SerializeToString())
+                            chunks_raw.append(chunk.proto.SerializeToString())
                             if include_debug_json:
                                 chunks_json.append(
                                     {
@@ -347,11 +473,16 @@ class XaiProtoCassetteHybridClient:
                                 )
                             yield response, chunk
                     finally:
-                        client.cassette.stream_chunks.append(chunks)
-                        if include_debug_json:
-                            client.cassette.stream_chunks_json.append(chunks_json)
+                        client.cassette.interactions.append(
+                            StreamInteraction(
+                                request_raw=request_raw,
+                                chunks_raw=chunks_raw,
+                                request_json=request_json,
+                                chunks_json=chunks_json if include_debug_json else None,
+                            )
+                        )
+                        client.interaction_idx += 1
                         client.dirty = True
-                        client.stream_idx += 1
 
                 return _aiter()
 
@@ -360,7 +491,7 @@ class XaiProtoCassetteHybridClient:
 
 @dataclass
 class XaiProtoRecorder:
-    """Record `chat.sample()` responses as protobuf bytes.
+    """Record `chat.sample()` and `chat.stream()` responses as protobuf bytes.
 
     Usage:
         recorder = XaiProtoRecorder(real_client)
@@ -369,7 +500,7 @@ class XaiProtoRecorder:
     """
 
     _inner: AsyncClient
-    cassette: XaiSampleProtoCassette = field(default_factory=lambda: XaiSampleProtoCassette(responses=[]))
+    cassette: XaiProtoCassette = field(default_factory=XaiProtoCassette)
     include_debug_json: bool = False
 
     @property
@@ -401,29 +532,32 @@ class XaiProtoRecorder:
 
         class _RecorderChatInstance:
             async def sample(self) -> chat_types.Response:
-                # Always record the request proto (lossless); only record JSON when debug is enabled.
-                recorder.cassette.sample_requests.append(inner_chat.proto.SerializeToString())
-                if request_json is not None:
-                    recorder.cassette.sample_requests_json.append(request_json)
+                request_raw = inner_chat.proto.SerializeToString()
                 response = await inner_chat.sample()
-                recorder.cassette.responses.append(response.proto.SerializeToString())
+                response_raw = response.proto.SerializeToString()
+
+                response_json: dict[str, Any] | None = None
                 if include_debug_json:
-                    recorder.cassette.responses_json.append(
-                        MessageToDict(response.proto, preserving_proto_field_name=True)
+                    response_json = MessageToDict(response.proto, preserving_proto_field_name=True)
+
+                recorder.cassette.interactions.append(
+                    SampleInteraction(
+                        request_raw=request_raw,
+                        response_raw=response_raw,
+                        request_json=request_json,
+                        response_json=response_json,
                     )
+                )
                 return response
 
             def stream(self) -> Any:
                 async def _aiter():
-                    chunks: list[bytes] = []
+                    request_raw = inner_chat.proto.SerializeToString()
+                    chunks_raw: list[bytes] = []
                     chunks_json: list[dict[str, Any]] = []
-                    # Always record the request proto (lossless); only record JSON when debug is enabled.
-                    recorder.cassette.stream_requests.append(inner_chat.proto.SerializeToString())
-                    if request_json is not None:
-                        recorder.cassette.stream_requests_json.append(request_json)
                     try:
                         async for response, chunk in inner_chat.stream():
-                            chunks.append(chunk.proto.SerializeToString())
+                            chunks_raw.append(chunk.proto.SerializeToString())
                             if include_debug_json:
                                 chunks_json.append(
                                     {
@@ -436,9 +570,14 @@ class XaiProtoRecorder:
                             yield response, chunk
                     finally:
                         # Ensure data is persisted even if the consumer stops early and closes the generator.
-                        recorder.cassette.stream_chunks.append(chunks)
-                        if include_debug_json:
-                            recorder.cassette.stream_chunks_json.append(chunks_json)
+                        recorder.cassette.interactions.append(
+                            StreamInteraction(
+                                request_raw=request_raw,
+                                chunks_raw=chunks_raw,
+                                request_json=request_json,
+                                chunks_json=chunks_json if include_debug_json else None,
+                            )
+                        )
 
                 return _aiter()
 
@@ -451,7 +590,7 @@ class XaiProtoCassetteSession:
 
     client: XaiAsyncClientLike
     cassette_path: Path
-    cassette: XaiSampleProtoCassette | None = None
+    cassette: XaiProtoCassette | None = None
     dirty_check: Any | None = None
 
     def dump_if_recording(self) -> None:
@@ -482,7 +621,7 @@ def xai_proto_cassette_session(
         env_record_flag=_truthy_env('XAI_PROTO_CASSETTE_RECORD'),
     )
     if plan == 'replay':
-        cassette = XaiSampleProtoCassette.load(cassette_path)
+        cassette = XaiProtoCassette.load(cassette_path)
         return XaiProtoCassetteSession(
             client=cast(XaiAsyncClientLike, XaiProtoCassetteClient(cassette=cassette)),
             cassette_path=cassette_path,
@@ -512,7 +651,7 @@ def xai_proto_cassette_session(
         real_client = AsyncClient(api_key=api_key)
 
     if plan == 'hybrid':
-        cassette = XaiSampleProtoCassette.load(cassette_path)
+        cassette = XaiProtoCassette.load(cassette_path)
         hybrid = XaiProtoCassetteHybridClient(real_client, cassette=cassette, include_debug_json=include_debug_json)
         return XaiProtoCassetteSession(
             client=cast(XaiAsyncClientLike, hybrid),
