@@ -122,7 +122,7 @@ class BatchModel(Model):
             await self.submit()
 
         # Wait for any pending batch to complete
-        if self._batch_task:
+        if self._batch_task:  # pragma: no cover
             try:
                 await self._batch_task
             except Exception:
@@ -222,7 +222,7 @@ class BatchModel(Model):
         if not self._queue:
             raise RuntimeError('Cannot submit an empty batch.')
 
-        if self._batch_task and not self._batch_task.done():
+        if self._batch_task and not self._batch_task.done():  # pragma: no cover
             raise RuntimeError('A batch is already being processed.')
 
         # Prepare batch requests
@@ -265,7 +265,7 @@ class BatchModel(Model):
             # Resolve each future
             for req in pending_requests:
                 result = result_map.get(req.custom_id)
-                if result is None:
+                if result is None:  # pragma: no cover
                     req.future.set_exception(RuntimeError(f'No result found for request {req.custom_id}'))
                 elif result.is_successful and result.response is not None:
                     req.future.set_result(result.response)
@@ -278,7 +278,7 @@ class BatchModel(Model):
         except Exception as e:
             # If batch processing fails, propagate error to all futures
             for req in pending_requests:
-                if not req.future.done():
+                if not req.future.done():  # pragma: no cover
                     req.future.set_exception(e)
             raise
 

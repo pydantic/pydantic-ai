@@ -323,28 +323,28 @@ class TestSupportsBatch:
                 requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
                 model_settings: ModelSettings | None = None,
             ) -> Batch:
-                return Batch(id='test', status=BatchStatus.PENDING, created_at=datetime.now(tz=timezone.utc))
+                return Batch(id='test', status=BatchStatus.PENDING, created_at=datetime.now(tz=timezone.utc))  # pragma: no cover
 
             async def batch_status(self, batch: Batch) -> Batch:
-                return batch
+                return batch  # pragma: no cover
 
             async def batch_results(self, batch: Batch) -> list[BatchResult]:
-                return []
+                return []  # pragma: no cover
 
             async def batch_cancel(self, batch: Batch) -> Batch:
-                return batch
+                return batch  # pragma: no cover
 
             # Required abstract methods
             async def request(self, *args: Any, **kwargs: Any) -> Any:
-                raise NotImplementedError
+                raise NotImplementedError  # pragma: no cover
 
             @property
             def model_name(self) -> str:
-                return 'test'
+                return 'test'  # pragma: no cover
 
             @property
             def system(self) -> str:
-                return 'test'
+                return 'test'  # pragma: no cover
 
         model = BatchCapableModel()
         assert supports_batch(model) is True

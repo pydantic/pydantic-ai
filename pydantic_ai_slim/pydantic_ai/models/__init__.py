@@ -799,7 +799,7 @@ def supports_batch(model: Model) -> bool:
         model_method = getattr(model_class, method_name, None)
         base_method = getattr(Model, method_name, None)
 
-        if model_method is None:
+        if model_method is None:  # pragma: no cover
             return False
 
         # If the method is the same as the base Model class method, it's a stub

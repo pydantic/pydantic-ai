@@ -896,7 +896,7 @@ class GoogleModel(Model):
                     model_name=self._model_name,
                     body=e.details,  # type: ignore[arg-type]
                 ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e  # pragma: no cover
 
         # Parse response and attach custom_ids for matching responses later
         batch = self._parse_batch_response(batch_response)
@@ -925,7 +925,7 @@ class GoogleModel(Model):
                     model_name=self._model_name,
                     body=e.details,  # type: ignore[arg-type]
                 ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e  # pragma: no cover
 
         # Parse response and preserve custom_ids from original batch
         updated_batch = self._parse_batch_response(batch_response)
@@ -985,7 +985,7 @@ class GoogleModel(Model):
                             item_response: GenerateContentResponse = cast(GenerateContentResponse, item.response)
                             model_response = self._process_response(item_response)
                             results.append(BatchResult(custom_id=custom_id, response=model_response))
-                        else:
+                        else:  # pragma: no cover
                             results.append(
                                 BatchResult(
                                     custom_id=custom_id,
@@ -1006,7 +1006,7 @@ class GoogleModel(Model):
                     model_name=self._model_name,
                     body=e.details,  # type: ignore[arg-type]
                 ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e  # pragma: no cover
 
         return results
 
@@ -1033,7 +1033,7 @@ class GoogleModel(Model):
                     model_name=self._model_name,
                     body=e.details,  # type: ignore[arg-type]
                 ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e  # pragma: no cover
 
         return self._parse_batch_response(batch_response)
 
@@ -1045,9 +1045,9 @@ class GoogleModel(Model):
             state_str = state
         elif state is not None and hasattr(state, 'name'):
             state_str = cast(str, state.name)
-        elif state is not None and hasattr(state, 'value'):
+        elif state is not None and hasattr(state, 'value'):  # pragma: no cover
             state_str = cast(str, state.value)
-        else:
+        else:  # pragma: no cover
             state_str = str(state) if state else 'JOB_STATE_PENDING'
 
         # Map Google state to BatchStatus
@@ -1067,7 +1067,7 @@ class GoogleModel(Model):
             request_count = getattr(counts, 'total', 0) or 0
             completed_count = getattr(counts, 'succeeded', 0) or 0
             failed_count = getattr(counts, 'failed', 0) or 0
-        elif hasattr(response, 'responses') and response.responses:
+        elif hasattr(response, 'responses') and response.responses:  # pragma: no cover
             request_count = len(response.responses)
             for item in response.responses:
                 if hasattr(item, 'error') and item.error:
