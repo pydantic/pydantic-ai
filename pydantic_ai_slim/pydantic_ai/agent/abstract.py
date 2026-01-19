@@ -1019,11 +1019,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         task = asyncio.create_task(run_agent())
 
-        async with receive_stream:
-            async for message in receive_stream:
-                yield message
+        try:
+            async with receive_stream:
+                async for message in receive_stream:
+                    yield message
 
-        result = await task
+            result = await task
+
+        except asyncio.CancelledError as e:
+            task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+            raise
+
         yield AgentRunResultEvent(result)
 
     @overload

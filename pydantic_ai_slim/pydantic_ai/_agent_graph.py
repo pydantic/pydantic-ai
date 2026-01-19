@@ -621,6 +621,17 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                         )
 
+                    # Check for content filter on empty response
+                    if self.model_response.finish_reason == 'content_filter':
+                        details = self.model_response.provider_details or {}
+                        reason = details.get('finish_reason', 'content_filter')
+
+                        body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
+
+                        raise exceptions.ContentFilterError(
+                            f"Content filter triggered. Finish reason: '{reason}'", body=body
+                        )
+
                     # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
@@ -1041,7 +1052,7 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
-async def _call_tools(
+async def _call_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
@@ -1121,13 +1132,20 @@ async def _call_tools(
                 for call in tool_calls
             ]
 
-            pending = tasks
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    index = tasks.index(task)
-                    if event := await handle_call_or_result(coro_or_task=task, index=index):
-                        yield event
+            try:
+                pending = tasks
+                while pending:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        index = tasks.index(task)
+                        if event := await handle_call_or_result(coro_or_task=task, index=index):
+                            yield event
+
+            except asyncio.CancelledError as e:
+                for task in tasks:
+                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+
+                raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing
