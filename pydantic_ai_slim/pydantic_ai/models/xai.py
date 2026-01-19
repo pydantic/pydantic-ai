@@ -2,9 +2,9 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal, cast
 
@@ -745,30 +745,30 @@ class XaiStreamedResponse(StreamedResponse):
         seen_tool_call_ids: set[str],
         seen_tool_return_ids: set[str],
         last_tool_return_content: dict[str, dict[str, Any] | str | None],
-    ) -> ModelResponseStreamEvent | None:
-        """Handle a single server-side tool call delta, emitting at most one stream event."""
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Handle a single server-side tool call delta, yielding stream events."""
         builtin_tool_name = _get_builtin_tool_name(tool_call)
 
         if delta.role == chat_pb2.MessageRole.ROLE_ASSISTANT:
             # Emit the call part once per tool_call_id.
             if tool_call.id in seen_tool_call_ids:
-                return None
+                return
             seen_tool_call_ids.add(tool_call.id)
 
-            # NOTE: xAI provides the full tool arguments in one go (not incremental JSON deltas),
-            # so we emit a fully-formed `BuiltinToolCallPart` immediately rather than emitting a
-            # `ToolCallPartDelta`. This keeps the event stream simpler while still matching the
-            # final `ModelResponse.parts` which include the fully parsed args.
+            # xAI provides the full tool arguments in one go (not incremental JSON deltas).
+            # To match OpenAI's pattern and ensure UI adapters receive a PartDeltaEvent for args
+            # (not just a PartStartEvent with full args), we:
+            # 1. First emit a PartStartEvent with args=None via handle_part
+            # 2. Then emit a PartDeltaEvent with the full args via handle_tool_call_delta
             parsed_args = _parse_tool_args(tool_call.function.arguments)
-            return self._parts_manager.handle_part(
-                vendor_part_id=tool_call.id,
-                part=BuiltinToolCallPart(
-                    tool_name=builtin_tool_name,
-                    args=parsed_args,
-                    tool_call_id=tool_call.id,
-                    provider_name=self.system,
-                ),
+            call_part = BuiltinToolCallPart(
+                tool_name=builtin_tool_name, args=parsed_args, tool_call_id=tool_call.id, provider_name=self.system
             )
+            yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=replace(call_part, args=None))
+            maybe_event = self._parts_manager.handle_tool_call_delta(vendor_part_id=tool_call.id, args=parsed_args)
+            if maybe_event is not None:
+                yield maybe_event
+            return
 
         if delta.role == chat_pb2.MessageRole.ROLE_TOOL:
             # Emit the return part once per tool_call_id.
@@ -777,21 +777,16 @@ class XaiStreamedResponse(StreamedResponse):
             if return_vendor_id in seen_tool_return_ids and tool_result_content == last_tool_return_content.get(
                 return_vendor_id
             ):
-                return None
+                return
             seen_tool_return_ids.add(return_vendor_id)
             last_tool_return_content[return_vendor_id] = tool_result_content
-            return self._parts_manager.handle_part(
-                vendor_part_id=return_vendor_id,
-                part=BuiltinToolReturnPart(
-                    tool_name=builtin_tool_name,
-                    content=tool_result_content,
-                    tool_call_id=tool_call.id,
-                    provider_name=self.system,
-                ),
+            return_part = BuiltinToolReturnPart(
+                tool_name=builtin_tool_name,
+                content=tool_result_content,
+                tool_call_id=tool_call.id,
+                provider_name=self.system,
             )
-
-        # Unknown role; ignore.
-        return None
+            yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Iterate over streaming events from xAI SDK."""
@@ -837,15 +832,14 @@ class XaiStreamedResponse(StreamedResponse):
                         continue
 
                     if tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL:
-                        maybe_event = self._handle_server_side_tool_call(
+                        for event in self._handle_server_side_tool_call(
                             tool_call=tool_call,
                             delta=delta,
                             seen_tool_call_ids=seen_tool_call_ids,
                             seen_tool_return_ids=seen_tool_return_ids,
                             last_tool_return_content=last_tool_return_content,
-                        )
-                        if maybe_event is not None:
-                            yield maybe_event
+                        ):
+                            yield event
                     else:
                         # Client-side tools: emit args as deltas so UI adapters receive PartDeltaEvents
                         # (not repeated PartStartEvents). Use accumulated args from response.tool_calls

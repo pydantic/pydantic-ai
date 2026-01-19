@@ -1825,11 +1825,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
+                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_42747457', provider_name='xai'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta={'query': 'current weather in San Francisco today in Celsius', 'num_results': 5},
+                    tool_call_id='call_42747457',
                 ),
             ),
             PartEndEvent(
@@ -1855,15 +1857,17 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={
+                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id='call_28209924', provider_name='xai'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta={
                         'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1'
                     },
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
+                    tool_call_id='call_28209924',
                 ),
-                previous_part_kind='builtin-tool-return',
             ),
             PartEndEvent(
                 index=2,
@@ -2118,12 +2122,10 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': 'print(2 + 2)'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                ),
+                part=BuiltinToolCallPart(tool_name='code_execution', tool_call_id='call_02414781', provider_name='xai'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta={'code': 'print(2 + 2)'}, tool_call_id='call_02414781')
             ),
             PartEndEvent(
                 index=0,
@@ -2664,15 +2666,19 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:deepwiki',
-                    args={
+                    tool_name='mcp_server:deepwiki', tool_call_id='call_50266835', provider_name='xai'
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta={
                         'repoName': 'pydantic/pydantic-ai',
                         'question': 'Provide a short summary of the repository, including its purpose and main features.',
                     },
                     tool_call_id='call_50266835',
-                    provider_name='xai',
                 ),
-                previous_part_kind='thinking',
             ),
             PartEndEvent(
                 index=1,
