@@ -1007,8 +1007,11 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
         builtin_tools=[WebSearchTool(allowed_domains=['wikipedia.org'])],
     )
 
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('Paris.')
+    result = await agent.run(
+        'What is the current population of Tokyo prefecture according to Wikipedia? Give me just the number.'
+    )
+    assert result.output
+    assert 'wikipedia.org' in result.output.lower()
 
 
 async def test_openai_responses_model_web_search_tool_with_invalid_region(
