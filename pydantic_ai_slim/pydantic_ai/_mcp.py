@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Sequence
 from typing import Literal
+from typing_extensions import assert_never
 
 from . import exceptions, messages
 
@@ -37,8 +38,10 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
                 user_part_content = [
                     messages.BinaryContent(data=base64.b64decode(content.data), media_type=content.mimeType)
                 ]
-            else:
+            elif isinstance(content, (list, mcp_types.AudioContent, mcp_types.ToolUseContent, mcp_types.ToolResultContent)):
                 raise NotImplementedError(f'Unsupported user content type: {type(content).__name__}')
+            else:
+                assert_never(content)
 
             request_parts.append(messages.UserPromptPart(content=user_part_content))
         else:
