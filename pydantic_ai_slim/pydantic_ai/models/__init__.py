@@ -570,7 +570,9 @@ class ModelRequestParameters:
     function_tools: list[ToolDefinition] = field(default_factory=list)
     builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
 
-    model_settings: ModelSettings | None = None
+    # Using Any to avoid Pydantic TypeAdapter serialization issues with complex TypedDict types
+    # Runtime type is Any, but type checkers see it as ModelSettings | None
+    model_settings: Any = None  # type: ModelSettings | None
     """Optional per-request settings override.
 
     When used with batch processing, these settings take precedence over the

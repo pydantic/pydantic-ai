@@ -29,6 +29,7 @@ def test_model_request_parameters_are_serializable():
         {
             'function_tools': [],
             'builtin_tools': [],
+            'model_settings': None,
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -121,6 +122,7 @@ def test_model_request_parameters_are_serializable():
                     'headers': None,
                 },
             ],
+            'model_settings': None,
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [
