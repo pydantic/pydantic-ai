@@ -51,6 +51,7 @@ with try_import() as imports_successful:
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
     from mcp.types import (
+        AudioContent,
         CreateMessageRequestParams,
         ElicitRequestParams,
         ElicitResult,
@@ -1657,6 +1658,20 @@ def test_map_from_mcp_params_model_response():
             )
         ]
     )
+
+
+def test_map_from_mcp_params_unsupported_user_content():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(
+                role='user',
+                content=AudioContent(type='audio', data='YXVkaW8=', mimeType='audio/wav'),
+            ),
+        ],
+        maxTokens=8,
+    )
+    with pytest.raises(NotImplementedError, match='Unsupported user content type: AudioContent'):
+        map_from_mcp_params(params)
 
 
 def test_map_from_pai_messages_with_binary_content():
