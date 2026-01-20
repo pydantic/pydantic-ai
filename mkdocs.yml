@@ -117,7 +117,7 @@ nav:
           - examples/sql-gen.md
           - examples/data-analyst.md
       - RAG:
-          - examples/rag.md
+          - examples/rag-pgvector.md
           - examples/rag-surrealdb.md
       - Streaming:
           - examples/stream-markdown.md
@@ -298,7 +298,7 @@ markdown_extensions:
   - material.extensions.preview:
       targets:
         include:
-          - '*'
+          - "*"
   - pydantic_docs.mdext
 
 watch:
