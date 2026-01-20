@@ -34,13 +34,14 @@ import unicodedata
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import httpx
 import logfire
 from anyio import create_task_group
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from surrealdb import (
+    AsyncEmbeddedSurrealConnection,
     AsyncHttpSurrealConnection,
     AsyncSurreal,
     AsyncWsSurrealConnection,
@@ -51,17 +52,38 @@ from typing_extensions import AsyncGenerator
 
 from pydantic_ai import Agent, Embedder
 
+SurrealConn = (
+    AsyncWsSurrealConnection
+    | AsyncHttpSurrealConnection
+    | AsyncEmbeddedSurrealConnection
+)
+
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 logfire.instrument_openai()
-# TODO: enable this once https://github.com/pydantic/logfire/pull/1573 is released
-# logfire.instrument_surrealdb()
+logfire.instrument_surrealdb()
 
 THIS_DIR = Path(__file__).parent
 
+SURREALDB_NS = 'pydantic_ai_examples'
+SURREALDB_DB = 'rag_surrealdb'
+SURREALDB_USER = 'root'
+SURREALDB_PASS = 'root'
+
 embedder = Embedder('openai:text-embedding-3-small')
 agent = Agent('openai:gpt-5')
+
+
+@dataclass
+class RetrievalQueryResult:
+    url: str
+    title: str
+    content: str
+    dist: float
+
+
+result_ta = TypeAdapter(list[RetrievalQueryResult])
 
 
 @agent.tool_plain
@@ -71,26 +93,14 @@ async def retrieve(search_query: str) -> str:
     Args:
         search_query: The search query.
     """
-
-    @dataclass
-    class RetrievalQueryResult:
-        url: str
-        title: str
-        content: str
-        dist: float
-
-    result_ta = TypeAdapter(list[RetrievalQueryResult])
-
     with logfire.span(
         'create embedding for {search_query=}', search_query=search_query
     ):
         result = await embedder.embed_query(search_query)
         embedding = result.embeddings
 
-    assert len(embedding) == 1, (
-        f'Expected 1 embedding, got {len(embedding)}, doc query: {search_query!r}'
-    )
-    embedding_vector = list(embedding[0])
+    # Embedder method guarantees there's one item here
+    embedding_vector = embedding[0]
 
     # SurrealDB vector search using HNSW index
     async with database_connect(False) as db:
@@ -108,12 +118,12 @@ async def retrieve(search_query: str) -> str:
     try:
         rows = result_ta.validate_python(result)
         logfire.info('Retrieved {len} results', len=len(rows))
-    except Exception as e:
+    except ValidationError as e:
         logfire.error('Failed to validate JSON response: {error}', error=e)
         raise
 
     return '\n\n'.join(
-        f'# {row.title}\nDocumentation URL:{row.url}\n\n{row.content}\n' for row in rows
+        f'# {row.title}\nDocumentation URL:{row.url}\n\n{row.content}' for row in rows
     )
 
 
@@ -162,7 +172,7 @@ async def build_search_db():
 async def insert_doc_section(
     embedding_sem: asyncio.Semaphore,
     db_sem: asyncio.Semaphore,
-    db: AsyncWsSurrealConnection | AsyncHttpSurrealConnection,
+    db: SurrealConn,
     section: DocsSection,
 ) -> None:
     async with embedding_sem:
@@ -223,30 +233,25 @@ sections_ta = TypeAdapter(list[DocsSection])
 
 
 @asynccontextmanager
-async def database_connect(create_db: bool = False) -> AsyncGenerator[Any, None]:
-    namespace = 'pydantic_ai_examples'
-    database = 'rag_surrealdb'
-    username = 'root'
-    password = 'root'
-
+async def database_connect(
+    create_db: bool = False,
+) -> AsyncGenerator[SurrealConn, None]:
     # Running SurrealDB embedded
-    db_path = THIS_DIR / f'.{database}'
+    db_path = THIS_DIR / f'.{SURREALDB_DB}'
     db_url = f'file://{db_path}'
     requires_auth = False
 
     # Running SurrealDB in a separate process, connect with URL
     # db_url = 'ws://localhost:8000/rpc'
-    # namespace = 'pydantic_ai_examples'
-    # database = 'rag_surrealdb'
     # requires_auth = True
 
     async with AsyncSurreal(db_url) as db:
         # Sign in to the database
         if requires_auth:
-            await db.signin({'username': username, 'password': password})
+            await db.signin({'username': SURREALDB_USER, 'password': SURREALDB_PASS})
 
         # Set namespace and database
-        await db.use(namespace, database)
+        await db.use(SURREALDB_NS, SURREALDB_DB)
 
         # Initialize schema if creating database
         if create_db:
