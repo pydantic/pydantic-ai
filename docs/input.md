@@ -126,6 +126,8 @@ Support for file URLs varies depending on type and provider:
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.azure import AzureProvider
 
+    pdf_bytes = b'%PDF-1.4 ...'  # Your PDF content
+
     model = OpenAIResponsesModel(
         'gpt-5',
         provider=AzureProvider(
