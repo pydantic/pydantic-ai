@@ -18,7 +18,7 @@ Ask the agent a question with:
 
 Or use the web UI:
 
-    uv run uvicorn pydantic_ai_examples.rag_surrealdb:app --host 127.0.0.1 --port 7932
+    uv run -m pydantic_ai_examples.rag_surrealdb web
 
 This example runs SurrealDB embedded. If you want to run it in a separate process (useful to explore the db using Surrealist) you can start it with (or with docker):
 
@@ -39,7 +39,7 @@ from typing import TypeVar, cast
 
 import httpx
 import logfire
-from anyio import create_task_group
+import uvicorn
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from surrealdb import (
     AsyncEmbeddedSurrealConnection,
@@ -311,9 +311,11 @@ if __name__ == '__main__':
         else:
             q = 'How do I configure logfire to work with FastAPI?'
         asyncio.run(run_agent(q))
+    elif action == 'web':
+        uvicorn.run(app, host='127.0.0.1', port=7932)
     else:
         print(
-            'uv run --extra examples -m pydantic_ai_examples.rag_surrealdb build|search',
+            'uv run --extra examples -m pydantic_ai_exampls.rag_surrealdb build|search',
             file=sys.stderr,
         )
         sys.exit(1)
