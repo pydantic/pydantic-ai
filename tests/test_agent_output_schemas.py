@@ -236,6 +236,7 @@ async def test_image_output_json_schema():
     agent = Agent('test', output_type=BinaryImage)
     assert agent.output_json_schema() == snapshot(
         {
+            'description': "Binary content that's guaranteed to be an image.",
             'properties': {
                 'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
                 'media_type': {
@@ -302,6 +303,7 @@ distinguish multiple files.\
                 {'type': 'string'},
                 {'type': 'boolean'},
                 {
+                    'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
                         'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
                         'media_type': {
@@ -439,6 +441,7 @@ async def test_deferred_output_json_schema():
         {
             'anyOf': [
                 {
+                    'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
                         'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
                         'media_type': {
