@@ -246,6 +246,7 @@ class _ConversionContext:
         # 2. Namespace the defs by source (e.g., "ParamsUser" vs "ReturnUser")
         # 3. Check if definitions are identical - allow if same, error if different
         #
+        # TODO: Consider stashing separate defs for params/returns to avoid silent clashes.
         # For now, we assume $defs names are unique across param and return schemas.
         self._defs.update(defs)
 

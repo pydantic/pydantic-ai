@@ -53,6 +53,11 @@ def _get_tool_signature(tool: ToolsetTool[Any]) -> str:
                 description=tool.tool_def.description,
             )
 
+    # TODO: Code mode currently ignores tool.include_return_schema and toolset-level return schema
+    # toggles, instead always deriving return types from the tool definition. If callers rely on
+    # include_return_schema=False, this will still expose return types in signatures.
+    # -> So we do need it or we can fallback to any if we want to respect that toggle, TBD for now
+
     result = signature_from_schema(
         name=tool.tool_def.name,
         parameters_json_schema=tool.tool_def.parameters_json_schema,
@@ -71,6 +76,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
+        # TODO: MCP tool names can include characters that aren't valid Python identifiers.
+        # We should sanitize names and maintain a mapping back to the original tool name.
         available_functions = [_get_tool_signature(tool) for tool in wrapped_tools.values()]
         # TODO: This dumps all tool signatures up-front, which can bloat context for large toolsets.
         # Example: hundreds of MCP tools can push tens of thousands of tokens into the prompt,
@@ -121,7 +128,9 @@ f"Found {len(combined)} items"
         assert isinstance(code, str)
 
         # TODO: There is no execution timeout or step budget for Monty runs here.
-        # Example: `while True: pass` will hang the agent run indefinitely.
+        # Example: `for _ in range(10**9): pass` can hang the agent run indefinitely.
+        # TODO: Monty supports a limited Python subset (no while loops, list comprehensions, lambdas).
+        # Consider documenting supported syntax so we do not gen incorrect code.
         m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
         result = m.start()
         while isinstance(result, monty.MontySnapshot):
