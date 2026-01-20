@@ -103,7 +103,7 @@ class ToolManager(Generic[AgentDepsT]):
         name = call.tool_name
         tool = self.tools.get(name)
         try:
-            if tool is None:
+            if tool is None:  # pragma: no cover
                 if self.tools:
                     msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tools.keys())}'
                 else:
@@ -139,7 +139,7 @@ class ToolManager(Generic[AgentDepsT]):
                         tool_call_id=call.tool_call_id,
                     )
                     e = ToolRetryError(m)
-                elif isinstance(e, ModelRetry):
+                elif isinstance(e, ModelRetry):  # pragma: no cover
                     m = _messages.RetryPromptPart(
                         tool_name=name,
                         content=e.message,

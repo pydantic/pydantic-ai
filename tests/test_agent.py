@@ -6724,7 +6724,7 @@ async def test_requires_approval_validates_args_before_deferring():
     agent = Agent(model, output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str, force: bool) -> str:
+    def delete_file(path: str, force: bool) -> str:  # pragma: no cover
         return f'File {path!r} deleted (force={force})'
 
     result = await agent.run('Delete file.txt')
@@ -6767,6 +6767,32 @@ async def test_requires_approval_validates_args_before_deferring():
             run_id=IsStr(),
         )
     )
+
+
+async def test_requires_approval_validation_max_retries_exceeded():
+    """When approval-requiring tool args validation repeatedly fails, it should raise UnexpectedModelBehavior."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Always return invalid args (missing required 'force' parameter)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='delete_file',
+                    args={'path': 'file.txt'},  # missing 'force'
+                    tool_call_id='delete_file_call',
+                ),
+            ]
+        )
+
+    model = FunctionModel(model_function)
+    agent = Agent(model, output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True, retries=1)
+    def delete_file(path: str, force: bool) -> str:  # pragma: no cover
+        return f'File {path!r} deleted (force={force})'
+
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'delete_file' exceeded max retries count of 1"):
+        await agent.run('Delete file.txt')
 
 
 async def test_run_with_deferred_tool_results_errors():
