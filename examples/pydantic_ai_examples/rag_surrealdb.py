@@ -34,12 +34,12 @@ import unicodedata
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TypeVar, cast
 
 import httpx
 import logfire
 from anyio import create_task_group
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from surrealdb import (
     AsyncEmbeddedSurrealConnection,
     AsyncHttpSurrealConnection,
@@ -61,7 +61,6 @@ SurrealConn = (
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
-logfire.instrument_openai()
 logfire.instrument_surrealdb()
 
 THIS_DIR = Path(__file__).parent
@@ -74,16 +73,23 @@ SURREALDB_PASS = 'root'
 embedder = Embedder('openai:text-embedding-3-small')
 agent = Agent('openai:gpt-5')
 
+RecordType = TypeVar('RecordType')
 
-@dataclass
-class RetrievalQueryResult:
+
+class RetrievalQueryResult(BaseModel):
     url: str
     title: str
     content: str
     dist: float
 
 
-result_ta = TypeAdapter(list[RetrievalQueryResult])
+async def query(
+    conn: SurrealConn, query_: str, vars: dict[str, Value], record_type: RecordType
+) -> list[RecordType]:
+    result = await conn.query(query_, vars)
+    result_ta = TypeAdapter(list[record_type])
+    rows = result_ta.validate_python(result)
+    return rows
 
 
 @agent.tool_plain
@@ -104,23 +110,22 @@ async def retrieve(search_query: str) -> str:
 
     # SurrealDB vector search using HNSW index
     async with database_connect(False) as db:
-        result = await db.query(
-            """
-            SELECT url, title, content, vector::distance::knn() AS dist
-            FROM doc_sections
-            WHERE embedding <|8, 40|> $vector
-            ORDER BY dist ASC
-            """,
-            {'vector': cast(Value, embedding_vector)},
-        )
-
-    # Process SurrealDB query result
-    try:
-        rows = result_ta.validate_python(result)
-        logfire.info('Retrieved {len} results', len=len(rows))
-    except ValidationError as e:
-        logfire.error('Failed to validate JSON response: {error}', error=e)
-        raise
+        try:
+            rows = await query(
+                db,
+                """
+                SELECT url, title, content, vector::distance::knn() AS dist
+                FROM doc_sections
+                WHERE embedding <|8, 40|> $vector
+                ORDER BY dist ASC
+                """,
+                {'vector': cast(Value, embedding_vector)},
+                RetrievalQueryResult,
+            )
+            logfire.info('Retrieved {len} results', len=len(rows))
+        except ValidationError as e:
+            logfire.error('Failed to validate JSON response: {error}', error=e)
+            raise
 
     return '\n\n'.join(
         f'# {row.title}\nDocumentation URL:{row.url}\n\n{row.content}' for row in rows
