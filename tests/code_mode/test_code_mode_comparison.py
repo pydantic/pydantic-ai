@@ -37,7 +37,7 @@ async def test_code_mode_with_real_model(allow_model_requests: None):
         )
 
     print(f'\n=== Result ===\n{result.output}')
-    print(f'\n=== Messages ===')
+    print('\n=== Messages ===')
     for msg in result.all_messages():
         print(msg)
 

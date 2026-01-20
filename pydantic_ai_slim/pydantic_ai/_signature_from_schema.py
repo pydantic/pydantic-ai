@@ -10,14 +10,17 @@ from __future__ import annotations
 import ast
 import asyncio
 import copy
+import dataclasses
 import inspect
 import json
 import re
+import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from inspect import Parameter, signature
-from typing import Any, Union, cast
+from typing import Any, Union, cast, get_origin
 
+from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _typing_extra
 
 from ._run_context import RunContext
@@ -29,6 +32,50 @@ def _is_run_context(annotation: Any) -> bool:
         return True
     origin = getattr(annotation, '__origin__', None)
     return origin is RunContext
+
+
+def _is_typeddict(t: Any) -> bool:
+    """Check if a type is a `TypedDict` subclass."""
+    return isinstance(t, type) and hasattr(t, '__annotations__') and hasattr(t, '__total__')
+
+
+def _is_named_type(t: Any) -> bool:
+    """Check if a type is a `BaseModel`, dataclass, or `TypedDict` that needs a definition."""
+    if t is None or t is type(None) or not isinstance(t, type):
+        return False
+    else:
+        return issubclass(t, BaseModel) or dataclasses.is_dataclass(t) or _is_typeddict(t)  # pyright: ignore[reportUnknownArgumentType]
+
+
+def _get_schema_from_type(t: Any) -> dict[str, Any]:
+    """Extract JSON schema from a `BaseModel`, dataclass, or `TypedDict`."""
+    if isinstance(t, type) and issubclass(t, BaseModel):
+        return t.model_json_schema()
+    return TypeAdapter(t).json_schema()  # pyright: ignore[reportUnknownArgumentType]
+
+
+def _collect_named_types_from_annotation(annotation: Any, collected: dict[str, Any]) -> None:
+    """Recursively collect named types from an annotation."""
+    if annotation is None or annotation is type(None):
+        return
+
+    if _is_named_type(annotation):
+        name = annotation.__name__
+        if name not in collected:
+            collected[name] = annotation
+            schema = _get_schema_from_type(annotation)
+            if '$defs' in schema:
+                for def_name, def_schema in schema['$defs'].items():
+                    if def_name not in collected:
+                        collected[def_name] = def_schema
+        return
+
+    origin = get_origin(annotation)
+    args = getattr(annotation, '__args__', None)
+
+    if origin is not None and args:
+        for arg in args:
+            _collect_named_types_from_annotation(arg, collected)
 
 
 @dataclass
@@ -49,7 +96,7 @@ def signature_from_function(
     description: str | None = None,
     *,
     include_return_type: bool = True,
-) -> str:
+) -> SignatureResult:
     """Generate a Python signature string from an actual function.
 
     Uses inspect.signature() and typing.get_type_hints() to reconstruct
@@ -59,9 +106,10 @@ def signature_from_function(
         func: The function to generate a signature for.
         name: Override the function name. If None, uses func.__name__.
         description: Optional description to include as a docstring.
+        include_return_type: Whether to include the return type annotation.
 
     Returns:
-        A Python signature string including optional docstring.
+        A SignatureResult containing the signature string and any TypedDict definitions.
     """
     name = name or func.__name__
     sig = signature(func)
@@ -71,6 +119,8 @@ def signature_from_function(
     except Exception:
         type_hints = {}
 
+    collected_types: dict[str, Any] = {}
+
     params: list[str] = []
 
     for i, (param_name, param) in enumerate(sig.parameters.items()):
@@ -78,6 +128,9 @@ def signature_from_function(
 
         if i == 0 and annotation is not None and _is_run_context(annotation):
             continue
+
+        if annotation is not None:
+            _collect_named_types_from_annotation(annotation, collected_types)
 
         annotation_str = _format_annotation(annotation) if annotation else ''
 
@@ -94,21 +147,54 @@ def signature_from_function(
                 params.append(f'{param_name}={default_str}')
 
     return_annotation = type_hints.get('return')
+    if return_annotation is not None:
+        _collect_named_types_from_annotation(return_annotation, collected_types)
+
     if include_return_type:
-        return_str = f' -> {_format_annotation(return_annotation)}' if return_annotation else ' -> Any'
+        return_type_str = _format_annotation(return_annotation) if return_annotation else 'Any'
     else:
-        return_str = ' -> Any'
+        return_type_str = 'Any'
 
     is_async = _is_async_function(func)
     prefix = 'async def' if is_async else 'def'
 
-    signature_line = f'{prefix} {name}({", ".join(params)}){return_str}'
+    signature_line = f'{prefix} {name}({", ".join(params)}) -> {return_type_str}'
+
+    typeddict_defs = _generate_typeddict_defs_from_collected(collected_types, name)
 
     if description:
         docstring = _format_docstring(description)
-        return f'{signature_line}:\n{docstring}'
+        signature_str = f'{signature_line}:\n{docstring}'
     else:
-        return f'{signature_line}: ...'
+        signature_str = f'{signature_line}: ...'
+
+    return SignatureResult(signature=signature_str, typeddict_defs=typeddict_defs, return_type=return_type_str)
+
+
+def _generate_typeddict_defs_from_collected(collected_types: dict[str, Any], tool_name: str) -> list[str]:
+    """Generate `TypedDict` definitions from collected named types."""
+    if not collected_types:
+        return []
+
+    context = _ConversionContext(tool_name)
+
+    for type_name, type_or_schema in collected_types.items():
+        if isinstance(type_or_schema, dict):
+            type_or_schema = cast(dict[str, Any], type_or_schema)
+            if type_or_schema.get('type') == 'object' and 'properties' in type_or_schema:
+                context.set_defs({type_name: type_or_schema})
+                _generate_typeddict(type_name, type_or_schema, context)
+        elif _is_named_type(type_or_schema):
+            schema = _get_schema_from_type(type_or_schema)
+            if '$defs' in schema:
+                context.set_defs(schema['$defs'])
+                _process_defs(schema['$defs'], context)
+            if '$ref' in schema:
+                pass
+            elif schema.get('type') == 'object' and 'properties' in schema:
+                _generate_typeddict(type_name, schema, context)
+
+    return context.get_typeddict_definitions()
 
 
 def _is_async_function(func: Callable[..., Any]) -> bool:
@@ -124,6 +210,11 @@ def _format_annotation(annotation: Any) -> str:
     """Format a type annotation as a string."""
     if annotation is None or annotation is type(None):
         return 'None'
+
+    # Handle Python 3.10+ union syntax (X | Y creates types.UnionType)
+    if isinstance(annotation, types.UnionType):
+        args = getattr(annotation, '__args__', ())
+        return ' | '.join(_format_annotation(arg) for arg in args)
 
     origin = getattr(annotation, '__origin__', None)
     args = getattr(annotation, '__args__', None)
@@ -151,21 +242,15 @@ def _get_type_name(t: Any) -> str:
     return s.replace('typing.', '').replace('typing_extensions.', '')
 
 
-# TODO: refactor this and the rest of the unstaged code to look cleaner
-# i.e. handle all cases where return str(value) in one branch ffs!
 def _format_default(value: Any) -> str:
-    """Format a default value as a string."""
-    if isinstance(value, str):
-        return repr(value)
     if value is None:
         return 'None'
-    if isinstance(value, bool):
+    elif isinstance(value, (bool, int, float)):
         return str(value)
-    if isinstance(value, (int, float)):
-        return str(value)
-    if isinstance(value, (list, dict)):
+    elif isinstance(value, (str, list, dict)):
         return repr(value)  # pyright: ignore[reportUnknownArgumentType]
-    return repr(value)
+    else:
+        return repr(value)
 
 
 # TODO we need to scope how much of this should be customizable by the user
@@ -343,8 +428,10 @@ def _namespace_schema_refs(schema: dict[str, Any], prefix: str) -> dict[str, Any
                 ref_name = value[len('#/$defs/') :]
                 updated[key] = f'#/$defs/{prefix}{ref_name}'
             elif isinstance(value, dict):
+                value = cast(dict[str, Any], value)
                 updated[key] = _rename(value)
             elif isinstance(value, list):
+                value = cast(list[dict[str, Any]], value)
                 updated[key] = [_rename(item) if isinstance(item, dict) else item for item in value]
             else:
                 updated[key] = value
@@ -363,8 +450,10 @@ def _namespace_defs(defs: dict[str, dict[str, Any]], prefix: str) -> dict[str, d
                 if key == '$ref' and value == f'#/$defs/{old}':
                     updated[key] = f'#/$defs/{new}'
                 elif isinstance(value, dict):
+                    value = cast(dict[str, Any], value)
                     updated[key] = _rename_ref(value, old, new)
                 elif isinstance(value, list):
+                    value = cast(list[dict[str, Any]], value)
                     updated[key] = [_rename_ref(item, old, new) if isinstance(item, dict) else item for item in value]
                 else:
                     updated[key] = value

@@ -7,12 +7,13 @@ complex task in both modes and comparing metrics like request count and token us
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypedDict
 
 import pytest
 from pydantic import BaseModel
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_evals import Case, Dataset
@@ -78,22 +79,78 @@ _TEAM_MEMBERS: dict[str, list[TeamMember]] = {
 # Orders with product references
 _USER_ORDERS: dict[str, list[Order]] = {
     'u1': [
-        {'order_id': 'o1', 'user_id': 'u1', 'product_id': 'p1', 'quantity': 2, 'unit_price': 100.0, 'status': 'completed'},
-        {'order_id': 'o2', 'user_id': 'u1', 'product_id': 'p2', 'quantity': 1, 'unit_price': 50.0, 'status': 'completed'},
+        {
+            'order_id': 'o1',
+            'user_id': 'u1',
+            'product_id': 'p1',
+            'quantity': 2,
+            'unit_price': 100.0,
+            'status': 'completed',
+        },
+        {
+            'order_id': 'o2',
+            'user_id': 'u1',
+            'product_id': 'p2',
+            'quantity': 1,
+            'unit_price': 50.0,
+            'status': 'completed',
+        },
     ],
     'u2': [
-        {'order_id': 'o3', 'user_id': 'u2', 'product_id': 'p3', 'quantity': 5, 'unit_price': 200.0, 'status': 'completed'},
-        {'order_id': 'o4', 'user_id': 'u2', 'product_id': 'p1', 'quantity': 1, 'unit_price': 100.0, 'status': 'pending'},
+        {
+            'order_id': 'o3',
+            'user_id': 'u2',
+            'product_id': 'p3',
+            'quantity': 5,
+            'unit_price': 200.0,
+            'status': 'completed',
+        },
+        {
+            'order_id': 'o4',
+            'user_id': 'u2',
+            'product_id': 'p1',
+            'quantity': 1,
+            'unit_price': 100.0,
+            'status': 'pending',
+        },
     ],
     'u3': [
-        {'order_id': 'o5', 'user_id': 'u3', 'product_id': 'p2', 'quantity': 3, 'unit_price': 50.0, 'status': 'completed'},
+        {
+            'order_id': 'o5',
+            'user_id': 'u3',
+            'product_id': 'p2',
+            'quantity': 3,
+            'unit_price': 50.0,
+            'status': 'completed',
+        },
     ],
     'u4': [
-        {'order_id': 'o6', 'user_id': 'u4', 'product_id': 'p4', 'quantity': 10, 'unit_price': 25.0, 'status': 'completed'},
-        {'order_id': 'o7', 'user_id': 'u4', 'product_id': 'p3', 'quantity': 2, 'unit_price': 200.0, 'status': 'completed'},
+        {
+            'order_id': 'o6',
+            'user_id': 'u4',
+            'product_id': 'p4',
+            'quantity': 10,
+            'unit_price': 25.0,
+            'status': 'completed',
+        },
+        {
+            'order_id': 'o7',
+            'user_id': 'u4',
+            'product_id': 'p3',
+            'quantity': 2,
+            'unit_price': 200.0,
+            'status': 'completed',
+        },
     ],
     'u5': [
-        {'order_id': 'o8', 'user_id': 'u5', 'product_id': 'p1', 'quantity': 20, 'unit_price': 100.0, 'status': 'completed'},
+        {
+            'order_id': 'o8',
+            'user_id': 'u5',
+            'product_id': 'p1',
+            'quantity': 20,
+            'unit_price': 100.0,
+            'status': 'completed',
+        },
     ],
     'u6': [],
 }
@@ -284,10 +341,11 @@ async def run_traditional(inputs: TaskInput) -> TaskOutput:
     total_input = 0
     total_output = 0
     for msg in result.all_messages():
-        if hasattr(msg, 'usage'):
-            request_count += 1
-            total_input += msg.usage.input_tokens
-            total_output += msg.usage.output_tokens
+        if not isinstance(msg, ModelResponse):
+            continue
+        request_count += 1
+        total_input += msg.usage.input_tokens
+        total_output += msg.usage.output_tokens
 
     return TaskOutput(
         result=result.output,
@@ -311,10 +369,11 @@ async def run_code_mode(inputs: TaskInput) -> TaskOutput:
     total_input = 0
     total_output = 0
     for msg in result.all_messages():
-        if hasattr(msg, 'usage'):
-            request_count += 1
-            total_input += msg.usage.input_tokens
-            total_output += msg.usage.output_tokens
+        if not isinstance(msg, ModelResponse):
+            continue
+        request_count += 1
+        total_input += msg.usage.input_tokens
+        total_output += msg.usage.output_tokens
 
     return TaskOutput(
         result=result.output,
@@ -388,7 +447,7 @@ async def test_code_mode_vs_traditional(allow_model_requests: None):
                     # Bob has p3 qty=5 (>=3, 15% off) = 5*200*0.15 = $150
                     expected_in_result=['bob', '150'],
                 ),
-                evaluators=[ContainsExpected()],
+                evaluators=(ContainsExpected(),),
             )
         ],
         evaluators=[RequestCountEvaluator(), TokenCountEvaluator()],

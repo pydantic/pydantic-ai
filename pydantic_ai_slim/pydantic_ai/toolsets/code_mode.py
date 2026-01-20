@@ -12,7 +12,6 @@ from typing_extensions import TypedDict
 from .._run_context import AgentDepsT, RunContext
 from .._signature_from_schema import signature_from_function, signature_from_schema
 from ..tools import ToolDefinition
-
 from .abstract import SchemaValidatorProt, ToolsetTool
 from .function import FunctionToolset, FunctionToolsetTool
 from .wrapper import WrapperToolset
@@ -55,12 +54,15 @@ def _get_tool_signature(tool: ToolsetTool[Any]) -> str:
         tool_name = tool.tool_def.name
         if tool_name in tool.toolset.tools:
             original_tool = tool.toolset.tools[tool_name]
-            return signature_from_function(
+            result = signature_from_function(
                 original_tool.function,
                 name=tool_name,
                 description=tool.tool_def.description,
                 include_return_type=True,  # Always show return types in code mode
             )
+            if result.typeddict_defs:
+                return '\n\n'.join(result.typeddict_defs) + '\n\n' + result.signature
+            return result.signature
 
     # For external tools (MCP, etc.), convert JSON schema to signature
     result = signature_from_schema(
@@ -87,10 +89,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         available_functions = [_get_tool_signature(tool) for tool in wrapped_tools.values()]
 
         # Debug: show what signatures the model will see
-        print(f'\n{"="*60}\nCODE MODE - Tool Signatures shown to model:\n{"="*60}')
+        print(f'\n{"=" * 60}\nCODE MODE - Tool Signatures shown to model:\n{"=" * 60}')
         for sig in available_functions:
             print(sig)
-        print(f'{"="*60}\n')
+        print(f'{"=" * 60}\n')
 
         # TODO: This dumps all tool signatures up-front, which can bloat context for large toolsets.
         # Example: hundreds of MCP tools can push tens of thousands of tokens into the prompt,
@@ -170,7 +172,7 @@ for item in items:
         assert isinstance(code, str)
 
         # Log the generated code for debugging visibility
-        print(f'\n{"="*60}\nCODE MODE - Generated Code:\n{"="*60}\n{code}\n{"="*60}\n')
+        print(f'\n{"=" * 60}\nCODE MODE - Generated Code:\n{"=" * 60}\n{code}\n{"=" * 60}\n')
 
         # TODO: There is no execution timeout or step budget for Monty runs here.
         # Example: `for _ in range(10**9): pass` can hang the agent run indefinitely.
@@ -182,7 +184,7 @@ for item in items:
             m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
             result = m.start()
         except monty.MontyRuntimeError as e:
-            print(f'\n{"!"*60}\nCODE MODE - Monty Parse/Start Error:\n{e}\n{"!"*60}\n')
+            print(f'\n{"!" * 60}\nCODE MODE - Monty Parse/Start Error:\n{e}\n{"!" * 60}\n')
             raise
 
         call_count = 0
@@ -230,12 +232,12 @@ for item in items:
             try:
                 result = result.resume(return_value=tool_return_value)
             except monty.MontyRuntimeError as e:
-                print(f'\n{"!"*60}\nCODE MODE - Monty Runtime Error after {tool_name} returned:\n')
+                print(f'\n{"!" * 60}\nCODE MODE - Monty Runtime Error after {tool_name} returned:\n')
                 print(f'  Return value was: {tool_return_value}')
-                print(f'  Error: {e}\n{"!"*60}\n')
+                print(f'  Error: {e}\n{"!" * 60}\n')
                 raise
 
         # Log final output
-        print(f'\n{"="*60}\nCODE MODE - Final Output:\n{"="*60}\n{result.output}\n{"="*60}\n')
+        print(f'\n{"=" * 60}\nCODE MODE - Final Output:\n{"=" * 60}\n{result.output}\n{"=" * 60}\n')
 
         return result.output

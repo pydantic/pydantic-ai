@@ -9,9 +9,9 @@ from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
