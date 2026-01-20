@@ -122,13 +122,20 @@ def parse_batch_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
+        # Ensure timezone-aware: if naive, assume UTC
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
         return value
     if isinstance(value, (int, float)):
         return datetime.fromtimestamp(value, tz=timezone.utc)
     if isinstance(value, str):
         try:
             # Handle 'Z' suffix and various ISO formats
-            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+            parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            # Ensure timezone-aware
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
         except ValueError:
             return None
     return None

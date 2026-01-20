@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from .._run_context import RunContext
@@ -125,8 +125,16 @@ class BatchModel(Model):
         if self._batch_task:
             try:
                 await self._batch_task
-            except Exception:
-                pass  # Errors are propagated through individual futures
+            except Exception as e:
+                # Errors are propagated through individual futures.
+                # If we reach here, it means the task failed in a way that
+                # couldn't be propagated to futures (e.g., setup error).
+                # Log it for debugging but don't re-raise since futures may
+                # already have the error.
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(f'Batch task completed with exception: {e}', exc_info=True)
 
     async def request(
         self,
@@ -158,7 +166,7 @@ class BatchModel(Model):
             )
 
         # Create a future for this request
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future[ModelResponse] = loop.create_future()
 
         # Generate a unique custom_id
@@ -225,20 +233,31 @@ class BatchModel(Model):
         if self._batch_task and not self._batch_task.done():  # pragma: no cover
             raise RuntimeError('A batch is already being processed.')
 
-        # Prepare batch requests
-        requests: list[tuple[str, list[ModelMessage], ModelRequestParameters]] = [
-            (req.custom_id, req.messages, req.model_request_parameters) for req in self._queue
-        ]
+        # Prepare batch requests with per-request settings embedded
+        requests: list[tuple[str, list[ModelMessage], ModelRequestParameters]] = []
+        for req in self._queue:
+            # Embed per-request settings into params if present
+            params = req.model_request_parameters
+            if req.model_settings is not None:
+                params = replace(params, model_settings=req.model_settings)
+            requests.append((req.custom_id, req.messages, params))
 
-        # Use the model settings from the first request (or None)
-        model_settings = self._queue[0].model_settings if self._queue else None
+        # Use BatchModel's own settings as batch-wide fallback
+        batch_wide_settings = self.settings
 
         # Create a copy of the queue and clear it
         pending_requests = list(self._queue)
         self._queue.clear()
 
-        # Submit the batch
-        self._pending_batch = await self.wrapped.batch_create(requests, model_settings)
+        # Submit the batch - if this fails, propagate error to all futures
+        try:
+            self._pending_batch = await self.wrapped.batch_create(requests, batch_wide_settings)
+        except Exception as e:
+            # batch_create failed - fail all queued futures
+            for req in pending_requests:
+                if not req.future.done():  # pragma: no cover
+                    req.future.set_exception(e)
+            raise
 
         # Start background task to wait for completion
         self._batch_task = asyncio.create_task(self._wait_and_resolve(pending_requests))

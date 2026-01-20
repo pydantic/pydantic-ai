@@ -212,9 +212,24 @@ Other providers will raise `NotImplementedError` when calling batch methods.
 |------------|--------|-----------|--------|
 | Different model per request | ❌ | ✅ | ❌ |
 | Different tools per request | ✅ | ✅ | ✅ |
-| Different temperature per request | ✅ | ✅ | ✅ |
-| Different max_tokens per request | ✅ | ✅ | ✅ |
-| Different response_format per request | ✅ | ✅ | ✅ |
+| Different output format per request | ✅ | ✅ | ✅ |
+| Per-request temperature/max_tokens | ✅ | ✅ | ✅ |
+
+!!! note "Per-Request Settings"
+    You can specify different `temperature`, `max_tokens`, and other settings for each request by including `model_settings` in the `ModelRequestParameters`. Per-request settings override the batch-wide `model_settings` parameter.
+
+    ```python
+    from dataclasses import replace
+    from pydantic_ai import ModelRequest, ModelRequestParameters
+
+    params = ModelRequestParameters()
+    requests = [
+        ('precise', msgs, replace(params, model_settings={'temperature': 0.2})),
+        ('creative', msgs, replace(params, model_settings={'temperature': 0.9})),
+    ]
+    # Batch-wide settings provide fallback values
+    batch = await model.batch_create(requests, model_settings={'max_tokens': 100})
+    ```
 
 !!! note "Submission Format"
     OpenAI uses JSONL file upload internally, while Anthropic and Google use direct JSON array submission. This is handled automatically by pydantic-ai.
@@ -333,8 +348,10 @@ from pydantic_ai.direct import batch_create
 
 
 async def main():
+    # Note: All providers require at least 2 requests per batch
     requests = [
         ('q1', [ModelRequest.user_text_prompt('Hello')]),
+        ('q2', [ModelRequest.user_text_prompt('World')]),
     ]
 
     batch = await batch_create('openai:gpt-5-mini', requests)
@@ -351,9 +368,9 @@ async def main():
     print(f'Status: {batch.status.name}')
     #> Status: COMPLETED
     print(f'Total: {batch.request_count}')
-    #> Total: 1
+    #> Total: 2
     print(f'Completed: {batch.completed_count}')
-    #> Completed: 1
+    #> Completed: 2
     print(f'Failed: {batch.failed_count}')
     #> Failed: 0
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -900,3 +900,95 @@ class TestAnthropicBatchAPIErrorHandling:
             await model.batch_results(batch)
 
         assert 'Connection failed' in str(exc_info.value)
+
+    async def test_batch_create_per_request_settings(self, allow_model_requests: None):
+        """Test that per-request settings override batch-wide settings."""
+        mock_client = MockAnthropicBatchClient()
+        model = mock_client.create_model()
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+
+        # Create requests with different per-request settings
+        params_1 = replace(ModelRequestParameters(), model_settings={'temperature': 0.2, 'max_tokens': 100})
+        params_2 = replace(ModelRequestParameters(), model_settings={'temperature': 0.9, 'max_tokens': 200})
+
+        requests = [
+            ('req-1', messages_1, params_1),
+            ('req-2', messages_2, params_2),
+        ]
+
+        # Call with batch-wide settings that should be overridden
+        await model.batch_create(requests, model_settings={'temperature': 0.5, 'max_tokens': 150})
+
+        # Verify batch was created
+        assert len(mock_client.batch_create_calls) == 1
+        batch_call = mock_client.batch_create_calls[0]
+        assert len(batch_call['requests']) == 2
+
+        # Verify first request has temperature 0.2 and max_tokens 100 (per-request settings)
+        req_1_params = batch_call['requests'][0]['params']
+        assert req_1_params['temperature'] == 0.2
+        assert req_1_params['max_tokens'] == 100
+
+        # Verify second request has temperature 0.9 and max_tokens 200 (per-request settings)
+        req_2_params = batch_call['requests'][1]['params']
+        assert req_2_params['temperature'] == 0.9
+        assert req_2_params['max_tokens'] == 200
+
+    async def test_batch_create_batch_wide_fallback(self, allow_model_requests: None):
+        """Test that batch-wide settings are used when per-request settings are absent."""
+        mock_client = MockAnthropicBatchClient()
+        model = mock_client.create_model()
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+
+        # Create requests without per-request settings
+        requests = [
+            ('req-1', messages_1, ModelRequestParameters()),
+            ('req-2', messages_2, ModelRequestParameters()),
+        ]
+
+        # Call with batch-wide settings
+        await model.batch_create(requests, model_settings={'temperature': 0.7, 'max_tokens': 500})
+
+        # Verify batch was created
+        assert len(mock_client.batch_create_calls) == 1
+        batch_call = mock_client.batch_create_calls[0]
+
+        # Both requests should use batch-wide settings
+        assert batch_call['requests'][0]['params']['temperature'] == 0.7
+        assert batch_call['requests'][0]['params']['max_tokens'] == 500
+        assert batch_call['requests'][1]['params']['temperature'] == 0.7
+        assert batch_call['requests'][1]['params']['max_tokens'] == 500
+
+    async def test_batch_create_settings_merging(self, allow_model_requests: None):
+        """Test that per-request settings are merged with batch-wide settings."""
+        mock_client = MockAnthropicBatchClient()
+        model = mock_client.create_model()
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+
+        # Per-request setting only overrides temperature, not max_tokens
+        params_1 = replace(ModelRequestParameters(), model_settings={'temperature': 0.9})
+
+        requests = [
+            ('req-1', messages_1, params_1),
+            ('req-2', messages_1, ModelRequestParameters()),  # No per-request settings
+        ]
+
+        # Batch-wide has both temperature and max_tokens
+        await model.batch_create(requests, model_settings={'temperature': 0.5, 'max_tokens': 300})
+
+        batch_call = mock_client.batch_create_calls[0]
+
+        # First request: temperature from per-request (0.9), max_tokens from batch-wide (300)
+        req_1_params = batch_call['requests'][0]['params']
+        assert req_1_params['temperature'] == 0.9
+        assert req_1_params['max_tokens'] == 300
+
+        # Second request: both from batch-wide
+        req_2_params = batch_call['requests'][1]['params']
+        assert req_2_params['temperature'] == 0.5
+        assert req_2_params['max_tokens'] == 300

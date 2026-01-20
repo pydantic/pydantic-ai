@@ -48,7 +48,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from . import (
     Batch,
@@ -62,7 +62,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._batch_utils import parse_batch_datetime
+from ._batch_utils import BatchResultBuilder, parse_batch_datetime, validate_batch_complete
 
 try:
     from google.genai import Client, errors
@@ -866,8 +866,13 @@ class GoogleModel(Model):
             # Track custom_ids in order for later matching with responses
             custom_ids.append(custom_id)
 
+            # Merge batch-wide settings with per-request settings
+            effective_settings = merge_model_settings(base_settings, params.model_settings)
+
             # Prepare request parameters using the same logic as regular requests
-            prepared_settings, prepared_params = self.prepare_request(base_settings, params)
+            prepared_settings, prepared_params = self.prepare_request(
+                cast(GoogleModelSettings, effective_settings or {}), params
+            )
 
             # Build content and config using existing method
             contents, config = await self._build_content_and_config(
@@ -950,13 +955,12 @@ class GoogleModel(Model):
         """
         check_allow_model_requests()
 
-        if not batch.is_complete:
-            raise ValueError(f'Batch {batch.id} is not complete (status: {batch.status})')
+        validate_batch_complete(batch, 'retrieve results')
 
         if not isinstance(batch, GoogleBatch):  # pragma: no cover
             raise TypeError(f'Expected GoogleBatch, got {type(batch).__name__}')
 
-        results: list[BatchResult] = []
+        builder = BatchResultBuilder()
 
         try:
             # Google returns results as part of the batch response or via a separate endpoint
@@ -965,40 +969,59 @@ class GoogleModel(Model):
             # Process each result in the batch
             # Google returns responses in order - we match by index using stored custom_ids
             if hasattr(batch_response, 'responses') and batch_response.responses:
+                response_count = len(batch_response.responses)
+                expected_count = len(batch.custom_ids)
+
+                # Validate response count matches request count
+                if response_count != expected_count:  # pragma: no cover
+                    import warnings
+
+                    warnings.warn(
+                        f'Batch {batch.id} returned {response_count} responses but expected {expected_count}',
+                        stacklevel=2,
+                    )
+
                 item: Any
                 for idx, item in enumerate(batch_response.responses):
                     # Get custom_id by position from our stored list
-                    custom_id = batch.custom_ids[idx] if idx < len(batch.custom_ids) else f'unknown_{idx}'
+                    if idx < len(batch.custom_ids):
+                        custom_id = batch.custom_ids[idx]
+                    else:  # pragma: no cover
+                        # More responses than custom_ids - this shouldn't happen
+                        custom_id = f'unknown_{idx}'
+                        import warnings
+
+                        warnings.warn(
+                            f'Batch {batch.id} response index {idx} has no corresponding custom_id',
+                            stacklevel=2,
+                        )
+
                     try:
                         if hasattr(item, 'error') and item.error:
                             item_error: Any = item.error
                             error_type: str = str(getattr(item_error, 'code', 'unknown_error'))
                             error_message: str = str(getattr(item_error, 'message', str(item_error)))
-                            results.append(
-                                BatchResult(
-                                    custom_id=custom_id,
-                                    error=BatchError(code=error_type, message=error_message),
-                                )
-                            )
+                            builder.add_error(custom_id, BatchError(code=error_type, message=error_message))
                         elif hasattr(item, 'response') and item.response:
                             # Convert the response using existing _process_response logic
                             item_response: GenerateContentResponse = cast(GenerateContentResponse, item.response)
                             model_response = self._process_response(item_response)
-                            results.append(BatchResult(custom_id=custom_id, response=model_response))
+                            builder.add_success(custom_id, model_response)
                         else:  # pragma: no cover
-                            results.append(
-                                BatchResult(
-                                    custom_id=custom_id,
-                                    error=BatchError(code='no_response', message='No response in batch result'),
-                                )
+                            builder.add_error(
+                                custom_id,
+                                BatchError(code='no_response', message='No response in batch result'),
                             )
                     except Exception as e:  # pragma: no cover
-                        results.append(
-                            BatchResult(
-                                custom_id=custom_id,
-                                error=BatchError(code='processing_error', message=str(e)),
-                            )
-                        )
+                        builder.add_error(custom_id, BatchError(code='processing_error', message=str(e)))
+            elif batch.request_count > 0:  # pragma: no cover
+                # Batch completed but no responses returned - this is unexpected
+                import warnings
+
+                warnings.warn(
+                    f'Batch {batch.id} completed with {batch.request_count} requests but returned no responses',
+                    stacklevel=2,
+                )
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
@@ -1008,7 +1031,7 @@ class GoogleModel(Model):
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e  # pragma: no cover
 
-        return results
+        return builder.results
 
     async def batch_cancel(self, batch: Batch) -> GoogleBatch:
         """Cancel a Google batch job.

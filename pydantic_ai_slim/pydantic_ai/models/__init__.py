@@ -570,6 +570,31 @@ class ModelRequestParameters:
     function_tools: list[ToolDefinition] = field(default_factory=list)
     builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
 
+    model_settings: ModelSettings | None = None
+    """Optional per-request settings override.
+
+    When used with batch processing, these settings take precedence over the
+    batch-wide model_settings parameter via `merge_model_settings()`.
+
+    Provider support:
+        - Anthropic: ✅ Different models + all settings per request
+        - OpenAI: ⚠️ Same model required, temperature/max_tokens supported
+        - Google: ⚠️ Same model required, per-request settings support unclear
+
+    Example:
+        ```python
+        from dataclasses import replace
+
+        params = ModelRequestParameters()
+        requests = [
+            ('precise', msgs, replace(params,
+                model_settings={'temperature': 0.2})),
+            ('creative', msgs, replace(params,
+                model_settings={'temperature': 0.9})),
+        ]
+        ```
+    """
+
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
@@ -792,6 +817,12 @@ def supports_batch(model: Model) -> bool:
                 ...
         ```
     """
+    # Special case: BatchModel supports batching via submit(), not batch_create()
+    from .batch import BatchModel
+
+    if isinstance(model, BatchModel):
+        return True
+
     model_class = model.__class__
 
     for method_name in ('batch_create', 'batch_status', 'batch_results', 'batch_cancel'):

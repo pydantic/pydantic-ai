@@ -61,7 +61,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._batch_utils import parse_batch_datetime
+from ._batch_utils import BatchResultBuilder, parse_batch_datetime, validate_batch_complete
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'end_turn': 'stop',
@@ -1254,7 +1254,11 @@ class AnthropicModel(Model):
         # Build batch requests array
         batch_requests: list[BetaBatchRequest] = []
         for custom_id, messages, params in requests:
-            request_params = await self._build_batch_request_params(messages, params, base_settings)
+            # Merge batch-wide settings with per-request settings
+            effective_settings = merge_model_settings(base_settings, params.model_settings)
+            request_params = await self._build_batch_request_params(
+                messages, params, cast(AnthropicModelSettings, effective_settings or {})
+            )
             batch_requests.append(
                 BetaBatchRequest(
                     custom_id=custom_id,
@@ -1280,10 +1284,16 @@ class AnthropicModel(Model):
         self,
         messages: list[ModelMessage],
         params: ModelRequestParameters,
-        base_settings: AnthropicModelSettings,
+        effective_settings: AnthropicModelSettings,
     ) -> dict[str, Any]:
-        """Build request parameters for a single batch request."""
-        prepared_settings, prepared_params = self.prepare_request(base_settings, params)
+        """Build request parameters for a single batch request.
+
+        Args:
+            messages: Message history for this request.
+            params: Tool definitions, output schema, etc.
+            effective_settings: Already-merged settings (batch-wide + per-request).
+        """
+        prepared_settings, prepared_params = self.prepare_request(effective_settings, params)
         prepared_settings = cast(AnthropicModelSettings, prepared_settings or {})
 
         # Get tools
@@ -1376,13 +1386,12 @@ class AnthropicModel(Model):
         """
         check_allow_model_requests()
 
-        if not batch.is_complete:
-            raise ValueError(f'Batch {batch.id} is not complete (status: {batch.status})')
+        validate_batch_complete(batch, 'retrieve results')
 
         if not isinstance(batch, AnthropicBatch):  # pragma: no cover
             raise TypeError(f'Expected AnthropicBatch, got {type(batch).__name__}')
 
-        results: list[BatchResult] = []
+        builder = BatchResultBuilder()
 
         try:
             # Stream results from the API
@@ -1396,38 +1405,30 @@ class AnthropicModel(Model):
                 if result.type == 'succeeded':  # pyright: ignore[reportUnknownMemberType]
                     # Parse successful response using existing logic
                     model_response = self._process_response(result.message)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                    results.append(BatchResult(custom_id=custom_id, response=model_response))  # pyright: ignore[reportUnknownArgumentType]
+                    builder.add_success(custom_id, model_response)  # pyright: ignore[reportUnknownArgumentType]
                 elif result.type == 'errored':  # pyright: ignore[reportUnknownMemberType]
                     error = result.error  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-                    results.append(
-                        BatchResult(
-                            custom_id=custom_id,  # pyright: ignore[reportUnknownArgumentType]
-                            error=BatchError(
-                                code=getattr(error, 'type', 'unknown'),  # pyright: ignore[reportUnknownArgumentType]
-                                message=getattr(error, 'message', str(error)),  # pyright: ignore[reportUnknownArgumentType]
-                            ),
-                        )
+                    builder.add_error(
+                        custom_id,  # pyright: ignore[reportUnknownArgumentType]
+                        BatchError(
+                            code=getattr(error, 'type', 'unknown'),  # pyright: ignore[reportUnknownArgumentType]
+                            message=getattr(error, 'message', str(error)),  # pyright: ignore[reportUnknownArgumentType]
+                        ),
                     )
                 elif result.type == 'canceled':  # pyright: ignore[reportUnknownMemberType]
-                    results.append(
-                        BatchResult(
-                            custom_id=custom_id,  # pyright: ignore[reportUnknownArgumentType]
-                            error=BatchError(code='canceled', message='Request was canceled'),
-                        )
+                    builder.add_error(
+                        custom_id,  # pyright: ignore[reportUnknownArgumentType]
+                        BatchError(code='canceled', message='Request was canceled'),
                     )
                 elif result.type == 'expired':  # pyright: ignore[reportUnknownMemberType]
-                    results.append(
-                        BatchResult(
-                            custom_id=custom_id,  # pyright: ignore[reportUnknownArgumentType]
-                            error=BatchError(code='expired', message='Request expired'),
-                        )
+                    builder.add_error(
+                        custom_id,  # pyright: ignore[reportUnknownArgumentType]
+                        BatchError(code='expired', message='Request expired'),
                     )
                 else:  # pragma: no cover
-                    results.append(
-                        BatchResult(
-                            custom_id=custom_id,  # pyright: ignore[reportUnknownArgumentType]
-                            error=BatchError(code='unknown', message=f'Unknown result type: {result.type}'),  # pyright: ignore[reportUnknownMemberType]
-                        )
+                    builder.add_error(
+                        custom_id,  # pyright: ignore[reportUnknownArgumentType]
+                        BatchError(code='unknown', message=f'Unknown result type: {result.type}'),  # pyright: ignore[reportUnknownMemberType]
                     )
         except APIStatusError as e:
             if e.status_code >= 400:
@@ -1436,7 +1437,7 @@ class AnthropicModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        return results
+        return builder.results
 
     async def batch_cancel(self, batch: Batch) -> AnthropicBatch:
         """Cancel an Anthropic batch job.

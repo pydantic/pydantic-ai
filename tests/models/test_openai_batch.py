@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -1835,3 +1835,112 @@ class TestModelRequestBatchPolling:
         result_map = {r.custom_id: r for r in results}
         assert result_map['req-poll-1'].is_successful is True
         assert result_map['req-poll-2'].is_successful is True
+
+    async def test_batch_create_per_request_settings(self, allow_model_requests: None):
+        """Test that per-request settings override batch-wide settings."""
+        mock_client = MockOpenAIBatch()
+        model = mock_client.create_model()
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+
+        # Create requests with different per-request settings
+        # Note: gpt-5-mini doesn't support temperature, so we use seed and max_tokens
+        params_1 = replace(ModelRequestParameters(), model_settings={'seed': 123, 'max_tokens': 100})
+        params_2 = replace(ModelRequestParameters(), model_settings={'seed': 456, 'max_tokens': 200})
+
+        requests = [
+            ('req-1', messages_1, params_1),
+            ('req-2', messages_2, params_2),
+        ]
+
+        # Call with batch-wide settings that should be overridden
+        await model.batch_create(requests, model_settings={'seed': 789, 'max_tokens': 150})
+
+        # Verify file was created
+        assert len(mock_client.file_create_calls) == 1
+        file_call = mock_client.file_create_calls[0]
+        jsonl_bytes = file_call['file']
+
+        # Read from BytesIO and parse JSONL lines
+        jsonl_content = jsonl_bytes.read().decode('utf-8')
+        lines = jsonl_content.strip().split('\n')
+        assert len(lines) == 2
+
+        req_1 = json.loads(lines[0])
+        req_2 = json.loads(lines[1])
+
+        # Verify first request has seed 123 and max_completion_tokens 100 (per-request settings)
+        assert req_1['body']['seed'] == 123
+        assert req_1['body']['max_completion_tokens'] == 100
+
+        # Verify second request has seed 456 and max_completion_tokens 200 (per-request settings)
+        assert req_2['body']['seed'] == 456
+        assert req_2['body']['max_completion_tokens'] == 200
+
+    async def test_batch_create_batch_wide_fallback(self, allow_model_requests: None):
+        """Test that batch-wide settings are used when per-request settings are absent."""
+        mock_client = MockOpenAIBatch()
+        model = mock_client.create_model()
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        messages_2: list[ModelMessage] = [ModelRequest.user_text_prompt('World')]
+
+        # Create requests without per-request settings
+        requests = [
+            ('req-1', messages_1, ModelRequestParameters()),
+            ('req-2', messages_2, ModelRequestParameters()),
+        ]
+
+        # Call with batch-wide settings (using seed since gpt-5-mini doesn't support temperature)
+        await model.batch_create(requests, model_settings={'seed': 999, 'max_tokens': 500})
+
+        # Verify file was created
+        file_call = mock_client.file_create_calls[0]
+        jsonl_bytes = file_call['file']
+
+        # Read from BytesIO and parse JSONL lines
+        jsonl_content = jsonl_bytes.read().decode('utf-8')
+        lines = jsonl_content.strip().split('\n')
+        req_1 = json.loads(lines[0])
+        req_2 = json.loads(lines[1])
+
+        # Both requests should use batch-wide settings
+        assert req_1['body']['seed'] == 999
+        assert req_1['body']['max_completion_tokens'] == 500
+        assert req_2['body']['seed'] == 999
+        assert req_2['body']['max_completion_tokens'] == 500
+
+    async def test_batch_create_settings_merging(self, allow_model_requests: None):
+        """Test that per-request settings are merged with batch-wide settings."""
+        mock_client = MockOpenAIBatch()
+        model = mock_client.create_model()
+
+        messages_1: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+
+        # Per-request setting only overrides seed, not max_tokens
+        params_1 = replace(ModelRequestParameters(), model_settings={'seed': 111})
+
+        requests = [
+            ('req-1', messages_1, params_1),
+            ('req-2', messages_1, ModelRequestParameters()),  # No per-request settings
+        ]
+
+        # Batch-wide has both seed and max_tokens
+        await model.batch_create(requests, model_settings={'seed': 222, 'max_tokens': 300})
+
+        # Parse JSONL lines
+        file_call = mock_client.file_create_calls[0]
+        jsonl_bytes = file_call['file']
+        jsonl_content = jsonl_bytes.read().decode('utf-8')
+        lines = jsonl_content.strip().split('\n')
+        req_1 = json.loads(lines[0])
+        req_2 = json.loads(lines[1])
+
+        # First request: seed from per-request (111), max_completion_tokens from batch-wide (300)
+        assert req_1['body']['seed'] == 111
+        assert req_1['body']['max_completion_tokens'] == 300
+
+        # Second request: both from batch-wide
+        assert req_2['body']['seed'] == 222
+        assert req_2['body']['max_completion_tokens'] == 300
