@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import replace
+from dataclasses import fields as dataclass_fields, is_dataclass, replace
 from functools import lru_cache
 from typing import Any
 
 import temporalio.api.common.v1
-from pydantic import TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_json
 from temporalio.contrib.pydantic import PydanticPayloadConverter
 from temporalio.converter import (
@@ -25,6 +25,33 @@ def _get_type_adapter(cls: type[Any]) -> TypeAdapter[Any]:
     return TypeAdapter(cls)
 
 
+def _prepare_for_serialization(value: Any) -> Any:
+    """Recursively convert `FileUrl` instances to dicts with computed fields preserved.
+
+    `pydantic_core.to_json()` doesn't use Pydantic schema information, so it doesn't
+    preserve computed fields or respect field aliases/exclusions on `FileUrl`.
+    This function walks the value tree and converts `FileUrl` instances using
+    `TypeAdapter.dump_python()` which properly handles computed fields.
+    """
+    if isinstance(value, FileUrl):
+        return _get_type_adapter(type(value)).dump_python(value, mode='json')
+
+    if isinstance(value, dict):
+        return {k: _prepare_for_serialization(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, list):
+        return [_prepare_for_serialization(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, tuple):
+        return tuple(_prepare_for_serialization(item) for item in value)  # pyright: ignore[reportUnknownVariableType]
+
+    if isinstance(value, BaseModel):
+        return _prepare_for_serialization(value.model_dump(mode='json'))
+
+    if is_dataclass(value) and not isinstance(value, type):
+        return {f.name: _prepare_for_serialization(getattr(value, f.name)) for f in dataclass_fields(value)}
+
+    return value
+
+
 class PydanticAIJSONPayloadConverter(EncodingPayloadConverter):
     """JSON payload converter using TypeAdapter for FileUrl to preserve computed fields."""
 
@@ -33,24 +60,13 @@ class PydanticAIJSONPayloadConverter(EncodingPayloadConverter):
         return 'json/plain'
 
     def to_payload(self, value: Any) -> temporalio.api.common.v1.Payload | None:
-        """FileUrl has computed fields (media_type, identifier) backed by excluded private fields (_media_type, _identifier).
+        """Serialize value to JSON, handling FileUrl computed fields correctly.
 
-        pydantic_core.to_json() doesn't preserve these computed fields correctly,
-        so we need `TypeAdapter.dump_json()` for proper serialization.
-
-        We can't use `TypeAdapter` for all BaseModel/dataclass types
-        because it causes hangs in Temporal workflows.
-
-        For example, `CallToolParams` has `tool_args: dict[str, Any]` but at runtime contains
-        a Pydantic model. `TypeAdapter.dump_json()` tries to serialize through the dict[str, Any] schema,
-        which hangs in Temporal's threading context (works fine in isolation, hangs in workflows).
-
-        So we use `TypeAdapter` only for `FileUrl` (which needs it), and to_json() for everything else.
+        Uses `_prepare_for_serialization()` to recursively convert any `FileUrl` instances
+        (including nested ones) to dicts that preserve computed fields like `media_type`.
         """
-        if isinstance(value, FileUrl):
-            data = _get_type_adapter(type(value)).dump_json(value)
-        else:
-            data = to_json(value)
+        prepared = _prepare_for_serialization(value)
+        data = to_json(prepared)
         return temporalio.api.common.v1.Payload(metadata={'encoding': self.encoding.encode()}, data=data)
 
     def from_payload(

@@ -76,6 +76,9 @@ try:
         TemporalAgent,
         pydantic_ai_data_converter,
     )
+    from pydantic_ai.durable_exec.temporal._converter import (
+        _prepare_for_serialization,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
@@ -3161,3 +3164,70 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
         result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
+
+
+def test_prepare_for_serialization_handles_nested_file_urls() -> None:
+    """Test that _prepare_for_serialization handles FileUrl instances nested in containers."""
+    doc = DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf')
+
+    # Top-level FileUrl
+    result = _prepare_for_serialization(doc)
+    assert result == snapshot(
+        {
+            'url': 'https://example.com/doc/12345',
+            'force_download': False,
+            'vendor_metadata': None,
+            'kind': 'document-url',
+            'media_type': 'application/pdf',
+            'identifier': 'eb8998',
+        }
+    )
+
+    # FileUrl in list
+    result = _prepare_for_serialization([doc])
+    assert result == snapshot(
+        [
+            {
+                'url': 'https://example.com/doc/12345',
+                'force_download': False,
+                'vendor_metadata': None,
+                'kind': 'document-url',
+                'media_type': 'application/pdf',
+                'identifier': 'eb8998',
+            }
+        ]
+    )
+
+    # FileUrl in dict
+    result = _prepare_for_serialization({'doc': doc})
+    assert result == snapshot(
+        {
+            'doc': {
+                'url': 'https://example.com/doc/12345',
+                'force_download': False,
+                'vendor_metadata': None,
+                'kind': 'document-url',
+                'media_type': 'application/pdf',
+                'identifier': 'eb8998',
+            }
+        }
+    )
+
+    # FileUrl in nested structure
+    result = _prepare_for_serialization({'items': [{'doc': doc}]})
+    assert result == snapshot(
+        {
+            'items': [
+                {
+                    'doc': {
+                        'url': 'https://example.com/doc/12345',
+                        'force_download': False,
+                        'vendor_metadata': None,
+                        'kind': 'document-url',
+                        'media_type': 'application/pdf',
+                        'identifier': 'eb8998',
+                    }
+                }
+            ]
+        }
+    )
