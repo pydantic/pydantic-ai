@@ -70,7 +70,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -5444,3 +5444,47 @@ async def test_google_stream_safety_filter(
     response_msg = body_json[0]
     assert response_msg['provider_details']['finish_reason'] == 'SAFETY'
     assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'
+
+
+async def test_google_provider_timeout_propagates_to_httpx_requests(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that GoogleProvider's timeout setting propagates to httpx requests.
+
+    The google-genai SDK's HttpOptions.timeout defaults to None, which causes the SDK to
+    explicitly pass timeout=None to httpx, overriding any timeout configured on the httpx
+    client. This would cause requests to hang indefinitely.
+
+    This test verifies that when a request is made, the timeout passed to httpx equals
+    DEFAULT_HTTP_TIMEOUT (600 seconds), confirming the fix works end-to-end.
+
+    See https://github.com/pydantic/pydantic-ai/issues/4031
+    """
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+
+    captured_timeout: float | None = None
+
+    mock_response = mocker.MagicMock()
+    mock_response.status_code = 200
+    mock_response.headers = {}
+    mock_response.text = json.dumps({
+        'candidates': [{'content': {'parts': [{'text': 'Hello!'}], 'role': 'model'}, 'finishReason': 'STOP'}],
+        'usageMetadata': {'promptTokenCount': 1, 'candidatesTokenCount': 1, 'totalTokenCount': 2},
+    })
+
+    async def capture_timeout_request(*args: Any, **kwargs: Any):
+        nonlocal captured_timeout
+        captured_timeout = kwargs.get('timeout')
+        return mock_response
+
+    mocker.patch.object(
+        google_provider._client._api_client._async_httpx_client,
+        'request',
+        side_effect=capture_timeout_request,
+    )
+
+    await agent.run('Hello!')
+
+    assert captured_timeout is not None, 'Timeout was None, which would cause requests to hang indefinitely'
+    assert captured_timeout == DEFAULT_HTTP_TIMEOUT
