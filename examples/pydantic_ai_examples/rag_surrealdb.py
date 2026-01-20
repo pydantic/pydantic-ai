@@ -157,6 +157,13 @@ DOCS_JSON = (
 )
 
 
+def build_doc_rec_id(url: str) -> RecordID:
+    # url = section.url()
+    url_slug = slugify(url, '_')
+    record_id = RecordID('doc_sections', url_slug)
+    return record_id
+
+
 async def build_search_db():
     """Build the search database."""
     async with httpx.AsyncClient() as client:
@@ -168,52 +175,55 @@ async def build_search_db():
         with logfire.span('create schema'):
             await db.query(DB_SCHEMA)
 
-        with logfire.span('create embeddings'):
-            result = await embedder.embed_documents(
-                [section.embedding_content() for section in sections]
-            )
-            embeddings = result.embeddings
-        assert len(embeddings) == len(sections), (
-            'Expected embeddings to match sections count, '
-            f'got {len(embeddings)} embeddings for {len(sections)} sections'
-        )
+        missing_sections: list[DocsSection] = []
+        for section in sections:
+            url = section.url()
+            record_id = build_doc_rec_id(url)
+            existing = await db.select(record_id)
+            if existing:
+                logfire.info('Skipping {url=}', url=url)
+                continue
+            missing_sections.append(section)
 
-        db_sem = asyncio.Semaphore(1)
-        async with create_task_group() as tg:
-            for section, embedding_vector in zip(sections, embeddings, strict=True):
-                tg.start_soon(insert_doc_section, db_sem, db, section, embedding_vector)
+        if missing_sections:
+            with logfire.span('create embeddings'):
+                result = await embedder.embed_documents(
+                    [section.embedding_content() for section in missing_sections]
+                )
+                embeddings = result.embeddings
+            assert len(embeddings) == len(missing_sections), (
+                'Expected embeddings to match sections count, '
+                f'got {len(embeddings)} embeddings for {len(missing_sections)} sections'
+            )
+
+            for section, embedding_vector in zip(
+                missing_sections, embeddings, strict=True
+            ):
+                await insert_doc_section(db, section, embedding_vector)
+        else:
+            logfire.info('All documents already exist; skipping embedding generation')
 
 
 async def insert_doc_section(
-    db_sem: asyncio.Semaphore,
     db: SurrealConn,
     section: DocsSection,
     embedding_vector: Sequence[float],
 ) -> None:
     url = section.url()
-    # Create a URL-safe record ID
-    url_slug = slugify(url, '_')
-    record_id = RecordID('doc_sections', url_slug)
+    record_id = build_doc_rec_id(url)
 
-    # Check if record exists
-    existing = await db.select(record_id)
-    if existing:
-        logfire.info('Skipping {url=}', url=url)
-        return
-
-    async with db_sem:
-        # Create record with embedding as array, using record ID directly
-        res = await db.create(
-            record_id,
-            {
-                'url': url,
-                'title': section.title,
-                'content': section.content,
-                'embedding': list(embedding_vector),
-            },
-        )
-        if not isinstance(res, dict):
-            raise ValueError(f'Unexpected response from database: {res}')
+    # Create record with embedding, using record ID directly
+    res = await db.create(
+        record_id,
+        {
+            'url': url,
+            'title': section.title,
+            'content': section.content,
+            'embedding': list(embedding_vector),
+        },
+    )
+    if not isinstance(res, dict):
+        raise ValueError(f'Unexpected response from database: {res}')
 
 
 @dataclass
