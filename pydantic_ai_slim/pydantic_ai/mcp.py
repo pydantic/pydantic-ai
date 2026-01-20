@@ -1134,8 +1134,10 @@ class _MCPServerHTTP(MCPServer):
         ],
     ]: ...
 
+    # Only used by MCPServerSSE which has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811).
+    # Remove pragma once https://github.com/modelcontextprotocol/python-sdk/pull/1838 is released.
     @asynccontextmanager
-    async def client_streams(
+    async def client_streams(  # pragma: no cover
         self,
     ) -> AsyncIterator[
         tuple[
@@ -1144,7 +1146,7 @@ class _MCPServerHTTP(MCPServer):
         ]
     ]:
         if self.http_client and self.headers:
-            raise ValueError('`http_client` is mutually exclusive with `headers`.')  # pragma: no cover
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
 
         transport_client_partial = functools.partial(
             self._transport_client,
@@ -1154,7 +1156,8 @@ class _MCPServerHTTP(MCPServer):
         )
 
         if self.http_client is not None:
-            # TODO: Clean up once https://github.com/modelcontextprotocol/python-sdk/pull/1177 lands.
+            # sse_client still uses the old httpx_client_factory API (streamable_http_client uses http_client).
+            # This wrapper is needed until sse_client is updated to match streamable_http_client's API.
             @asynccontextmanager
             async def httpx_client_factory(
                 headers: dict[str, str] | None = None,
@@ -1218,8 +1221,8 @@ class MCPServerSSE(_MCPServerHTTP):
         )
 
     @property
-    def _transport_client(self):
-        return sse_client  # pragma: no cover
+    def _transport_client(self):  # pragma: no cover
+        return sse_client
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerSSE) and self.url == value.url
@@ -1282,7 +1285,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
         )
 
     @property
-    def _transport_client(self):
+    def _transport_client(self):  # pragma: no cover
         return streamable_http_client
 
     @asynccontextmanager
