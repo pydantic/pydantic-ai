@@ -1029,10 +1029,18 @@ async def process_tool_calls(  # noqa: C901
                         )
                     )
         elif calls:
-            deferred_calls['external'].extend(tool_calls_by_kind['external'])
-            deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
-
             for call in calls:
+                try:
+                    tool_manager.validate_args(call)
+                except ToolRetryError as e:
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                    output_parts.append(e.tool_retry)
+                    continue
+
+                if call in tool_calls_by_kind['external']:
+                    deferred_calls['external'].append(call)
+                else:
+                    deferred_calls['unapproved'].append(call)
                 yield _messages.FunctionToolCallEvent(call)
 
     if not final_result and deferred_calls:

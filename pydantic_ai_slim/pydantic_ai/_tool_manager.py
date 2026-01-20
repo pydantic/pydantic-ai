@@ -33,7 +33,7 @@ class ToolManager(Generic[AgentDepsT]):
     """The agent run context for a specific run step."""
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
     """The cached tools for this run step."""
-    failed_tools: set[str] = field(default_factory=set)
+    failed_tools: set[str] = field(default_factory=set[str])
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
@@ -91,6 +91,67 @@ class ToolManager(Generic[AgentDepsT]):
         except KeyError:
             return None
 
+    def validate_args(self, call: ToolCallPart) -> dict[str, Any]:
+        """Validate tool call arguments without executing the tool.
+
+        This is used to validate arguments before deferring tool calls that require approval.
+        Raises `ToolRetryError` on validation failure, or `ModelRetry` if the tool is unknown.
+        """
+        if self.tools is None or self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        name = call.tool_name
+        tool = self.tools.get(name)
+        try:
+            if tool is None:
+                if self.tools:
+                    msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tools.keys())}'
+                else:
+                    msg = 'No tools available.'
+                raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+
+            ctx = replace(
+                self.ctx,
+                tool_name=name,
+                tool_call_id=call.tool_call_id,
+                retry=self.ctx.retries.get(name, 0),
+                max_retries=tool.max_retries,
+            )
+
+            validator = tool.args_validator
+            if isinstance(call.args, str):
+                args_dict = validator.validate_json(call.args or '{}', context=ctx.validation_context)
+            else:
+                args_dict = validator.validate_python(call.args or {}, context=ctx.validation_context)
+
+            return args_dict
+        except (ValidationError, ModelRetry) as e:
+            max_retries = tool.max_retries if tool is not None else self.default_max_retries
+            current_retry = self.ctx.retries.get(name, 0)
+
+            if current_retry == max_retries:
+                raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
+            else:
+                if isinstance(e, ValidationError):
+                    m = _messages.RetryPromptPart(
+                        tool_name=name,
+                        content=e.errors(include_url=False, include_context=False),
+                        tool_call_id=call.tool_call_id,
+                    )
+                    e = ToolRetryError(m)
+                elif isinstance(e, ModelRetry):
+                    m = _messages.RetryPromptPart(
+                        tool_name=name,
+                        content=e.message,
+                        tool_call_id=call.tool_call_id,
+                    )
+                    e = ToolRetryError(m)
+                else:
+                    assert_never(e)
+
+                self.failed_tools.add(name)
+                raise e
+
     async def handle_call(
         self,
         call: ToolCallPart,
@@ -107,7 +168,7 @@ class ToolManager(Generic[AgentDepsT]):
             allow_partial: Whether to allow partial validation of the tool arguments.
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
             approved: Whether the tool call has been approved.
-            metadata: Additional metadata from DeferredToolResults.metadata.
+            metadata: Additional metadata from `DeferredToolResults`.metadata.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover

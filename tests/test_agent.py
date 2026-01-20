@@ -6686,6 +6686,89 @@ async def test_hitl_tool_approval():
     )
 
 
+async def test_requires_approval_validates_args_before_deferring():
+    """Tool with requires_approval=True should validate args before deferring.
+
+    If the model returns invalid args for an approval-requiring tool, the agent
+    should retry instead of deferring an invalid tool call for approval.
+    """
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: return invalid args (missing required 'force' parameter)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file',
+                        args={'path': 'file.txt'},  # missing 'force'
+                        tool_call_id='delete_file_1',
+                    ),
+                ]
+            )
+        else:
+            # Second call: return valid args
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file',
+                        args={'path': 'file.txt', 'force': True},
+                        tool_call_id='delete_file_2',
+                    ),
+                ]
+            )
+
+    model = FunctionModel(model_function)
+    agent = Agent(model, output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str, force: bool) -> str:
+        return f'File {path!r} deleted (force={force})'
+
+    result = await agent.run('Delete file.txt')
+
+    # Should have retried and returned deferred tool request with valid args
+    assert call_count == 2
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[
+                ToolCallPart(
+                    tool_name='delete_file',
+                    args={'path': 'file.txt', 'force': True},
+                    tool_call_id='delete_file_2',
+                )
+            ]
+        )
+    )
+
+    # Verify that the first call resulted in a retry prompt
+    messages = result.all_messages()
+    assert len(messages) == 4  # UserPrompt, ModelResponse(invalid), RetryPrompt, ModelResponse(valid)
+    assert messages[2] == snapshot(
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='delete_file',
+                    content=[
+                        {
+                            'type': 'missing',
+                            'loc': ('force',),
+                            'msg': 'Field required',
+                            'input': {'path': 'file.txt'},
+                        }
+                    ],
+                    tool_call_id='delete_file_1',
+                    timestamp=IsDatetime(),
+                )
+            ],
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+        )
+    )
+
+
 async def test_run_with_deferred_tool_results_errors():
     agent = Agent('test')
 
