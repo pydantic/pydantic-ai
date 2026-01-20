@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: LLM Provider Built-in Tools Documentation"
-description: "Leverage native capabilities provided by LLM vendors. Documentation on using built-in tools like web search or code execution within Pydantic AI."
----
 # Built-in Tools
 
 Built-in tools are native tools provided by LLM providers that can be used to enhance your agent's capabilities. Unlike [common tools](common-tools.md), which are custom implementations that Pydantic AI executes, built-in tools are executed directly by the model provider.
@@ -172,7 +168,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | Google | ✅ | Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Anthropic | ✅ | |
 | Groq | ❌ | |
-| Bedrock | ❌ | |
+| Bedrock | ✅ | Only available for Nova 2.0 models. |
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |

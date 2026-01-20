@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Examples: Setup, Install & Run Guide"
-description: "Learn how to clone a repository, install dependencies, and execute sample agent scripts."
----
 # Examples
 
 Here we include some examples of how to use Pydantic AI and what it can do.

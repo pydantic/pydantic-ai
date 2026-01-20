@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Deferred Tools & Human in the Loop"
-description: "Implement human-in-the-loop patterns using deferred tools. Pause agent execution for manual approval or external input before proceeding with tasks."
----
 # Deferred Tools
 
 There are a few scenarios where the model should be able to call a tool that should not or cannot be executed during the same agent run inside the same Python process:
