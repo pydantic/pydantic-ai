@@ -289,13 +289,98 @@ def greet(name: str) -> Any:
         )
 
     def test_custom_return_type(self):
-        schema = {
+        schema: dict[str, Any] = {
             'type': 'object',
             'properties': {'x': {'type': 'integer'}},
             'required': ['x'],
         }
         result = signature_from_schema('func', schema, return_type='str')
         assert result.signature == snapshot('def func(x: int) -> str: ...')
+
+    def test_return_schema_object_generates_return_type(self):
+        schema: dict[str, Any] = {'type': 'object', 'properties': {}}
+        return_schema: dict[str, Any] = {
+            'type': 'object',
+            'properties': {
+                'items': {'type': 'array', 'items': {'type': 'string'}},
+                'next_cursor': {'type': 'string'},
+            },
+            'required': ['items', 'next_cursor'],
+        }
+        result = signature_from_schema('process', schema, return_json_schema=return_schema)
+        assert result.typeddict_defs == snapshot(
+            [
+                """\
+class ProcessReturn(TypedDict):
+    items: list[str]
+    next_cursor: str"""
+            ]
+        )
+        assert result.signature == snapshot('def process() -> ProcessReturn: ...')
+
+    def test_return_schema_with_defs_and_ref(self):
+        schema: dict[str, Any] = {
+            'type': 'object',
+            'properties': {'input': {'$ref': '#/$defs/Input'}},
+            'required': ['input'],
+            '$defs': {
+                'Input': {
+                    'type': 'object',
+                    'properties': {'name': {'type': 'string'}},
+                    'required': ['name'],
+                }
+            },
+        }
+        return_schema: dict[str, Any] = {
+            '$defs': {
+                'Output': {
+                    'type': 'object',
+                    'properties': {'count': {'type': 'integer'}},
+                    'required': ['count'],
+                }
+            },
+            '$ref': '#/$defs/Output',
+        }
+        result = signature_from_schema('process', schema, return_json_schema=return_schema)
+        assert result.typeddict_defs == snapshot(
+            [
+                """\
+class Input(TypedDict):
+    name: str""",
+                """\
+class Output(TypedDict):
+    count: int""",
+            ]
+        )
+        assert result.signature == snapshot('def process(input: Input) -> Output: ...')
+
+    def test_return_schema_any_adds_docstring(self):
+        schema: dict[str, Any] = {
+            'type': 'object',
+            'properties': {'x': {'type': 'integer'}},
+            'required': ['x'],
+        }
+        return_schema: dict[str, Any] = {'allOf': [{'type': 'string'}, {'type': 'integer'}]}
+        result = signature_from_schema('func', schema, description='Do stuff', return_json_schema=return_schema)
+        assert result.signature == snapshot(
+            '''\
+def func(x: int) -> Any:
+    """
+    Do stuff
+
+    Return schema:
+    {
+      "allOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    }
+    """'''
+        )
 
     def test_refs_and_defs(self):
         schema = {

@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -37,6 +38,8 @@ class SignatureResult:
     """The Python signature string, e.g. 'def foo(x: int, y: str = "default") -> Any'."""
     typeddict_defs: list[str]
     """Any TypedDict class definitions needed by the signature."""
+    return_type: str
+    """The resolved return type annotation string."""
 
 
 def signature_from_function(
@@ -178,6 +181,7 @@ def signature_from_schema(
     parameters_json_schema: dict[str, Any],
     description: str | None = None,
     return_type: str = 'Any',
+    return_json_schema: dict[str, Any] | None = None,
 ) -> SignatureResult:
     """Convert a JSON schema to a Python function signature string.
 
@@ -186,15 +190,24 @@ def signature_from_schema(
         parameters_json_schema: The JSON schema for the function's parameters.
         description: Optional function description to include as docstring.
         return_type: The return type annotation string. Defaults to 'Any'.
+        return_json_schema: Optional JSON schema for the return value.
 
     Returns:
         A SignatureResult containing the signature string and any TypedDict definitions.
     """
     context = _ConversionContext(name)
     params = _schema_to_params(parameters_json_schema, context)
+
+    resolved_return_type = return_type
+    if return_json_schema is not None and return_type == 'Any':
+        if return_json_schema.get('$defs'):
+            context.set_defs(return_json_schema['$defs'])
+            _process_defs(return_json_schema['$defs'], context)
+        resolved_return_type = _schema_to_type(return_json_schema, context, 'Return')
+
     typeddict_defs = context.get_typeddict_definitions()
 
-    signature_line = f'def {name}({", ".join(params)}) -> {return_type}'
+    signature_line = f'def {name}({", ".join(params)}) -> {resolved_return_type}'
 
     if description:
         docstring = _format_docstring(description)
@@ -202,7 +215,15 @@ def signature_from_schema(
     else:
         signature_str = f'{signature_line}: ...'
 
-    return SignatureResult(signature=signature_str, typeddict_defs=typeddict_defs)
+    if return_json_schema is not None and resolved_return_type == 'Any':
+        return_schema_blob = json.dumps(return_json_schema, indent=2)
+        return_schema_note = f'\n\nReturn schema:\n{return_schema_blob}'
+        if description:
+            signature_str = f'{signature_line}:\n{_format_docstring(description + return_schema_note)}'
+        else:
+            signature_str = f'{signature_line}:\n{_format_docstring(return_schema_note.strip())}'
+
+    return SignatureResult(signature=signature_str, typeddict_defs=typeddict_defs, return_type=resolved_return_type)
 
 
 class _ConversionContext:
@@ -215,7 +236,18 @@ class _ConversionContext:
         self._counter = 0
 
     def set_defs(self, defs: dict[str, dict[str, Any]]) -> None:
-        self._defs = defs
+        # TODO: Using update() can silently overwrite $defs if parameter schema and return schema
+        # both define a $def with the same name but different definitions.
+        # Example: params has `$defs: {User: {name: str}}`, return has `$defs: {User: {id: int}}`
+        # The return schema's User will overwrite the params User, causing incorrect TypedDict generation.
+        #
+        # Expected correct behavior options:
+        # 1. Raise an error if conflicting $defs are detected (same name, different schema)
+        # 2. Namespace the defs by source (e.g., "ParamsUser" vs "ReturnUser")
+        # 3. Check if definitions are identical - allow if same, error if different
+        #
+        # For now, we assume $defs names are unique across param and return schemas.
+        self._defs.update(defs)
 
     def resolve_ref(self, ref: str) -> dict[str, Any]:
         """Resolve a $ref to its schema."""
