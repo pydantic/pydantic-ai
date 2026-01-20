@@ -8,11 +8,13 @@ than raw JSON schemas.
 from __future__ import annotations
 
 import ast
+import asyncio
+import inspect
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from inspect import Parameter, signature
-from typing import Any, cast
+from typing import Any, Union, cast
 
 from pydantic._internal import _typing_extra
 
@@ -102,9 +104,6 @@ def signature_from_function(
 
 def _is_async_function(func: Callable[..., Any]) -> bool:
     """Check if a function is async."""
-    import asyncio
-    import inspect
-
     if asyncio.iscoroutinefunction(func):
         return True
     if inspect.ismethod(func):
@@ -114,11 +113,7 @@ def _is_async_function(func: Callable[..., Any]) -> bool:
 
 def _format_annotation(annotation: Any) -> str:
     """Format a type annotation as a string."""
-    import typing
-
-    if annotation is None:
-        return 'None'
-    if annotation is type(None):
+    if annotation is None or annotation is type(None):
         return 'None'
 
     origin = getattr(annotation, '__origin__', None)
@@ -129,7 +124,7 @@ def _format_annotation(annotation: Any) -> str:
 
         if args:
             formatted_args = ', '.join(_format_annotation(arg) for arg in args)
-            if origin is typing.Union:
+            if origin is Union:
                 return ' | '.join(_format_annotation(arg) for arg in args)
             return f'{origin_name}[{formatted_args}]'
         return origin_name
@@ -164,6 +159,7 @@ def _format_default(value: Any) -> str:
     return repr(value)
 
 
+# TODO we need to scope how much of this should be customizable by the user
 def _format_docstring(description: str, indent: str = '    ') -> str:
     """Format a description as a docstring."""
     lines = description.strip().split('\n')

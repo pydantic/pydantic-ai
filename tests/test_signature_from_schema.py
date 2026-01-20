@@ -45,6 +45,51 @@ class Point:
     y: float
 
 
+# Models for recursive $defs and union tests
+
+
+class Address(BaseModel):
+    street: str
+    city: str
+
+
+class User(BaseModel):
+    name: str
+    address: Address
+
+
+class TreeNode(BaseModel):
+    value: str
+    children: list[TreeNode] = []
+
+
+class Circle(BaseModel):
+    radius: float
+
+
+class Rectangle(BaseModel):
+    width: float
+    height: float
+
+
+class Country(BaseModel):
+    name: str
+
+
+class CompanyAddress(BaseModel):
+    street: str
+    country: Country
+
+
+class Company(BaseModel):
+    name: str
+    headquarters: CompanyAddress
+
+
+class ConfigModel(BaseModel):
+    key: str
+
+
 class TestSignatureFromFunction:
     """Tests for signature_from_function with actual functions."""
 
@@ -567,3 +612,72 @@ def list_files(owner: str, repo: str, branch: str | None = None, recursive: bool
         )
         assert result.typeddict_defs == snapshot([])
         validate_signature(result.signature)
+
+
+# Roundtrip tests for recursive $defs and union types
+
+
+def test_nested_basemodel_roundtrip():
+    """Nested BaseModel generates $defs with references."""
+
+    def process(user: User) -> str:
+        return ''
+
+    fs = function_schema(process, GenerateToolJsonSchema)
+    result = signature_from_schema('process', fs.json_schema, fs.description)
+    # Top-level model fields are expanded; nested Address becomes a TypedDict
+    assert 'Address' in '\n'.join(result.typeddict_defs)
+    assert 'address: Address' in result.signature
+    validate_signature('\n\n'.join(result.typeddict_defs + [result.signature]))
+
+
+def test_self_referential_model_roundtrip():
+    """Self-referential BaseModel (tree pattern)."""
+
+    def traverse(node: TreeNode) -> None:
+        pass
+
+    fs = function_schema(traverse, GenerateToolJsonSchema)
+    result = signature_from_schema('traverse', fs.json_schema, fs.description)
+    assert 'TreeNode' in '\n'.join(result.typeddict_defs)
+    validate_signature('\n\n'.join(result.typeddict_defs + [result.signature]))
+
+
+def test_union_of_basemodels_roundtrip():
+    """Union of BaseModels generates multiple TypedDicts."""
+
+    def draw(shape: Circle | Rectangle) -> None:
+        pass
+
+    fs = function_schema(draw, GenerateToolJsonSchema)
+    result = signature_from_schema('draw', fs.json_schema, fs.description)
+    defs = '\n'.join(result.typeddict_defs)
+    assert 'Circle' in defs
+    assert 'Rectangle' in defs
+    validate_signature('\n\n'.join(result.typeddict_defs + [result.signature]))
+
+
+def test_union_basemodel_and_primitive_roundtrip():
+    """Union of BaseModel and str."""
+
+    def process(data: ConfigModel | str) -> None:
+        pass
+
+    fs = function_schema(process, GenerateToolJsonSchema)
+    result = signature_from_schema('process', fs.json_schema, fs.description)
+    validate_signature('\n\n'.join(result.typeddict_defs + [result.signature]))
+
+
+def test_deeply_nested_models_roundtrip():
+    """Three levels of nested BaseModels."""
+
+    def info(company: Company) -> str:
+        return ''
+
+    fs = function_schema(info, GenerateToolJsonSchema)
+    result = signature_from_schema('info', fs.json_schema, fs.description)
+    defs = '\n'.join(result.typeddict_defs)
+    assert 'Country' in defs
+    assert 'CompanyAddress' in defs
+    assert 'Company' in defs
+    validate_signature('\n\n'.join(result.typeddict_defs + [result.signature]))
