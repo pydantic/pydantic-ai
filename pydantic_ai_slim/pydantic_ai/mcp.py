@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import base64
-import functools
 import os
 import re
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -32,7 +31,7 @@ try:
     from mcp.client.session import ClientSession, ElicitationFnT, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp.client.streamable_http import GetSessionIdCallback, streamable_http_client
+    from mcp.client.streamable_http import streamable_http_client
     from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
     from mcp.shared.message import SessionMessage
@@ -1113,70 +1112,6 @@ class _MCPServerHTTP(MCPServer):
             client_info=client_info,
         )
 
-    @property
-    @abstractmethod
-    def _transport_client(
-        self,
-    ) -> Callable[
-        ...,
-        AbstractAsyncContextManager[
-            tuple[
-                MemoryObjectReceiveStream[SessionMessage | Exception],
-                MemoryObjectSendStream[SessionMessage],
-                GetSessionIdCallback,
-            ],
-        ]
-        | AbstractAsyncContextManager[
-            tuple[
-                MemoryObjectReceiveStream[SessionMessage | Exception],
-                MemoryObjectSendStream[SessionMessage],
-            ]
-        ],
-    ]: ...
-
-    # Only used by MCPServerSSE which has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811).
-    # Remove pragma once https://github.com/modelcontextprotocol/python-sdk/pull/1838 is released.
-    @asynccontextmanager
-    async def client_streams(  # pragma: no cover
-        self,
-    ) -> AsyncIterator[
-        tuple[
-            MemoryObjectReceiveStream[SessionMessage | Exception],
-            MemoryObjectSendStream[SessionMessage],
-        ]
-    ]:
-        if self.http_client and self.headers:
-            raise ValueError('`http_client` is mutually exclusive with `headers`.')
-
-        transport_client_partial = functools.partial(
-            self._transport_client,
-            url=self.url,
-            timeout=self.timeout,
-            sse_read_timeout=self.read_timeout,
-        )
-
-        if self.http_client is not None:
-            # sse_client still uses the old httpx_client_factory API (streamable_http_client uses http_client).
-            # This wrapper is needed until sse_client is updated to match streamable_http_client's API.
-            @asynccontextmanager
-            async def httpx_client_factory(
-                headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> AsyncIterator[httpx.AsyncClient]:
-                assert self.http_client is not None
-                yield self.http_client
-
-            async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
-                read_stream,
-                write_stream,
-                *_,
-            ):
-                yield read_stream, write_stream
-        else:
-            async with transport_client_partial(headers=self.headers) as (read_stream, write_stream, *_):
-                yield read_stream, write_stream
-
     def __repr__(self) -> str:  # pragma: no cover
         repr_args = [
             f'url={self.url!r}',
@@ -1220,9 +1155,47 @@ class MCPServerSSE(_MCPServerHTTP):
             ),
         )
 
-    @property
-    def _transport_client(self):  # pragma: no cover
-        return sse_client
+    # sse_client has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811).
+    # Remove pragma once https://github.com/modelcontextprotocol/python-sdk/pull/1838 is released.
+    @asynccontextmanager
+    async def client_streams(  # pragma: no cover
+        self,
+    ) -> AsyncIterator[
+        tuple[
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
+        ]
+    ]:
+        if self.http_client and self.headers:
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+
+        if self.http_client is not None:
+            # sse_client's McpHttpClientFactory type expects -> AsyncClient, but we use
+            # @asynccontextmanager to prevent closing the user's client. Works at runtime.
+            @asynccontextmanager
+            async def httpx_client_factory(
+                headers: dict[str, str] | None = None,
+                timeout: httpx.Timeout | None = None,
+                auth: httpx.Auth | None = None,
+            ) -> AsyncIterator[httpx.AsyncClient]:
+                assert self.http_client is not None
+                yield self.http_client
+
+            async with sse_client(
+                url=self.url,
+                timeout=self.timeout,
+                sse_read_timeout=self.read_timeout,
+                httpx_client_factory=httpx_client_factory,  # pyright: ignore[reportArgumentType]
+            ) as (read_stream, write_stream, *_):
+                yield read_stream, write_stream
+        else:
+            async with sse_client(
+                url=self.url,
+                timeout=self.timeout,
+                sse_read_timeout=self.read_timeout,
+                headers=self.headers,
+            ) as (read_stream, write_stream, *_):
+                yield read_stream, write_stream
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerSSE) and self.url == value.url
@@ -1283,10 +1256,6 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
                 }
             ),
         )
-
-    @property
-    def _transport_client(self):  # pragma: no cover
-        return streamable_http_client
 
     @asynccontextmanager
     async def client_streams(
