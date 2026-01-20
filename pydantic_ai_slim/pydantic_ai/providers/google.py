@@ -113,12 +113,15 @@ class GoogleProvider(Provider[Client]):
             # Note: google-genai's HttpOptions.timeout defaults to None, which causes
             # the SDK to explicitly pass timeout=None to httpx, overriding any timeout
             # configured on the httpx client. We must set the timeout here to ensure
-            # requests actually time out. The value is converted from seconds to milliseconds.
+            # requests actually time out. Read the timeout from the http_client if set,
+            # otherwise use the default. The value is converted from seconds to milliseconds.
+            timeout_seconds = http_client.timeout.read
+            timeout_ms = int(timeout_seconds * 1000) if timeout_seconds is not None else DEFAULT_HTTP_TIMEOUT * 1000
             http_options = HttpOptions(
                 base_url=base_url,
                 headers={'User-Agent': get_user_agent()},
                 httpx_async_client=http_client,
-                timeout=DEFAULT_HTTP_TIMEOUT * 1000,
+                timeout=timeout_ms,
             )
             if not vertexai:
                 if api_key is None:

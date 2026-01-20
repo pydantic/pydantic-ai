@@ -11,7 +11,7 @@ from datetime import timezone
 from typing import Any
 
 import pytest
-from httpx import Timeout
+from httpx import AsyncClient as HttpxAsyncClient, Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
@@ -5460,7 +5460,28 @@ async def test_google_provider_timeout_propagates_to_httpx_requests(
 
     See https://github.com/pydantic/pydantic-ai/issues/4031
     """
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    captured_timeout = await _run_agent_and_capture_timeout(google_provider, mocker)
+    assert captured_timeout == DEFAULT_HTTP_TIMEOUT
+
+
+async def test_google_provider_respects_custom_http_client_timeout(
+    allow_model_requests: None, mocker: MockerFixture, gemini_api_key: str
+):
+    """Test that GoogleProvider respects a custom timeout from a user-provided http_client.
+
+    See https://github.com/pydantic/pydantic-ai/pull/4032#discussion_r2709797127
+    """
+    custom_timeout = 120
+    custom_http_client = HttpxAsyncClient(timeout=Timeout(custom_timeout))
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=custom_http_client)
+
+    captured_timeout = await _run_agent_and_capture_timeout(provider, mocker)
+    assert captured_timeout == custom_timeout
+
+
+async def _run_agent_and_capture_timeout(provider: GoogleProvider, mocker: MockerFixture) -> float:
+    """Run an agent with a mocked httpx client and return the timeout passed to the request."""
+    model = GoogleModel('gemini-1.5-flash', provider=provider)
     agent = Agent(model=model)
 
     captured_timeout: float | None = None
@@ -5479,7 +5500,7 @@ async def test_google_provider_timeout_propagates_to_httpx_requests(
         return mock_response
 
     mocker.patch.object(
-        google_provider._client._api_client._async_httpx_client,
+        provider._client._api_client._async_httpx_client,
         'request',
         side_effect=capture_timeout_request,
     )
@@ -5487,4 +5508,4 @@ async def test_google_provider_timeout_propagates_to_httpx_requests(
     await agent.run('Hello!')
 
     assert captured_timeout is not None, 'Timeout was None, which would cause requests to hang indefinitely'
-    assert captured_timeout == DEFAULT_HTTP_TIMEOUT
+    return captured_timeout
