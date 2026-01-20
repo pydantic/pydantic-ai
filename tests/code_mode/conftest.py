@@ -11,18 +11,18 @@ class WeatherResult(TypedDict):
     """Weather data for a city."""
 
     city: str
-    temp: float
+    temperature: float
     unit: str
     conditions: str
 
 
 # Simulated weather data for test cities
 _WEATHER_DATA: dict[str, dict[str, Any]] = {
-    'London': {'temp': 15.0, 'conditions': 'cloudy'},
-    'Paris': {'temp': 18.0, 'conditions': 'sunny'},
-    'Tokyo': {'temp': 22.0, 'conditions': 'rainy'},
-    'New York': {'temp': 12.0, 'conditions': 'windy'},
-    'Sydney': {'temp': 25.0, 'conditions': 'sunny'},
+    'London': {'temperature': 15.0, 'conditions': 'cloudy'},
+    'Paris': {'temperature': 18.0, 'conditions': 'sunny'},
+    'Tokyo': {'temperature': 22.0, 'conditions': 'rainy'},
+    'New York': {'temperature': 12.0, 'conditions': 'windy'},
+    'Sydney': {'temperature': 25.0, 'conditions': 'sunny'},
 }
 
 
@@ -35,5 +35,5 @@ def get_weather(city: str) -> WeatherResult:
     Returns:
         Weather data including temperature and conditions.
     """
-    data = _WEATHER_DATA.get(city, {'temp': 20.0, 'conditions': 'unknown'})
-    return {'city': city, 'temp': data['temp'], 'unit': 'celsius', 'conditions': data['conditions']}
+    data = _WEATHER_DATA.get(city, {'temperature': 20.0, 'conditions': 'unknown'})
+    return {'city': city, 'temperature': data['temperature'], 'unit': 'celsius', 'conditions': data['conditions']}

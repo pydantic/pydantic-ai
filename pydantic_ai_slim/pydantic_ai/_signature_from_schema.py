@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import copy
 import inspect
 import json
 import re
@@ -46,6 +47,8 @@ def signature_from_function(
     func: Callable[..., Any],
     name: str | None = None,
     description: str | None = None,
+    *,
+    include_return_type: bool = True,
 ) -> str:
     """Generate a Python signature string from an actual function.
 
@@ -91,7 +94,10 @@ def signature_from_function(
                 params.append(f'{param_name}={default_str}')
 
     return_annotation = type_hints.get('return')
-    return_str = f' -> {_format_annotation(return_annotation)}' if return_annotation else ' -> Any'
+    if include_return_type:
+        return_str = f' -> {_format_annotation(return_annotation)}' if return_annotation else ' -> Any'
+    else:
+        return_str = ' -> Any'
 
     is_async = _is_async_function(func)
     prefix = 'async def' if is_async else 'def'
@@ -182,6 +188,8 @@ def signature_from_schema(
     description: str | None = None,
     return_type: str = 'Any',
     return_json_schema: dict[str, Any] | None = None,
+    *,
+    namespace_defs: bool = False,
 ) -> SignatureResult:
     """Convert a JSON schema to a Python function signature string.
 
@@ -191,18 +199,24 @@ def signature_from_schema(
         description: Optional function description to include as docstring.
         return_type: The return type annotation string. Defaults to 'Any'.
         return_json_schema: Optional JSON schema for the return value.
+        namespace_defs: Whether to prefix $defs names to avoid param/return collisions.
 
     Returns:
         A SignatureResult containing the signature string and any TypedDict definitions.
     """
     context = _ConversionContext(name)
-    params = _schema_to_params(parameters_json_schema, context)
+    params = _schema_to_params(parameters_json_schema, context, namespace_defs=namespace_defs)
 
     resolved_return_type = return_type
     if return_json_schema is not None and return_type == 'Any':
         if return_json_schema.get('$defs'):
-            context.set_defs(return_json_schema['$defs'])
-            _process_defs(return_json_schema['$defs'], context)
+            return_defs = return_json_schema['$defs']
+            if namespace_defs:
+                return_defs = _namespace_defs(return_defs, 'Return')
+                return_json_schema = _namespace_schema_refs(return_json_schema, 'Return')
+            context.set_defs(return_defs)
+            _process_defs(return_defs, context)
+        assert return_json_schema is not None
         resolved_return_type = _schema_to_type(return_json_schema, context, 'Return')
 
     typeddict_defs = context.get_typeddict_definitions()
@@ -241,13 +255,8 @@ class _ConversionContext:
         # Example: params has `$defs: {User: {name: str}}`, return has `$defs: {User: {id: int}}`
         # The return schema's User will overwrite the params User, causing incorrect TypedDict generation.
         #
-        # Expected correct behavior options:
-        # 1. Raise an error if conflicting $defs are detected (same name, different schema)
-        # 2. Namespace the defs by source (e.g., "ParamsUser" vs "ReturnUser")
-        # 3. Check if definitions are identical - allow if same, error if different
-        #
-        # TODO: Consider stashing separate defs for params/returns to avoid silent clashes.
-        # For now, we assume $defs names are unique across param and return schemas.
+        # We can namespace $defs via signature_from_schema(..., namespace_defs=True) to avoid
+        # collisions (e.g., ParamUser vs ReturnUser), but this changes the generated type names.
         self._defs.update(defs)
 
     def resolve_ref(self, ref: str) -> dict[str, Any]:
@@ -285,11 +294,20 @@ def _to_pascal_case(s: str) -> str:
     return ''.join(part.capitalize() for part in parts if part)
 
 
-def _schema_to_params(schema: dict[str, Any], context: _ConversionContext) -> list[str]:
+def _schema_to_params(
+    schema: dict[str, Any],
+    context: _ConversionContext,
+    *,
+    namespace_defs: bool = False,
+) -> list[str]:
     """Convert a JSON schema to a list of parameter strings."""
     if '$defs' in schema:
-        context.set_defs(schema['$defs'])
-        _process_defs(schema['$defs'], context)
+        param_defs = schema['$defs']
+        if namespace_defs:
+            param_defs = _namespace_defs(param_defs, 'Param')
+            schema = _namespace_schema_refs(schema, 'Param')
+        context.set_defs(param_defs)
+        _process_defs(param_defs, context)
 
     properties = schema.get('properties', {})
     required = set(schema.get('required', []))
@@ -313,6 +331,56 @@ def _schema_to_params(schema: dict[str, Any], context: _ConversionContext) -> li
     params.extend(required_params)
     params.extend(optional_params)
     return params
+
+
+def _namespace_schema_refs(schema: dict[str, Any], prefix: str) -> dict[str, Any]:
+    """Return a copy of a schema with $ref names prefixed."""
+
+    def _rename(schema_part: dict[str, Any]) -> dict[str, Any]:
+        updated: dict[str, Any] = {}
+        for key, value in schema_part.items():
+            if key == '$ref' and isinstance(value, str) and value.startswith('#/$defs/'):
+                ref_name = value[len('#/$defs/') :]
+                updated[key] = f'#/$defs/{prefix}{ref_name}'
+            elif isinstance(value, dict):
+                updated[key] = _rename(value)
+            elif isinstance(value, list):
+                updated[key] = [_rename(item) if isinstance(item, dict) else item for item in value]
+            else:
+                updated[key] = value
+        return updated
+
+    return _rename(copy.deepcopy(schema))
+
+
+def _namespace_defs(defs: dict[str, dict[str, Any]], prefix: str) -> dict[str, dict[str, Any]]:
+    """Return a new $defs dict with prefixed names and updated $refs."""
+
+    def _rename_ref(schema: dict[str, Any], old: str, new: str) -> dict[str, Any]:
+        if isinstance(schema, dict):
+            updated: dict[str, Any] = {}
+            for key, value in schema.items():
+                if key == '$ref' and value == f'#/$defs/{old}':
+                    updated[key] = f'#/$defs/{new}'
+                elif isinstance(value, dict):
+                    updated[key] = _rename_ref(value, old, new)
+                elif isinstance(value, list):
+                    updated[key] = [_rename_ref(item, old, new) if isinstance(item, dict) else item for item in value]
+                else:
+                    updated[key] = value
+            return updated
+        return schema
+
+    renamed: dict[str, dict[str, Any]] = {}
+    for name, schema in defs.items():
+        new_name = f'{prefix}{name}'
+        renamed[new_name] = copy.deepcopy(schema)
+
+    rename_map = {name: f'{prefix}{name}' for name in defs}
+    for old_name, new_name in rename_map.items():
+        renamed = {k: _rename_ref(v, old_name, new_name) for k, v in renamed.items()}
+
+    return renamed
 
 
 def _process_defs(defs: dict[str, dict[str, Any]], context: _ConversionContext) -> None:

@@ -354,6 +354,19 @@ class Output(TypedDict):
         )
         assert result.signature == snapshot('def process(input: Input) -> Output: ...')
 
+        namespaced = signature_from_schema('process', schema, return_json_schema=return_schema, namespace_defs=True)
+        assert namespaced.typeddict_defs == snapshot(
+            [
+                """\
+class ParamInput(TypedDict):
+    name: str""",
+                """\
+class ReturnOutput(TypedDict):
+    count: int""",
+            ]
+        )
+        assert namespaced.signature == snapshot('def process(input: ParamInput) -> ReturnOutput: ...')
+
     def test_return_schema_any_adds_docstring(self):
         schema: dict[str, Any] = {
             'type': 'object',

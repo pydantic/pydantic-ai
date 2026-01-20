@@ -12,6 +12,7 @@ from typing_extensions import TypedDict
 from .._run_context import AgentDepsT, RunContext
 from .._signature_from_schema import signature_from_function, signature_from_schema
 from ..tools import ToolDefinition
+
 from .abstract import SchemaValidatorProt, ToolsetTool
 from .function import FunctionToolset, FunctionToolsetTool
 from .wrapper import WrapperToolset
@@ -35,7 +36,14 @@ def _get_tool_signature(tool: ToolsetTool[Any]) -> str:
 
     For native function tools, uses the original function's signature (including return type).
     For external tools (MCP, etc.), converts the JSON schema to a signature.
+
+    Note: Code mode always includes return types because the model needs to know
+    what structure each function returns to write correct code.
     """
+    # Code mode MUST show return types - without them the model can't know
+    # that get_weather() returns a dict with 'temperature' key vs just a number.
+    # We ignore tool.include_return_schema here because code mode has different needs
+    # than traditional tool calling.
     # TODO: For native function tools, we call signature_from_function which uses
     # inspect.signature() and get_type_hints() every time get_tools() is called.
     # This re-inspection is needed to filter out RunContext params and format the signature,
@@ -51,18 +59,16 @@ def _get_tool_signature(tool: ToolsetTool[Any]) -> str:
                 original_tool.function,
                 name=tool_name,
                 description=tool.tool_def.description,
+                include_return_type=True,  # Always show return types in code mode
             )
 
-    # TODO: Code mode currently ignores tool.include_return_schema and toolset-level return schema
-    # toggles, instead always deriving return types from the tool definition. If callers rely on
-    # include_return_schema=False, this will still expose return types in signatures.
-    # -> So we do need it or we can fallback to any if we want to respect that toggle, TBD for now
-
+    # For external tools (MCP, etc.), convert JSON schema to signature
     result = signature_from_schema(
         name=tool.tool_def.name,
         parameters_json_schema=tool.tool_def.parameters_json_schema,
         description=tool.tool_def.description,
-        return_json_schema=tool.tool_def.return_schema,
+        return_json_schema=tool.tool_def.return_schema,  # Always include if available
+        namespace_defs=True,
     )
 
     if result.typeddict_defs:
@@ -79,16 +85,27 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # TODO: MCP tool names can include characters that aren't valid Python identifiers.
         # We should sanitize names and maintain a mapping back to the original tool name.
         available_functions = [_get_tool_signature(tool) for tool in wrapped_tools.values()]
+
+        # Debug: show what signatures the model will see
+        print(f'\n{"="*60}\nCODE MODE - Tool Signatures shown to model:\n{"="*60}')
+        for sig in available_functions:
+            print(sig)
+        print(f'{"="*60}\n')
+
         # TODO: This dumps all tool signatures up-front, which can bloat context for large toolsets.
         # Example: hundreds of MCP tools can push tens of thousands of tokens into the prompt,
         # defeating the progressive-disclosure approach described in code-mode references.
         # Consider: progressive discovery (list tool names first, fetch signatures on demand).
         description = (
             """\
-You can generate arbitrary python code that doesn't use imports.
-The last evaluated expression will be the return value of the tool.
+Write Python code to accomplish your task using the available functions.
 
-The following functions are available as local variables in the interpreter:
+Important:
+- No imports allowed - use only the functions provided below
+- Functions return dicts - access fields with bracket notation: result["field"], not result.field
+- The last expression evaluated becomes the return value
+
+Available functions:
 
 ```python
 """
@@ -98,11 +115,13 @@ The following functions are available as local variables in the interpreter:
 
 Example:
 ```python
-# Fetch data, process, return result
-result1 = get_data("item1")
-result2 = get_data("item2")
-combined = [result1, result2]
-f"Found {len(combined)} items"
+# Fetch data from multiple sources
+data1 = get_data(id="item1")
+data2 = get_data(id="item2")
+
+# Access dict fields with brackets
+total = data1["value"] + data2["value"]
+f"Total: {total}"
 ```"""
         )
         return {
@@ -127,38 +146,71 @@ f"Found {len(combined)} items"
         assert isinstance(tool, _CodeModeTool)
         assert isinstance(code, str)
 
+        # Log the generated code for debugging visibility
+        print(f'\n{"="*60}\nCODE MODE - Generated Code:\n{"="*60}\n{code}\n{"="*60}\n')
+
         # TODO: There is no execution timeout or step budget for Monty runs here.
         # Example: `for _ in range(10**9): pass` can hang the agent run indefinitely.
         # TODO: Monty supports a limited Python subset (no while loops, list comprehensions, lambdas).
         # Consider documenting supported syntax so we do not gen incorrect code.
-        m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
-        result = m.start()
+        try:
+            m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
+            result = m.start()
+        except monty.MontyRuntimeError as e:
+            print(f'\n{"!"*60}\nCODE MODE - Monty Parse/Start Error:\n{e}\n{"!"*60}\n')
+            raise
+
+        call_count = 0
         while isinstance(result, monty.MontySnapshot):
+            call_count += 1
             tool_name = result.function_name
             original_tool = tool.original_tools[tool_name]
 
             tool_kwargs = dict(result.kwargs)
             if result.args:
-                # TODO: Positional args rely on JSON schema property order, which may not match
-                # actual tool parameter ordering for external tools.
-                # Example: schema properties are {'b': ..., 'a': ...} but tool expects (a, b),
-                # so calling tool(1, 2) maps b=1, a=2 and silently swaps inputs.
+                # TODO: Positional args currently map using JSON schema property order, which may
+                # not match the tool's intended parameter order (especially for MCP tools). This
+                # can silently swap arguments; consider enforcing keyword-only or deriving a stable
+                # ordering from the tool source.
                 param_names = list(original_tool.tool_def.parameters_json_schema.get('properties', {}).keys())
                 for i, arg in enumerate(result.args):
                     if i < len(param_names):
                         tool_kwargs[param_names[i]] = arg
 
+            # Log inner tool call
+            print(f'  [{call_count}] Calling: {tool_name}({tool_kwargs})')
+
             inner_ctx = replace(ctx, tool_name=tool_name)
 
+            # TODO: Approval/defer flows are handled by the outer tool call, so inner tool approvals
+            # (ApprovalRequired/CallDeferred) currently fail the entire run_code call instead of
+            # surfacing a per-tool approval step. Cloudflare-style proxying would allow pausing after
+            # each tool call. Example:
+            #   run_code: "result = dangerous_tool(action='delete')"
+            # Ideally yields: a pending approval for dangerous_tool, rather than a failed run_code call.
             # Create span for inner tool call with code_mode.inner_tool attribute
             span_attributes = {
                 'gen_ai.tool.name': tool_name,
                 'code_mode.inner_tool': True,
                 'logfire.msg': f'code mode calling: {tool_name}',
             }
+
             span_name = f'code_mode_tool:{tool_name}'
             with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
                 tool_return_value = await super().call_tool(tool_name, tool_kwargs, inner_ctx, original_tool)
 
-            result = result.resume(return_value=tool_return_value)
+            # Log return value
+            print(f'      -> {tool_return_value}')
+
+            try:
+                result = result.resume(return_value=tool_return_value)
+            except monty.MontyRuntimeError as e:
+                print(f'\n{"!"*60}\nCODE MODE - Monty Runtime Error after {tool_name} returned:\n')
+                print(f'  Return value was: {tool_return_value}')
+                print(f'  Error: {e}\n{"!"*60}\n')
+                raise
+
+        # Log final output
+        print(f'\n{"="*60}\nCODE MODE - Final Output:\n{"="*60}\n{result.output}\n{"="*60}\n')
+
         return result.output
