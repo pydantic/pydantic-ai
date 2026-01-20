@@ -31,6 +31,7 @@ import asyncio
 import re
 import sys
 import unicodedata
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -167,38 +168,38 @@ async def build_search_db():
         with logfire.span('create schema'):
             await db.query(DB_SCHEMA)
 
-        embedding_sem = asyncio.Semaphore(10)
+        with logfire.span('create embeddings'):
+            result = await embedder.embed_documents(
+                [section.embedding_content() for section in sections]
+            )
+            embeddings = result.embeddings
+        assert len(embeddings) == len(sections), (
+            'Expected embeddings to match sections count, '
+            f'got {len(embeddings)} embeddings for {len(sections)} sections'
+        )
+
         db_sem = asyncio.Semaphore(1)
         async with create_task_group() as tg:
-            for section in sections:
-                tg.start_soon(insert_doc_section, embedding_sem, db_sem, db, section)
+            for section, embedding_vector in zip(sections, embeddings, strict=True):
+                tg.start_soon(insert_doc_section, db_sem, db, section, embedding_vector)
 
 
 async def insert_doc_section(
-    embedding_sem: asyncio.Semaphore,
     db_sem: asyncio.Semaphore,
     db: SurrealConn,
     section: DocsSection,
+    embedding_vector: Sequence[float],
 ) -> None:
-    async with embedding_sem:
-        url = section.url()
-        # Create a URL-safe record ID
-        url_slug = slugify(url, '_')
-        record_id = RecordID('doc_sections', url_slug)
+    url = section.url()
+    # Create a URL-safe record ID
+    url_slug = slugify(url, '_')
+    record_id = RecordID('doc_sections', url_slug)
 
-        # Check if record exists
-        existing = await db.select(record_id)
-        if existing:
-            logfire.info('Skipping {url=}', url=url)
-            return
-
-        with logfire.span('create embedding for {url=}', url=url):
-            result = await embedder.embed_documents([section.embedding_content()])
-            embedding = result.embeddings
-        assert len(embedding) == 1, (
-            f'Expected 1 embedding, got {len(embedding)}, doc section: {section}'
-        )
-        embedding_vector = embedding[0]
+    # Check if record exists
+    existing = await db.select(record_id)
+    if existing:
+        logfire.info('Skipping {url=}', url=url)
+        return
 
     async with db_sem:
         # Create record with embedding as array, using record ID directly
