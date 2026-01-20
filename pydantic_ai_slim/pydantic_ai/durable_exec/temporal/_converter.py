@@ -38,10 +38,8 @@ def _prepare_for_serialization(value: Any) -> Any:
 
     if isinstance(value, dict):
         return {k: _prepare_for_serialization(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return [_prepare_for_serialization(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
-    if isinstance(value, tuple):
-        return tuple(_prepare_for_serialization(item) for item in value)  # pyright: ignore[reportUnknownVariableType]
 
     if isinstance(value, BaseModel):
         return _prepare_for_serialization(value.model_dump(mode='json'))
