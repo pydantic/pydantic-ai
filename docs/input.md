@@ -118,7 +118,31 @@ Support for file URLs varies depending on type and provider:
 | [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | — | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 
-A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request. In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
+??? warning "`DocumentUrl` and `BinaryContent` documents are not supported when using `AzureProvider` with `OpenAIChatModel`."
+    Use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] instead:
+
+    ```python
+    from pydantic_ai import Agent, BinaryContent
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.azure import AzureProvider
+
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=AzureProvider(
+            azure_endpoint='your-azure-endpoint',
+            api_version='your-api-version',
+        ),
+    )
+    agent = Agent(model)
+    result = agent.run_sync([
+        'Summarize this document',
+        BinaryContent(data=pdf_bytes, media_type='application/pdf'),
+    ])
+    ```
+
+A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request.
+
+In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
 
 ```py {title="force_download.py" test="skip" lint="skip"}
 from pydantic_ai import ImageUrl, AudioUrl, VideoUrl, DocumentUrl

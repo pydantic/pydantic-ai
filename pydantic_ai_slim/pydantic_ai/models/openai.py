@@ -13,7 +13,7 @@ from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, ValidationError
 from pydantic_core import to_json
-from typing_extensions import assert_never, deprecated
+from typing_extensions import Never, assert_never, deprecated
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -1087,6 +1087,8 @@ class OpenAIChatModel(Model):
                             audio = InputAudio(data=item.base64, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                     elif item.is_document:
+                        if not profile.openai_chat_supports_file_input:
+                            self._raise_file_input_not_supported_error()
                         content.append(
                             File(
                                 file=FileFile(
@@ -1118,6 +1120,8 @@ class OpenAIChatModel(Model):
                             )
                         )
                     else:
+                        if not profile.openai_chat_supports_file_input:
+                            self._raise_file_input_not_supported_error()
                         downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                         content.append(
                             File(
@@ -1136,6 +1140,16 @@ class OpenAIChatModel(Model):
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
+
+    def _raise_file_input_not_supported_error(self) -> Never:
+        if self._provider.name == 'azure':
+            raise UserError(
+                "Azure's Chat Completions API does not support document input. "
+                'Use `OpenAIResponsesModel` with `AzureProvider` instead.'
+            )
+        raise UserError(
+            f'The {self._provider.name!r} provider does not support document input via the Chat Completions API.'
+        )
 
     @staticmethod
     def _is_text_like_media_type(media_type: str) -> bool:
