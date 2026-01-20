@@ -98,12 +98,19 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Consider: progressive discovery (list tool names first, fetch signatures on demand).
         description = (
             """\
-Write Python code to accomplish your task using the available functions.
+Write Python code to accomplish the ENTIRE task in a SINGLE code block.
 
-Important:
+CRITICAL:
+- Solve the complete task in ONE execution - do not break it into multiple steps
+- Do not write exploratory code that just fetches data and returns - process it fully
+- Use loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
+- The last expression evaluated becomes the return value - make it the final answer
+
+Syntax restrictions:
 - No imports allowed - use only the functions provided below
-- Functions return dicts - access fields with bracket notation: result["field"], not result.field
-- The last expression evaluated becomes the return value
+- No generator expressions (e.g., `sum(x for x in items)`) - use explicit for loops
+- Initialize numeric accumulators with 0.0 (float) not 0 (int)
+- Access dict fields with brackets: result["field"], not result.field
 
 Available functions:
 
@@ -113,17 +120,25 @@ Available functions:
             + """
 ```
 
-Example:
+Example - completing a full aggregation task in one execution:
 ```python
-# Fetch data from multiple sources
-data1 = get_data(id="item1")
-data2 = get_data(id="item2")
+# Get all items and process them completely in one go
+items = get_items(category="electronics")
 
-# Access dict fields with brackets
-total = data1["value"] + data2["value"]
-f"Total: {total}"
+# Aggregate data using a loop
+total = 0.0
+for item in items:
+    details = get_item_details(id=item["id"])
+    if details["status"] == "active":
+        total += details["price"]
+
+f"Total value of active items: ${total}"
 ```"""
         )
+        # TODO: Ideally we'd use kind='output' to make the code result be the final answer
+        # without a second LLM call. However, output tools are treated differently by models -
+        # they expect to provide structured output directly, not execute code. We need a way
+        # to have a function tool whose result becomes the final output without another LLM call.
         return {
             _CODE_MODE_TOOL_NAME: _CodeModeTool(
                 toolset=self,
@@ -153,6 +168,8 @@ f"Total: {total}"
         # Example: `for _ in range(10**9): pass` can hang the agent run indefinitely.
         # TODO: Monty supports a limited Python subset (no while loops, list comprehensions, lambdas).
         # Consider documenting supported syntax so we do not gen incorrect code.
+        # TODO: Monty errors should be caught and returned to the model for retry, allowing the model
+        # to fix syntax errors (e.g., unsupported generator expressions) in a subsequent attempt.
         try:
             m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
             result = m.start()
