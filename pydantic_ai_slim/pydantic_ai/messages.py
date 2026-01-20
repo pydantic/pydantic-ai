@@ -18,8 +18,9 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
-from pydantic import BeforeValidator, PlainSerializer
+from pydantic import PlainSerializer, WrapValidator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic_core import core_schema
 from typing_extensions import deprecated
 
 from . import _otel_messages, _utils
@@ -464,13 +465,20 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
-@pydantic_dataclass(init=False, repr=False)
+def _validate_binary_data(v: Any, handler: core_schema.ValidatorFunctionWrapHandler) -> Any:
+    """Validate binary data, decoding base64 strings and allowing test matchers through."""
+    if isinstance(v, str):
+        return base64.b64decode(v)
+    return v
+
+
+@pydantic_dataclass(init=False, repr=False, config=pydantic.ConfigDict(arbitrary_types_allowed=True))
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
     data: Annotated[
         bytes,
-        BeforeValidator(lambda v: base64.b64decode(v) if isinstance(v, str) else v),
+        WrapValidator(_validate_binary_data),
         PlainSerializer(lambda v: base64.b64encode(v).decode('ascii'), when_used='json'),
     ]
     """The binary file data.
@@ -635,9 +643,12 @@ class BinaryImage(BinaryContent):
         kind: Literal['binary'] = 'binary',
         _identifier: str | None = None,
     ):
-        super().__init__(
-            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
-        )
+        # Directly set attributes to avoid Pydantic validation (allows inline-snapshot matchers)
+        self.data = data
+        self.media_type = media_type
+        self._identifier = identifier or _identifier
+        self.vendor_metadata = vendor_metadata
+        self.kind = kind
 
         if not self.is_image:
             raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
