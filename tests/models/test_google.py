@@ -5489,18 +5489,21 @@ async def _run_agent_and_capture_timeout(provider: GoogleProvider, mocker: Mocke
     mock_response = mocker.MagicMock()
     mock_response.status_code = 200
     mock_response.headers = {}
-    mock_response.text = json.dumps({
-        'candidates': [{'content': {'parts': [{'text': 'Hello!'}], 'role': 'model'}, 'finishReason': 'STOP'}],
-        'usageMetadata': {'promptTokenCount': 1, 'candidatesTokenCount': 1, 'totalTokenCount': 2},
-    })
+    mock_response.text = json.dumps(
+        {
+            'candidates': [{'content': {'parts': [{'text': 'Hello!'}], 'role': 'model'}, 'finishReason': 'STOP'}],
+            'usageMetadata': {'promptTokenCount': 1, 'candidatesTokenCount': 1, 'totalTokenCount': 2},
+        }
+    )
 
     async def capture_timeout_request(*args: Any, **kwargs: Any):
         nonlocal captured_timeout
         captured_timeout = kwargs.get('timeout')
         return mock_response
 
+    httpx_client = provider._client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
     mocker.patch.object(
-        provider._client._api_client._async_httpx_client,
+        httpx_client,
         'request',
         side_effect=capture_timeout_request,
     )
