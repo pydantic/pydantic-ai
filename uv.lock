@@ -6238,7 +6238,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.4" },
     { name = "gradio", specifier = ">=5.31.0" },
     { name = "logfire", extras = ["asyncpg", "fastapi", "httpx", "sqlite3"], specifier = ">=3.14.1" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.24.0" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.25.0" },
     { name = "modal", specifier = ">=1.0.4" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "groq", "openai", "vertexai"], editable = "pydantic_ai_slim" },
