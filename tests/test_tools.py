@@ -4,10 +4,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
 
+import pydantic
 import pydantic_core
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import BaseModel, Field, FileUrl, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -32,6 +33,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.messages import AudioUrl, BinaryContent, BinaryImage, DocumentUrl, ImageUrl, VideoUrl
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -151,6 +153,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -186,6 +189,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -229,6 +233,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -272,6 +277,7 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string', 'description': 'The result as a string.'},
         }
     )
 
@@ -313,6 +319,7 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string', 'description': 'The result as a string with type.'},
         }
     )
 
@@ -360,6 +367,7 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string', 'description': 'The result as a string with type.'},
         }
     )
 
@@ -395,6 +403,7 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string', 'description': 'The result as a string.'},
         }
     )
 
@@ -421,6 +430,7 @@ def test_docstring_unknown():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -465,6 +475,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -502,6 +513,7 @@ def test_takes_just_model():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -548,6 +560,7 @@ def test_takes_model_and_int():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -914,6 +927,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'string'},
         }
     )
 
@@ -987,6 +1001,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': {'type': 'integer'},
             },
             {
                 'description': None,
@@ -1003,6 +1018,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': {'type': 'integer'},
             },
         ]
     )
@@ -1092,6 +1108,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': None,
             },
             {
                 'description': None,
@@ -1106,6 +1123,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': None,
             },
         ]
     )
@@ -1144,6 +1162,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': {'type': 'integer'},
         }
     )
 
@@ -2983,3 +3002,345 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     # For regular tool calls (not via ToolApproved), metadata should be None
     assert len(received_metadata) == 1
     assert received_metadata[0] is None
+
+
+def test_tool_return_schema():
+    """Test that the return schema is properly set on ToolDefinition."""
+    agent = Agent(FunctionModel(get_json_schema))
+
+    @agent.tool_plain
+    def tool_with_return_schema() -> FileUrl:  # pragma: no cover
+        return FileUrl('https://example.com/file.txt')
+
+    @agent.tool_plain
+    def tool_with_return_schema_binary_content() -> BinaryContent:  # pragma: no cover
+        return BinaryContent(data=b'hello', media_type='text/plain')
+
+    class MyBaseModel(BaseModel):
+        x: int = pydantic.Field(description='The x value')
+
+    @agent.tool_plain
+    def tool_with_return_schema_base_model() -> MyBaseModel:  # pragma: no cover
+        return MyBaseModel(x=1)
+
+    @dataclass
+    class MyDataclass:
+        x: int
+
+    @agent.tool_plain
+    def tool_with_return_schema_dataclass() -> MyDataclass:  # pragma: no cover
+        return MyDataclass(x=1)
+
+    @agent.tool_plain
+    def tool_with_return_binary_image() -> BinaryImage:  # pragma: no cover
+        return BinaryImage(data=b'hello', media_type='image/jpeg')
+
+    @agent.tool_plain
+    def tool_with_return_document_url() -> DocumentUrl:  # pragma: no cover
+        return DocumentUrl(url='https://example.com/document.pdf')
+
+    @agent.tool_plain
+    def tool_with_return_video_url() -> VideoUrl:  # pragma: no cover
+        return VideoUrl(url='https://example.com/video.mp4')
+
+    @agent.tool_plain
+    def tool_with_return_audio_url() -> AudioUrl:  # pragma: no cover
+        return AudioUrl(url='https://example.com/audio.mp3')
+
+    @agent.tool_plain
+    def tool_with_return_image_url() -> ImageUrl:  # pragma: no cover
+        return ImageUrl(url='https://example.com/image.jpg')
+
+    @agent.tool_plain
+    def tool_with_return_tool_return() -> ToolReturn:  # pragma: no cover
+        return ToolReturn(return_value='hello', content=[ImageUrl(url='https://example.com/image.jpg')])
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema == snapshot(
+        [
+            {
+                'name': 'tool_with_return_schema',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {'format': 'uri', 'minLength': 1, 'type': 'string'},
+            },
+            {
+                'name': 'tool_with_return_schema_binary_content',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'Binary content, e.g. an audio or image file.',
+                    'properties': {
+                        'data': {'format': 'binary', 'type': 'string'},
+                        'media_type': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ]
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
+                    },
+                    'required': ['data', 'media_type'],
+                    'title': 'BinaryContent',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_schema_base_model',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'properties': {'x': {'description': 'The x value', 'type': 'integer'}},
+                    'required': ['x'],
+                    'title': 'MyBaseModel',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_schema_dataclass',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                    'title': 'MyDataclass',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_binary_image',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'properties': {
+                        'data': {'format': 'binary', 'type': 'string'},
+                        'media_type': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ]
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
+                    },
+                    'required': ['data', 'media_type'],
+                    'title': 'BinaryImage',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_document_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'The URL of the document.',
+                    'properties': {
+                        'url': {'type': 'string'},
+                        'force_download': {'default': False, 'type': 'boolean'},
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'document-url', 'default': 'document-url', 'type': 'string'},
+                    },
+                    'required': ['url'],
+                    'title': 'DocumentUrl',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_video_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'A URL to a video.',
+                    'properties': {
+                        'url': {'type': 'string'},
+                        'force_download': {'default': False, 'type': 'boolean'},
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'video-url', 'default': 'video-url', 'type': 'string'},
+                    },
+                    'required': ['url'],
+                    'title': 'VideoUrl',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_audio_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'A URL to an audio file.',
+                    'properties': {
+                        'url': {'type': 'string'},
+                        'force_download': {'default': False, 'type': 'boolean'},
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'audio-url', 'default': 'audio-url', 'type': 'string'},
+                    },
+                    'required': ['url'],
+                    'title': 'AudioUrl',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_image_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'A URL to an image.',
+                    'properties': {
+                        'url': {'type': 'string'},
+                        'force_download': {'default': False, 'type': 'boolean'},
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                        'kind': {'const': 'image-url', 'default': 'image-url', 'type': 'string'},
+                    },
+                    'required': ['url'],
+                    'title': 'ImageUrl',
+                    'type': 'object',
+                },
+            },
+            {
+                'name': 'tool_with_return_tool_return',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {},
+            },
+        ]
+    )

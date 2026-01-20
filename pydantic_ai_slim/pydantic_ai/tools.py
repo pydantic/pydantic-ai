@@ -284,6 +284,7 @@ class Tool(Generic[ToolAgentDepsT]):
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
+    include_return_schema: bool
 
     def __init__(
         self,
@@ -303,6 +304,7 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
+        include_return_schema: bool = False,
     ):
         """Create a new tool instance.
 
@@ -361,6 +363,7 @@ class Tool(Generic[ToolAgentDepsT]):
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
+            include_return_schema: Whether to include the return schema in the tool definition. Defaults to False.
         """
         self.function = function
         self.function_schema = function_schema or _function_schema.function_schema(
@@ -382,6 +385,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
+        self.include_return_schema = include_return_schema
 
     @classmethod
     def from_schema(
@@ -392,6 +396,7 @@ class Tool(Generic[ToolAgentDepsT]):
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
         sequential: bool = False,
+        return_schema: ObjectJsonSchema | None = None,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -406,6 +411,7 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            return_schema: The schema for the function return value. If not provided, it will be inferred from the function signature.
 
         Returns:
             A Pydantic tool that calls the function
@@ -417,6 +423,7 @@ class Tool(Generic[ToolAgentDepsT]):
             json_schema=json_schema,
             takes_ctx=takes_ctx,
             is_async=_utils.is_async_callable(function),
+            return_schema=return_schema,
         )
 
         return cls(
@@ -429,7 +436,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
 
     @property
-    def tool_def(self):
+    def tool_def(self) -> ToolDefinition:
         return ToolDefinition(
             name=self.name,
             description=self.description,
@@ -439,6 +446,7 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata=self.metadata,
             timeout=self.timeout,
             kind='unapproved' if self.requires_approval else 'function',
+            return_schema=self.function_schema.return_schema,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -530,6 +538,9 @@ class ToolDefinition:
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
     """
+
+    return_schema: ObjectJsonSchema | None = None
+    """The JSON schema for the tool's return value."""
 
     @property
     def defer(self) -> bool:
