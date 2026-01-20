@@ -1,0 +1,942 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2523'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: 'Use arbitrary_query to get the 5 most recent traces with columns: span_name, duration_ms. Then format the
+          results as CSV using format_as_csv. Return the CSV.'
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |-
+            You can generate arbitrary python code that doesn't use imports.
+            The last evaluated expression will be the return value of the tool.
+
+            The following functions are available as local variables in the interpreter:
+
+            ```python
+            def find_exceptions_in_file(filepath: str, age: int) -> Any:
+                """Get the details about the 10 most recent exceptions on the file."""
+
+            def arbitrary_query(query: str, age: int) -> Any:
+                """
+                Run an arbitrary query on the Pydantic Logfire database.
+
+                The SQL reference is available via the `sql_reference` tool.
+                """
+
+            def logfire_link(trace_id: str) -> Any:
+                """Creates a link to help the user to view the trace in the Logfire UI."""
+
+            def schema_reference() -> Any:
+                """
+                The database schema for the Logfire DataFusion database.
+
+                This includes all tables, columns, and their types as well as descriptions.
+                For example:
+
+                ```sql
+                -- The records table contains spans and logs.
+                CREATE TABLE records (
+                    message TEXT, -- The message of the record
+                    span_name TEXT, -- The name of the span, message is usually templated from this
+                    trace_id TEXT, -- The trace ID, identifies a group of spans in a trace
+                    exception_type TEXT, -- The type of the exception
+                    exception_message TEXT, -- The message of the exception
+                    -- other columns...
+                );
+                ```
+                The SQL syntax is similar to Postgres, although the query engine is actually Apache DataFusion.
+
+                To access nested JSON fields e.g. in the `attributes` column use the `->` and `->>` operators.
+                You may need to cast the result of these operators e.g. `(attributes->'cost')::float + 10`.
+
+                You should apply as much filtering as reasonable to reduce the amount of data queried.
+                Filters on `start_timestamp`, `service_name`, `span_name`, `metric_name`, `trace_id` are efficient.
+                """
+
+            def format_as_csv(data: list[dict[str, Any]]) -> Any:
+                """Convert data to CSV format. Each dict becomes a row with its values."""
+            ```
+          name: run_code
+          parameters:
+            additionalProperties: false
+            properties:
+              code:
+                type: string
+            required:
+            - code
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1422'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '994'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"code": "arbitrary_query(''SELECT span_name, duration_ms FROM records ORDER BY start_timestamp
+                DESC LIMIT 5'', 0)"}'
+              name: run_code
+            id: call_kZbAWU3Wda57VwmNGaX9dq89
+            type: function
+          - function:
+              arguments: '{"code": "schema_reference()"}'
+              name: run_code
+            id: call_dhj91eYWX1rWUD2S7sy9M0wB
+            type: function
+      created: 1768864135
+      id: chatcmpl-CzsedMwYl5TGRESvye7y43pFJG2Q5
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_cbf1785567
+      usage:
+        completion_tokens: 69
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 505
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 574
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '7622'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=hfY1yCVkuI1Ho6IjROucDDZZkRJ0h5OGQkfBarmqBaY-1768864136-1.0.1.1-f_7sJJteSac3glQVRmkFMrQ.db0BCmWjiHUypB2ljAkpHzxML_KS3RHGVMfIl84BMdrn3M.UtNCRImLNxbjbqH4anBH6qgYMW6OwSRMim9s;
+        _cfuvid=jdbkCcRKLpaPmWJfFWvZdbftk_0G35IqNdkVJkByfiY-1768864136607-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: 'Use arbitrary_query to get the 5 most recent traces with columns: span_name, duration_ms. Then format the
+          results as CSV using format_as_csv. Return the CSV.'
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"code": "arbitrary_query(''SELECT span_name, duration_ms FROM records ORDER BY start_timestamp DESC
+              LIMIT 5'', 0)"}'
+            name: run_code
+          id: call_kZbAWU3Wda57VwmNGaX9dq89
+          type: function
+        - function:
+            arguments: '{"code": "schema_reference()"}'
+            name: run_code
+          id: call_dhj91eYWX1rWUD2S7sy9M0wB
+          type: function
+      - content: |-
+          Error executing tool arbitrary_query: {'detail': '{"error":"invalid query","details":{"error_type":"UserError","details":{"kind":"Error","message":"column \'duration_ms\' not found","span":{"start":{"line":1,"column":19},"end":{"line":1,"column":30}},"replace_span_with":"duration"}}}'}
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: call_kZbAWU3Wda57VwmNGaX9dq89
+      - content: |-
+          CREATE TABLE records (
+              attributes TEXT,
+              attributes_json_schema TEXT,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+              day DATE NOT NULL,
+              deployment_environment TEXT,
+              duration DOUBLE PRECISION,
+              end_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              exception_message TEXT,
+              exception_stacktrace TEXT,
+              exception_type TEXT,
+              http_method TEXT,
+              http_response_status_code INTEGER,
+              http_route TEXT,
+              is_exception BOOLEAN,
+              kind TEXT NOT NULL,
+              level INTEGER NOT NULL,
+              log_body TEXT,
+              message TEXT NOT NULL,
+              otel_events TEXT,
+              otel_links TEXT,
+              otel_resource_attributes TEXT,
+              otel_scope_attributes TEXT,
+              otel_scope_name TEXT,
+              otel_scope_version TEXT,
+              otel_status_code TEXT,
+              otel_status_message TEXT,
+              parent_span_id TEXT,
+              process_pid INTEGER,
+              project_id TEXT NOT NULL,
+              service_instance_id TEXT,
+              service_name TEXT NOT NULL,
+              service_namespace TEXT,
+              service_version TEXT,
+              span_id TEXT NOT NULL,
+              span_name TEXT NOT NULL,
+              start_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              tags TEXT[],
+              telemetry_sdk_language TEXT,
+              telemetry_sdk_name TEXT,
+              telemetry_sdk_version TEXT,
+              trace_id TEXT NOT NULL,
+              url_full TEXT,
+              url_path TEXT,
+              url_query TEXT
+          );
+
+          CREATE TABLE extended_records (
+              attributes TEXT,
+              attributes_json_schema TEXT,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+              day DATE NOT NULL,
+              deployment_environment TEXT,
+              duration DOUBLE PRECISION,
+              end_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              exception_message TEXT,
+              exception_stacktrace TEXT,
+              exception_type TEXT,
+              http_method TEXT,
+              http_response_status_code INTEGER,
+              http_route TEXT,
+              is_exception BOOLEAN,
+              kind TEXT NOT NULL,
+              level INTEGER NOT NULL,
+              log_body TEXT,
+              message TEXT NOT NULL,
+              otel_events TEXT,
+              otel_links TEXT,
+              otel_resource_attributes TEXT,
+              otel_scope_attributes TEXT,
+              otel_scope_name TEXT,
+              otel_scope_version TEXT,
+              otel_status_code TEXT,
+              otel_status_message TEXT,
+              parent_span_id TEXT,
+              process_pid INTEGER,
+              project_id TEXT NOT NULL,
+              service_instance_id TEXT,
+              service_name TEXT NOT NULL,
+              service_namespace TEXT,
+              service_version TEXT,
+              span_id TEXT NOT NULL,
+              span_name TEXT NOT NULL,
+              start_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              tags TEXT[],
+              telemetry_sdk_language TEXT,
+              telemetry_sdk_name TEXT,
+              telemetry_sdk_version TEXT,
+              trace_id TEXT NOT NULL,
+              url_full TEXT,
+              url_path TEXT,
+              url_query TEXT
+          );
+
+          CREATE TABLE metrics (
+              aggregation_temporality TEXT,
+              attributes TEXT,
+              attributes_json_schema TEXT,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+              day DATE NOT NULL,
+              deployment_environment TEXT,
+              exemplars TEXT,
+              exp_histogram_negative_bucket_counts INTEGER[],
+              exp_histogram_negative_bucket_counts_offset INTEGER,
+              exp_histogram_positive_bucket_counts INTEGER[],
+              exp_histogram_positive_bucket_counts_offset INTEGER,
+              exp_histogram_scale INTEGER,
+              exp_histogram_zero_count INTEGER,
+              exp_histogram_zero_threshold DOUBLE PRECISION,
+              histogram_bucket_counts INTEGER[],
+              histogram_count INTEGER,
+              histogram_explicit_bounds DOUBLE PRECISION[],
+              histogram_max DOUBLE PRECISION,
+              histogram_min DOUBLE PRECISION,
+              histogram_sum DOUBLE PRECISION,
+              is_monotonic BOOLEAN,
+              metric_description TEXT,
+              metric_name TEXT NOT NULL,
+              metric_type TEXT NOT NULL,
+              otel_resource_attributes TEXT,
+              otel_scope_attributes TEXT,
+              otel_scope_name TEXT,
+              otel_scope_version TEXT,
+              process_pid INTEGER,
+              project_id TEXT NOT NULL,
+              recorded_timestamp TIMESTAMP WITH TIME ZONE,
+              scalar_value DOUBLE PRECISION,
+              service_instance_id TEXT,
+              service_name TEXT NOT NULL,
+              service_namespace TEXT,
+              service_version TEXT,
+              start_timestamp TIMESTAMP WITH TIME ZONE,
+              telemetry_sdk_language TEXT,
+              telemetry_sdk_name TEXT,
+              telemetry_sdk_version TEXT,
+              unit TEXT NOT NULL
+          );
+        role: tool
+        tool_call_id: call_dhj91eYWX1rWUD2S7sy9M0wB
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |-
+            You can generate arbitrary python code that doesn't use imports.
+            The last evaluated expression will be the return value of the tool.
+
+            The following functions are available as local variables in the interpreter:
+
+            ```python
+            def find_exceptions_in_file(filepath: str, age: int) -> Any:
+                """Get the details about the 10 most recent exceptions on the file."""
+
+            def arbitrary_query(query: str, age: int) -> Any:
+                """
+                Run an arbitrary query on the Pydantic Logfire database.
+
+                The SQL reference is available via the `sql_reference` tool.
+                """
+
+            def logfire_link(trace_id: str) -> Any:
+                """Creates a link to help the user to view the trace in the Logfire UI."""
+
+            def schema_reference() -> Any:
+                """
+                The database schema for the Logfire DataFusion database.
+
+                This includes all tables, columns, and their types as well as descriptions.
+                For example:
+
+                ```sql
+                -- The records table contains spans and logs.
+                CREATE TABLE records (
+                    message TEXT, -- The message of the record
+                    span_name TEXT, -- The name of the span, message is usually templated from this
+                    trace_id TEXT, -- The trace ID, identifies a group of spans in a trace
+                    exception_type TEXT, -- The type of the exception
+                    exception_message TEXT, -- The message of the exception
+                    -- other columns...
+                );
+                ```
+                The SQL syntax is similar to Postgres, although the query engine is actually Apache DataFusion.
+
+                To access nested JSON fields e.g. in the `attributes` column use the `->` and `->>` operators.
+                You may need to cast the result of these operators e.g. `(attributes->'cost')::float + 10`.
+
+                You should apply as much filtering as reasonable to reduce the amount of data queried.
+                Filters on `start_timestamp`, `service_name`, `span_name`, `metric_name`, `trace_id` are efficient.
+                """
+
+            def format_as_csv(data: list[dict[str, Any]]) -> Any:
+                """Convert data to CSV format. Each dict becomes a row with its values."""
+            ```
+          name: run_code
+          parameters:
+            additionalProperties: false
+            properties:
+              code:
+                type: string
+            required:
+            - code
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1673'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1536'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The query to retrieve the 5 most recent traces failed because the column `duration_ms` does not exist.
+            Instead, you should use the `duration` column, which is of type `DOUBLE PRECISION`. Let's correct that and try
+            again to get the results in CSV format.
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"code": "arbitrary_query(''SELECT span_name, duration FROM records ORDER BY start_timestamp DESC
+                LIMIT 5'', 0)"}'
+              name: run_code
+            id: call_9CyU1XEZisIWlqRqQZR9b8lU
+            type: function
+          - function:
+              arguments: '{"code": "schema_reference()"}'
+              name: run_code
+            id: call_SyCvqNJDTOTBAqILcnlVRIpQ
+            type: function
+      created: 1768864137
+      id: chatcmpl-CzsefQQUdHqT9Lb7zw8x4RcetxApD
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_cbf1785567
+      usage:
+        completion_tokens: 125
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 1670
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 1795
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '12612'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=hfY1yCVkuI1Ho6IjROucDDZZkRJ0h5OGQkfBarmqBaY-1768864136-1.0.1.1-f_7sJJteSac3glQVRmkFMrQ.db0BCmWjiHUypB2ljAkpHzxML_KS3RHGVMfIl84BMdrn3M.UtNCRImLNxbjbqH4anBH6qgYMW6OwSRMim9s;
+        _cfuvid=jdbkCcRKLpaPmWJfFWvZdbftk_0G35IqNdkVJkByfiY-1768864136607-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: 'Use arbitrary_query to get the 5 most recent traces with columns: span_name, duration_ms. Then format the
+          results as CSV using format_as_csv. Return the CSV.'
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"code": "arbitrary_query(''SELECT span_name, duration_ms FROM records ORDER BY start_timestamp DESC
+              LIMIT 5'', 0)"}'
+            name: run_code
+          id: call_kZbAWU3Wda57VwmNGaX9dq89
+          type: function
+        - function:
+            arguments: '{"code": "schema_reference()"}'
+            name: run_code
+          id: call_dhj91eYWX1rWUD2S7sy9M0wB
+          type: function
+      - content: |-
+          Error executing tool arbitrary_query: {'detail': '{"error":"invalid query","details":{"error_type":"UserError","details":{"kind":"Error","message":"column \'duration_ms\' not found","span":{"start":{"line":1,"column":19},"end":{"line":1,"column":30}},"replace_span_with":"duration"}}}'}
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: call_kZbAWU3Wda57VwmNGaX9dq89
+      - content: |-
+          CREATE TABLE records (
+              attributes TEXT,
+              attributes_json_schema TEXT,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+              day DATE NOT NULL,
+              deployment_environment TEXT,
+              duration DOUBLE PRECISION,
+              end_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              exception_message TEXT,
+              exception_stacktrace TEXT,
+              exception_type TEXT,
+              http_method TEXT,
+              http_response_status_code INTEGER,
+              http_route TEXT,
+              is_exception BOOLEAN,
+              kind TEXT NOT NULL,
+              level INTEGER NOT NULL,
+              log_body TEXT,
+              message TEXT NOT NULL,
+              otel_events TEXT,
+              otel_links TEXT,
+              otel_resource_attributes TEXT,
+              otel_scope_attributes TEXT,
+              otel_scope_name TEXT,
+              otel_scope_version TEXT,
+              otel_status_code TEXT,
+              otel_status_message TEXT,
+              parent_span_id TEXT,
+              process_pid INTEGER,
+              project_id TEXT NOT NULL,
+              service_instance_id TEXT,
+              service_name TEXT NOT NULL,
+              service_namespace TEXT,
+              service_version TEXT,
+              span_id TEXT NOT NULL,
+              span_name TEXT NOT NULL,
+              start_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              tags TEXT[],
+              telemetry_sdk_language TEXT,
+              telemetry_sdk_name TEXT,
+              telemetry_sdk_version TEXT,
+              trace_id TEXT NOT NULL,
+              url_full TEXT,
+              url_path TEXT,
+              url_query TEXT
+          );
+
+          CREATE TABLE extended_records (
+              attributes TEXT,
+              attributes_json_schema TEXT,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+              day DATE NOT NULL,
+              deployment_environment TEXT,
+              duration DOUBLE PRECISION,
+              end_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              exception_message TEXT,
+              exception_stacktrace TEXT,
+              exception_type TEXT,
+              http_method TEXT,
+              http_response_status_code INTEGER,
+              http_route TEXT,
+              is_exception BOOLEAN,
+              kind TEXT NOT NULL,
+              level INTEGER NOT NULL,
+              log_body TEXT,
+              message TEXT NOT NULL,
+              otel_events TEXT,
+              otel_links TEXT,
+              otel_resource_attributes TEXT,
+              otel_scope_attributes TEXT,
+              otel_scope_name TEXT,
+              otel_scope_version TEXT,
+              otel_status_code TEXT,
+              otel_status_message TEXT,
+              parent_span_id TEXT,
+              process_pid INTEGER,
+              project_id TEXT NOT NULL,
+              service_instance_id TEXT,
+              service_name TEXT NOT NULL,
+              service_namespace TEXT,
+              service_version TEXT,
+              span_id TEXT NOT NULL,
+              span_name TEXT NOT NULL,
+              start_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              tags TEXT[],
+              telemetry_sdk_language TEXT,
+              telemetry_sdk_name TEXT,
+              telemetry_sdk_version TEXT,
+              trace_id TEXT NOT NULL,
+              url_full TEXT,
+              url_path TEXT,
+              url_query TEXT
+          );
+
+          CREATE TABLE metrics (
+              aggregation_temporality TEXT,
+              attributes TEXT,
+              attributes_json_schema TEXT,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+              day DATE NOT NULL,
+              deployment_environment TEXT,
+              exemplars TEXT,
+              exp_histogram_negative_bucket_counts INTEGER[],
+              exp_histogram_negative_bucket_counts_offset INTEGER,
+              exp_histogram_positive_bucket_counts INTEGER[],
+              exp_histogram_positive_bucket_counts_offset INTEGER,
+              exp_histogram_scale INTEGER,
+              exp_histogram_zero_count INTEGER,
+              exp_histogram_zero_threshold DOUBLE PRECISION,
+              histogram_bucket_counts INTEGER[],
+              histogram_count INTEGER,
+              histogram_explicit_bounds DOUBLE PRECISION[],
+              histogram_max DOUBLE PRECISION,
+              histogram_min DOUBLE PRECISION,
+              histogram_sum DOUBLE PRECISION,
+              is_monotonic BOOLEAN,
+              metric_description TEXT,
+              metric_name TEXT NOT NULL,
+              metric_type TEXT NOT NULL,
+              otel_resource_attributes TEXT,
+              otel_scope_attributes TEXT,
+              otel_scope_name TEXT,
+              otel_scope_version TEXT,
+              process_pid INTEGER,
+              project_id TEXT NOT NULL,
+              recorded_timestamp TIMESTAMP WITH TIME ZONE,
+              scalar_value DOUBLE PRECISION,
+              service_instance_id TEXT,
+              service_name TEXT NOT NULL,
+              service_namespace TEXT,
+              service_version TEXT,
+              start_timestamp TIMESTAMP WITH TIME ZONE,
+              telemetry_sdk_language TEXT,
+              telemetry_sdk_name TEXT,
+              telemetry_sdk_version TEXT,
+              unit TEXT NOT NULL
+          );
+        role: tool
+        tool_call_id: call_dhj91eYWX1rWUD2S7sy9M0wB
+      - content: The query to retrieve the 5 most recent traces failed because the column `duration_ms` does not exist. Instead,
+          you should use the `duration` column, which is of type `DOUBLE PRECISION`. Let's correct that and try again to get
+          the results in CSV format.
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"code": "arbitrary_query(''SELECT span_name, duration FROM records ORDER BY start_timestamp DESC
+              LIMIT 5'', 0)"}'
+            name: run_code
+          id: call_9CyU1XEZisIWlqRqQZR9b8lU
+          type: function
+        - function:
+            arguments: '{"code": "schema_reference()"}'
+            name: run_code
+          id: call_SyCvqNJDTOTBAqILcnlVRIpQ
+          type: function
+      - content: '[]'
+        role: tool
+        tool_call_id: call_9CyU1XEZisIWlqRqQZR9b8lU
+      - content: |-
+          CREATE TABLE records (
+              attributes TEXT,
+              attributes_json_schema TEXT,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+              day DATE NOT NULL,
+              deployment_environment TEXT,
+              duration DOUBLE PRECISION,
+              end_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              exception_message TEXT,
+              exception_stacktrace TEXT,
+              exception_type TEXT,
+              http_method TEXT,
+              http_response_status_code INTEGER,
+              http_route TEXT,
+              is_exception BOOLEAN,
+              kind TEXT NOT NULL,
+              level INTEGER NOT NULL,
+              log_body TEXT,
+              message TEXT NOT NULL,
+              otel_events TEXT,
+              otel_links TEXT,
+              otel_resource_attributes TEXT,
+              otel_scope_attributes TEXT,
+              otel_scope_name TEXT,
+              otel_scope_version TEXT,
+              otel_status_code TEXT,
+              otel_status_message TEXT,
+              parent_span_id TEXT,
+              process_pid INTEGER,
+              project_id TEXT NOT NULL,
+              service_instance_id TEXT,
+              service_name TEXT NOT NULL,
+              service_namespace TEXT,
+              service_version TEXT,
+              span_id TEXT NOT NULL,
+              span_name TEXT NOT NULL,
+              start_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              tags TEXT[],
+              telemetry_sdk_language TEXT,
+              telemetry_sdk_name TEXT,
+              telemetry_sdk_version TEXT,
+              trace_id TEXT NOT NULL,
+              url_full TEXT,
+              url_path TEXT,
+              url_query TEXT
+          );
+
+          CREATE TABLE extended_records (
+              attributes TEXT,
+              attributes_json_schema TEXT,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+              day DATE NOT NULL,
+              deployment_environment TEXT,
+              duration DOUBLE PRECISION,
+              end_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              exception_message TEXT,
+              exception_stacktrace TEXT,
+              exception_type TEXT,
+              http_method TEXT,
+              http_response_status_code INTEGER,
+              http_route TEXT,
+              is_exception BOOLEAN,
+              kind TEXT NOT NULL,
+              level INTEGER NOT NULL,
+              log_body TEXT,
+              message TEXT NOT NULL,
+              otel_events TEXT,
+              otel_links TEXT,
+              otel_resource_attributes TEXT,
+              otel_scope_attributes TEXT,
+              otel_scope_name TEXT,
+              otel_scope_version TEXT,
+              otel_status_code TEXT,
+              otel_status_message TEXT,
+              parent_span_id TEXT,
+              process_pid INTEGER,
+              project_id TEXT NOT NULL,
+              service_instance_id TEXT,
+              service_name TEXT NOT NULL,
+              service_namespace TEXT,
+              service_version TEXT,
+              span_id TEXT NOT NULL,
+              span_name TEXT NOT NULL,
+              start_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+              tags TEXT[],
+              telemetry_sdk_language TEXT,
+              telemetry_sdk_name TEXT,
+              telemetry_sdk_version TEXT,
+              trace_id TEXT NOT NULL,
+              url_full TEXT,
+              url_path TEXT,
+              url_query TEXT
+          );
+
+          CREATE TABLE metrics (
+              aggregation_temporality TEXT,
+              attributes TEXT,
+              attributes_json_schema TEXT,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+              day DATE NOT NULL,
+              deployment_environment TEXT,
+              exemplars TEXT,
+              exp_histogram_negative_bucket_counts INTEGER[],
+              exp_histogram_negative_bucket_counts_offset INTEGER,
+              exp_histogram_positive_bucket_counts INTEGER[],
+              exp_histogram_positive_bucket_counts_offset INTEGER,
+              exp_histogram_scale INTEGER,
+              exp_histogram_zero_count INTEGER,
+              exp_histogram_zero_threshold DOUBLE PRECISION,
+              histogram_bucket_counts INTEGER[],
+              histogram_count INTEGER,
+              histogram_explicit_bounds DOUBLE PRECISION[],
+              histogram_max DOUBLE PRECISION,
+              histogram_min DOUBLE PRECISION,
+              histogram_sum DOUBLE PRECISION,
+              is_monotonic BOOLEAN,
+              metric_description TEXT,
+              metric_name TEXT NOT NULL,
+              metric_type TEXT NOT NULL,
+              otel_resource_attributes TEXT,
+              otel_scope_attributes TEXT,
+              otel_scope_name TEXT,
+              otel_scope_version TEXT,
+              process_pid INTEGER,
+              project_id TEXT NOT NULL,
+              recorded_timestamp TIMESTAMP WITH TIME ZONE,
+              scalar_value DOUBLE PRECISION,
+              service_instance_id TEXT,
+              service_name TEXT NOT NULL,
+              service_namespace TEXT,
+              service_version TEXT,
+              start_timestamp TIMESTAMP WITH TIME ZONE,
+              telemetry_sdk_language TEXT,
+              telemetry_sdk_name TEXT,
+              telemetry_sdk_version TEXT,
+              unit TEXT NOT NULL
+          );
+        role: tool
+        tool_call_id: call_SyCvqNJDTOTBAqILcnlVRIpQ
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |-
+            You can generate arbitrary python code that doesn't use imports.
+            The last evaluated expression will be the return value of the tool.
+
+            The following functions are available as local variables in the interpreter:
+
+            ```python
+            def find_exceptions_in_file(filepath: str, age: int) -> Any:
+                """Get the details about the 10 most recent exceptions on the file."""
+
+            def arbitrary_query(query: str, age: int) -> Any:
+                """
+                Run an arbitrary query on the Pydantic Logfire database.
+
+                The SQL reference is available via the `sql_reference` tool.
+                """
+
+            def logfire_link(trace_id: str) -> Any:
+                """Creates a link to help the user to view the trace in the Logfire UI."""
+
+            def schema_reference() -> Any:
+                """
+                The database schema for the Logfire DataFusion database.
+
+                This includes all tables, columns, and their types as well as descriptions.
+                For example:
+
+                ```sql
+                -- The records table contains spans and logs.
+                CREATE TABLE records (
+                    message TEXT, -- The message of the record
+                    span_name TEXT, -- The name of the span, message is usually templated from this
+                    trace_id TEXT, -- The trace ID, identifies a group of spans in a trace
+                    exception_type TEXT, -- The type of the exception
+                    exception_message TEXT, -- The message of the exception
+                    -- other columns...
+                );
+                ```
+                The SQL syntax is similar to Postgres, although the query engine is actually Apache DataFusion.
+
+                To access nested JSON fields e.g. in the `attributes` column use the `->` and `->>` operators.
+                You may need to cast the result of these operators e.g. `(attributes->'cost')::float + 10`.
+
+                You should apply as much filtering as reasonable to reduce the amount of data queried.
+                Filters on `start_timestamp`, `service_name`, `span_name`, `metric_name`, `trace_id` are efficient.
+                """
+
+            def format_as_csv(data: list[dict[str, Any]]) -> Any:
+                """Convert data to CSV format. Each dict becomes a row with its values."""
+            ```
+          name: run_code
+          parameters:
+            additionalProperties: false
+            properties:
+              code:
+                type: string
+            required:
+            - code
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1108'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1186'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: |-
+            It appears there was an issue retrieving the 5 most recent traces, as no results were returned from the `arbitrary_query`. This could mean that there are currently no records in the database that match the criteria.
+
+            If you have any specific queries or need further assistance, please let me know!
+          refusal: null
+          role: assistant
+      created: 1768864138
+      id: chatcmpl-CzsegetaZuxbrcSd5yjsAwFjHnJUD
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_cbf1785567
+      usage:
+        completion_tokens: 60
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 2810
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 1792
+        total_tokens: 2870
+    status:
+      code: 200
+      message: OK
+version: 1
