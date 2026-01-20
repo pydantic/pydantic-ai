@@ -471,7 +471,7 @@ class BinaryContent:
     data: Annotated[
         bytes,
         BeforeValidator(lambda v: base64.b64decode(v) if isinstance(v, str) else v),
-        PlainSerializer(lambda v: base64.b64encode(v).decode('ascii') if isinstance(v, bytes) else v, when_used='json'),
+        PlainSerializer(lambda v: base64.b64encode(v).decode('ascii'), when_used='json'),
     ]
     """The binary file data.
 

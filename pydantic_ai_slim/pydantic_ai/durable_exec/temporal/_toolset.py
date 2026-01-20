@@ -75,9 +75,7 @@ def rehydrate_binary_content(value: Any) -> Any:
     if isinstance(value, dict):
         d = cast(dict[str, Any], value)
         if d.get('kind') == 'binary' and 'data' in d and 'media_type' in d:
-            data: bytes | str = d['data']
-            if isinstance(data, str):
-                data = base64.b64decode(data)
+            data = base64.b64decode(d['data']) if isinstance(d['data'], str) else d['data']
             return BinaryContent(
                 data=data,
                 media_type=d['media_type'],
