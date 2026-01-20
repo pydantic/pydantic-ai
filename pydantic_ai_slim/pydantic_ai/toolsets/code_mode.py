@@ -106,11 +106,14 @@ CRITICAL:
 - Use loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
 - The last expression evaluated becomes the return value - make it the final answer
 
-Syntax restrictions:
+Syntax restrictions (MUST follow - the runtime does not support these):
 - No imports allowed - use only the functions provided below
 - No generator expressions (e.g., `sum(x for x in items)`) - use explicit for loops
+- No dictionary/list subscript assignment (e.g., `dict[key] = value`) - use list.append() instead
+- No string methods (e.g., `", ".join(list)`, `.split()`, `.upper()`) - return data structures instead
 - Initialize numeric accumulators with 0.0 (float) not 0 (int)
 - Access dict fields with brackets: result["field"], not result.field
+- Return dicts/lists as the final result - do NOT format as strings
 
 Available functions:
 
@@ -125,14 +128,19 @@ Example - completing a full aggregation task in one execution:
 # Get all items and process them completely in one go
 items = get_items(category="electronics")
 
-# Aggregate data using a loop
+# Use a list to collect results (can't assign to dict keys)
+results = []
 total = 0.0
+
 for item in items:
     details = get_item_details(id=item["id"])
     if details["status"] == "active":
         total += details["price"]
+        # Append dicts to collect data
+        results.append({"name": item["name"], "price": details["price"]})
 
-f"Total value of active items: ${total}"
+# Return a dict structure as the final result (no string formatting)
+{"total": total, "count": len(results), "items": results}
 ```"""
         )
         # TODO: Ideally we'd use kind='output' to make the code result be the final answer
