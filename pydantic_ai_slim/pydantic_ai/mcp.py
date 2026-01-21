@@ -1170,11 +1170,12 @@ class MCPServerSSE(_MCPServerHTTP):
             raise ValueError('`http_client` is mutually exclusive with `headers`.')
 
         if self.http_client is not None:
+
             def httpx_client_factory(
                 headers: dict[str, str] | None = None,
                 timeout: httpx.Timeout | None = None,
                 auth: httpx.Auth | None = None,
-            ) -> AsyncIterator[httpx.AsyncClient]:
+            ) -> httpx.AsyncClient:
                 assert self.http_client is not None
                 return self.http_client
 
@@ -1182,7 +1183,7 @@ class MCPServerSSE(_MCPServerHTTP):
                 url=self.url,
                 timeout=self.timeout,
                 sse_read_timeout=self.read_timeout,
-                httpx_client_factory=httpx_client_factory,  # pyright: ignore[reportArgumentType]
+                httpx_client_factory=httpx_client_factory,
             ) as (read_stream, write_stream, *_):
                 yield read_stream, write_stream
         else:
@@ -1264,20 +1265,17 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
         ]
     ]:
         aexit_stack = AsyncExitStack()
-        if self.http_client is not None:
-            http_client = self.http_client
-        else:
-            timeout = httpx.Timeout(self.timeout, read=self.read_timeout)
-            http_client = await aexit_stack.enter_async_context(
-                httpx.AsyncClient(timeout=timeout, headers=self.headers)
-            )
-        read_stream, write_stream, *_ = aexit_stack.enter_async_context(
-            streamable_http_client(self.url, http_client=client)
+        http_client = self.http_client or await aexit_stack.enter_async_context(
+            httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, read=self.read_timeout), headers=self.headers)
         )
-            try:
-                yield read_stream, write_stream
-            finally:
-                # unwrap the aexit
+        read_stream, write_stream, *_ = await aexit_stack.enter_async_context(
+            streamable_http_client(self.url, http_client=http_client)
+        )
+        try:
+            yield read_stream, write_stream
+        finally:
+            # unwrap the aexit
+            await aexit_stack.aclose()
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url
