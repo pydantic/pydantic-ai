@@ -119,8 +119,9 @@ async def test_generated_signatures_are_valid_python():
     # Build the prefix that will be used for type checking
     prefix = _build_type_check_prefix(code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
 
-    # `...` and `pass` syntax is not valid for Monty type checking, so we use
-    # `raise NotImplementedError()` instead
+    # `...` and `pass` are not valid for Monty/ty type checking - ty is intentionally
+    # stricter than pyright here. See https://github.com/astral-sh/ty/issues/1922
+    # They may add a way to disable this check in the future.
     assert prefix == snapshot('''\
 from typing import Any, TypedDict, NotRequired, Literal
 
