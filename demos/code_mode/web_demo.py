@@ -1,4 +1,4 @@
-"""Code Mode Web Demo
+"""Code Mode Web Demo.
 
 Run this demo to see code mode in action via the web UI.
 The demo exposes mock business tools that the agent can call via generated Python code.
@@ -83,22 +83,78 @@ _TEAM_MEMBERS: dict[str, list[TeamMember]] = {
 # Orders
 _USER_ORDERS: dict[str, list[Order]] = {
     'u1': [
-        {'order_id': 'o1', 'user_id': 'u1', 'product_id': 'p1', 'quantity': 2, 'unit_price': 100.0, 'status': 'completed'},
-        {'order_id': 'o2', 'user_id': 'u1', 'product_id': 'p2', 'quantity': 1, 'unit_price': 50.0, 'status': 'completed'},
+        {
+            'order_id': 'o1',
+            'user_id': 'u1',
+            'product_id': 'p1',
+            'quantity': 2,
+            'unit_price': 100.0,
+            'status': 'completed',
+        },
+        {
+            'order_id': 'o2',
+            'user_id': 'u1',
+            'product_id': 'p2',
+            'quantity': 1,
+            'unit_price': 50.0,
+            'status': 'completed',
+        },
     ],
     'u2': [
-        {'order_id': 'o3', 'user_id': 'u2', 'product_id': 'p3', 'quantity': 5, 'unit_price': 200.0, 'status': 'completed'},
-        {'order_id': 'o4', 'user_id': 'u2', 'product_id': 'p1', 'quantity': 1, 'unit_price': 100.0, 'status': 'pending'},
+        {
+            'order_id': 'o3',
+            'user_id': 'u2',
+            'product_id': 'p3',
+            'quantity': 5,
+            'unit_price': 200.0,
+            'status': 'completed',
+        },
+        {
+            'order_id': 'o4',
+            'user_id': 'u2',
+            'product_id': 'p1',
+            'quantity': 1,
+            'unit_price': 100.0,
+            'status': 'pending',
+        },
     ],
     'u3': [
-        {'order_id': 'o5', 'user_id': 'u3', 'product_id': 'p2', 'quantity': 3, 'unit_price': 50.0, 'status': 'completed'},
+        {
+            'order_id': 'o5',
+            'user_id': 'u3',
+            'product_id': 'p2',
+            'quantity': 3,
+            'unit_price': 50.0,
+            'status': 'completed',
+        },
     ],
     'u4': [
-        {'order_id': 'o6', 'user_id': 'u4', 'product_id': 'p4', 'quantity': 10, 'unit_price': 25.0, 'status': 'completed'},
-        {'order_id': 'o7', 'user_id': 'u4', 'product_id': 'p3', 'quantity': 2, 'unit_price': 200.0, 'status': 'completed'},
+        {
+            'order_id': 'o6',
+            'user_id': 'u4',
+            'product_id': 'p4',
+            'quantity': 10,
+            'unit_price': 25.0,
+            'status': 'completed',
+        },
+        {
+            'order_id': 'o7',
+            'user_id': 'u4',
+            'product_id': 'p3',
+            'quantity': 2,
+            'unit_price': 200.0,
+            'status': 'completed',
+        },
     ],
     'u5': [
-        {'order_id': 'o8', 'user_id': 'u5', 'product_id': 'p1', 'quantity': 20, 'unit_price': 100.0, 'status': 'completed'},
+        {
+            'order_id': 'o8',
+            'user_id': 'u5',
+            'product_id': 'p1',
+            'quantity': 20,
+            'unit_price': 100.0,
+            'status': 'completed',
+        },
     ],
     'u6': [],
 }
@@ -300,7 +356,7 @@ if __name__ == '__main__':
     print('=' * 60)
     print('TEST PROMPT (copy and paste into both):')
     print('=' * 60)
-    print('''
+    print("""
 Analyze the engineering team's spending with discount savings.
 
 Steps:
@@ -314,7 +370,7 @@ Return:
 - The name of the person who saved the most from discounts
 - Their total discount savings amount
 - The product(s) that gave them the biggest discount
-''')
+""")
     print('=' * 60)
     print('Expected answer: Bob with $150 savings (Monitor, 15% off)')
     print('=' * 60)

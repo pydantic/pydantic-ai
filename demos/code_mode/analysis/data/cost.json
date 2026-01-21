@@ -1,0 +1,121 @@
+{
+  "columns": [
+    {
+      "name": "mode",
+      "datatype": "Utf8",
+      "nullable": true
+    },
+    {
+      "name": "run_number",
+      "datatype": "Utf8",
+      "nullable": true
+    },
+    {
+      "name": "total_cost",
+      "datatype": "Float64",
+      "nullable": true
+    }
+  ],
+  "rows": [
+    {
+      "mode": "code_mode",
+      "run_number": "1",
+      "total_cost": 0.02595599927008152
+    },
+    {
+      "mode": "code_mode",
+      "run_number": "10",
+      "total_cost": 0.02692799922078848
+    },
+    {
+      "mode": "code_mode",
+      "run_number": "2",
+      "total_cost": 0.027158998884260654
+    },
+    {
+      "mode": "code_mode",
+      "run_number": "3",
+      "total_cost": 0.025944000110030174
+    },
+    {
+      "mode": "code_mode",
+      "run_number": "4",
+      "total_cost": 0.026649000123143196
+    },
+    {
+      "mode": "code_mode",
+      "run_number": "5",
+      "total_cost": 0.026436000131070614
+    },
+    {
+      "mode": "code_mode",
+      "run_number": "6",
+      "total_cost": 0.028088999912142754
+    },
+    {
+      "mode": "code_mode",
+      "run_number": "7",
+      "total_cost": 0.02691000048071146
+    },
+    {
+      "mode": "code_mode",
+      "run_number": "8",
+      "total_cost": 0.026781000196933746
+    },
+    {
+      "mode": "code_mode",
+      "run_number": "9",
+      "total_cost": 0.02581800054758787
+    },
+    {
+      "mode": "traditional",
+      "run_number": "1",
+      "total_cost": 0.03677999973297119
+    },
+    {
+      "mode": "traditional",
+      "run_number": "10",
+      "total_cost": 0.03555000014603138
+    },
+    {
+      "mode": "traditional",
+      "run_number": "2",
+      "total_cost": 0.03544500004500151
+    },
+    {
+      "mode": "traditional",
+      "run_number": "3",
+      "total_cost": 0.03610499948263168
+    },
+    {
+      "mode": "traditional",
+      "run_number": "4",
+      "total_cost": 0.03510299976915121
+    },
+    {
+      "mode": "traditional",
+      "run_number": "5",
+      "total_cost": 0.03484500013291836
+    },
+    {
+      "mode": "traditional",
+      "run_number": "6",
+      "total_cost": 0.035937000066041946
+    },
+    {
+      "mode": "traditional",
+      "run_number": "7",
+      "total_cost": 0.03571799956262112
+    },
+    {
+      "mode": "traditional",
+      "run_number": "8",
+      "total_cost": 0.035792999900877476
+    },
+    {
+      "mode": "traditional",
+      "run_number": "9",
+      "total_cost": 0.035144999623298645
+    }
+  ]
+}

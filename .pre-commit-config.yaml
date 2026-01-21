@@ -16,7 +16,9 @@ repos:
           (?x)^(
               tests/models/cassettes/.*|
               tests/cassettes/.*|
-              uv.lock
+              uv.lock|
+              demos/code_mode/results/.*|
+              demos/code_mode/analysis/.*
           )$
 
   - repo: https://github.com/sirosen/texthooks
@@ -34,7 +36,7 @@ repos:
     rev: v2.3.0
     hooks:
       - id: codespell
-        args: ["--skip", "tests/models/cassettes/*"]
+        args: ["--skip", "tests/models/cassettes/*,demos/code_mode/results/*,demos/code_mode/analysis/*"]
         additional_dependencies:
           - tomli
   - repo: local
