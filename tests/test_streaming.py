@@ -3302,3 +3302,145 @@ async def test_get_output_after_stream_output():
             ),
         ]
     )
+
+
+class TestStreamCancellation:
+    """Tests for streaming cancellation functionality."""
+
+    async def test_stream_cancel_basic(self):
+        """Test that cancel() stops iteration and sets incomplete=True."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            chunks: list[str] = []
+            # Use debounce_by=None to ensure we get individual chunks from TestModel
+            async for text in result.stream_text(delta=True, debounce_by=None):
+                chunks.append(text)
+                if len(chunks) >= 2:
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+
+    async def test_stream_cancel_idempotent(self):
+        """Test that calling cancel() multiple times is safe."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            await result.cancel()
+            await result.cancel()  # Should not raise
+            await result.cancel()  # Should not raise
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+
+    async def test_stream_cancel_in_stream_text(self):
+        """Test cancellation during stream_text()."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            chunks: list[str] = []
+            async for text in result.stream_text():
+                chunks.append(text)
+                if len(chunks) >= 1:
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert len(chunks) >= 1
+
+    async def test_stream_cancel_message_history(self):
+        """Test that cancelled response appears in all_messages() with incomplete=True."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            # Use debounce_by=None to ensure we get individual chunks from TestModel
+            async for _ in result.stream_text(delta=True, debounce_by=None):
+                await result.cancel()
+                break
+
+            messages = result.all_messages()
+            # Should have request + incomplete response
+            assert len(messages) == 2
+            # Find the ModelResponse - it should be present and marked incomplete
+            responses = [m for m in messages if isinstance(m, ModelResponse)]
+            assert len(responses) == 1, 'Cancelled response should be in all_messages()'
+            assert responses[0].incomplete, 'Cancelled response should be marked incomplete'
+
+    async def test_stream_cancel_before_iteration(self):
+        """Test that cancel() works before iteration starts."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            await result.cancel()
+
+            # Iteration should complete immediately
+            chunks: list[str] = []
+            # Use debounce_by=None to ensure we get individual chunks from TestModel
+            async for text in result.stream_text(delta=True, debounce_by=None):
+                chunks.append(text)
+
+            assert result.is_cancelled
+            # May or may not have any chunks depending on timing
+            assert result.response.incomplete
+
+    async def test_stream_cancel_structured_output(self):
+        """Test that cancel() works with structured output streaming via stream_output()."""
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42')}
+            yield {0: DeltaToolCall(json_args=', "b": "h')}
+            yield {0: DeltaToolCall(json_args='el')}
+            yield {0: DeltaToolCall(json_args='lo')}
+            yield {0: DeltaToolCall(json_args='"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=Foo)
+
+        async with agent.run_stream('test') as result:
+            outputs: list[Foo] = []
+            async for output in result.stream_output(debounce_by=None):
+                outputs.append(output)
+                if len(outputs) >= 2:
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+            assert len(outputs) >= 2
+
+    async def test_stream_cancel_stream_responses(self):
+        """Test that cancel() works with stream_responses() iteration."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            responses: list[tuple[ModelResponse, bool]] = []
+            async for response_tuple in result.stream_responses():
+                responses.append(response_tuple)
+                if len(responses) >= 2:
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+            assert len(responses) >= 2
+
+    async def test_stream_cancel_agent_iter(self):
+        """Test that cancel() works when using Agent.iter() with node.stream()."""
+        agent = Agent(TestModel())
+
+        async with agent.iter('Hello') as run:
+            async for node in run:
+                if agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        chunks: list[str] = []
+                        async for text in stream.stream_text(delta=True, debounce_by=None):
+                            chunks.append(text)
+                            if len(chunks) >= 2:
+                                await stream.cancel()
+                                break
+
+                        assert stream.is_cancelled
+                        assert stream.response.incomplete
+                        assert len(chunks) >= 2

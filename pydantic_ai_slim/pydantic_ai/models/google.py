@@ -613,6 +613,7 @@ class GoogleModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
+            _stream_to_close=response,
         )
 
     async def _map_messages(  # noqa: C901
@@ -778,6 +779,15 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
+    _stream_to_close: AsyncIterator[GenerateContentResponse] | None = field(default=None)
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response and close the underlying HTTP connection."""
+        await super().cancel()
+        if self._stream_to_close is not None:
+            # google.genai.types.AsyncGenerateContentResponse is typed as AsyncIterator but is actually
+            # an AsyncGenerator at runtime
+            await self._stream_to_close.aclose()  # type: ignore[attr-defined]
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:

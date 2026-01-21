@@ -477,9 +477,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 yield agent_stream
                 # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-                # otherwise usage won't be properly counted:
-                async for _ in agent_stream:
-                    pass
+                # otherwise usage won't be properly counted. Skip draining if cancelled.
+                if not agent_stream.is_cancelled:
+                    async for _ in agent_stream:
+                        pass
 
         model_response = streamed_response.get()
 

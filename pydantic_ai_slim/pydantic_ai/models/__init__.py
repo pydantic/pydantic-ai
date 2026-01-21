@@ -927,6 +927,7 @@ class StreamedResponse(ABC):
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
+    _cancelled: bool = field(default=False, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -936,63 +937,73 @@ class StreamedResponse(ABC):
         first match is found.
         """
         if self._event_iterator is None:
-
-            async def iterator_with_final_event(
-                iterator: AsyncIterator[ModelResponseStreamEvent],
-            ) -> AsyncIterator[ModelResponseStreamEvent]:
-                async for event in iterator:
-                    yield event
-                    if (
-                        final_result_event := _get_final_result_event(event, self.model_request_parameters)
-                    ) is not None:
-                        self.final_result_event = final_result_event
-                        yield final_result_event
-                        break
-
-                # If we broke out of the above loop, we need to yield the rest of the events
-                # If we didn't, this will just be a no-op
-                async for event in iterator:
-                    yield event
-
-            async def iterator_with_part_end(
-                iterator: AsyncIterator[ModelResponseStreamEvent],
-            ) -> AsyncIterator[ModelResponseStreamEvent]:
-                last_start_event: PartStartEvent | None = None
-
-                def part_end_event(next_part: ModelResponsePart | None = None) -> PartEndEvent | None:
-                    if not last_start_event:
-                        return None
-
-                    index = last_start_event.index
-                    part = self._parts_manager.get_parts()[index]
-                    if not isinstance(part, TextPart | ThinkingPart | BaseToolCallPart):
-                        # Parts other than these 3 don't have deltas, so don't need an end part.
-                        return None
-
-                    return PartEndEvent(
-                        index=index,
-                        part=part,
-                        next_part_kind=next_part.part_kind if next_part else None,
-                    )
-
-                async for event in iterator:
-                    if isinstance(event, PartStartEvent):
-                        if last_start_event:
-                            end_event = part_end_event(event.part)
-                            if end_event:
-                                yield end_event
-
-                            event.previous_part_kind = last_start_event.part.part_kind
-                        last_start_event = event
-
-                    yield event
-
-                end_event = part_end_event()
-                if end_event:
-                    yield end_event
-
-            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            self._event_iterator = self._wrap_with_part_end(self._wrap_with_final_event(self._get_event_iterator()))
         return self._event_iterator
+
+    async def _wrap_with_final_event(
+        self,
+        iterator: AsyncIterator[ModelResponseStreamEvent],
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Wrap iterator to detect and emit FinalResultEvent when a matching result is found."""
+        async for event in iterator:
+            if self._cancelled:
+                break
+            yield event
+            if (final_result_event := _get_final_result_event(event, self.model_request_parameters)) is not None:
+                self.final_result_event = final_result_event
+                yield final_result_event
+                break
+
+        if self._cancelled:
+            return
+
+        # If we broke out of the above loop, we need to yield the rest of the events
+        # If we didn't, this will just be a no-op
+        async for event in iterator:
+            if self._cancelled:
+                break
+            yield event
+
+    async def _wrap_with_part_end(
+        self,
+        iterator: AsyncIterator[ModelResponseStreamEvent],
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Wrap iterator to emit PartEndEvent when a part completes."""
+        last_start_event: PartStartEvent | None = None
+
+        def part_end_event(next_part: ModelResponsePart | None = None) -> PartEndEvent | None:
+            if not last_start_event:
+                return None
+
+            index = last_start_event.index
+            part = self._parts_manager.get_parts()[index]
+            if not isinstance(part, TextPart | ThinkingPart | BaseToolCallPart):
+                # Parts other than these 3 don't have deltas, so don't need an end part.
+                return None
+
+            return PartEndEvent(
+                index=index,
+                part=part,
+                next_part_kind=next_part.part_kind if next_part else None,
+            )
+
+        async for event in iterator:
+            if self._cancelled:
+                break
+            if isinstance(event, PartStartEvent):
+                if last_start_event:
+                    end_event = part_end_event(event.part)
+                    if end_event:
+                        yield end_event
+
+                    event.previous_part_kind = last_start_event.part.part_kind
+                last_start_event = event
+
+            yield event
+
+        end_event = part_end_event()
+        if end_event:
+            yield end_event
 
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1019,7 +1030,24 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
+            incomplete=self._cancelled,
         )
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response.
+
+        After calling this method:
+        - Iteration will stop immediately
+        - get() will return a ModelResponse with incomplete=True
+
+        Subclasses should override to close the underlying HTTP stream.
+        """
+        self._cancelled = True
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Returns True if the stream was cancelled."""
+        return self._cancelled
 
     # TODO (v2): Make this a property
     def usage(self) -> RequestUsage:

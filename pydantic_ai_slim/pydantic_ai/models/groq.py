@@ -371,6 +371,7 @@ class GroqModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created),
+            _stream_to_close=response,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -529,6 +530,13 @@ class GroqStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _stream_to_close: AsyncStream[chat.ChatCompletionChunk] | None = field(default=None)
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response and close the underlying HTTP connection."""
+        await super().cancel()
+        if self._stream_to_close is not None:
+            await self._stream_to_close.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
