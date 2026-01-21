@@ -199,10 +199,10 @@ def _generate_typeddict_defs_from_collected(collected_types: dict[str, Any], too
 
 def _is_async_function(func: Callable[..., Any]) -> bool:
     """Check if a function is async."""
-    if asyncio.iscoroutinefunction(func):
+    if inspect.iscoroutinefunction(func): # -> Changed from asyncio.iscoroutinefunction which got deprecated
         return True
     if inspect.ismethod(func):
-        return asyncio.iscoroutinefunction(func.__func__)
+        return inspect.iscoroutinefunction(func.__func__)
     return False
 
 

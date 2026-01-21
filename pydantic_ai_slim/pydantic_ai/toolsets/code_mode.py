@@ -47,8 +47,9 @@ def build_code_mode_prompt(*, signatures: list[str]) -> str:
         The complete prompt describing code mode capabilities and available functions.
     """
     functions_block = '\n\n'.join(signatures)
+    # TODO: The first line of the prompt should be customizeable by the user using Prompt Templates
     return f"""\
-Write Python code to accomplish the ENTIRE task in a SINGLE code block.
+You should consider writing Python code to accomplish multiple tasks in one go instead of using multiple tools one by one.
 
 CRITICAL:
 - Use for loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
@@ -172,12 +173,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         available_functions = [_get_tool_signature(tool) for tool in wrapped_tools.values()]
         self._cached_signatures = available_functions
 
-        # Debug: show what signatures the model will see
-        print(f'\n{"=" * 60}\nCODE MODE - Tool Signatures shown to model:\n{"=" * 60}')
-        for sig in available_functions:
-            print(sig)
-        print(f'{"=" * 60}\n')
-
         # TODO: This dumps all tool signatures up-front, which can bloat context for large toolsets.
         # Example: hundreds of MCP tools can push tens of thousands of tokens into the prompt,
         # defeating the progressive-disclosure approach described in code-mode references.
@@ -210,8 +205,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert isinstance(code, str)
 
         # Log the generated code for debugging visibility
-        print(f'\n{"=" * 60}\nCODE MODE - Generated Code:\n{"=" * 60}\n{code}\n{"=" * 60}\n')
-
         # TODO: There is no execution timeout or step budget for Monty runs here.
         # Example: `for _ in range(10**9): pass` can hang the agent run indefinitely.
         # TODO: Monty supports a limited Python subset (no while loops, list comprehensions, lambdas).
@@ -224,20 +217,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             result = m.start()
         except monty.MontyTypingError as e:
             error_msg = e.display('concise')
-            print(f'\n{"!" * 60}\nCODE MODE - Type Error:\n{error_msg}\n{"!" * 60}\n')
             raise ModelRetry(f'Type error in generated code:\n{error_msg}')
         except monty.MontySyntaxError as e:
             error_msg = e.display()
-            print(f'\n{"!" * 60}\nCODE MODE - Syntax Error:\n{error_msg}\n{"!" * 60}\n')
             raise ModelRetry(f'Syntax error in generated code:\n{error_msg}')
         except monty.MontyRuntimeError as e:
             error_msg = e.display('traceback')
-            print(f'\n{"!" * 60}\nCODE MODE - Runtime Error:\n{error_msg}\n{"!" * 60}\n')
             raise ModelRetry(f'Runtime error in generated code:\n{error_msg}')
 
-        call_count = 0
         while isinstance(result, monty.MontySnapshot):
-            call_count += 1
             tool_name = result.function_name
             original_tool = tool.original_tools[tool_name]
 
@@ -251,10 +239,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 for i, arg in enumerate(result.args):
                     if i < len(param_names):
                         tool_kwargs[param_names[i]] = arg
-
-            # Log inner tool call
-            print(f'  [{call_count}] Calling: {tool_name}({tool_kwargs})')
-
             inner_ctx = replace(ctx, tool_name=tool_name)
 
             # TODO: Approval/defer flows are handled by the outer tool call, so inner tool approvals
@@ -270,23 +254,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 'logfire.msg': f'code mode calling: {tool_name}',
             }
 
+            # TODO: Consider moving this to tool manager(Discussion with Douwe)?
             span_name = f'code_mode_tool:{tool_name}'
             with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
                 tool_return_value = await super().call_tool(tool_name, tool_kwargs, inner_ctx, original_tool)
-
-            # Log return value
-            print(f'      -> {tool_return_value}')
 
             try:
                 result = result.resume(return_value=tool_return_value)
             except monty.MontyRuntimeError as e:
                 error_msg = e.display('traceback')
-                print(f'\n{"!" * 60}\nCODE MODE - Runtime Error after {tool_name} returned:\n')
-                print(f'  Return value was: {tool_return_value}')
-                print(f'  Error: {error_msg}\n{"!" * 60}\n')
                 raise ModelRetry(f'Runtime error in generated code:\n{error_msg}')
-
-        # Log final output
-        print(f'\n{"=" * 60}\nCODE MODE - Final Output:\n{"=" * 60}\n{result.output}\n{"=" * 60}\n')
 
         return result.output
