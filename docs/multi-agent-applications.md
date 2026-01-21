@@ -341,7 +341,7 @@ In addition, the community maintains packages that bring these concepts together
 
 ## Observing Multi-Agent Systems
 
-Multi-agent systems can be challenging to debug due to their complexity—when multiple agents interact, understanding the flow of execution becomes essential.
+Multi-agent systems can be challenging to debug due to their complexity; when multiple agents interact, understanding the flow of execution becomes essential.
 
 ### Tracing Agent Delegation
 
@@ -362,8 +362,10 @@ Logfire shows you:
 - **Delegation decisions**—when and why one agent called another
 - **End-to-end latency** broken down by agent
 - **Token usage and costs** per agent
+- **What triggered the agent run**—the HTTP request, scheduled job, or user action that started it all
+- **What happened inside tool calls**—database queries, HTTP requests, file operations, and any other instrumented code that tools execute
 
-This is essential for understanding and optimizing complex agent workflows. When something goes wrong in a multi-agent system, you'll see exactly which agent failed and what it was trying to do.
+This is essential for understanding and optimizing complex agent workflows. When something goes wrong in a multi-agent system, you'll see exactly which agent failed and what it was trying to do, and whether the problem was in the agent's reasoning or in the backend systems it called.
 
 ### Full-Stack Visibility
 

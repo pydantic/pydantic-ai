@@ -1060,11 +1060,13 @@ user_id=123 message='Hello John, would you be free for coffee sometime next week
 
 ## Debugging and Monitoring
 
-Understanding what your agent is doing, and why, is essential for development and production operation.
+Agents require a different approach to observability than traditional software. With traditional web endpoints or data pipelines, you can largely predict behavior by reading the code. With agents, this is much harder. The model's decisions are stochastic, and that stochasticity compounds through the agentic loop as the agent reasons, calls tools, observes results, and reasons again. You need to actually see what happened.
+
+This means setting up your application to record what's happening in a way you can review afterward, both during development (to understand and iterate) and in production (to debug issues and monitor behavior). The ergonomics matter too: a plaintext dump of everything that happened isn't a practical way to review agent behavior, even during development. You want tooling that lets you step through each decision and tool call interactively.
+
+We recommend [Pydantic Logfire](https://logfire.pydantic.dev/docs/), which has been designed with Pydantic AI workflows in mind.
 
 ### Tracing with Logfire
-
-[Pydantic Logfire](https://pydantic.dev/logfire) provides specialized tooling for PydanticAI agents:
 
 ```python
 import logfire
@@ -1073,7 +1075,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 ```
 
-With Logfire instrumented, every agent run creates a detailed trace showing:
+With Logfire instrumentation enabled, every agent run creates a detailed trace showing:
 
 - **Messages exchanged** with the model (system, user, assistant)
 - **Tool calls** including arguments and return values
@@ -1092,7 +1094,7 @@ This visibility is invaluable for:
 
 For systematic evaluation of agent behavior beyond runtime debugging, [Pydantic Evals](evals.md) provides a code-first framework for testing AI systems:
 
-```python
+```python {test="skip" lint="skip" format="skip"}
 from pydantic_evals import Case, Dataset
 
 dataset = Dataset(
@@ -1107,7 +1109,7 @@ Evals let you define test cases, run them against your agent, and score the resu
 
 ### Using Other Backends
 
-PydanticAI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can send traces to any compatible backend—including Jaeger, Zipkin, and Grafana Tempo. Even if you use the Logfire SDK for its convenience, you can configure it to send data to other backends. See [alternative backends](logfire.md#using-opentelemetry) for setup instructions.
+Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can send traces to any compatible backend. Even if you use the Logfire SDK for its convenience, you can configure it to send data to other backends. See [alternative backends](logfire.md#using-opentelemetry) for setup instructions.
 
 [Full Logfire integration guide →](logfire.md)
 

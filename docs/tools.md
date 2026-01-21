@@ -368,7 +368,7 @@ _(This example is complete, it can be run "as is")_
     - How long each tool took to execute
     - Any errors that occurred
 
-    This visibility helps you understand why an agent made specific decisions and identify issues in tool implementations. PydanticAI's instrumentation is built on OpenTelemetry, so you can also use other compatible backends.
+    This visibility helps you understand why an agent made specific decisions and identify issues in tool implementations.
 
 ## See Also
 

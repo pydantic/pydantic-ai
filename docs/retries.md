@@ -323,7 +323,7 @@ agent = Agent(model)
     - Monitor retry frequency over time
     - Identify opportunities to reduce retries
 
-    With [HTTPX instrumentation](logfire.md#monitoring-http-requests) enabled, retry attempts are automatically captured in your traces. PydanticAI's instrumentation is built on OpenTelemetry, so you can also use other compatible backends.
+    With [HTTPX instrumentation](logfire.md#monitoring-http-requests) enabled, retry attempts are automatically captured in your traces.
 
 ## Error Handling
 
