@@ -148,12 +148,12 @@ async def test_signature_includes_raise_not_implemented():
     assert description == snapshot('''\
 You should consider writing Python code to accomplish multiple tasks in one go instead of using multiple tools one by one.
 
-How to:
+How to do that:
 - ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
 - The last expression evaluated becomes the return value - make it the final answer
 
-Syntax restrictions (the runtime uses a restricted Python subset):
+CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
 - No imports - use only the provided functions and builtins (len, sum, str, etc.)
 - No while loops - use for loops instead
 - No comprehensions (list/dict/set) or generator expressions - use explicit for loops
