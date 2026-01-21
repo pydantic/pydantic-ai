@@ -24,6 +24,7 @@ class EmbeddingSettings(TypedDict, total=False):
     * Google
     * Sentence Transformers
     * Bedrock
+    * VoyageAI
     """
 
     truncate: bool
@@ -44,6 +45,7 @@ class EmbeddingSettings(TypedDict, total=False):
 
     * Cohere
     * Bedrock (Cohere and Nova models)
+    * VoyageAI
     """
 
     extra_headers: dict[str, str]

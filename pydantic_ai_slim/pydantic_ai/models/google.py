@@ -615,7 +615,7 @@ class GoogleModel(Model):
             _provider_timestamp=first_chunk.create_time,
         )
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
@@ -656,8 +656,28 @@ class GoogleModel(Model):
                     else:
                         assert_never(part)
 
+                # Work around a Gemini bug where content objects containing functionResponse parts are treated as
+                # role=model even when role=user is explicitly specified.
+                #
+                # We build `message_parts` first, then split into multiple content objects whenever we transition
+                # between function_response and non-function_response parts.
+                #
+                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
                 if message_parts:
-                    contents.append({'role': 'user', 'parts': message_parts})
+                    content_parts: list[PartDict] = []
+
+                    for part in message_parts:
+                        if (
+                            content_parts
+                            and 'function_response' in content_parts[-1]
+                            and 'function_response' not in part
+                        ):
+                            contents.append({'role': 'user', 'parts': content_parts})
+                            content_parts = []
+
+                        content_parts.append(part)
+
+                    contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(m, self.system)
                 if maybe_content:
