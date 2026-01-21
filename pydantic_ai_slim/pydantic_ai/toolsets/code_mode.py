@@ -258,6 +258,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 for i, arg in enumerate(result.args):
                     if i < len(param_names):
                         tool_kwargs[param_names[i]] = arg
+
+            # Apply override_args if provided by user during approval.
+            # When _approval_call is present, the agent graph stores override_args in metadata
+            # as '_override_args' rather than replacing the outer tool's args directly.
+            if checkpoint and ctx.tool_call_metadata:
+                override_args = ctx.tool_call_metadata.get('_override_args')
+                if override_args:
+                    tool_kwargs = override_args
+
             # NOTE: we intentionally do not propagate outer approval beyond a single call.
             # When resuming from checkpoint, pass only the inner tool's original metadata
             # to avoid leaking code_mode's checkpoint data into the inner tool's context.
@@ -282,6 +291,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # overrides to the checkpointed tool_args before resuming.
                 # We keep 'original_metadata' separate to avoid key collisions when passing
                 # metadata back to the inner tool on resume.
+                # '_approval_call' tells the agent graph to surface the inner tool name/args
+                # in DeferredToolRequests.approvals instead of the outer 'run_code' call.
                 raise ApprovalRequired(
                     metadata={
                         'code_mode': {
@@ -290,6 +301,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                             'tool_args': tool_kwargs,
                         },
                         'original_metadata': e.metadata,
+                        '_approval_call': {
+                            'tool_name': tool_name,
+                            'args': tool_kwargs,
+                        },
                     }
                 )
             try:
