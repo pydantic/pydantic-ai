@@ -240,10 +240,10 @@ class FileBasedSkillScript(SkillScript):
     The uri attribute points to the Python script file and serves as the unique identifier.
 
     Attributes:
-        _executor: Executor for running the script (internal use).
+        executor: Executor for running the script.
     """
 
-    _executor: LocalSkillScriptExecutor | CallableSkillScriptExecutor = LocalSkillScriptExecutor()
+    executor: LocalSkillScriptExecutor | CallableSkillScriptExecutor = LocalSkillScriptExecutor()
 
     async def run(self, ctx: Any, args: dict[str, Any] | None = None) -> Any:
         """Execute script file via subprocess.
@@ -261,7 +261,7 @@ class FileBasedSkillScript(SkillScript):
         if not self.uri:
             raise SkillScriptExecutionError(f"Script '{self.name}' has no URI")
 
-        return await self._executor.run(self, args)
+        return await self.executor.run(self, args)
 
 
 def create_file_based_script(
@@ -288,5 +288,5 @@ def create_file_based_script(
         uri=uri,
         skill_name=skill_name,
         description=description,
-        _executor=executor,
+        executor=executor,
     )
