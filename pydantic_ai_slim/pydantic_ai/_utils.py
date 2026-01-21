@@ -175,7 +175,7 @@ async def _cleanup_temporal_group(
 
 
 @asynccontextmanager
-async def group_by_temporal(
+async def group_by_temporal(  # noqa: C901
     aiterable: AsyncIterable[T], soft_max_interval: float | None
 ) -> AsyncIterator[AsyncIterable[list[T]]]:
     """Group items from an async iterable into lists based on time interval between them.
