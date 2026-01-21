@@ -1817,11 +1817,11 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
     # Verify we got the expected builtin tool call events with snapshot.
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', provider_name='xai')),
-            PartDeltaEvent(
+            PartStartEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='qBsbOpXt0iGLuYsVE7NyapPz/aM46HSgPDWPirBkao7k1PC/Kr8cCkd8X7kIKzvoyNsXaXRuUlaX/HIeSWM+Z1WX4D7zkUugOj+9wpiI3yuOVvpcgH9ZR8jHXDVl2l3wOuJ1MJLN3ksDfzEe8jXdp2eFqjphqMe4L2F+0CztjBAA8t3JrChA5WOMNCi+7J/ilrMj/Vb5ziC2OYdnoZgKo0tw5g8MD79sSBZI4gccCkyWtepj/Tq5raR5HZbXVXKLbPJSHBe2OHbN3QNnm8Kru+D268Y4g0FviU0FfVGF+VaQvkbHyfj0khheg/e0haj7AssXkH5b6YYOVbxe2qCtQOCSUAw37gAW77nqG9EQc74kk4eobmi8eoeDCVMnQ1C2TqhMaL7bvJ1/YIEQoQ9MZKIMyHSYgsrn6GsEZXza01NAqKrO8tK03UFGR19TphM7ybDzs9dB5VMyg0OhlS+4ZJFTSNg0mrz578hqhp3/iNfgAMD04L8EOA5HdoCS60khfF+LHir0syt+4aN6Dxotm5UK3SMtbnAf26kPLAp/C1TIIBoC2cU+rHOyylXY47w7VrgQVPrYDmuOnt4C2bqGb3W/HYcgg/f4c9pG1nqWdEu8CgvyNtOsHGFilTJJ/7wnZYeA48YtV5yP1GpWKmK1ukSod6YuAjyHFiguBIbLnqVN/c1gJcSm40COikR9B87vzOawR0IgdQjf04ASyucZpTW7MJ3DM+NT5FOHMIg6bqQt2xdkwtPaQSrTMvvFBpIO4FMip103f/1DrFpW+8sQqR7GXcpJi824jHQmb+rqIEjQ1BgsyQNtZuInhXNx31snZgpTkG5cFVl9W/2DaH9PTZkhQP1xibQqpQaPgF83c7j+o2fWYH39kgbEMZMlfxa4BIjHqm2ryFwzhLByfoafpnAyS4u2IRenO3CRr3mFatUGssLs0GjB/sG7zJjqfn7aORhBK4M03uQaW4UaAW4H+p9dbZRomOsh2mubWZG3rrDnjQoMoJv9YqvE78IhNkfInhP98IaFxHRTQpWMTzIkAlBdXyYlz/zxKfV4N4/4ZwQ4kwk1PhH769O7xiQa0PiNSg5dK28LULR0Z8WHz1KMSC6F3IA',
+                part=ThinkingPart(
+                    content='',
+                    signature='qBsbOpXt0iGLuYsVE7NyapPz/aM46HSgPDWPirBkao7k1PC/Kr8cCkd8X7kIKzvoyNsXaXRuUlaX/HIeSWM+Z1WX4D7zkUugOj+9wpiI3yuOVvpcgH9ZR8jHXDVl2l3wOuJ1MJLN3ksDfzEe8jXdp2eFqjphqMe4L2F+0CztjBAA8t3JrChA5WOMNCi+7J/ilrMj/Vb5ziC2OYdnoZgKo0tw5g8MD79sSBZI4gccCkyWtepj/Tq5raR5HZbXVXKLbPJSHBe2OHbN3QNnm8Kru+D268Y4g0FviU0FfVGF+VaQvkbHyfj0khheg/e0haj7AssXkH5b6YYOVbxe2qCtQOCSUAw37gAW77nqG9EQc74kk4eobmi8eoeDCVMnQ1C2TqhMaL7bvJ1/YIEQoQ9MZKIMyHSYgsrn6GsEZXza01NAqKrO8tK03UFGR19TphM7ybDzs9dB5VMyg0OhlS+4ZJFTSNg0mrz578hqhp3/iNfgAMD04L8EOA5HdoCS60khfF+LHir0syt+4aN6Dxotm5UK3SMtbnAf26kPLAp/C1TIIBoC2cU+rHOyylXY47w7VrgQVPrYDmuOnt4C2bqGb3W/HYcgg/f4c9pG1nqWdEu8CgvyNtOsHGFilTJJ/7wnZYeA48YtV5yP1GpWKmK1ukSod6YuAjyHFiguBIbLnqVN/c1gJcSm40COikR9B87vzOawR0IgdQjf04ASyucZpTW7MJ3DM+NT5FOHMIg6bqQt2xdkwtPaQSrTMvvFBpIO4FMip103f/1DrFpW+8sQqR7GXcpJi824jHQmb+rqIEjQ1BgsyQNtZuInhXNx31snZgpTkG5cFVl9W/2DaH9PTZkhQP1xibQqpQaPgF83c7j+o2fWYH39kgbEMZMlfxa4BIjHqm2ryFwzhLByfoafpnAyS4u2IRenO3CRr3mFatUGssLs0GjB/sG7zJjqfn7aORhBK4M03uQaW4UaAW4H+p9dbZRomOsh2mubWZG3rrDnjQoMoJv9YqvE78IhNkfInhP98IaFxHRTQpWMTzIkAlBdXyYlz/zxKfV4N4/4ZwQ4kwk1PhH769O7xiQa0PiNSg5dK28LULR0Z8WHz1KMSC6F3IA',
                     provider_name='xai',
                 ),
             ),
@@ -1836,14 +1836,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='xai'),
-                previous_part_kind='thinking',
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(
-                    args_delta={'query': 'San Francisco weather today Celsius'}, tool_call_id=IsStr()
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'San Francisco weather today Celsius'},
+                    tool_call_id=IsStr(),
+                    provider_name='xai',
                 ),
+                previous_part_kind='thinking',
             ),
             PartEndEvent(
                 index=1,
@@ -1875,15 +1874,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='xai'),
-                previous_part_kind='builtin-tool-return',
-            ),
-            PartDeltaEvent(
-                index=3,
-                delta=ToolCallPartDelta(
-                    args_delta={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                     tool_call_id=IsStr(),
+                    provider_name='xai',
                 ),
+                previous_part_kind='builtin-tool-return',
             ),
             PartEndEvent(
                 index=3,
@@ -2141,9 +2138,13 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(tool_name='code_execution', tool_call_id=IsStr(), provider_name='xai'),
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={'code': 'print(2 + 2)'},
+                    tool_call_id=IsStr(),
+                    provider_name='xai',
+                ),
             ),
-            PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': 'print(2 + 2)'}, tool_call_id=IsStr())),
             PartEndEvent(
                 index=0,
                 part=BuiltinToolCallPart(
@@ -2675,14 +2676,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
     )
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', provider_name='xai')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta=IsStr(),
-                    provider_name='xai',
-                ),
-            ),
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature=IsStr(), provider_name='xai')),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
@@ -2694,13 +2688,9 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(tool_name='mcp_server:deepwiki', tool_call_id=IsStr(), provider_name='xai'),
-                previous_part_kind='thinking',
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(
-                    args_delta={
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    args={
                         'action': 'call_tool',
                         'tool_name': 'ask_question',
                         'tool_args': {
@@ -2709,7 +2699,9 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                         },
                     },
                     tool_call_id=IsStr(),
+                    provider_name='xai',
                 ),
+                previous_part_kind='thinking',
             ),
             PartEndEvent(
                 index=1,
@@ -3160,14 +3152,7 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', provider_name='xai')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta=IsStr(),
-                    provider_name='xai',
-                ),
-            ),
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature=IsStr(), provider_name='xai')),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(

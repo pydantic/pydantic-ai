@@ -1,4 +1,4 @@
-version: 2
+version: 1
 interactions:
 - request_stream:
     json:

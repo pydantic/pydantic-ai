@@ -10,12 +10,12 @@ This is intentionally minimal for now:
   `Response` via `Response.process_chunk()` during replay
 - supports `files.upload(...)` with deterministic IDs for tests that pass `DocumentUrl`
 
-Cassette Format (v2):
+Cassette Format:
     The cassette stores an ordered list of request/response interactions for human readability.
     Each interaction pairs a request with its response, using `_sample` or `_stream` suffixes
     to align with the SDK methods (`chat.sample()` and `chat.stream()`).
 
-    version: 2
+    version: 1
     interactions:
     - request_sample:
         json: {...}    # Human-readable request (optional, for debugging)
@@ -154,18 +154,11 @@ class XaiProtoCassette:
     """
 
     interactions: list[Interaction] = field(default_factory=list)
-    version: int = 2
+    version: int = 1
 
     @classmethod
     def load(cls, path: Path) -> XaiProtoCassette:
         data = yaml.safe_load(path.read_text(encoding='utf-8'))
-        version = int(data.get('version', 1))
-        if version < 2:
-            raise ValueError(
-                f'Cassette format v{version} is no longer supported.\n'
-                f'Re-record with: XAI_API_KEY=... uv run pytest '
-                f'--record-mode=rewrite <test> -v'
-            )
 
         interactions: list[Interaction] = []
         for item in data.get('interactions', []):

@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
@@ -743,17 +743,6 @@ class XaiStreamedResponse(StreamedResponse):
 
         if response.encrypted_content and response.encrypted_content != prev_encrypted_content:
             prev_encrypted_content = response.encrypted_content
-            # Ensure the thinking part exists first (without signature), then emit signature as delta.
-            # This ensures PartStartEvent has no signature, and signature appears only in PartDeltaEvent.
-            if not self._parts_manager.has_vendor_part('reasoning'):
-                events.extend(
-                    self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='reasoning',
-                        content='',
-                        provider_name=self.system,
-                    )
-                )
-            # Now emit signature as a delta
             events.extend(
                 self._parts_manager.handle_thinking_delta(
                     vendor_part_id='reasoning',
@@ -782,11 +771,6 @@ class XaiStreamedResponse(StreamedResponse):
                 return
             seen_tool_call_ids.add(tool_call.id)
 
-            # xAI provides the full tool arguments in one go (not incremental JSON deltas).
-            # To match OpenAI's pattern and ensure UI adapters receive a PartDeltaEvent for args
-            # (not just a PartStartEvent with full args), we:
-            # 1. First emit a PartStartEvent with args=None via handle_part
-            # 2. Then emit a PartDeltaEvent with the full args via handle_tool_call_delta
             if builtin_tool_name.startswith(MCPServerTool.kind):
                 parsed_args = _build_mcp_tool_call_args(tool_call)
             else:
@@ -794,10 +778,7 @@ class XaiStreamedResponse(StreamedResponse):
             call_part = BuiltinToolCallPart(
                 tool_name=builtin_tool_name, args=parsed_args, tool_call_id=tool_call.id, provider_name=self.system
             )
-            yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=replace(call_part, args=None))
-            maybe_event = self._parts_manager.handle_tool_call_delta(vendor_part_id=tool_call.id, args=parsed_args)
-            if maybe_event is not None:  # pragma: no branch
-                yield maybe_event
+            yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
             return
 
         if delta.role == chat_pb2.MessageRole.ROLE_TOOL:
