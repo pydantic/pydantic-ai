@@ -24,7 +24,7 @@ from typing import Any, cast
 
 import anyio
 
-from ..._utils import is_async_callable, run_in_executor
+from .._utils import is_async_callable, run_in_executor
 from ._exceptions import SkillResourceLoadError, SkillScriptExecutionError
 from ._types import SkillResource, SkillScript
 
@@ -34,14 +34,8 @@ class FileBasedSkillResource(SkillResource):
     """A file-based skill resource that loads content from disk.
 
     This subclass extends SkillResource to add filesystem support.
-    The uri attribute points to the file location, and skill_uri provides
-    the base directory for security checks.
-
-    Attributes:
-        skill_uri: Base URI of the skill directory (for path resolution and security).
+    The uri attribute points to the file location and serves as the unique identifier.
     """
-
-    skill_uri: str | None = None
 
     async def load(self, ctx: Any, args: dict[str, Any] | None = None) -> Any:
         """Load resource content from file.
@@ -60,13 +54,6 @@ class FileBasedSkillResource(SkillResource):
             raise SkillResourceLoadError(f"Resource '{self.name}' has no URI")
 
         resource_path = Path(self.uri)
-
-        # Security check - ensure resource is within skill directory
-        if self.skill_uri:
-            try:
-                resource_path.resolve().relative_to(Path(self.skill_uri).resolve())
-            except ValueError as exc:
-                raise SkillResourceLoadError('Resource path escapes skill directory.') from exc
 
         try:
             return resource_path.read_text(encoding='utf-8')
@@ -106,14 +93,12 @@ class LocalSkillScriptExecutor:
         self,
         script: SkillScript,
         args: dict[str, Any] | None = None,
-        skill_uri: str | None = None,
     ) -> Any:
         """Run a skill script locally using subprocess.
 
         Args:
             script: The script to run.
             args: Named arguments as a dictionary (converted to command-line arguments).
-            skill_uri: The skill's base URI (for cwd resolution).
 
         Returns:
             Combined stdout and stderr output.
@@ -142,8 +127,8 @@ class LocalSkillScriptExecutor:
 
         try:
             # Use anyio.run_process for async-compatible execution
-            # cwd is the skill's directory - use uri if available, otherwise None
-            cwd = str(skill_uri) if skill_uri else None
+            # cwd is the script's directory
+            cwd = str(script_path.parent)
 
             result = None
             with anyio.move_on_after(self.timeout) as scope:
@@ -184,9 +169,9 @@ class CallableSkillScriptExecutor:
         ```python
         from pydantic_ai.toolsets.skills import CallableSkillScriptExecutor, SkillsDirectory
 
-        async def my_executor(script, args=None, skill_uri=None):
-            # Custom execution logic
-            return f"Executed {script.name} with {args}"
+        async def my_executor(script, args=None):
+            # Custom execution logic - script.uri contains the file path
+            return f"Executed {script.name} at {script.uri} with {args}"
 
         executor = CallableSkillScriptExecutor(func=my_executor)
         directory = SkillsDirectory(path="./skills", script_executor=executor)
@@ -198,8 +183,8 @@ class CallableSkillScriptExecutor:
 
         Args:
             func: Callable that executes scripts. Can be sync or async.
-                Should accept keyword arguments: script (SkillScript), args (dict[str, Any] | None),
-                and skill_uri (str | None), and return the script output as a string.
+                Should accept keyword arguments: script (SkillScript) and args (dict[str, Any] | None),
+                and return the script output as a string. The script's uri attribute contains the file path.
         """
         self._func = func
         self._is_async = is_async_callable(func)
@@ -208,29 +193,26 @@ class CallableSkillScriptExecutor:
         self,
         script: SkillScript,
         args: dict[str, Any] | None = None,
-        skill_uri: str | None = None,
     ) -> Any:
         """Run using the wrapped callable.
 
         Args:
             script: The script to run.
             args: Named arguments as a dictionary.
-            skill_uri: The skill's base URI.
 
         Returns:
             Script output (can be any type like str, dict, etc.).
         """
         if self._is_async:
             function = cast(Callable[..., Awaitable[Any]], self._func)
-            return await function(script=script, args=args, skill_uri=skill_uri)
+            return await function(script=script, args=args)
         else:
-            return await run_in_executor(self._func, script=script, args=args, skill_uri=skill_uri)
+            return await run_in_executor(self._func, script=script, args=args)
 
 
 def create_file_based_resource(
     name: str,
     uri: str,
-    skill_uri: str | None = None,
     description: str | None = None,
 ) -> FileBasedSkillResource:
     """Create a file-based resource.
@@ -238,7 +220,6 @@ def create_file_based_resource(
     Args:
         name: Resource name (e.g., "FORMS.md").
         uri: Path to the resource file.
-        skill_uri: Base URI of the skill directory.
         description: Optional resource description.
 
     Returns:
@@ -247,7 +228,6 @@ def create_file_based_resource(
     return FileBasedSkillResource(
         name=name,
         uri=uri,
-        skill_uri=skill_uri,
         description=description,
     )
 
@@ -257,15 +237,12 @@ class FileBasedSkillScript(SkillScript):
     """A file-based skill script that executes via subprocess.
 
     This subclass extends SkillScript to add subprocess execution support.
-    The uri attribute points to the Python script file, and the executor
-    handles the actual subprocess execution.
+    The uri attribute points to the Python script file and serves as the unique identifier.
 
     Attributes:
-        skill_uri: Base URI of the skill directory (for path resolution and execution context).
         _executor: Executor for running the script (internal use).
     """
 
-    skill_uri: str | None = None
     _executor: LocalSkillScriptExecutor | CallableSkillScriptExecutor = LocalSkillScriptExecutor()
 
     async def run(self, ctx: Any, args: dict[str, Any] | None = None) -> Any:
@@ -279,22 +256,12 @@ class FileBasedSkillScript(SkillScript):
             Script output (stdout + stderr).
 
         Raises:
-            SkillResourceLoadError: If script path is invalid.
             SkillScriptExecutionError: If execution fails.
         """
         if not self.uri:
             raise SkillScriptExecutionError(f"Script '{self.name}' has no URI")
 
-        script_path = Path(self.uri)
-
-        # Security check - ensure script is within skill directory
-        if self.skill_uri:
-            try:
-                script_path.resolve().relative_to(Path(self.skill_uri).resolve())
-            except ValueError as exc:
-                raise SkillResourceLoadError('Script path escapes skill directory.') from exc
-
-        return await self._executor.run(self, args, self.skill_uri)
+        return await self._executor.run(self, args)
 
 
 def create_file_based_script(
@@ -302,17 +269,15 @@ def create_file_based_script(
     uri: str,
     skill_name: str,
     executor: LocalSkillScriptExecutor | CallableSkillScriptExecutor,
-    skill_uri: str | None = None,
     description: str | None = None,
 ) -> FileBasedSkillScript:
     """Create a file-based script with executor.
 
     Args:
-        name: Script name (without .py extension).
+        name: Script name (includes .py extension).
         uri: Path to the script file.
         skill_name: Name of the parent skill.
         executor: Executor for running the script.
-        skill_uri: Base URI of the skill directory.
         description: Optional script description.
 
     Returns:
@@ -322,7 +287,6 @@ def create_file_based_script(
         name=name,
         uri=uri,
         skill_name=skill_name,
-        skill_uri=skill_uri,
         description=description,
         _executor=executor,
     )

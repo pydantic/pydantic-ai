@@ -17,35 +17,32 @@ import warnings
 from pathlib import Path
 from typing import Any
 
-from ..._run_context import RunContext
-from ..function import FunctionToolset
-from ._directory import SkillsDirectory
-from ._exceptions import SkillNotFoundError, SkillResourceNotFoundError
-from ._types import Skill, SkillResource, SkillScript
+from .._run_context import RunContext
+from ..skills import Skill, SkillResource, SkillScript, SkillsDirectory
+from ..skills._exceptions import SkillNotFoundError, SkillResourceNotFoundError
+from .function import FunctionToolset
 
 # Default instruction template for skills system prompt
-DEFAULT_INSTRUCTION_TEMPLATE = """<skills>
-
+DEFAULT_INSTRUCTION_TEMPLATE = """\
 Here is a list of skills that contain domain specific knowledge on a variety of topics.
 Each skill comes with a description of the topic and instructions on how to use it.
 When a user asks you to perform a task that falls within the domain of a skill, use the `load_skill` tool to acquire the full instructions.
 
+<available_skills>
 {skills_list}
+</available_skills>
 
-Use progressive disclosure: load only what you need, when you need it.
+Use progressive disclosure: load only what you need, when you need it:
 
 - First, use `load_skill` tool to read the full skill instructions
-- To read additional resources within a skill, use `read_skill_resource` tool.
-- To execute skill scripts, use `run_skill_script` tool.
-
-</skills>
-"""
+- To read additional resources within a skill, use `read_skill_resource` tool
+- To execute skill scripts, use `run_skill_script` tool"""
 
 # Template used by load_skill
 LOAD_SKILL_TEMPLATE = """<skill>
 <name>{skill_name}</name>
 <description>{description}</description>
-<path>{path}</path>
+<uri>{uri}</uri>
 
 <resources>
 {resources_list}
@@ -56,11 +53,8 @@ LOAD_SKILL_TEMPLATE = """<skill>
 </scripts>
 
 <instructions>
-
 {content}
-
 </instructions>
-
 </skill>
 """
 
@@ -409,7 +403,7 @@ class SkillsToolset(FunctionToolset):
             return LOAD_SKILL_TEMPLATE.format(
                 skill_name=skill.name,
                 description=skill.description,
-                path=skill.uri or 'N/A',
+                uri=skill.uri or 'N/A',
                 resources_list=resources_list,
                 scripts_list=scripts_list,
                 content=skill.content,
@@ -472,7 +466,7 @@ class SkillsToolset(FunctionToolset):
             Args:
                 ctx: Run context (required by toolset protocol).
                 skill_name: Exact name of the skill (from list_skills or load_skill).
-                script_name: Exact script name as listed in load_skill output (without .py extension).
+                script_name: Exact script name as listed in load_skill output (includes .py extension).
                 args: Named arguments as a dictionary matching the script's parameter schema.
                     Keys should match parameter names from the script's schema.
 
@@ -518,7 +512,7 @@ class SkillsToolset(FunctionToolset):
             skills_list_lines.append(f'<name>{skill.name}</name>')
             skills_list_lines.append(f'<description>{skill.description}</description>')
             if skill.uri:
-                skills_list_lines.append(f'<path>{skill.uri}</path>')
+                skills_list_lines.append(f'<uri>{skill.uri}</uri>')
             skills_list_lines.append('</skill>')
         skills_list = '\n'.join(skills_list_lines)
 

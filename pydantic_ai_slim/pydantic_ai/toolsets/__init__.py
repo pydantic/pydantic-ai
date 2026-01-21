@@ -8,7 +8,11 @@ from .function import FunctionToolset
 from .prefixed import PrefixedToolset
 from .prepared import PreparedToolset
 from .renamed import RenamedToolset
-from .skills import (
+from .skills_toolset import SkillsToolset
+from .wrapper import WrapperToolset
+
+# Import skills types from the skills module (they're re-exported here for convenience)
+from ..skills import (
     CallableSkillScriptExecutor,
     LocalSkillScriptExecutor,
     Skill,
@@ -16,13 +20,12 @@ from .skills import (
     SkillNotFoundError,
     SkillResource,
     SkillResourceLoadError,
+    SkillResourceNotFoundError,
     SkillScript,
     SkillScriptExecutionError,
     SkillsDirectory,
-    SkillsToolset,
     SkillValidationError,
 )
-from .wrapper import WrapperToolset
 
 __all__ = (
     'AbstractToolset',

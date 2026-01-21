@@ -17,8 +17,8 @@ from typing import Any
 
 from pydantic.json_schema import GenerateJsonSchema
 
-from ... import _function_schema
-from ...tools import GenerateToolJsonSchema
+from .. import _function_schema
+from ..tools import GenerateToolJsonSchema
 
 
 @dataclass
@@ -95,7 +95,7 @@ class SkillScript:
     - File-based scripts: Python scripts executed via subprocess
 
     Attributes:
-        name: Script name (without .py extension for file-based scripts).
+        name: Script name (includes .py extension for file-based scripts).
         description: Description of what the script does.
         function: Callable that implements the script logic (for programmatic scripts).
         takes_ctx: Whether the function takes a RunContext first argument (auto-detected).
@@ -193,6 +193,8 @@ class Skill:
         name: Skill name.
         description: Brief description of what the skill does.
         content: Main instructional content for the skill.
+        license: Optional license information (e.g., "Apache-2.0" or reference to LICENSE.txt).
+        compatibility: Optional environment requirements (e.g., "Requires git, docker, and internet access"). Max 500 chars.
         resources: List of resources (files or callables). Defaults to empty list.
         scripts: List of scripts (functions or file-based). Defaults to empty list.
         uri: Optional URI string for skill's base location (internal use only, for file-based skills).
@@ -202,26 +204,12 @@ class Skill:
     name: str
     description: str
     content: str
+    license: str | None = None
+    compatibility: str | None = None
     resources: list[SkillResource] = field(default_factory=list)
     scripts: list[SkillScript] = field(default_factory=list)
     uri: str | None = None
     metadata: dict[str, Any] | None = None
-
-    @property
-    def extra(self) -> dict[str, Any] | None:
-        """Deprecated: Use `metadata` instead.
-
-        Returns:
-            The metadata dictionary.
-        """
-        import warnings
-
-        warnings.warn(
-            'The `extra` attribute is deprecated. Use `metadata` instead.',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.metadata
 
     def resource(
         self,

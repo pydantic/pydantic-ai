@@ -8,12 +8,11 @@ Agent Skills are **modular packages** that extend your agent's capabilities with
 
 Key benefits:
 
-- **🔍 Progressive Discovery**: Skills are listed in the system prompt; agents load detailed instructions only when needed
-- **📦 Modular Design**: Each skill is a self-contained directory with instructions and resources
-- **🛠️ Script Execution**: Skills can include executable Python scripts
-- **📚 Resource Management**: Support for additional documentation and data files
-- **🚀 Easy Integration**: Simple toolset interface that works with any Pydantic AI agent
-- **⚡ Automatic Injection**: Skill metadata is automatically added to the agent's system prompt via `get_instructions()`
+- **Progressive Discovery**: Skills are listed in the system prompt; agents load detailed instructions only when needed
+- **Modular Design**: Each skill is a self-contained directory with instructions and resources
+- **Script Execution**: Skills can include executable Python scripts
+- **Resource Management**: Support for additional documentation and data files
+- **Simple Integration**: Works seamlessly with any Pydantic AI agent and model provider with tool calling support.
 
 ## Quick Example
 
@@ -26,7 +25,6 @@ from pydantic_ai.toolsets import SkillsToolset
 skills_toolset = SkillsToolset(directories=["./skills"])
 
 # Create agent with skills
-# Skills instructions are automatically injected via get_instructions()
 agent = Agent(
     model='openai:gpt-4o',
     instructions="You are a helpful research assistant.",
@@ -48,82 +46,38 @@ print(result.output)
 
 ## How It Works
 
-1. **Discovery**: The toolset scans specified directories for skills (folders with `SKILL.md` files) or accepts pre-built `Skill` objects
-2. **Automatic Injection**: Skill names and descriptions are automatically injected into the agent's system prompt via the toolset's `get_instructions()` method
-3. **Registration**: Four skill management tools are registered with the agent
-4. **Progressive Loading**: Agents can:
-   - List all available skills with `list_skills()` (optional, as skills are already in system prompt)
-   - Load detailed instructions with `load_skill(skill_name)`
-   - Read additional resources with `read_skill_resource(skill_name, resource_name)`
-   - Execute scripts with `run_skill_script(skill_name, script_name, args)`
-
-The toolset supports multiple initialization modes:
-
-- **Directory-based**: Automatically discover skills from filesystem directories (creates [`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill] instances)
-- **Programmatic**: Pass pre-built [`Skill`][pydantic_ai.toolsets.skills.Skill] objects directly (can be custom implementations)
-- **Combined**: Mix both directory-based and programmatic skills
-- **SkillsDirectory instances**: Use [`SkillsDirectory`][pydantic_ai.toolsets.skills.SkillsDirectory] objects for fine-grained control over discovery and script execution
+1. **Discovery**: The toolset discovers skills from directories or accepts pre-built [`Skill`][pydantic_ai.skills.Skill] objects
+2. **Registration**: Skills are listed in the agent's system prompt with four management tools: `list_skills()`, `load_skill()`, `read_skill_resource()`, and `run_skill_script()`
+3. **Progressive Loading**: Agents load detailed instructions only when needed, keeping initial context minimal
 
 ## Progressive Disclosure
 
-The toolset implements **progressive disclosure** - exposing information only when needed:
+Skills implement **progressive disclosure** - exposing information only when needed. This keeps initial context minimal while allowing agents to discover capabilities dynamically:
 
-```markdown
-┌─────────────────────────────────────────────────────────────┐
-│  System Prompt (automatically injected via toolset)         │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ Available Skills:                                     │  │
-│  │ - arxiv-search: Search arXiv for research papers      │  │
-│  │ - web-research: Research topics on the web            │  │
-│  │ - data-analyzer: Analyze CSV and JSON files           │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-          Agent sees skill names & descriptions
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│  load_skill("arxiv-search")                                 │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ Returns full SKILL.md instructions:                   │  │
-│  │ - When to use                                         │  │
-│  │ - Step-by-step guide                                  │  │
-│  │ - Example invocations                                 │  │
-│  │ - Available resources and scripts                     │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-      Agent loads detailed instructions when needed
-```
+- Skills are listed in the system prompt with names and descriptions
+- Agents load full instructions using `load_skill()` only when needed
+- Additional resources accessed via `read_skill_resource()`
+- Scripts executed via `run_skill_script()`
 
-This approach:
-
-- **Reduces initial context size** - Only metadata is in the system prompt
-- **Lets agents discover capabilities dynamically** - Load what's needed
-- **Improves token efficiency** - Don't pay for unused instructions
-- **Scales to many skills** - Add hundreds of skills without bloating prompts
+This approach reduces token usage and scales to hundreds of skills without bloating prompts.
 
 ## Security Considerations
 
 !!! warning "Use Skills from Trusted Sources Only"
 
-    Skills provide AI agents with new capabilities through instructions and code. While this makes them powerful, it also means a malicious skill can direct agents to invoke tools or execute code in ways that don't match the skill's stated purpose.
-
-    If you must use a skill from an untrusted or unknown source, exercise extreme caution and thoroughly audit it before use. Depending on what access agents have when executing the skill, malicious skills could lead to data exfiltration, unauthorized system access, or other security risks.
+    Skills provide agents with instructions and executable code. Use only skills from trusted sources you control or verify. Malicious skills could misuse agent capabilities or execute harmful code.
 
 The toolset includes security measures:
 
-- **Path traversal prevention**: For filesystem-based skills ([`LocalSkill`][pydantic_ai.toolsets.skills.LocalSkill]), resources and scripts are validated to stay within the skill directory using path resolution to prevent directory traversal attacks
-- **Script timeout**: Scripts have a configurable timeout (default: 30 seconds) enforced via `anyio.move_on_after()` to prevent hung processes
-- **Subprocess execution**: [`LocalSkillScriptExecutor`][pydantic_ai.toolsets.skills.LocalSkillScriptExecutor] runs scripts in a separate process via `anyio.run_process()`, but with the same OS-level permissions as your agent process
-- **Resource depth limit**: Resource discovery is limited to a maximum depth of 3 levels within the skill directory (`max_depth=3`) to prevent excessive file system traversal
-- **Flexible execution**: Custom script executors can implement additional security measures through the [`SkillScriptExecutor`][pydantic_ai.toolsets.skills.SkillScriptExecutor] protocol
+- **Path validation**: Resources and scripts validated within skill directories
+- **Script timeout**: Configurable timeout (default: 30s) prevents hung processes  
+- **Subprocess isolation**: Scripts run in separate processes
+- **Resource depth limit**: Maximum 3-level depth prevents excessive traversal
+- **Custom executors**: Implement [`SkillScriptExecutor`][pydantic_ai.skills.SkillScriptExecutor] for additional security
 
 ## Default Directory Behavior
 
-When initializing [`SkillsToolset`][pydantic_ai.toolsets.skills.SkillsToolset] without arguments, it defaults to discovering skills in the `./skills` directory:
+When initializing [`SkillsToolset`][pydantic_ai.toolsets.SkillsToolset] without arguments, it defaults to discovering skills in the `./skills` directory:
 
 ```python
 # These are equivalent
@@ -163,10 +117,4 @@ See the [skills_agent.py example](https://github.com/pydantic/pydantic-ai/blob/m
 
 ## References
 
-This implementation is inspired by:
-
-- [DougTrajano/pydantic-ai-skills](https://github.com/DougTrajano/pydantic-ai-skills/)
-- [vstorm-co/pydantic-deepagents](https://github.com/vstorm-co/pydantic-deepagents/)
-- [langchain-ai/deepagents](https://github.com/langchain-ai/deepagents/)
-- [Introducing Agent Skills | Anthropic](https://www.anthropic.com/news/agent-skills)
-- [Using skills with Deep Agents | LangChain](https://blog.langchain.com/using-skills-with-deep-agents/)
+This implementation follows concepts from [agentskills.io](https://agentskills.io).

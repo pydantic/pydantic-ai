@@ -30,8 +30,8 @@ from ._types import Skill, SkillResource, SkillScript
 
 __all__ = ['SkillsDirectory']
 
-# Anthropic's naming convention: lowercase letters, numbers, and hyphens only
-SKILL_NAME_PATTERN = re.compile(r'^[a-z0-9-]+$')
+# agentskills.io naming convention: lowercase letters, numbers, and hyphens only (no consecutive hyphens)
+SKILL_NAME_PATTERN = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
 RESERVED_WORDS = {'anthropic', 'claude'}
 
 
@@ -81,6 +81,14 @@ def _validate_skill_metadata(
     if description and len(description) > 1024:
         warnings.warn(
             f'Skill description exceeds 1024 characters ({len(description)} chars)', UserWarning, stacklevel=2
+        )
+        is_valid = False
+
+    # Validate compatibility (if provided)
+    compatibility = frontmatter.get('compatibility', '')
+    if compatibility and len(compatibility) > 500:
+        warnings.warn(
+            f'Skill compatibility exceeds 500 characters ({len(compatibility)} chars)', UserWarning, stacklevel=2
         )
         is_valid = False
 
@@ -137,8 +145,8 @@ def _parse_skill_md(content: str) -> tuple[dict[str, Any], str]:
 def _discover_resources(skill_folder: Path) -> list[SkillResource]:
     """Discover resource files in a skill folder.
 
-    Resources are markdown files other than SKILL.md, plus any files
-    in a resources/ subdirectory.
+    Resources are markdown files other than SKILL.md in the root directory
+    or in any subdirectory (e.g., references/, assets/).
 
     Args:
         skill_folder: Path to the skill directory.
@@ -148,30 +156,18 @@ def _discover_resources(skill_folder: Path) -> list[SkillResource]:
     """
     resources: list[SkillResource] = []
 
-    # Find .md files other than SKILL.md (FORMS.md, REFERENCE.md, etc.)
-    for md_file in skill_folder.glob('*.md'):
+    # Find all .md files recursively, excluding SKILL.md
+    for md_file in skill_folder.rglob('*.md'):
         if md_file.name.upper() != 'SKILL.MD':
+            rel_path = md_file.relative_to(skill_folder)
+            # Always use relative path for consistency and better context
+            name = str(rel_path)
             resources.append(
                 create_file_based_resource(
-                    name=md_file.name,
+                    name=name,
                     uri=str(md_file.resolve()),
-                    skill_uri=str(skill_folder.resolve()),
                 )
             )
-
-    # Find files in resources/ subdirectory if it exists
-    resources_dir = skill_folder / 'resources'
-    if resources_dir.exists() and resources_dir.is_dir():
-        for resource_file in resources_dir.rglob('*'):
-            if resource_file.is_file():
-                rel_path = resource_file.relative_to(skill_folder)
-                resources.append(
-                    create_file_based_resource(
-                        name=str(rel_path),
-                        uri=str(resource_file.resolve()),
-                        skill_uri=str(skill_folder.resolve()),
-                    )
-                )
 
     return resources
 
@@ -229,13 +225,13 @@ def _discover_scripts(
     # Find .py files in skill folder root (excluding __init__.py)
     for py_file in skill_folder.glob('*.py'):
         if py_file.name != '__init__.py':
+            rel_path = py_file.relative_to(skill_folder)
             scripts.append(
                 create_file_based_script(
-                    name=py_file.stem,  # filename without .py
+                    name=str(rel_path),  # relative path with .py extension
                     uri=str(py_file.resolve()),
                     skill_name=skill_name,
                     executor=executor,
-                    skill_uri=str(skill_folder.resolve()),
                 )
             )
 
@@ -244,13 +240,13 @@ def _discover_scripts(
     if scripts_dir.exists() and scripts_dir.is_dir():
         for py_file in scripts_dir.glob('*.py'):
             if py_file.name != '__init__.py':
+                rel_path = py_file.relative_to(skill_folder)
                 scripts.append(
                     create_file_based_script(
-                        name=py_file.stem,
+                        name=str(rel_path),  # relative path with .py extension
                         uri=str(py_file.resolve()),
                         skill_name=skill_name,
                         executor=executor,
-                        skill_uri=str(skill_folder.resolve()),
                     )
                 )
 
@@ -314,8 +310,10 @@ def _discover_skills(
                     # Use folder name as fallback when validation is disabled
                     name = skill_folder.name
 
-            # Extract metadata fields (beyond name and description)
-            metadata = {k: v for k, v in frontmatter.items() if k not in ('name', 'description')}
+            # Extract standard fields and remaining metadata
+            license_field = frontmatter.get('license')
+            compatibility_field = frontmatter.get('compatibility')
+            metadata = {k: v for k, v in frontmatter.items() if k not in ('name', 'description', 'license', 'compatibility')}
 
             # Validate metadata
             if validate:
@@ -330,6 +328,8 @@ def _discover_skills(
                 name=name,
                 description=description,
                 content=instructions,
+                license=license_field,
+                compatibility=compatibility_field,
                 uri=str(skill_folder.resolve()),
                 resources=resources,
                 scripts=scripts,

@@ -1,18 +1,19 @@
 # Creating Skills
 
-This guide covers everything you need to know about creating your own Agent Skills, from basic structure to advanced patterns.
+This guide covers creating file-based Agent Skills - modular directories that agents can discover and load from the filesystem. For programmatic skills created in code, see [Using Skills - Programmatic Skills](using-skills.md#programmatic-skills).
 
 ## Skill Structure
 
-Every skill must have at minimum a `SKILL.md` file:
+Every skill is a directory with at minimum a `SKILL.md` file. For the complete specification, see [Agent Skills Specification](https://agentskills.io/specification).
 
 ```markdown
 my-skill/
 ├── SKILL.md           # Required: Instructions and metadata
 ├── scripts/           # Optional: Executable scripts
 │   └── my_script.py
-└── resources/         # Optional: Additional files
-    ├── reference.md
+├── references/        # Optional: Additional documentation
+│   └── REFERENCE.md
+└── assets/            # Optional: Static resources
     └── data.json
 ```
 
@@ -24,6 +25,8 @@ The `SKILL.md` file uses **YAML frontmatter** for metadata and **Markdown** for 
 ---
 name: arxiv-search
 description: Search arXiv for research papers
+license: MIT
+compatibility: Requires network access to arxiv.org API and arxiv package
 version: 1.0.0
 author: Your Name
 tags: [papers, arxiv, academic]
@@ -40,21 +43,15 @@ Use this skill when you need to:
 
 ## Instructions
 
-To search arXiv, use the `run_skill_script` tool with:
+To search arXiv, use the `arxiv_search.py` script:
 
-1. **skill_name**: "arxiv-search"
-2. **script_name**: "arxiv_search"
-3. **args**: Your search query and options
+**Arguments:**
+- `query` (required): Your search query
+- `max-papers` (optional): Maximum number of papers to return (default: 5)
 
-## Example
+**Example:**
 
-```python
-run_skill_script(
-    skill_name="arxiv-search",
-    script_name="arxiv_search",
-    args=["machine learning", "--max-papers", "5"]
-)
-```
+Search for papers about machine learning with 5 results.
 ````
 
 ## Required Fields
@@ -64,35 +61,41 @@ The YAML frontmatter must include:
 - `name`: Unique identifier (lowercase letters, numbers, and hyphens only)
 - `description`: Brief summary (appears in skill listings, max 1024 characters)
 
-All other fields are optional and stored in the `metadata` dictionary of the [`Skill`](../api/skills.md#pydantic_ai.toolsets.skills.Skill) object.
+## Optional Standard Fields
+
+The following optional fields are defined by the [Agent Skills specification](https://agentskills.io/specification):
+
+- `license`: License information (e.g., "MIT", "Apache-2.0", or "Proprietary. See LICENSE.txt")
+- `compatibility`: Environment requirements (max 500 characters, e.g., "Requires git, docker, and internet access")
+
+All other fields are optional and stored in the `metadata` dictionary of the [`Skill`](../api/skills.md#pydantic_ai.skills.Skill) object.
 
 !!! note "Validation Behavior"
-    When `validate=True` (default), skills missing the `name` field are skipped with a warning. When `validate=False`, the folder name is used as a fallback for missing `name` fields. See [Validation](#skill-validation) for details.
+    When `validate=True` (default), skills missing the `name` field are skipped with a warning. When `validate=False`, the folder name is used as a fallback for missing `name` fields. See [Validation](#validation) for details.
 
-## Naming Conventions
+The [Agent Skills specification](https://agentskills.io/specification#name-field) defines the following requirements for skill names:
 
-Following Anthropic's skill naming conventions:
-
-| Requirement | Example |
-|------------|---------|
-| Lowercase only | `arxiv-search` ✅, `ArxivSearch` ❌ |
-| Hyphens for spaces | `web-research` ✅, `web_research` ❌ |
-| Max 64 characters | `data-analyzer` ✅ |
-| No reserved words | Avoid "anthropic" or "claude" in names |
+| Requirement             | Example                                    |
+|-------------------------|--------------------------------------------|
+| Lowercase only          | `arxiv-search` ✅, `ArxivSearch` ❌        |
+| Hyphens for spaces      | `web-research` ✅, `web_research` ❌       |
+| No consecutive hyphens  | `arxiv-search` ✅, `arxiv--search` ❌      |
+| Max 64 characters       | `data-analyzer` ✅                         |
+| No reserved words       | Avoid "anthropic" or "claude" in names     |
 
 ## Resource Discovery
 
-Resources are discovered automatically in two locations:
+Resources are discovered automatically. For the complete specification, see [Optional directories](https://agentskills.io/specification#optional-directories).
 
 1. **Root-level markdown files** (except SKILL.md):
-   - `FORMS.md`, `REFERENCE.md`, `GUIDE.md`, etc.
-   - Referenced as: `"FORMS.md"`
+   - `REFERENCE.md`, `FORMS.md`, `GUIDE.md`, etc.
+   - Referenced as: `"REFERENCE.md"`
 
-2. **Files in `resources/` subdirectory** (recursive with depth limits):
-   - `resources/schema.json`
-   - `resources/data/sample.csv`
-   - `resources/nested/file.txt`
-   - Referenced with full relative path: `"resources/data/sample.csv"`
+2. **Files in optional subdirectories** (`references/`, `assets/`, recursive with depth limits):
+   - `references/technical.md`
+   - `assets/schema.json`
+   - `assets/data/sample.csv`
+   - Referenced with full relative path: `"references/technical.md"`
 
 **Example structure:**
 
@@ -101,21 +104,20 @@ my-skill/
 ├── SKILL.md
 ├── FORMS.md              # Referenced as "FORMS.md"
 ├── REFERENCE.md          # Referenced as "REFERENCE.md"
-└── resources/
-    ├── schema.json       # Referenced as "resources/schema.json"
+├── references/
+│   └── technical.md      # Referenced as "references/technical.md"
+└── assets/
+    ├── schema.json       # Referenced as "assets/schema.json"
     └── data/
-        └── sample.csv    # Referenced as "resources/data/sample.csv"
+        └── sample.csv    # Referenced as "assets/data/sample.csv"
 ```
 
-**Usage in agent:**
+**Usage:**
 
-```python
-# Root-level resource
-read_skill_resource("my-skill", "FORMS.md")
+Resources can be accessed by their path:
 
-# Nested resource
-read_skill_resource("my-skill", "resources/data/sample.csv")
-```
+- Root-level: `FORMS.md`
+- Nested: `assets/data/sample.csv`
 
 ## Adding Scripts to Skills
 
@@ -123,10 +125,7 @@ Scripts enable skills to perform custom operations that aren't available as stan
 
 ### Script Location
 
-Place scripts in either:
-
-- `scripts/` subdirectory (recommended)
-- Directly in the skill folder
+All scripts must be placed in the `scripts/` subdirectory within your skill folder:
 
 ```markdown
 my-skill/
@@ -188,23 +187,12 @@ if __name__ == "__main__":
     main()
 ```
 
-**How arguments are passed:**
+**Script execution:**
 
-When the agent calls `run_skill_script` with:
+Scripts accept named arguments. For example, the `process_data` script accepts:
 
-```python
-run_skill_script(
-    skill_name="my-skill",
-    script_name="process_data",
-    args={"input": "test data", "format": "xml"}
-)
-```
-
-The framework converts the dictionary to command-line arguments:
-
-```bash
-python process_data.py --input "test data" --format "xml"
-```
+- `input`: Input data to process
+- `format`: Output format
 
 !!! note "Argument Naming Convention"
     Dictionary keys are used exactly as provided without any conversion.
@@ -217,9 +205,7 @@ python process_data.py --input "test data" --format "xml"
 
 ## Complete Example
 
-Here's a complete example combining file-based skills with programmatic enhancements:
-
-### File-Based Skill with Scripts
+Here's a complete file-based skill with a script:
 
 ```markdown
 skills/
@@ -241,21 +227,17 @@ Search the arXiv preprint server for academic papers.
 
 ## Usage
 
-Use `run_skill_script` with:
-- **script_name**: "arxiv_search"
-- **args**: {"query": "your search query", "max-papers": 5}
+Use the `arxiv_search.py` script:
 
-## Example
+**Arguments:**
+- `query` (required): Your search query
+- `max-papers` (optional): Maximum number of results (default: 5)
 
-To find papers about transformers:
+**Example:**
 
-```python
-run_skill_script(
-    skill_name="arxiv-search",
-    script_name="arxiv_search",
-    args={"query": "transformers attention mechanism", "max-papers": 3}
-)
-```
+Find papers about transformers (limited to 3 results):
+- query: "transformers attention mechanism"
+- max-papers: 3
 ````
 
 ```python {title="arxiv_search.py"}
@@ -322,242 +304,11 @@ if __name__ == "__main__":
     main()
 ```
 
-### Programmatic Skill
-
-```python {title="programmatic_skill.py"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.toolsets import SkillsToolset
-from pydantic_ai.toolsets.skills import Skill, SkillResource
-from dataclasses import dataclass
-
-@dataclass
-class MyDeps:
-    db: DatabaseConnection
-    api_key: str
-
-# Create programmatic skill
-data_skill = Skill(
-    name='data-analyzer',
-    description='Analyze datasets with various algorithms',
-    content='''# Data Analyzer
-
-Use this skill to analyze datasets.
-
-## Available Operations
-
-1. Load dataset using `load_dataset` script
-2. Get schema using `get_schema` resource
-3. Run analysis using `analyze` script
-''',
-    resources=[
-        SkillResource(name='readme', content='# README\n\nSupports CSV and JSON formats.')
-    ]
-)
-
-@data_skill.resource
-async def get_schema(ctx: RunContext[MyDeps]) -> str:
-    """Get current dataset schema."""
-    schema = await ctx.deps.db.get_schema()
-    return f"Schema: {schema}"
-
-@data_skill.script
-async def load_dataset(ctx: RunContext[MyDeps], path: str) -> str:
-    """Load dataset from path.
-    
-    Args:
-        path: Path to dataset file.
-    """
-    await ctx.deps.db.load(path)
-    return f'Loaded dataset from {path}'
-
-@data_skill.script
-async def analyze(ctx: RunContext[MyDeps], metric: str) -> str:
-    """Analyze dataset with specified metric.
-    
-    Args:
-        metric: Analysis metric (mean, median, mode).
-    """
-    result = await ctx.deps.db.analyze(metric)
-    return f'{metric}: {result}'
-
-# Use with agent
-agent = Agent(
-    model='openai:gpt-4o',
-    deps_type=MyDeps,
-    toolsets=[SkillsToolset(
-        skills=[data_skill],
-        directories=['./skills']  # Also load file-based skills
-    )]
-)
-
-# Run agent
-deps = MyDeps(db=my_database, api_key='...')
-result = await agent.run(
-    'Search for papers about LLMs and analyze the results',
-    deps=deps
-)
-```
-
-## Programmatic Skills
-
-You can create skills programmatically using the [`Skill`][pydantic_ai.toolsets.skills.Skill] class. Programmatic skills are ideal when you need dynamic resources or scripts that interact with your application's dependencies.
-
-### Basic Programmatic Skill
-
-```python
-from pydantic_ai.toolsets.skills import Skill, SkillResource
-
-# Create a skill with static content
-my_skill = Skill(
-    name='data-processor',
-    description='Process data using various algorithms',
-    content='Use this skill for data processing tasks...',
-    resources=[
-        SkillResource(name='algorithms', content='Available algorithms: sort, filter, transform')
-    ]
-)
-```
-
-### Adding Dynamic Resources
-
-Use the `@skill.resource` decorator to add callable resources that can access dependencies:
-
-```python
-from pydantic_ai import RunContext
-
-@my_skill.resource
-def get_config() -> str:
-    """Get current configuration (static)."""
-    return "Config: mode=production"
-
-@my_skill.resource
-async def get_data_schema(ctx: RunContext[MyDeps]) -> str:
-    """Get data schema from database (dynamic)."""
-    schema = await ctx.deps.db.get_schema()
-    return f"Schema: {schema}"
-
-@my_skill.resource
-async def get_samples(ctx: RunContext[MyDeps], count: int = 5) -> str:
-    """Get sample data.
-    
-    Args:
-        count: Number of samples to return.
-    """
-    samples = await ctx.deps.db.fetch_samples(count)
-    return f"Samples: {samples}"
-```
-
-**Key points:**
-
-- Resources can be sync or async functions
-- Resources can optionally take `RunContext` to access dependencies (auto-detected)
-- Resources can accept additional parameters (will be available as tool arguments)
-- Description is inferred from docstring if not provided
-
-### Adding Executable Scripts
-
-Use the `@skill.script` decorator to add callable scripts:
-
-```python
-@my_skill.script
-async def load_dataset(ctx: RunContext[MyDeps], path: str) -> str:
-    """Load a dataset from the given path.
-    
-    Args:
-        path: Path to the dataset file.
-    """
-    await ctx.deps.data_loader.load(path)
-    return f'Dataset loaded from {path}'
-
-@my_skill.script
-async def run_query(ctx: RunContext[MyDeps], query: str, limit: int = 10) -> str:
-    """Execute a query on the loaded dataset.
-    
-    Args:
-        query: SQL-like query string.
-        limit: Maximum number of results to return.
-    """
-    result = await ctx.deps.db.execute(query, limit)
-    return str(result)
-```
-
-**Key points:**
-
-- Scripts can be sync or async functions
-- Scripts can optionally take `RunContext` to access dependencies (auto-detected)
-- Scripts accept named arguments matching their function signature
-- Description is inferred from docstring if not provided
-
-### Using with Agent
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.toolsets import SkillsToolset
-
-agent = Agent(
-    model='openai:gpt-4o',
-    toolsets=[SkillsToolset(skills=[my_skill])]
-)
-
-result = await agent.run('Load dataset from data.csv and show 3 samples')
-```
-
-### Mixing Static and Callable Resources/Scripts
-
-You can combine static and callable resources/scripts in the same skill:
-
-```python
-skill = Skill(
-    name='mixed-skill',
-    description='Skill with mixed resources',
-    content='Instructions here...',
-    resources=[
-        SkillResource(name='static-doc', content='Static documentation')
-    ]
-)
-
-@skill.resource
-async def dynamic_data(ctx: RunContext[MyDeps]) -> str:
-    return await ctx.deps.fetch_live_data()
-```
-
-## Skill Validation
-
-The `validate` parameter controls skill structure validation during discovery:
-
-### Validation Enabled (Default)
-
-```python
-toolset = SkillsToolset(directories=["./skills"], validate=True)
-```
-
-**Behavior:**
-
-- **Missing `name` field**: Skill is skipped with warning
-- **Invalid name format**: Warning emitted, skill still loaded
-- **Description too long** (>1024 chars): Warning emitted, skill still loaded
-- **Instructions too long** (>500 lines): Warning emitted, skill still loaded
-- **YAML parse errors**: [`SkillValidationError`][pydantic_ai.toolsets.skills.SkillValidationError] raised
-
-### Validation Disabled
-
-```python
-toolset = SkillsToolset(directories=["./skills"], validate=False)
-```
-
-**Behavior:**
-
-- **Missing `name` field**: Uses folder name as fallback
-- **No format checks**: All validation warnings suppressed
-- **YAML parse errors**: Still raises [`SkillValidationError`][pydantic_ai.toolsets.skills.SkillValidationError]
-
-**Recommendation:** Keep validation enabled during development to catch issues early. Disable in production if you need more permissive loading (e.g., accepting skills without strict naming conventions).
-
 ## Best Practices
 
 ### Documentation
 
-- Write clear, concise descriptions (they appear in skill listings)
+- Write clear, concise descriptions (appear in skill listings, max 1024 characters)
 - Include "When to Use" sections to guide agents
 - Provide multiple examples showing different usage patterns
 - Document all script arguments and expected output formats
@@ -565,14 +316,15 @@ toolset = SkillsToolset(directories=["./skills"], validate=False)
 ### Scripts
 
 - Keep scripts focused on a single responsibility
-- Use descriptive script names (e.g., `search_papers.py` not `script1.py`)
+- Use descriptive names (e.g., `search_papers.py` not `script1.py`)
 - Include helpful error messages
 - Return structured output (JSON) when possible
 - Test scripts independently before adding to skills
 
 ### Resources
 
-- Use the `resources/` directory for reference documentation
+- Use `references/` for reference documentation
+- Use `assets/` for data files and static content
 - Keep resource files small and focused
 - Use clear, descriptive filenames
 - Reference resources in your `SKILL.md` instructions
@@ -583,3 +335,7 @@ toolset = SkillsToolset(directories=["./skills"], validate=False)
 - Use consistent naming across your skills
 - Version your skills in metadata for tracking
 - Document dependencies in `SKILL.md`
+
+## Validation
+
+By default, skills are validated during discovery (`validate=True`). See [Using Skills - Skill Validation](using-skills.md#skill-validation) for details on validation behavior and how to configure it.

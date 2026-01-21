@@ -2165,24 +2165,6 @@ async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -
             assert result == []
 
 
-async def test_instructions(mcp_server: MCPServerStdio) -> None:
-    with pytest.raises(
-        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
-    ):
-        with pytest.warns(DeprecationWarning, match='The `instructions` property is deprecated'):
-            mcp_server.instructions  # type: ignore[deprecated]
-    async with mcp_server:
-        with pytest.warns(DeprecationWarning, match='The `instructions` property is deprecated'):
-            assert mcp_server.instructions == 'Be a helpful assistant.'  # type: ignore[deprecated]
-
-
-async def test_instructions_property_is_deprecated(mcp_server: MCPServerStdio) -> None:
-    """Test that accessing instructions property triggers deprecation warning."""
-    async with mcp_server:
-        with pytest.warns(DeprecationWarning, match='Set `use_server_instructions=True`'):
-            _ = mcp_server.instructions  # type: ignore[deprecated]
-
-
 async def test_get_instructions_with_use_server_instructions_false(run_context: RunContext[int]) -> None:
     """Test that get_instructions returns None when use_server_instructions is False."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], use_server_instructions=False)

@@ -1,6 +1,7 @@
 ---
 name: arxiv-search
 description: Search arXiv preprint repository for papers in physics, mathematics, computer science, quantitative biology, and related fields.
+compatibility: Requires arxiv installed in the Python environment and access to the internet
 ---
 
 # arXiv Search Skill
@@ -21,42 +22,26 @@ Use this skill when you need to:
 
 ### arxiv_search
 
-The `arxiv_search` script accepts the following named arguments:
+The `arxiv_search` script accepts the following arguments:
 
-- `--query` (required): Search query string (e.g., "neural networks protein structure", "single cell RNA-seq")
-- `--max-papers` (optional): Maximum number of papers to retrieve (default: 10)
+- `query` (required): Search query string (e.g., "neural networks protein structure", "single cell RNA-seq")
+- `max-papers` (optional): Maximum number of papers to retrieve (default: 10)
 
-### Usage Pattern
+### Usage Examples
 
-Use the `run_skill_script` tool to execute the `arxiv_search` script. Pass arguments as a dictionary with named keys:
+**Search for computational biology papers (default 10 results):**
 
-```python
-run_skill_script(
-    skill_name="arxiv-search",
-    script_name="arxiv_search",
-    args={"query": "your search query", "max-papers": 5}
-)
-```
+- query: "protein folding prediction"
 
-Search for computational biology papers (default 10 results):
+**Search for machine learning papers with limited results:**
 
-```python
-run_skill_script(
-    skill_name="arxiv-search",
-    script_name="arxiv_search",
-    args={"query": "protein folding prediction"}
-)
-```
+- query: "transformer attention mechanism"
+- max-papers: 3
 
-Search for machine learning papers with limited results:
+**General search with custom limit:**
 
-```python
-run_skill_script(
-    skill_name="arxiv-search",
-    script_name="arxiv_search",
-    args={"query": "transformer attention mechanism", "max-papers": 3}
-)
-```
+- query: "your search query"
+- max-papers: 5
 
 ## Output Format
 
@@ -68,8 +53,4 @@ The script returns formatted results with:
 
 ## Dependencies
 
-This script requires the `arxiv` package. Install with:
-
-```bash
-pip install arxiv
-```
+This script requires the `arxiv` package, which should be installed in your environment.

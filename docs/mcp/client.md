@@ -344,7 +344,7 @@ MCP servers can provide instructions during initialization that give context abo
 
 ### Automatic Instruction Injection (Recommended)
 
-The recommended approach is to enable automatic instruction injection when creating the MCP server. This automatically includes the server's instructions in the agent's system prompt via the toolset's `get_instructions()` method:
+The recommended approach is to enable automatic instruction injection when creating the MCP server. This automatically includes the server's instructions in the agent's system prompt.
 
 ```python {title="mcp_server_instructions_auto.py"}
 from pydantic_ai import Agent
@@ -352,43 +352,11 @@ from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 server = MCPServerStreamableHTTP(
     'http://localhost:8000/mcp',
-    use_server_instructions=True  # (1)!
+    use_server_instructions=True
 )
-agent = Agent('openai:gpt-5', toolsets=[server])
 
-async def main():
-    result = await agent.run('What is 7 plus 5?')
-    print(result.output)
-    #> The answer is 12.
+agent = Agent('openai:gpt-5.2', toolsets=[server])
 ```
-
-1. Enable automatic instruction injection. The server's instructions will be included in the system prompt automatically.
-
-### Manual Instruction Access (Deprecated)
-
-!!! warning "Deprecated Approach"
-    Manually accessing `server.instructions` is deprecated in favor of using `use_server_instructions=True`. The `instructions` property will be removed in a future version.
-
-You can still manually access instructions via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the server connection is established:
-
-```python {title="mcp_server_instructions_manual.py"}
-from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerStreamableHTTP
-
-server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-5', toolsets=[server])
-
-@agent.instructions
-async def mcp_server_instructions():
-    return server.instructions  # (1)!
-
-async def main():
-    result = await agent.run('What is 7 plus 5?')
-    print(result.output)
-    #> The answer is 12.
-```
-
-1. The server connection is guaranteed to be established by this point, so `server.instructions` is available.
 
 ## Tool metadata
 

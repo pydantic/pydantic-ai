@@ -6,6 +6,14 @@ Searches the arXiv preprint repository for research papers.
 
 import argparse
 
+try:
+    import arxiv
+except ImportError as exc:
+    raise ImportError(
+        "The 'arxiv' package is required to run this script. "
+        "Please install it using 'pip install arxiv'."
+    ) from exc
+
 
 def query_arxiv(query: str, max_papers: int = 10) -> str:
     """Query arXiv for papers based on the provided search query.
@@ -21,21 +29,16 @@ def query_arxiv(query: str, max_papers: int = 10) -> str:
         The formatted search results or an error message.
     """
     try:
-        import arxiv  # pyright: ignore[reportMissingImports]
-    except ImportError:
-        return 'Error: arxiv package not installed. Install with: pip install arxiv'
-
-    try:
-        client = arxiv.Client()  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-        search = arxiv.Search(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        client = arxiv.Client()
+        search = arxiv.Search(
             query=query,
             max_results=max_papers,
-            sort_by=arxiv.SortCriterion.Relevance,  # pyright: ignore[reportUnknownMemberType]
+            sort_by=arxiv.SortCriterion.Relevance,
         )
         results = '\n\n'.join(
             [
-                f'Title: {paper.title}\nSummary: {paper.summary}\nURL: {paper.entry_id}'  # pyright: ignore[reportUnknownMemberType]
-                for paper in client.results(search)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                f'Title: {paper.title}\nSummary: {paper.summary}\nURL: {paper.entry_id}'
+                for paper in client.results(search)
             ]
         )
         return results if results else 'No papers found on arXiv.'

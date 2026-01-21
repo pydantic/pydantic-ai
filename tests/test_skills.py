@@ -1,25 +1,32 @@
 """Tests for skills toolset."""
 
+import asyncio
+import os
 from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import RunContext
+from pydantic_ai import Agent, RunContext
+from pydantic_ai._run_context import RunContext as InternalRunContext
+from pydantic_ai._tool_manager import ToolManager
+from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets.skills import (
+from pydantic_ai.skills import (
     Skill,
     SkillNotFoundError,
     SkillResource,
     SkillScript,
     SkillsDirectory,
-    SkillsToolset,
     SkillValidationError,
 )
-from pydantic_ai.toolsets.skills._directory import (
+from pydantic_ai.skills._directory import (
     _discover_skills,  # pyright: ignore[reportPrivateUsage]
     _parse_skill_md,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import SkillsToolset
+from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
 
@@ -112,9 +119,9 @@ def test_skill_resource_creation() -> None:
 
 def test_skill_script_creation() -> None:
     """Test creating SkillScript."""
-    script = SkillScript(name='test_script', uri='/tmp/skill/scripts/test_script.py', skill_name='test-skill')
+    script = SkillScript(name='test_script.py', uri='/tmp/skill/scripts/test_script.py', skill_name='test-skill')
 
-    assert script.name == 'test_script'
+    assert script.name == 'test_script.py'
     assert script.uri == '/tmp/skill/scripts/test_script.py'
     assert script.skill_name == 'test-skill'
 
@@ -122,7 +129,7 @@ def test_skill_script_creation() -> None:
 def test_skill_creation() -> None:
     """Test creating a complete Skill."""
     resource = SkillResource(name='FORMS.md', uri='/tmp/skill/FORMS.md')
-    script = SkillScript(name='test_script', uri='/tmp/skill/scripts/test_script.py', skill_name='test-skill')
+    script = SkillScript(name='test_script.py', uri='/tmp/skill/scripts/test_script.py', skill_name='test-skill')
 
     skill = Skill(
         name='test-skill',
@@ -151,21 +158,6 @@ def test_skill_metadata() -> None:
     )
 
     assert skill.metadata == {'version': '1.0.0', 'author': 'Test Author'}
-
-
-def test_skill_extra_is_deprecated() -> None:
-    """Test that Skill.extra is deprecated and returns metadata."""
-    skill = Skill(
-        name='test-skill',
-        description='A test skill',
-        content='# Instructions\n\nTest instructions.',
-        metadata={'version': '1.0.0', 'author': 'Test Author'},
-    )
-
-    with pytest.warns(DeprecationWarning, match='Use `metadata` instead'):
-        result = skill.extra
-
-    assert result == {'version': '1.0.0', 'author': 'Test Author'}
 
 
 # ==================== Parsing Tests ====================
@@ -357,6 +349,7 @@ See FORMS.md for details.
     assert len(skills) == 1
     assert skills[0].resources is not None and len(skills[0].resources) == 2
     resource_names = {r.name for r in skills[0].resources}
+    # Resource names should be relative paths
     assert resource_names == {'FORMS.md', 'REFERENCE.md'}
 
 
@@ -383,7 +376,8 @@ Use the search script.
     assert len(skills) == 1
     assert skills[0].scripts is not None and len(skills[0].scripts) == 2
     script_names = {s.name for s in skills[0].scripts}
-    assert script_names == {'search', 'process'}
+    # Script names should be relative paths from skill folder
+    assert script_names == {'scripts/search.py', 'scripts/process.py'}
 
 
 def test_discover_skills_nested_directories(tmp_path: Path) -> None:
@@ -451,26 +445,26 @@ def test_discover_skills_nonexistent_directory(tmp_path: Path) -> None:
 
 
 def test_discover_skills_resources_subdirectory(tmp_path: Path) -> None:
-    """Test discovering resources in resources/ subdirectory."""
+    """Test discovering resources in references/ subdirectory."""
     skill_dir = tmp_path / 'test-skill'
     skill_dir.mkdir()
 
     (skill_dir / 'SKILL.md').write_text("""---
 name: test-skill
-description: Skill with resources subdirectory
+description: Skill with references subdirectory
 ---
 
 Content.
 """)
 
-    resources_dir = skill_dir / 'resources'
-    resources_dir.mkdir()
-    (resources_dir / 'schema.json').write_text('{}')
-    (resources_dir / 'template.txt').write_text('template')
+    references_dir = skill_dir / 'references'
+    references_dir.mkdir()
+    (references_dir / 'schema.md').write_text('# Schema\n\nSchema documentation.')
+    (references_dir / 'template.md').write_text('# Template\n\nTemplate documentation.')
 
-    nested_dir = resources_dir / 'nested'
+    nested_dir = references_dir / 'nested'
     nested_dir.mkdir()
-    (nested_dir / 'data.csv').write_text('col1,col2')
+    (nested_dir / 'data.md').write_text('# Data\n\nData documentation.')
 
     skills = _discover_skills(tmp_path, validate=True)
 
@@ -478,9 +472,10 @@ Content.
     assert skills[0].resources is not None and len(skills[0].resources) == 3
 
     resource_names = {r.name for r in skills[0].resources}
-    assert 'resources/schema.json' in resource_names
-    assert 'resources/template.txt' in resource_names
-    assert 'resources/nested/data.csv' in resource_names
+    # Resource names should be relative paths from skill folder
+    assert 'references/schema.md' in resource_names
+    assert 'references/template.md' in resource_names
+    assert 'references/nested/data.md' in resource_names
 
 
 # ==================== SkillsToolset Tests ====================
@@ -514,8 +509,6 @@ description: Test skill
 """)
 
     # Change to tmp_path and create toolset
-    import os
-
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
@@ -528,15 +521,10 @@ description: Test skill
 
 def test_toolset_tool_definitions(sample_skills_dir: Path) -> None:
     """Test SkillsToolset tool definitions with snapshot."""
-    from pydantic_ai._run_context import RunContext
-    from pydantic_ai._tool_manager import ToolManager
-    from pydantic_ai.tools import ToolDefinition
-    from pydantic_ai.usage import RunUsage
-
     toolset = SkillsToolset(directories=[sample_skills_dir])
 
     # Build a run context to get tool definitions via ToolManager
-    context = RunContext(
+    context = InternalRunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
@@ -546,8 +534,6 @@ def test_toolset_tool_definitions(sample_skills_dir: Path) -> None:
     )
 
     # Get tool manager and prepare for run step
-    import asyncio
-
     async def get_tool_defs():
         tool_manager = await ToolManager(toolset).for_run_step(context)
         return tool_manager.tool_defs
@@ -660,7 +646,7 @@ Keys should match parameter names from the script's schema.\
 """,
                         },
                         'script_name': {
-                            'description': 'Exact script name as listed in load_skill output (without .py extension).',
+                            'description': 'Exact script name as listed in load_skill output (includes .py extension).',
                             'type': 'string',
                         },
                         'skill_name': {
@@ -774,8 +760,9 @@ async def test_run_skill_script_tool(sample_skills_dir: Path) -> None:
     assert skill.scripts is not None and len(skill.scripts) == 2
 
     script_names = [s.name for s in skill.scripts]
-    assert 'hello' in script_names
-    assert 'echo' in script_names
+    # Script names should be relative paths from skill folder
+    assert 'scripts/hello.py' in script_names
+    assert 'scripts/echo.py' in script_names
 
     # Check that scripts can be found
     for script in skill.scripts:
@@ -797,14 +784,13 @@ async def test_run_skill_script_not_found(sample_skills_dir: Path) -> None:
     skill_three = toolset.get_skill('skill-three')
     assert skill_three.scripts is not None
     script_names = [s.name for s in skill_three.scripts]
-    assert 'nonexistent' not in script_names
+    # Script names should be relative paths
+    assert 'nonexistent.py' not in script_names
+    assert 'scripts/nonexistent.py' not in script_names
 
 
 async def test_get_instructions_returns_system_prompt(sample_skills_dir: Path) -> None:
     """Test that get_instructions() returns the skills system prompt."""
-    from pydantic_ai.tools import RunContext
-    from pydantic_ai.usage import RunUsage
-
     toolset = SkillsToolset(directories=[sample_skills_dir])
 
     # Create a minimal run context
@@ -830,9 +816,6 @@ async def test_get_instructions_returns_system_prompt(sample_skills_dir: Path) -
 
 async def test_get_instructions_empty_toolset() -> None:
     """Test that get_instructions() returns None for empty toolset."""
-    from pydantic_ai.tools import RunContext
-    from pydantic_ai.usage import RunUsage
-
     toolset = SkillsToolset(directories=[])
 
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
@@ -843,9 +826,6 @@ async def test_get_instructions_empty_toolset() -> None:
 
 async def test_get_instructions_with_custom_template(sample_skills_dir: Path) -> None:
     """Test get_instructions uses custom template when provided."""
-    from pydantic_ai.tools import RunContext
-    from pydantic_ai.usage import RunUsage
-
     custom_template = """# My Custom Skills
 
 Available:
@@ -876,9 +856,6 @@ Use load_skill(name) for details.
 @pytest.mark.skip(reason='TestModel behavior is non-deterministic and calls random skills')
 async def test_skills_instructions_injected_into_agent(sample_skills_dir: Path) -> None:
     """Test that SkillsToolset instructions are automatically injected into agent runs."""
-    from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelRequest
-
     toolset = SkillsToolset(directories=[sample_skills_dir])
     agent: Agent[None, str] = Agent(TestModel(), toolsets=[toolset])
 
@@ -897,8 +874,6 @@ async def test_skills_instructions_injected_into_agent(sample_skills_dir: Path) 
 
 def test_skills_toolset_with_directories(sample_skills_dir: Path) -> None:
     """Test SkillsToolset with directories parameter."""
-    from pydantic_ai.toolsets.skills import SkillsToolset
-
     toolset = SkillsToolset(directories=[sample_skills_dir])
 
     # Verify skills were loaded
@@ -910,8 +885,6 @@ def test_skills_toolset_with_directories(sample_skills_dir: Path) -> None:
 
 def test_skills_toolset_with_skills_list() -> None:
     """Test SkillsToolset with pre-loaded skills list."""
-    from pydantic_ai.toolsets.skills import SkillsToolset
-
     # Create custom skills
     skill1 = Skill(
         name='custom-skill-1',
@@ -937,8 +910,6 @@ def test_skills_toolset_with_skills_list() -> None:
 @pytest.mark.filterwarnings("ignore:Duplicate skill 'skill-three' found.*:UserWarning")
 def test_skills_toolset_duplicate_detection(sample_skills_dir: Path, tmp_path: Path) -> None:
     """Test SkillsToolset duplicate detection across directories."""
-    from pydantic_ai.toolsets.skills import SkillsToolset
-
     # Create isolated directories to avoid recursive discovery conflicts
     # sample_skills_dir is tmp_path, so we create siblings
     first_dir = tmp_path.parent / f'{tmp_path.name}_first'
@@ -996,8 +967,6 @@ Another skill from a different source.
 
 def test_toolset_with_both_skills_and_directories(sample_skills_dir: Path) -> None:
     """Test toolset with both programmatic skills and directories."""
-    from pydantic_ai.toolsets.skills import SkillsToolset
-
     # Create programmatic skills
     prog_skill1 = Skill(
         name='programmatic-skill-one',
@@ -1024,8 +993,6 @@ def test_toolset_with_both_skills_and_directories(sample_skills_dir: Path) -> No
 @pytest.mark.filterwarnings('ignore:Duplicate skill.*:UserWarning')
 def test_toolset_with_skills_directory_instances(sample_skills_dir: Path, tmp_path: Path) -> None:
     """Test toolset with SkillsDirectory instances."""
-    from pydantic_ai.toolsets.skills import SkillsToolset
-
     # Create second directory
     second_dir = tmp_path / 'second'
     second_dir.mkdir()
@@ -1052,8 +1019,6 @@ Extra content.
 @pytest.mark.filterwarnings('ignore:Duplicate skill.*:UserWarning')
 def test_toolset_mixed_directory_types(sample_skills_dir: Path, tmp_path: Path) -> None:
     """Test toolset with mixed directory types (str, Path, SkillsDirectory)."""
-    from pydantic_ai.toolsets.skills import SkillsToolset
-
     # Create second directory
     second_dir = tmp_path / 'second'
     second_dir.mkdir()
@@ -1085,8 +1050,6 @@ Mixed content.
 @pytest.mark.filterwarnings('ignore:Duplicate skill.*:UserWarning')
 def test_toolset_combined_with_duplicate_override(tmp_path: Path) -> None:
     """Test that directory skills override programmatic skills with same name."""
-    from pydantic_ai.toolsets.skills import SkillsToolset
-
     # Create directory with skill
     skill_dir = tmp_path / 'skills'
     skill_dir.mkdir()
@@ -1118,8 +1081,6 @@ Directory content.
 
 async def test_toolset_combined_mode_tools(sample_skills_dir: Path) -> None:
     """Test that tools work correctly with combined mode."""
-    from pydantic_ai.toolsets.skills import SkillsToolset
-
     prog_skill = Skill(
         name='prog-test',
         description='Test skill',
@@ -1127,12 +1088,10 @@ async def test_toolset_combined_mode_tools(sample_skills_dir: Path) -> None:
         uri='memory://test',
     )
 
-    from pydantic_ai.usage import RunUsage
-
     toolset = SkillsToolset(skills=[prog_skill], directories=[sample_skills_dir])
 
     # Create context for tool calls
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
 
     # Test list_skills - should include both
     result = await toolset.tools['list_skills'].function(ctx)

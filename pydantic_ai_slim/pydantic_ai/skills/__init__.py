@@ -78,8 +78,8 @@ Example - File-based skills:
     ```
 """
 
-from pydantic_ai.toolsets.skills._directory import SkillsDirectory
-from pydantic_ai.toolsets.skills._exceptions import (
+from ._directory import SkillsDirectory
+from ._exceptions import (
     SkillException,
     SkillNotFoundError,
     SkillResourceLoadError,
@@ -87,18 +87,18 @@ from pydantic_ai.toolsets.skills._exceptions import (
     SkillScriptExecutionError,
     SkillValidationError,
 )
-from pydantic_ai.toolsets.skills._local import (
+from ._local import (
     CallableSkillScriptExecutor,
     FileBasedSkillResource,
     FileBasedSkillScript,
     LocalSkillScriptExecutor,
 )
-from pydantic_ai.toolsets.skills._toolset import SkillsToolset
-from pydantic_ai.toolsets.skills._types import Skill, SkillResource, SkillScript
+from ._types import Skill, SkillResource, SkillScript
+
+# SkillsToolset is imported from toolsets module in __all__ for convenience
+# but not imported here to avoid circular dependencies
 
 __all__ = (
-    # Main toolset
-    'SkillsToolset',
     # Directory discovery
     'SkillsDirectory',
     # Types

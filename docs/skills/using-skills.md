@@ -1,35 +1,64 @@
 # Using Skills
 
-This guide covers how to integrate and use the Skills framework in your Pydantic AI agents.
+This guide covers integrating skills into your agents, both file-based skills from directories and programmatic skills created in code.
 
-## SkillsToolset API
-
-The [`SkillsToolset`][pydantic_ai.toolsets.skills.SkillsToolset] is the main entry point for working with skills.
-
-### Initialization
+## Quick Start
 
 ```python
+from pydantic_ai import Agent
 from pydantic_ai.toolsets import SkillsToolset
 
 # Default: uses ./skills directory
 toolset = SkillsToolset()
 
-# Multiple directories (can be str, Path, or SkillsDirectory instances)
-toolset = SkillsToolset(
-    directories=["./skills", "./shared-skills"]
+# Create agent with skills
+agent = Agent(
+    model='openai:gpt-4o',
+    toolsets=[toolset]
 )
 
-# Programmatic skills with decorators
-from pydantic_ai.toolsets.skills import Skill, SkillResource
+# Agent automatically has access to skill tools
+result = await agent.run("Search for papers about transformers")
+```
+
+## SkillsToolset Initialization
+
+The [`SkillsToolset`][pydantic_ai.toolsets.SkillsToolset] supports multiple initialization modes:
+
+### Directory-based Skills
+
+Load skills from filesystem directories:
+
+```python
+from pydantic_ai.toolsets import SkillsToolset
+
+# Single directory
+toolset = SkillsToolset(directories=["./skills"])
+
+# Multiple directories
+toolset = SkillsToolset(
+    directories=["./skills", "./shared-skills", "~/.pydantic-ai/skills"]
+)
+
+# Using SkillsDirectory instances for fine-grained control
+from pydantic_ai.skills import SkillsDirectory
+
+skills_dir = SkillsDirectory(path="./skills", validate=True)
+toolset = SkillsToolset(directories=[skills_dir, "./more-skills"])
+```
+
+### Programmatic Skills
+
+Create skills in code with full access to dependencies:
+
+```python
+from pydantic_ai.skills import Skill, SkillResource
 from pydantic_ai import RunContext
 
 my_skill = Skill(
-    name="my-skill",
-    description="Custom skill",
-    content="Instructions here",
-    resources=[
-        SkillResource(name="readme", content="Static readme")
-    ]
+    name="data-processor",
+    description="Process data using various algorithms",
+    content="Use this skill for data processing tasks..."
 )
 
 @my_skill.resource
@@ -43,24 +72,27 @@ async def process(ctx: RunContext[MyDeps], data: str) -> str:
     return f"Processed: {data}"
 
 toolset = SkillsToolset(skills=[my_skill])
+```
 
-# Combined mode: both programmatic and directory-based
+See [Programmatic Skills](#programmatic-skills) for details.
+
+### Combined Mode
+
+Mix both directory-based and programmatic skills:
+
+```python
 toolset = SkillsToolset(
     skills=[my_skill],
     directories=["./skills"]
 )
+```
 
-# Using SkillsDirectory instances directly
-from pydantic_ai.toolsets.skills import SkillsDirectory
+### Configuration Options
 
-skills_dir = SkillsDirectory(path="./skills", validate=True)
-toolset = SkillsToolset(
-    directories=[skills_dir, "./more-skills"]  # Mix SkillsDirectory and paths
-)
-
-# Configuration options
+```python
 toolset = SkillsToolset(
     directories=["./skills"],
+    skills=[],                    # Programmatic skills (default: [])
     validate=True,                # Validate skill structure (default: True)
     max_depth=3,                  # Max directory depth for discovery (default: 3)
     id=None,                      # Unique identifier (default: None)
@@ -68,7 +100,25 @@ toolset = SkillsToolset(
 )
 ```
 
-### Handling Duplicate Skills
+### Default Directory Behavior
+
+When initializing without arguments, it defaults to `./skills`:
+
+```python
+# These are equivalent
+toolset = SkillsToolset()
+toolset = SkillsToolset(directories=["./skills"])
+```
+
+**Important:** The default is NOT used when providing programmatic skills:
+
+```python
+# No default directory - only programmatic skills
+toolset = SkillsToolset(skills=[custom_skill])
+
+# To use both, explicitly specify directories
+toolset = SkillsToolset(skills=[custom_skill], directories=["./skills"])
+```
 
 When the same skill name appears multiple times, **the last occurrence wins**:
 
@@ -95,14 +145,15 @@ A warning is emitted when duplicates are detected:
 UserWarning: Duplicate skill 'data-tool' found. Overriding previous occurrence.
 ```
 
-**Best Practice:** Use unique skill names, or intentionally use this behavior for environment-specific overrides (e.g., dev/prod skill variations).
+**Best Practice:** Use unique skill names, or intentionally use this behavior for environment-specific overrides (e.g., dev/prod variations).
+
+## SkillsToolset API
 
 ### Key Methods
 
 | Method | Description |
 |--------|-------------|
-| `get_skill(name)` | Get a specific skill object by name. Raises `SkillNotFoundError` if not found |
-| `get_instructions(ctx)` | Return instructions to inject into agent's system prompt. Called automatically by the agent |
+| `get_skill(name)` | Get a specific skill by name. Raises [`SkillNotFoundError`][pydantic_ai.toolsets.skills.SkillNotFoundError] if not found |
 
 ### Properties
 
@@ -131,526 +182,382 @@ toolset = SkillsToolset(
 
 The template must include the `{skills_list}` placeholder, which will be replaced with the formatted list of available skills.
 
-## The Four Tools
+## Skill Management Tools
 
-The `SkillsToolset` provides four tools to agents:
+!!! note "Model-Facing Tools"
+    These tools are available to the AI model during execution. You don't call them directly - they're documented here to help you understand how skills work.
 
-### 1. `list_skills()`
+The toolset provides four tools to agents. Skills are automatically listed in the system prompt, so agents know what's available before calling any tools.
 
-Lists all available skills with their descriptions.
+### list_skills()
 
-**Returns**: `dict[str, str]` - Dictionary mapping skill names to descriptions
+Lists all available skills with descriptions. **Optional** - skills are already in the system prompt.
 
-**When to use**: Optional - skills are already listed in the system prompt automatically. Use only if the agent needs to re-check available skills dynamically.
+**Returns**: `dict[str, str]` - skill names to descriptions
 
-**Example**:
+### load_skill(skill_name)
 
-```python
-# Agent can call this tool
-result = list_skills()
+Loads complete instructions for a specific skill.
 
-# Returns:
-{
-    "arxiv-search": "Search arXiv for research papers",
-    "web-research": "Research topics on the web",
-    "data-analyzer": "Analyze CSV and JSON files"
-}
-```
-
-### 2. `load_skill(skill_name)`
-
-Loads the complete instructions for a specific skill.
-
-**Parameters**:
-
-- `skill_name` (str) - Name of the skill to load
-
-**Returns**: `str` - Formatted string with complete skill details including:
+**Returns**: Formatted string with:
 
 - Skill name and description
-- File path/URI
-- List of available resources
-- List of available scripts
+- Available resources and scripts
 - Full SKILL.md content
 
-**Example return format**:
+### read_skill_resource(skill_name, resource_name, args)
 
-```text
-# Skill: arxiv-search
-**Description:** Search arXiv for research papers
-**Path:** /path/to/skills/arxiv-search
-**Available Resources:**
-- FORMS.md
-- REFERENCE.md
-**Available Scripts:**
-- arxiv_search
-
----
-
-# arXiv Search
-
-[Full SKILL.md content here...]
-```
-
-**When to use**: When the agent needs detailed instructions for using a skill
-
-**Example**:
-
-```python
-# Agent loads skill details
-load_skill("arxiv-search")
-
-# Returns full SKILL.md content with:
-# - When to use
-# - Step-by-step instructions
-# - Example invocations
-# - Available resources and scripts
-```
-
-### 3. `read_skill_resource(skill_name, resource_name, args)`
-
-Reads additional resources from a skill (files or callable resources).
+Reads resources from a skill (files or callables).
 
 **Parameters**:
 
-- `skill_name` (str) - Name of the skill
-- `resource_name` (str) - Resource name (e.g., "FORMS.md" or "get_schema")
-- `args` (dict[str, Any] | None, optional) - Named arguments for callable resources
+- `skill_name`: Name of the skill
+- `resource_name`: Resource name (e.g., "FORMS.md" or "get_schema")
+- `args`: Optional arguments for callable resources
 
-**Returns**: Content of the resource (can be str, dict, or any type returned by the resource)
-
-**When to use**: When a skill references additional documentation, data files, or dynamic resources
-
-**Example**:
+**Examples**:
 
 ```python
 # File-based resource
-read_skill_resource("web-research", "FORMS.md")
-
-# Callable resource (no args)
-read_skill_resource("data-skill", "get_config")
+read_skill_resource(skill_name="web-research", resource_name="FORMS.md")
+read_skill_resource(skill_name="web-research", resource_name="references/report-template.md")
 
 # Callable resource with args
-read_skill_resource("data-skill", "get_samples", args={"count": 10})
+read_skill_resource(skill_name="data-skill", resource_name="get_samples", args={"count": 10})
 ```
 
-### 4. `run_skill_script(skill_name, script_name, args)`
+### run_skill_script(skill_name, script_name, args)
 
-Executes a Python script from a skill (file-based or programmatic).
+Executes a script from a skill (file-based or programmatic).
 
 **Parameters**:
 
-- `skill_name` (str) - Name of the skill
-- `script_name` (str) - Script name without .py extension
-- `args` (dict[str, Any] | None, optional) - Named arguments as dictionary matching the script's parameter schema
+- `skill_name`: Name of the skill
+- `script_name`: Script name (includes .py extension)
+- `args`: Named arguments as dictionary
 
-**Returns**: Script output (can be str, dict, or any JSON-serializable type)
-
-**When to use**: When a skill needs to execute custom code
-
-**Example**:
+**Examples**:
 
 ```python
-# File-based script (subprocess execution with named arguments)
+# File-based script (subprocess with named args)
 run_skill_script(
     skill_name="arxiv-search",
-    script_name="arxiv_search",
+    script_name="scripts/arxiv_search.py",
     args={"query": "machine learning", "max-papers": 3}
 )
 
 # Programmatic script (direct function call)
 run_skill_script(
     skill_name="data-processor",
-    script_name="load_dataset",
+    script_name="scripts/load_dataset.py",
     args={"path": "data.csv"}
 )
 ```
 
-!!! note "Argument Format for File-Based Scripts"
-    For file-based scripts, arguments are passed as **named command-line arguments**.
-    Dictionary keys are used exactly as provided. For example:
+!!! note "File-Based Script Arguments"
+    For file-based scripts, arguments are passed as **named command-line arguments**:
     ```python
     args={"query": "test", "max-papers": 5}
+    # Becomes: python script.py --query "test" --max-papers 5
     ```
-    is converted to:
-    ```bash
-    python script.py --query "test" --max-papers 5
-    ```
+    All file-based scripts must use named arguments. Positional arguments are not supported.
+
+## Creating Programmatic Skills
+
+Create skills in code when you need dynamic resources or scripts that interact with your application's dependencies.
+
+### Basic Skill
+
+```python
+from pydantic_ai.skills import Skill, SkillResource
+
+my_skill = Skill(
+    name='data-processor',
+    description='Process data using various algorithms',
+    content='Use this skill for data processing tasks...',
+    resources=[
+        SkillResource(name='readme', content='# README\nSupports CSV and JSON.')
+    ]
+)
+```
+
+### Adding Dynamic Resources
+
+Use `@skill.resource` for callable resources that can access dependencies:
+
+```python
+from pydantic_ai import RunContext
+
+@my_skill.resource
+def get_config() -> str:
+    """Get configuration (static)."""
+    return "Config: mode=production"
+
+@my_skill.resource
+async def get_data_schema(ctx: RunContext[MyDeps]) -> str:
+    """Get data schema from database (dynamic)."""
+    schema = await ctx.deps.db.get_schema()
+    return f"Schema: {schema}"
+
+@my_skill.resource
+async def get_samples(ctx: RunContext[MyDeps], count: int = 5) -> str:
+    """Get sample data.
     
-    **Important:** All file-based scripts must use named arguments (argparse or similar).
-    Positional arguments are not supported.
+    Args:
+        count: Number of samples to return.
+    """
+    samples = await ctx.deps.db.fetch_samples(count)
+    return f"Samples: {samples}"
+```
 
-## Skill Types
+**Key points:**
 
-Skills can be created in two ways:
+- Resources can be sync or async
+- `RunContext` parameter is auto-detected for dependency access
+- Additional parameters become tool arguments
+- Description inferred from docstring
 
-### File-Based Skills
+### Adding Executable Scripts
 
-Discovered from filesystem directories using [`SkillsDirectory`][pydantic_ai.toolsets.skills.SkillsDirectory]:
+Use `@skill.script` for callable scripts:
 
-- Resources are loaded from markdown files
-- Scripts are Python files executed via subprocess (with JSON stdin)
-- Automatically discovered from directory structure
+```python
+@my_skill.script
+async def load_dataset(ctx: RunContext[MyDeps], path: str) -> str:
+    """Load a dataset from path.
+    
+    Args:
+        path: Path to the dataset file.
+    """
+    await ctx.deps.data_loader.load(path)
+    return f'Dataset loaded from {path}'
 
-### Programmatic Skills
+@my_skill.script
+async def run_query(ctx: RunContext[MyDeps], query: str, limit: int = 10) -> str:
+    """Execute a query on the dataset.
+    
+    Args:
+        query: SQL-like query string.
+        limit: Maximum results to return.
+    """
+    result = await ctx.deps.db.execute(query, limit)
+    return str(result)
+```
 
-Created using the [`Skill`][pydantic_ai.toolsets.skills.Skill] class:
+**Key points:**
 
-- Resources can be static strings or callable functions
-- Scripts are Python functions (sync or async)
-- Full access to `RunContext` and dependencies
+- Scripts can be sync or async
+- `RunContext` parameter is auto-detected
+- Arguments match function signature
+- Description inferred from docstring
 
-**Key differences:**
+### Complete Example
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.toolsets import SkillsToolset
+from pydantic_ai.skills import Skill, SkillResource
+from dataclasses import dataclass
+
+@dataclass
+class MyDeps:
+    db: DatabaseConnection
+    api_key: str
+
+# Create programmatic skill
+data_skill = Skill(
+    name='data-analyzer',
+    description='Analyze datasets with various algorithms',
+    content='''# Data Analyzer
+
+Use this skill to analyze datasets.
+
+## Available Operations
+
+1. Load dataset using `load_dataset` script
+2. Get schema using `get_schema` resource
+3. Run analysis using `analyze` script
+'''
+)
+
+@data_skill.resource
+async def get_schema(ctx: RunContext[MyDeps]) -> str:
+    """Get current dataset schema."""
+    schema = await ctx.deps.db.get_schema()
+    return f"Schema: {schema}"
+
+@data_skill.script
+async def load_dataset(ctx: RunContext[MyDeps], path: str) -> str:
+    """Load dataset from path."""
+    await ctx.deps.db.load(path)
+    return f'Loaded dataset from {path}'
+
+@data_skill.script
+async def analyze(ctx: RunContext[MyDeps], metric: str) -> str:
+    """Analyze dataset with specified metric."""
+    result = await ctx.deps.db.analyze(metric)
+    return f'{metric}: {result}'
+
+# Use with agent
+agent = Agent(
+    model='openai:gpt-4o',
+    deps_type=MyDeps,
+    toolsets=[SkillsToolset(skills=[data_skill])]
+)
+
+deps = MyDeps(db=my_database, api_key='...')
+result = await agent.run('Load data.csv and compute mean', deps=deps)
+```
+
+## File-Based vs Programmatic Skills
 
 | Feature | File-Based | Programmatic |
 |---------|------------|--------------|
 | Resource type | Files on disk | Static strings or callables |
 | Script type | Subprocess execution | Direct function calls |
-| Script arguments | Named CLI arguments (e.g., `--query value`) | Function parameters |
+| Script arguments | Named CLI arguments | Function parameters |
 | Dependencies | Not available | Full `RunContext` access |
-| Discovery | Automatic | Manual creation |
-| Execution | Slower (subprocess) | Faster (in-process) |
+| Discovery | Automatic from directories | Manual creation |
+| Execution speed | Slower (subprocess) | Faster (in-process) |
 
 **Example comparison:**
 
 ```python
-# File-based skill
-# Script executed as: python arxiv_search.py --query "transformers" --max-papers 5
+# File-based: python arxiv_search.py --query "transformers" --max-papers 5
 toolset = SkillsToolset(directories=["./skills"])
 
-# Programmatic skill
+# Programmatic: Direct function call with dependency access
 @my_skill.script
 async def arxiv_search(ctx: RunContext[MyDeps], query: str, max_papers: int = 10) -> str:
-    # Direct function call with dependency access
     return await ctx.deps.api.search_arxiv(query, max_papers)
 
 toolset = SkillsToolset(skills=[my_skill])
 ```
 
-### Skill URI
+## Advanced Usage
 
-Every skill has an optional `uri` field that identifies its location:
+### Skill URIs
 
-- **For file-based skills**: Absolute filesystem path to skill directory
-- **For programmatic skills**: Optional identifier (URLs, database IDs, or None)
+Every skill has an optional `uri` field:
 
-```python
-# File-based skill
-file_skill.uri  # "/Users/you/project/skills/my-skill"
+- **File-based**: Absolute filesystem path to skill directory
+- **Programmatic**: Optional identifier (URLs, database IDs, or None)
 
-# Programmatic skill (optional)
-prog_skill = Skill(name="processor", description="...", content="...", uri=None)
-```
+The URI is used for error messages, logging, and as the working directory for file-based script execution.
 
-**The URI is used for:**
+### Skill Discovery
 
-- Error messages and logging
-- Skill identification in toolset
-- Working directory for file-based script execution
-
-## Skill Discovery
-
-The [`SkillsDirectory`][pydantic_ai.toolsets.skills.SkillsDirectory] class provides low-level skill discovery from filesystem directories:
+The [`SkillsDirectory`][pydantic_ai.skills.SkillsDirectory] class provides low-level skill discovery:
 
 ```python
-from pydantic_ai.toolsets.skills import SkillsDirectory
+from pydantic_ai.skills import SkillsDirectory
 
-# Create a skills directory for discovery
 skills_dir = SkillsDirectory(
     path="./skills",
     validate=True,
     max_depth=3,
-    script_timeout=30,  # Script execution timeout in seconds
+    script_timeout=30,
 )
 
-# Load a specific skill by URI (filesystem path)
+# Load specific skill
 skill = skills_dir.load_skill("/path/to/skills/my-skill")
 
-# Access skills dictionary (keyed by URI)
+# Access all skills (keyed by URI)
 for skill_uri, skill in skills_dir.skills.items():
-    print(f"Skill: {skill.name} at {skill_uri}")
+    print(f"{skill.name} at {skill_uri}")
 
-# Pass to SkillsToolset
+# Pass to toolset
 toolset = SkillsToolset(directories=[skills_dir])
 ```
 
-This is useful for:
+Useful for:
 
-- Listing available skills before creating an agent
+- Listing skills before creating agents
 - Validating skill structure in tests
 - Building custom skill management tools
-- Generating documentation about available skills
-- Fine-grained control over skill loading and script execution
+- Generating documentation
 
-## Usage Patterns
+### Skill Validation
 
-### Basic Usage
+Control skill structure validation with the `validate` parameter:
+
+**Enabled (default)**:
 
 ```python
-from pydantic_ai import Agent
-from pydantic_ai.toolsets import SkillsToolset
-
-# Create toolset with skills
-skills_toolset = SkillsToolset(directories=["./skills"])
-
-# Create agent with skills
-agent = Agent(
-    model='openai:gpt-4o',
-    instructions="You are a helpful assistant.",
-    toolsets=[skills_toolset]
-)
-
-# Agent automatically has access to all skill tools
-result = await agent.run("Search for papers about transformers")
+toolset = SkillsToolset(directories=["./skills"], validate=True)
 ```
 
-### Multiple Skill Directories
+- Missing `name`: Skill skipped with warning
+- Invalid name format: Warning emitted, skill still loaded
+- Description >1024 chars: Warning emitted, skill still loaded
+- Instructions >500 lines: Warning emitted, skill still loaded
+- YAML parse errors: [`SkillValidationError`][pydantic_ai.skills.SkillValidationError] raised
+
+**Disabled**:
 
 ```python
-# Load skills from multiple directories
-skills_toolset = SkillsToolset(
-    directories=[
-        "./my-skills",           # Project-specific skills
-        "./shared-skills",       # Shared across projects
-        "~/.pydantic-ai/skills"  # Global skills
-    ]
-)
+toolset = SkillsToolset(directories=["./skills"], validate=False)
 ```
 
-## Configuring Script Execution
+- Missing `name`: Uses folder name as fallback
+- No format checks: All validation warnings suppressed
+- YAML parse errors: Still raises [`SkillValidationError`][pydantic_ai.skills.SkillValidationError]
 
-When creating a [`SkillsDirectory`][pydantic_ai.toolsets.skills.SkillsDirectory], you can control how scripts are executed using the `script_executor` parameter. The parameter accepts three types of values:
+**Recommendation:** Keep enabled during development, disable in production if needed.
 
-### Option 1: Use Default (LocalSkillScriptExecutor)
+### Script Executors
 
-When `script_executor` is `None` (default), skills use [`LocalSkillScriptExecutor`][pydantic_ai.toolsets.skills.LocalSkillScriptExecutor] with default settings:
+Control how file-based scripts are executed using the `script_executor` parameter with [`SkillsDirectory`][pydantic_ai.skills.SkillsDirectory]:
+
+**Option 1: Default ([`LocalSkillScriptExecutor`][pydantic_ai.skills.LocalSkillScriptExecutor])**:
 
 ```python
-# Default: local subprocess execution with 30s timeout
-skills_dir = SkillsDirectory(path="./skills")
+skills_dir = SkillsDirectory(path="./skills")  # 30s timeout, default Python
 ```
 
-### Option 2: Custom LocalSkillScriptExecutor
-
-Create a [`LocalSkillScriptExecutor`][pydantic_ai.toolsets.skills.LocalSkillScriptExecutor] instance with custom configuration:
+**Option 2: Custom LocalSkillScriptExecutor**:
 
 ```python
-from pydantic_ai.toolsets.skills import LocalSkillScriptExecutor, SkillsDirectory
+from pydantic_ai.skills import LocalSkillScriptExecutor
 
 executor = LocalSkillScriptExecutor(
-    python_executable="/usr/bin/python3.11",  # Custom Python
-    timeout=120  # 2 minutes
+    python_executable="/usr/bin/python3.11",
+    timeout=120
 )
-
-skills_dir = SkillsDirectory(
-    path="./skills",
-    script_executor=executor
-)
+skills_dir = SkillsDirectory(path="./skills", script_executor=executor)
 ```
 
-### Option 3: Callable Function (Sync or Async)
-
-Pass any callable function - it will be automatically wrapped in [`CallableSkillScriptExecutor`][pydantic_ai.toolsets.skills.CallableSkillScriptExecutor]:
+**Option 3: Callable Function** (auto-wrapped in [`CallableSkillScriptExecutor`][pydantic_ai.skills.CallableSkillScriptExecutor]):
 
 ```python
-from pydantic_ai.toolsets.skills import SkillsDirectory
-
-# Async function - automatically wrapped
 async def my_executor(skill, script, args=None):
-    print(f"Executing {script.name} from skill {skill.name}")
-    # Custom logic here
+    print(f"Executing {script.name} from {skill.name}")
     result = await execute_with_monitoring(script.uri, args)
     return result
 
-skills_dir = SkillsDirectory(
-    path="./skills",
-    script_executor=my_executor  # Wrapped automatically
-)
+skills_dir = SkillsDirectory(path="./skills", script_executor=my_executor)
 
-# Sync function - also supported
+# Sync functions also supported
 def sync_executor(skill, script, args=None):
-    # Synchronous execution logic
     return execute_in_sandbox(script.uri, args)
-
-skills_dir = SkillsDirectory(
-    path="./skills",
-    script_executor=sync_executor
-)
 ```
 
-### Option 4: Custom SkillScriptExecutor
-
-Implement the [`SkillScriptExecutor`][pydantic_ai.toolsets.skills.SkillScriptExecutor] protocol for full control:
+**Option 4: Custom Protocol**:
 
 ```python
+from pydantic_ai.skills import SkillScriptExecutor
+
 class DockerExecutor:
     async def run(self, skill, script, args=None):
         # Execute in Docker container
         pass
 
-skills_dir = SkillsDirectory(
-    path="./skills",
-    script_executor=DockerExecutor()
-)
-```
-
-**Summary:**
-
-- `None`: Uses [`LocalSkillScriptExecutor`][pydantic_ai.toolsets.skills.LocalSkillScriptExecutor] with defaults
-- [`LocalSkillScriptExecutor`][pydantic_ai.toolsets.skills.LocalSkillScriptExecutor] instance: Custom timeout and Python executable
-- Callable (sync or async): Automatically wrapped in [`CallableSkillScriptExecutor`][pydantic_ai.toolsets.skills.CallableSkillScriptExecutor]
-- Custom protocol implementation: Full control over execution
-
-## Script Executors
-
-Skills can execute Python scripts through the [`SkillScriptExecutor`][pydantic_ai.toolsets.skills.SkillScriptExecutor] protocol. The framework provides two built-in executors:
-
-### LocalSkillScriptExecutor
-
-[`LocalSkillScriptExecutor`][pydantic_ai.toolsets.skills.LocalSkillScriptExecutor] runs scripts using the local Python interpreter in a subprocess:
-
-```python
-from pydantic_ai.toolsets.skills import LocalSkillScriptExecutor, SkillsDirectory
-
-# Create executor with custom timeout and Python executable
-executor = LocalSkillScriptExecutor(
-    python_executable="/usr/bin/python3.11",  # Optional, defaults to sys.executable
-    timeout=120  # 2 minutes
-)
-
-# Use with SkillsDirectory
-skills_dir = SkillsDirectory(
-    path="./skills",
-    script_executor=executor
-)
-```
-
-### CallableSkillScriptExecutor
-
-[`CallableSkillScriptExecutor`][pydantic_ai.toolsets.skills.CallableSkillScriptExecutor] wraps a callable function as a script executor, supporting both sync and async functions:
-
-```python
-from pydantic_ai.toolsets.skills import SkillsDirectory
-
-# Async executor with custom logic
-async def custom_async_executor(skill, script, args=None):
-    """Custom script execution with logging and monitoring."""
-    print(f"Executing {script.name} from skill {skill.name}")
-
-    # Add custom logic: logging, monitoring, sandboxing, etc.
-    start_time = time.time()
-    result = await execute_in_sandbox(script.uri, args)
-    duration = time.time() - start_time
-
-    logger.info(f"Script {script.name} completed in {duration:.2f}s")
-    return result
-
-# Use callable executor (automatically wrapped in CallableSkillScriptExecutor)
-skills_dir = SkillsDirectory(
-    path="./skills",
-    script_executor=custom_async_executor
-)
-
-# Synchronous executors are also supported
-def sync_executor(skill, script, args=None):
-    """Sync executor for simple scripts."""
-    print(f"Running {script.name}")
-    # Custom synchronous execution logic
-    result = subprocess.run(
-        ["python", script.uri] + (args or []),
-        capture_output=True,
-        text=True
-    )
-    return result.stdout
-
-skills_dir = SkillsDirectory(
-    path="./skills",
-    script_executor=sync_executor
-)
-```
-
-### Implementing Custom SkillScriptExecutor
-
-For advanced use cases, you can implement the [`SkillScriptExecutor`][pydantic_ai.toolsets.skills.SkillScriptExecutor] protocol directly:
-
-```python
-from pydantic_ai.toolsets.skills import SkillScriptExecutor, Skill, SkillScript
-
-class DockerScriptExecutor:
-    """Execute scripts in Docker containers for isolation."""
-
-    def __init__(self, image: str = "python:3.11-slim", timeout: int = 30):
-        self.image = image
-        self.timeout = timeout
-
-    async def run(self, skill: Skill, script: SkillScript, args: list[str] | None = None) -> str:
-        """Run script in Docker container."""
-        import anyio
-
-        # Build docker command
-        cmd = [
-            "docker", "run", "--rm",
-            "-v", f"{skill.uri}:/skill:ro",  # Mount skill directory read-only
-            self.image,
-            "python", f"/skill/{Path(script.uri).name}"
-        ]
-        if args:
-            cmd.extend(args)
-
-        # Execute with timeout
-        with anyio.move_on_after(self.timeout) as scope:
-            result = await anyio.run_process(cmd, check=False)
-
-        if scope.cancelled_caught:
-            raise SkillScriptExecutionError(
-                f"Script timed out after {self.timeout}s"
-            )
-
-        return result.stdout.decode("utf-8")
-
-# Use custom executor
-executor = DockerScriptExecutor(image="python:3.11-slim", timeout=60)
-skills_dir = SkillsDirectory(
-    path="./skills",
-    script_executor=executor
-)
-```
-
-### Programmatic Access
-
-```python
-# Access skills programmatically
-toolset = SkillsToolset(directories=["./skills"])
-
-# Get a specific skill
-skill = toolset.get_skill("arxiv-search")
-print(f"Skill: {skill.name}")
-print(f"Description: {skill.metadata.description}")
-print(f"Scripts: {[s.name for s in skill.scripts]}")
-```
-
-### Custom Instructions Template
-
-```python
-# Customize how skills appear in system prompt
-template = """
-## Available Research Tools
-
-The following specialized tools are available:
-{skills_list}
-
-To use a tool, first load its instructions with load_skill(name).
-"""
-
-toolset = SkillsToolset(
-    directories=["./skills"],
-    instruction_template=template
-)
+skills_dir = SkillsDirectory(path="./skills", script_executor=DockerExecutor())
 ```
 
 ## Error Handling
 
-The toolset raises specific exceptions for different error conditions:
+The toolset raises specific exceptions:
 
 ```python
 from pydantic_ai.toolsets.skills import (
@@ -669,22 +576,16 @@ except SkillValidationError as e:
     print(f"Invalid skill structure: {e}")
 ```
 
-## Best Practices
+## Security
 
-### Organization
+!!! warning "Use Skills from Trusted Sources Only"
 
-- **Organize by domain**: Group related skills in subdirectories
-- **Use descriptive directories**: `./skills/research/`, `./skills/data-analysis/`
+    Skills provide agents with instructions and executable code. Use only skills from trusted sources you control or thoroughly audit. Malicious skills could misuse agent capabilities or execute harmful code depending on what access agents have.
 
-### Testing
+Best practices:
 
-- **Test skills independently**: Run scripts directly before adding to skills
-- **Validate structure**: Use `validate=True` during development
-- **Use programmatic discovery**: Test skill loading in your test suite
-
-### Security
-
-We strongly recommend using Skills only from trusted sources: those you created yourself or obtained from trusted sources. Skills provide AI Agents with new capabilities through instructions and code, and while this makes them powerful, it also means a malicious Skill can direct agents to invoke tools or execute code in ways that don't match the Skill's stated purpose.
-
-!!! warning
-    If you must use a Skill from an untrusted or unknown source, exercise extreme caution and thoroughly audit it before use. Depending on the access agents have when executing the Skill, malicious Skills could lead to data exfiltration, unauthorized system access, or other security risks.
+- Only load skills from trusted sources
+- Review skill content and scripts before use
+- Use custom script executors for additional sandboxing
+- Limit agent permissions and access
+- Monitor skill execution in production
