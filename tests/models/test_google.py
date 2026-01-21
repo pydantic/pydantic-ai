@@ -5470,3 +5470,125 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
 
     http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
     assert http_options.timeout == custom_timeout * 1000
+
+
+async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
+    """Test that ToolReturnPart and UserPromptPart are split into separate content objects.
+
+    TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    # ToolReturn + UserPrompt
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
+                UserPromptPart(content="What's 2 + 2?"),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': "What's 2 + 2?",
+                    }
+                ],
+            },
+        ]
+    )
+
+    # ToolReturn + Retry + UserPrompts
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id_1'),
+                RetryPromptPart(content='Tool error occurred', tool_name='another_tool', tool_call_id='test_id_2'),
+                UserPromptPart(content="What's 2 + 2?"),
+                UserPromptPart(content="What's 3 + 3?"),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id_1',
+                        }
+                    },
+                    {
+                        'function_response': {
+                            'name': 'another_tool',
+                            'response': {'error': 'Tool error occurred\n\nFix the errors and try again.'},
+                            'id': 'test_id_2',
+                        }
+                    },
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': "What's 2 + 2?",
+                    },
+                    {
+                        'text': "What's 3 + 3?",
+                    },
+                ],
+            },
+        ]
+    )
+
+    # ToolReturn only
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id',
+                        }
+                    },
+                ],
+            }
+        ]
+    )
