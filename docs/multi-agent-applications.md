@@ -339,6 +339,38 @@ In addition, the community maintains packages that bring these concepts together
 
 - [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) by [Vstorm](https://vstorm.co/)
 
+## Observing Multi-Agent Systems
+
+Multi-agent systems can be challenging to debug due to their complexity—when multiple agents interact, understanding the flow of execution becomes essential.
+
+### Tracing Agent Delegation
+
+With [Logfire](logfire.md), you can trace the entire flow across multiple agents:
+
+```python
+import logfire
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
+# Your multi-agent code here...
+```
+
+Logfire shows you:
+
+- **Which agent handled which part** of the request
+- **Delegation decisions**—when and why one agent called another
+- **End-to-end latency** broken down by agent
+- **Token usage and costs** per agent
+
+This is essential for understanding and optimizing complex agent workflows. When something goes wrong in a multi-agent system, you'll see exactly which agent failed and what it was trying to do.
+
+### Full-Stack Visibility
+
+If your PydanticAI application includes a TypeScript frontend, API gateway, or services in other languages, Logfire can trace them too—Logfire provides SDKs for Python, JavaScript/TypeScript, and Rust, plus compatibility with any OpenTelemetry-instrumented application. See traces from your entire stack in a unified view. For details on sending data from other languages using standard OpenTelemetry, see the [alternative clients guide](https://logfire.pydantic.dev/docs/how-to-guides/alternative-clients/).
+
+PydanticAI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can also use any OTel-compatible backend. See the [Logfire integration guide](logfire.md) for details.
+
 ## Examples
 
 The following examples demonstrate how to use multi-agent patterns in Pydantic AI:
