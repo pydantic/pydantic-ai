@@ -62,7 +62,8 @@ SurrealConn = (
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
-logfire.instrument_surrealdb()
+# TODO: add this once logfire is updated to at least 4.19.0
+# logfire.instrument_surrealdb()
 
 THIS_DIR = Path(__file__).parent
 
