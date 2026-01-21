@@ -42,11 +42,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - REDACTED
       openai-processing-ms:
       - '43706'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - REDACTED
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -173,7 +173,7 @@ interactions:
         type: web_search
         user_location:
           city: null
-          country: US
+          country: REDACTED
           region: null
           timezone: null
           type: approximate

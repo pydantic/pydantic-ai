@@ -1010,8 +1010,9 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
     result = await agent.run(
         'What is the current population of Tokyo prefecture according to Wikipedia? Give me just the number.'
     )
-    assert result.output
-    assert 'wikipedia.org' in result.output.lower()
+    assert result.output == snapshot(
+        '14,195,730 ([en.wikipedia.org](https://en.wikipedia.org/wiki/Demographics_of_Tokyo))'
+    )
 
 
 async def test_openai_responses_model_web_search_tool_with_invalid_region(
