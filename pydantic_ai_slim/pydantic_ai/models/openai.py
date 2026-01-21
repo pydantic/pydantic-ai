@@ -1109,7 +1109,19 @@ class OpenAIChatModel(Model):
                     audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
-                    if self._is_text_like_media_type(item.media_type):
+                    # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
+                    # Some providers (e.g., OpenRouter) support URLs via the profile flag.
+                    if not item.force_download and profile.openai_chat_supports_file_urls:
+                        content.append(
+                            File(
+                                file=FileFile(
+                                    file_data=item.url,
+                                    filename=f'filename.{item.format}',
+                                ),
+                                type='file',
+                            )
+                        )
+                    elif self._is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
                         content.append(
                             self._inline_text_file_part(
