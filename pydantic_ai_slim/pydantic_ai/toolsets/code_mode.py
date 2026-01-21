@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
@@ -16,6 +17,13 @@ from .abstract import SchemaValidatorProt, ToolsetTool
 from .function import FunctionToolset, FunctionToolsetTool
 from .wrapper import WrapperToolset
 
+__all__ = (
+    'CodeModeToolset',
+    'build_code_mode_prompt',
+    'signature_from_function',
+    'signature_from_schema',
+)
+
 
 class _CodeToolArguments(TypedDict):
     code: str
@@ -23,6 +31,62 @@ class _CodeToolArguments(TypedDict):
 
 _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
 _CODE_MODE_TOOL_NAME = 'run_code'
+
+
+def build_code_mode_prompt(*, signatures: list[str]) -> str:
+    """Build the default code mode prompt with the given tool signatures.
+
+    This is the default prompt builder used by CodeModeToolset. Users can provide
+    their own prompt_builder callback to customize the prompt entirely.
+
+    Args:
+        signatures: List of Python function signatures for available tools.
+
+    Returns:
+        The complete prompt describing code mode capabilities and available functions.
+    """
+    functions_block = '\n\n'.join(signatures)
+    return f"""\
+Write Python code to accomplish the ENTIRE task in a SINGLE code block.
+
+CRITICAL:
+- Use loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
+- The last expression evaluated becomes the return value - make it the final answer
+
+Syntax restrictions (MUST follow - the runtime does not support these):
+- No imports allowed - use only the functions provided below
+- No generator expressions (e.g., `sum(x for x in items)`) - use explicit for loops
+- No dictionary/list subscript assignment (e.g., `dict[key] = value`) - use list.append() instead
+- No string methods (e.g., `", ".join(list)`, `.split()`, `.upper()`) - return data structures instead
+- Initialize numeric accumulators with 0.0 (float) not 0 (int)
+- Access dict fields with brackets: result["field"], not result.field
+- Return dicts/lists as the final result - do NOT format as strings
+
+Available functions:
+
+```python
+{functions_block}
+```
+
+Example - completing a full aggregation task in one execution:
+```python
+# Get all items and process them completely in one go
+items = get_items(category="electronics")
+
+# Use a list to collect results (can't assign to dict keys)
+results = []
+total = 0.0
+
+for item in items:
+    details = get_item_details(id=item["id"])
+    if details["status"] == "active":
+        total += details["price"]
+        # Append dicts to collect data
+        results.append({{"name": item["name"], "price": details["price"]}})
+
+# Return a dict structure as the final result (no string formatting)
+{{"total": total, "count": len(results), "items": results}}
+```"""
 
 
 @dataclass(kw_only=True)
@@ -80,7 +144,16 @@ def _get_tool_signature(tool: ToolsetTool[Any]) -> str:
 
 @dataclass(kw_only=True)
 class CodeModeToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that exposes wrapped tools as callable Python functions in a code execution context."""
+    """A toolset that exposes wrapped tools as callable Python functions in a code execution context.
+
+    Args:
+        wrapped: The underlying toolset to wrap.
+        prompt_builder: Optional callback to build a custom prompt. If not provided,
+            uses `build_code_mode_prompt`. The callback receives `signatures` as a
+            keyword argument containing the list of Python function signatures.
+    """
+
+    prompt_builder: Callable[..., str] = build_code_mode_prompt
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
@@ -98,53 +171,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Example: hundreds of MCP tools can push tens of thousands of tokens into the prompt,
         # defeating the progressive-disclosure approach described in code-mode references.
         # Consider: progressive discovery (list tool names first, fetch signatures on demand).
-        description = (
-            """\
-Write Python code to accomplish the ENTIRE task in a SINGLE code block.
-
-CRITICAL:
-- Solve the complete task in ONE execution - do not break it into multiple steps
-- Do not write exploratory code that just fetches data and returns - process it fully
-- Use loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
-- The last expression evaluated becomes the return value - make it the final answer
-
-Syntax restrictions (MUST follow - the runtime does not support these):
-- No imports allowed - use only the functions provided below
-- No generator expressions (e.g., `sum(x for x in items)`) - use explicit for loops
-- No dictionary/list subscript assignment (e.g., `dict[key] = value`) - use list.append() instead
-- No string methods (e.g., `", ".join(list)`, `.split()`, `.upper()`) - return data structures instead
-- Initialize numeric accumulators with 0.0 (float) not 0 (int)
-- Access dict fields with brackets: result["field"], not result.field
-- Return dicts/lists as the final result - do NOT format as strings
-
-Available functions:
-
-```python
-"""
-            + '\n\n'.join(available_functions)
-            + """
-```
-
-Example - completing a full aggregation task in one execution:
-```python
-# Get all items and process them completely in one go
-items = get_items(category="electronics")
-
-# Use a list to collect results (can't assign to dict keys)
-results = []
-total = 0.0
-
-for item in items:
-    details = get_item_details(id=item["id"])
-    if details["status"] == "active":
-        total += details["price"]
-        # Append dicts to collect data
-        results.append({"name": item["name"], "price": details["price"]})
-
-# Return a dict structure as the final result (no string formatting)
-{"total": total, "count": len(results), "items": results}
-```"""
-        )
+        description = self.prompt_builder(signatures=available_functions)
         # TODO: Ideally we'd use kind='output' to make the code result be the final answer
         # without a second LLM call. However, output tools are treated differently by models -
         # they expect to provide structured output directly, not execute code. We need a way

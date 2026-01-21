@@ -12,7 +12,7 @@ from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ToolCallPa
 from pydantic_ai.messages import RetryPromptPart
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsInstance, IsInt, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsInt, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.mcp import MCPServerStdio
