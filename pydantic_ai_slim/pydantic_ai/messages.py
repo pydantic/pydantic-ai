@@ -18,9 +18,8 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
-from pydantic import PlainSerializer, WrapValidator
+from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from pydantic_core import core_schema
 from typing_extensions import deprecated
 
 from . import _otel_messages, _utils
@@ -465,22 +464,18 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
-def _validate_binary_data(v: Any, handler: core_schema.ValidatorFunctionWrapHandler) -> Any:
-    """Validate binary data, decoding base64 strings and allowing test matchers through."""
-    if isinstance(v, str):
-        return base64.b64decode(v)
-    return v
-
-
-@pydantic_dataclass(init=False, repr=False, config=pydantic.ConfigDict(arbitrary_types_allowed=True))
+@pydantic_dataclass(
+    init=False,
+    repr=False,
+    config=pydantic.ConfigDict(
+        ser_json_bytes='base64',
+        val_json_bytes='base64',
+    ),
+)
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
-    data: Annotated[
-        bytes,
-        WrapValidator(_validate_binary_data),
-        PlainSerializer(lambda v: base64.b64encode(v).decode('ascii'), when_used='json'),
-    ]
+    data: bytes
     """The binary file data.
 
     Use `.base64` to get the base64-encoded string.
@@ -516,7 +511,7 @@ class BinaryContent:
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
-    ) -> None:
+    ) -> None:  # pragma: no cover
         self.data = data
         self.media_type = media_type
         self._identifier = identifier or _identifier
@@ -818,7 +813,7 @@ class BaseToolReturnPart:
     tool_name: str
     """The name of the "tool" was called."""
 
-    content: Any
+    content: BinaryContent | list[BinaryContent | Any] | dict[str, Any] | Any
     """The return value."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
@@ -852,14 +847,17 @@ class BaseToolReturnPart:
             return {'return_value': json_content}
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        body: AnyValue = {
+            'role': 'tool',
+            'id': self.tool_call_id,
+            'name': self.tool_name,
+        }
+        if settings.include_content:
+            body['content'] = self.content  # pyright: ignore[reportArgumentType]
+
         return LogRecord(
+            body=body,
             attributes={'event.name': 'gen_ai.tool.message'},
-            body={
-                **({'content': self.content} if settings.include_content else {}),
-                'role': 'tool',
-                'id': self.tool_call_id,
-                'name': self.tool_name,
-            },
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:

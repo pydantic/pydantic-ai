@@ -1872,7 +1872,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             content_is_dict = isinstance(item.content, dict)
-                            status = item.content.get('status') if content_is_dict else None
+                            status = cast(dict[str, Any], item.content).get('status') if content_is_dict else None
                             kind_to_item = {
                                 CodeExecutionTool.kind: code_interpreter_item,
                                 WebSearchTool.kind: web_search_item,
