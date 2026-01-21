@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import monty
@@ -12,6 +12,7 @@ from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
 from .._signature_from_schema import signature_from_function, signature_from_schema
+from ..exceptions import ModelRetry
 from ..tools import ToolDefinition
 from .abstract import SchemaValidatorProt, ToolsetTool
 from .function import FunctionToolset, FunctionToolsetTool
@@ -50,17 +51,24 @@ def build_code_mode_prompt(*, signatures: list[str]) -> str:
 Write Python code to accomplish the ENTIRE task in a SINGLE code block.
 
 CRITICAL:
-- Use loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
+- Use for loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
 - The last expression evaluated becomes the return value - make it the final answer
 
-Syntax restrictions (MUST follow - the runtime does not support these):
-- No imports allowed - use only the functions provided below
-- No generator expressions (e.g., `sum(x for x in items)`) - use explicit for loops
-- No dictionary/list subscript assignment (e.g., `dict[key] = value`) - use list.append() instead
-- No string methods (e.g., `", ".join(list)`, `.split()`, `.upper()`) - return data structures instead
-- Initialize numeric accumulators with 0.0 (float) not 0 (int)
-- Access dict fields with brackets: result["field"], not result.field
-- Return dicts/lists as the final result - do NOT format as strings
+Syntax restrictions (the runtime uses a restricted Python subset):
+- No imports - use only the provided functions and builtins (len, sum, str, etc.)
+- No while loops - use for loops instead
+- No comprehensions (list/dict/set) or generator expressions - use explicit for loops
+- No lambdas - define logic inline
+- No tuple unpacking (e.g., `a, b = 1, 2`) - assign variables separately
+- No list index assignment (e.g., `lst[0] = x`) - use list.append() to build lists
+- No string methods (.join, .split, .upper, etc.) - return data structures, not formatted strings
+
+What DOES work:
+- Dict assignment: `d["key"] = value`
+- Dict methods: `.get()`, `.keys()`, `.values()`, `.items()`
+- List methods: `.append()`
+- F-strings: `f"value is {{x}}"`
+- Builtins: `len()`, `sum()`, `str()`, `list()`, `range()`
 
 Available functions:
 
@@ -70,23 +78,24 @@ Available functions:
 
 Example - completing a full aggregation task in one execution:
 ```python
-# Get all items and process them completely in one go
 items = get_items(category="electronics")
-
-# Use a list to collect results (can't assign to dict keys)
 results = []
-total = 0.0
+total = 0
 
 for item in items:
     details = get_item_details(id=item["id"])
     if details["status"] == "active":
         total += details["price"]
-        # Append dicts to collect data
         results.append({{"name": item["name"], "price": details["price"]}})
 
-# Return a dict structure as the final result (no string formatting)
 {{"total": total, "count": len(results), "items": results}}
 ```"""
+
+
+def _build_type_check_prefix(signatures: list[str]) -> str:
+    """Build prefix code with imports and tool signatures for Monty type checking."""
+    imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
+    return imports + '\n\n'.join(signatures)
 
 
 @dataclass(kw_only=True)
@@ -154,12 +163,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     """
 
     prompt_builder: Callable[..., str] = build_code_mode_prompt
+    _cached_signatures: list[str] = field(default_factory=list, init=False, repr=False)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
         # TODO: MCP tool names can include characters that aren't valid Python identifiers.
         # We should sanitize names and maintain a mapping back to the original tool name.
         available_functions = [_get_tool_signature(tool) for tool in wrapped_tools.values()]
+        self._cached_signatures = available_functions
 
         # Debug: show what signatures the model will see
         print(f'\n{"=" * 60}\nCODE MODE - Tool Signatures shown to model:\n{"=" * 60}')
@@ -205,14 +216,24 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Example: `for _ in range(10**9): pass` can hang the agent run indefinitely.
         # TODO: Monty supports a limited Python subset (no while loops, list comprehensions, lambdas).
         # Consider documenting supported syntax so we do not gen incorrect code.
-        # TODO: Monty errors should be caught and returned to the model for retry, allowing the model
-        # to fix syntax errors (e.g., unsupported generator expressions) in a subsequent attempt.
         try:
             m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
+            # Type check the code before execution
+            prefix = _build_type_check_prefix(self._cached_signatures)
+            m.type_check(prefix_code=prefix)
             result = m.start()
+        except monty.MontyTypingError as e:
+            error_msg = e.display('concise')
+            print(f'\n{"!" * 60}\nCODE MODE - Type Error:\n{error_msg}\n{"!" * 60}\n')
+            raise ModelRetry(f'Type error in generated code:\n{error_msg}')
+        except monty.MontySyntaxError as e:
+            error_msg = e.display()
+            print(f'\n{"!" * 60}\nCODE MODE - Syntax Error:\n{error_msg}\n{"!" * 60}\n')
+            raise ModelRetry(f'Syntax error in generated code:\n{error_msg}')
         except monty.MontyRuntimeError as e:
-            print(f'\n{"!" * 60}\nCODE MODE - Monty Parse/Start Error:\n{e}\n{"!" * 60}\n')
-            raise
+            error_msg = e.display('traceback')
+            print(f'\n{"!" * 60}\nCODE MODE - Runtime Error:\n{error_msg}\n{"!" * 60}\n')
+            raise ModelRetry(f'Runtime error in generated code:\n{error_msg}')
 
         call_count = 0
         while isinstance(result, monty.MontySnapshot):
@@ -259,10 +280,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             try:
                 result = result.resume(return_value=tool_return_value)
             except monty.MontyRuntimeError as e:
-                print(f'\n{"!" * 60}\nCODE MODE - Monty Runtime Error after {tool_name} returned:\n')
+                error_msg = e.display('traceback')
+                print(f'\n{"!" * 60}\nCODE MODE - Runtime Error after {tool_name} returned:\n')
                 print(f'  Return value was: {tool_return_value}')
-                print(f'  Error: {e}\n{"!" * 60}\n')
-                raise
+                print(f'  Error: {error_msg}\n{"!" * 60}\n')
+                raise ModelRetry(f'Runtime error in generated code:\n{error_msg}')
 
         # Log final output
         print(f'\n{"=" * 60}\nCODE MODE - Final Output:\n{"=" * 60}\n{result.output}\n{"=" * 60}\n')

@@ -164,9 +164,9 @@ def signature_from_function(
 
     if description:
         docstring = _format_docstring(description)
-        signature_str = f'{signature_line}:\n{docstring}'
+        signature_str = f'{signature_line}:\n{docstring}\n    raise NotImplementedError()'
     else:
-        signature_str = f'{signature_line}: ...'
+        signature_str = f'{signature_line}:\n    raise NotImplementedError()'
 
     return SignatureResult(signature=signature_str, typeddict_defs=typeddict_defs, return_type=return_type_str)
 
@@ -310,17 +310,19 @@ def signature_from_schema(
 
     if description:
         docstring = _format_docstring(description)
-        signature_str = f'{signature_line}:\n{docstring}'
+        signature_str = f'{signature_line}:\n{docstring}\n    raise NotImplementedError()'
     else:
-        signature_str = f'{signature_line}: ...'
+        signature_str = f'{signature_line}:\n    raise NotImplementedError()'
 
     if return_json_schema is not None and resolved_return_type == 'Any':
         return_schema_blob = json.dumps(return_json_schema, indent=2)
         return_schema_note = f'\n\nReturn schema:\n{return_schema_blob}'
         if description:
-            signature_str = f'{signature_line}:\n{_format_docstring(description + return_schema_note)}'
+            signature_str = f'{signature_line}:\n{_format_docstring(description + return_schema_note)}\n    raise NotImplementedError()'
         else:
-            signature_str = f'{signature_line}:\n{_format_docstring(return_schema_note.strip())}'
+            signature_str = (
+                f'{signature_line}:\n{_format_docstring(return_schema_note.strip())}\n    raise NotImplementedError()'
+            )
 
     return SignatureResult(signature=signature_str, typeddict_defs=typeddict_defs, return_type=resolved_return_type)
 
