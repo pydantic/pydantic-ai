@@ -37,7 +37,7 @@ toolset = SkillsToolset(directories=["./skills"])
 
 # Multiple directories
 toolset = SkillsToolset(
-    directories=["./skills", "./shared-skills", "~/.pydantic-ai/skills"]
+    directories=["./skills", "./shared-skills"]
 )
 
 # Using SkillsDirectory instances for fine-grained control
@@ -207,20 +207,29 @@ Loads complete instructions for a specific skill.
 
 ### read_skill_resource(skill_name, resource_name, args)
 
-Reads resources from a skill (files or callables).
+Reads resources from a skill (files or callables). Supports multiple file types including Markdown, JSON, YAML, CSV, XML, and TXT files.
 
 **Parameters**:
 
 - `skill_name`: Name of the skill
-- `resource_name`: Resource name (e.g., "FORMS.md" or "get_schema")
+- `resource_name`: Resource name (e.g., "FORMS.md", "config.json", "data.csv")
 - `args`: Optional arguments for callable resources
 
 **Examples**:
 
 ```python
-# File-based resource
+# Markdown resource (returned as text)
 read_skill_resource(skill_name="web-research", resource_name="FORMS.md")
 read_skill_resource(skill_name="web-research", resource_name="references/report-template.md")
+
+# JSON resource (automatically parsed to dict)
+read_skill_resource(skill_name="api-skill", resource_name="config.json")
+
+# YAML resource (automatically parsed to dict)
+read_skill_resource(skill_name="api-skill", resource_name="settings.yaml")
+
+# CSV resource (returned as text)
+read_skill_resource(skill_name="data-skill", resource_name="samples.csv")
 
 # Callable resource with args
 read_skill_resource(skill_name="data-skill", resource_name="get_samples", args={"count": 10})
@@ -302,7 +311,7 @@ async def get_data_schema(ctx: RunContext[MyDeps]) -> str:
 @my_skill.resource
 async def get_samples(ctx: RunContext[MyDeps], count: int = 5) -> str:
     """Get sample data.
-    
+
     Args:
         count: Number of samples to return.
     """
@@ -325,7 +334,7 @@ Use `@skill.script` for callable scripts:
 @my_skill.script
 async def load_dataset(ctx: RunContext[MyDeps], path: str) -> str:
     """Load a dataset from path.
-    
+
     Args:
         path: Path to the dataset file.
     """
@@ -335,7 +344,7 @@ async def load_dataset(ctx: RunContext[MyDeps], path: str) -> str:
 @my_skill.script
 async def run_query(ctx: RunContext[MyDeps], query: str, limit: int = 10) -> str:
     """Execute a query on the dataset.
-    
+
     Args:
         query: SQL-like query string.
         limit: Maximum results to return.
@@ -427,6 +436,12 @@ result = await agent.run('Load data.csv and compute mean', deps=deps)
 toolset = SkillsToolset(directories=["./skills"])
 
 # Programmatic: Direct function call with dependency access
+my_skill = Skill(
+    name='arxiv-search',
+    description='Search arXiv for research papers',
+    content='Use this skill to search arXiv...'
+)
+
 @my_skill.script
 async def arxiv_search(ctx: RunContext[MyDeps], query: str, max_papers: int = 10) -> str:
     return await ctx.deps.api.search_arxiv(query, max_papers)
@@ -450,13 +465,22 @@ The URI is used for error messages, logging, and as the working directory for fi
 The [`SkillsDirectory`][pydantic_ai.skills.SkillsDirectory] class provides low-level skill discovery:
 
 ```python
-from pydantic_ai.skills import SkillsDirectory
+from pydantic_ai.skills import SkillsDirectory, LocalSkillScriptExecutor
 
+# Basic usage with default settings (30s timeout)
 skills_dir = SkillsDirectory(
     path="./skills",
     validate=True,
     max_depth=3,
-    script_timeout=30,
+)
+
+# With custom timeout via script_executor
+executor = LocalSkillScriptExecutor(timeout=60)
+skills_dir = SkillsDirectory(
+    path="./skills",
+    validate=True,
+    max_depth=3,
+    script_executor=executor,
 )
 
 # Load specific skill
@@ -530,7 +554,9 @@ skills_dir = SkillsDirectory(path="./skills", script_executor=executor)
 **Option 3: Callable Function** (auto-wrapped in [`CallableSkillScriptExecutor`][pydantic_ai.skills.CallableSkillScriptExecutor]):
 
 ```python
-async def my_executor(skill, script, args=None):
+from pydantic_ai.skills import SkillScript
+
+async def my_executor(script: SkillScript, args=None):
     print(f"Executing {script.name} from {skill.name}")
     result = await execute_with_monitoring(script.uri, args)
     return result
@@ -538,17 +564,17 @@ async def my_executor(skill, script, args=None):
 skills_dir = SkillsDirectory(path="./skills", script_executor=my_executor)
 
 # Sync functions also supported
-def sync_executor(skill, script, args=None):
+def sync_executor(script: SkillScript, args=None):
     return execute_in_sandbox(script.uri, args)
 ```
 
 **Option 4: Custom Protocol**:
 
 ```python
-from pydantic_ai.skills import SkillScriptExecutor
+from pydantic_ai.skills import SkillScriptExecutor, SkillScript
 
 class DockerExecutor:
-    async def run(self, skill, script, args=None):
+    async def run(self, script: SkillScript, args: dict[str, Any] | None = None) -> str:
         # Execute in Docker container
         pass
 

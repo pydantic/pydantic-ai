@@ -1,5 +1,7 @@
 # Skills
 
+This implementation follows the [Agent Skills specification](https://agentskills.io) - a standardized format for creating modular, reusable agent capabilities.
+
 A standardized, composable framework for building and managing Agent Skills. Skills are modular collections of instructions, scripts, tools, and resources that enable AI agents to progressively discover, load, and execute specialized capabilities for domain-specific tasks.
 
 ## What are Agent Skills?
@@ -70,7 +72,7 @@ This approach reduces token usage and scales to hundreds of skills without bloat
 The toolset includes security measures:
 
 - **Path validation**: Resources and scripts validated within skill directories
-- **Script timeout**: Configurable timeout (default: 30s) prevents hung processes  
+- **Script timeout**: Configurable timeout (default: 30s) prevents hung processes
 - **Subprocess isolation**: Scripts run in separate processes
 - **Resource depth limit**: Maximum 3-level depth prevents excessive traversal
 - **Custom executors**: Implement [`SkillScriptExecutor`][pydantic_ai.skills.SkillScriptExecutor] for additional security
@@ -102,10 +104,9 @@ If the default `./skills` directory doesn't exist, a warning is emitted and no s
 
 ## Example Skills
 
-The PydanticAI repository includes example skills you can reference:
+The PydanticAI repository includes an example skill you can reference:
 
 - **[arxiv-search](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/skills/arxiv-search)**: Searches arXiv for research papers with Python script
-- **[pydanticai-docs](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/skills/pydanticai-docs)**: Documentation skill for PydanticAI
 
 See the [skills_agent.py example](https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/skills_agent.py) for how to use them.
 
@@ -114,7 +115,3 @@ See the [skills_agent.py example](https://github.com/pydantic/pydantic-ai/blob/m
 - [Creating Skills](creating-skills.md) - Learn how to build your own skills
 - [Using Skills](using-skills.md) - Learn how to integrate and use skills in your agents
 - [API Reference](../api/skills.md) - Detailed type and API documentation
-
-## References
-
-This implementation follows concepts from [agentskills.io](https://agentskills.io).

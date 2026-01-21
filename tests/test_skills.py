@@ -24,6 +24,9 @@ from pydantic_ai.skills._directory import (
     _discover_skills,  # pyright: ignore[reportPrivateUsage]
     _parse_skill_md,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.skills._local import (
+    create_file_based_resource,
+)
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import SkillsToolset
 from pydantic_ai.usage import RunUsage
@@ -478,6 +481,374 @@ Content.
     assert 'references/nested/data.md' in resource_names
 
 
+def test_discover_skills_with_json_resources(tmp_path: Path) -> None:
+    """Test discovering skills with JSON resource files."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Skill with JSON resources
+---
+
+See data.json for configuration.
+""")
+
+    (skill_dir / 'data.json').write_text('{"key": "value", "count": 42}')
+    (skill_dir / 'config.json').write_text('{"setting": true}')
+
+    skills = _discover_skills(tmp_path, validate=True)
+
+    assert len(skills) == 1
+    assert skills[0].resources is not None and len(skills[0].resources) == 2
+    resource_names = {r.name for r in skills[0].resources}
+    assert resource_names == {'data.json', 'config.json'}
+
+    # Verify file extension can be extracted from name
+    for resource in skills[0].resources:
+        from pathlib import Path
+
+        assert Path(resource.name).suffix == '.json'
+
+
+def test_discover_skills_with_yaml_resources(tmp_path: Path) -> None:
+    """Test discovering skills with YAML resource files."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Skill with YAML resources
+---
+
+See config.yaml for settings.
+""")
+
+    (skill_dir / 'config.yaml').write_text('key: value\ncount: 42')
+    (skill_dir / 'data.yml').write_text('setting: true')
+
+    skills = _discover_skills(tmp_path, validate=True)
+
+    assert len(skills) == 1
+    assert skills[0].resources is not None and len(skills[0].resources) == 2
+    resource_names = {r.name for r in skills[0].resources}
+    assert resource_names == {'config.yaml', 'data.yml'}
+
+    # Verify file extension can be extracted from name
+    from pathlib import Path
+
+    yaml_resource = next(r for r in skills[0].resources if r.name == 'config.yaml')
+    yml_resource = next(r for r in skills[0].resources if r.name == 'data.yml')
+    assert Path(yaml_resource.name).suffix == '.yaml'
+    assert Path(yml_resource.name).suffix == '.yml'
+
+
+def test_discover_skills_with_csv_resources(tmp_path: Path) -> None:
+    """Test discovering skills with CSV resource files."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Skill with CSV resources
+---
+
+See data.csv for samples.
+""")
+
+    (skill_dir / 'data.csv').write_text('name,age\nAlice,30\nBob,25')
+
+    skills = _discover_skills(tmp_path, validate=True)
+
+    assert len(skills) == 1
+    assert skills[0].resources is not None and len(skills[0].resources) == 1
+    assert skills[0].resources[0].name == 'data.csv'
+    from pathlib import Path
+
+    assert Path(skills[0].resources[0].name).suffix == '.csv'
+
+
+def test_discover_skills_with_xml_resources(tmp_path: Path) -> None:
+    """Test discovering skills with XML resource files."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Skill with XML resources
+---
+
+See schema.xml for structure.
+""")
+
+    (skill_dir / 'schema.xml').write_text('<?xml version="1.0"?><root><item>test</item></root>')
+
+    skills = _discover_skills(tmp_path, validate=True)
+
+    assert len(skills) == 1
+    assert skills[0].resources is not None and len(skills[0].resources) == 1
+    assert skills[0].resources[0].name == 'schema.xml'
+    from pathlib import Path
+
+    assert Path(skills[0].resources[0].name).suffix == '.xml'
+
+
+def test_discover_skills_with_txt_resources(tmp_path: Path) -> None:
+    """Test discovering skills with TXT resource files."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Skill with text resources
+---
+
+See notes.txt for additional info.
+""")
+
+    (skill_dir / 'notes.txt').write_text('These are plain text notes.\nLine 2.')
+
+    skills = _discover_skills(tmp_path, validate=True)
+
+    assert len(skills) == 1
+    assert skills[0].resources is not None and len(skills[0].resources) == 1
+    assert skills[0].resources[0].name == 'notes.txt'
+    from pathlib import Path
+
+    assert Path(skills[0].resources[0].name).suffix == '.txt'
+
+
+def test_discover_skills_with_mixed_resources(tmp_path: Path) -> None:
+    """Test discovering skills with multiple file types."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Skill with mixed resource types
+---
+
+Multiple resource types available.
+""")
+
+    # Create resources of different types
+    (skill_dir / 'README.md').write_text('# README')
+    (skill_dir / 'data.json').write_text('{"key": "value"}')
+    (skill_dir / 'config.yaml').write_text('key: value')
+    (skill_dir / 'samples.csv').write_text('a,b,c')
+    (skill_dir / 'schema.xml').write_text('<root/>')
+    (skill_dir / 'notes.txt').write_text('notes')
+
+    # Create nested resources
+    assets_dir = skill_dir / 'assets'
+    assets_dir.mkdir()
+    (assets_dir / 'nested.json').write_text('{"nested": true}')
+
+    skills = _discover_skills(tmp_path, validate=True)
+
+    assert len(skills) == 1
+    assert skills[0].resources is not None and len(skills[0].resources) == 7
+    resource_names = {r.name for r in skills[0].resources}
+    assert resource_names == {
+        'README.md',
+        'data.json',
+        'config.yaml',
+        'samples.csv',
+        'schema.xml',
+        'notes.txt',
+        'assets/nested.json',
+    }
+
+
+async def test_load_json_resource_parsed(tmp_path: Path) -> None:
+    """Test loading JSON resource returns parsed dict."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    json_file = skill_dir / 'data.json'
+    json_content = '{"name": "test", "count": 42, "active": true}'
+    json_file.write_text(json_content)
+
+    resource = create_file_based_resource(
+        name='data.json',
+        uri=str(json_file.resolve()),
+    )
+
+    result = await resource.load(ctx=None, args=None)
+
+    # Should return parsed dict, not string
+    assert isinstance(result, dict)
+    assert result == {'name': 'test', 'count': 42, 'active': True}
+
+
+async def test_load_yaml_resource_parsed(tmp_path: Path) -> None:
+    """Test loading YAML resource returns parsed dict."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    yaml_file = skill_dir / 'config.yaml'
+    yaml_content = 'name: test\ncount: 42\nactive: true'
+    yaml_file.write_text(yaml_content)
+
+    resource = create_file_based_resource(
+        name='config.yaml',
+        uri=str(yaml_file.resolve()),
+    )
+
+    result = await resource.load(ctx=None, args=None)
+
+    # Should return parsed dict, not string
+    assert isinstance(result, dict)
+    assert result == {'name': 'test', 'count': 42, 'active': True}
+
+
+async def test_load_yml_resource_parsed(tmp_path: Path) -> None:
+    """Test loading YML resource returns parsed dict."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    yml_file = skill_dir / 'config.yml'
+    yml_content = 'setting: enabled'
+    yml_file.write_text(yml_content)
+
+    resource = create_file_based_resource(
+        name='config.yml',
+        uri=str(yml_file.resolve()),
+    )
+
+    result = await resource.load(ctx=None, args=None)
+
+    # Should return parsed dict, not string
+    assert isinstance(result, dict)
+    assert result == {'setting': 'enabled'}
+
+
+async def test_load_json_resource_invalid_fallback(tmp_path: Path) -> None:
+    """Test loading invalid JSON falls back to text."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    json_file = skill_dir / 'invalid.json'
+    invalid_content = '{not valid json}'
+    json_file.write_text(invalid_content)
+
+    resource = create_file_based_resource(
+        name='invalid.json',
+        uri=str(json_file.resolve()),
+    )
+
+    result = await resource.load(ctx=None, args=None)
+
+    # Should fall back to returning raw text
+    assert isinstance(result, str)
+    assert result == invalid_content
+
+
+async def test_load_yaml_resource_invalid_fallback(tmp_path: Path) -> None:
+    """Test loading invalid YAML falls back to text."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    yaml_file = skill_dir / 'invalid.yaml'
+    invalid_content = 'key: [invalid\nnot: closed'
+    yaml_file.write_text(invalid_content)
+
+    resource = create_file_based_resource(
+        name='invalid.yaml',
+        uri=str(yaml_file.resolve()),
+    )
+
+    result = await resource.load(ctx=None, args=None)
+
+    # Should fall back to returning raw text
+    assert isinstance(result, str)
+    assert result == invalid_content
+
+
+async def test_load_csv_resource_as_text(tmp_path: Path) -> None:
+    """Test loading CSV resource returns raw text."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    csv_file = skill_dir / 'data.csv'
+    csv_content = 'name,age\nAlice,30\nBob,25'
+    csv_file.write_text(csv_content)
+
+    resource = create_file_based_resource(
+        name='data.csv',
+        uri=str(csv_file.resolve()),
+    )
+
+    result = await resource.load(ctx=None, args=None)
+
+    # Should return raw text
+    assert isinstance(result, str)
+    assert result == csv_content
+
+
+async def test_load_xml_resource_as_text(tmp_path: Path) -> None:
+    """Test loading XML resource returns raw text."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    xml_file = skill_dir / 'schema.xml'
+    xml_content = '<?xml version="1.0"?><root><item>test</item></root>'
+    xml_file.write_text(xml_content)
+
+    resource = create_file_based_resource(
+        name='schema.xml',
+        uri=str(xml_file.resolve()),
+    )
+
+    result = await resource.load(ctx=None, args=None)
+
+    # Should return raw text
+    assert isinstance(result, str)
+    assert result == xml_content
+
+
+async def test_load_txt_resource_as_text(tmp_path: Path) -> None:
+    """Test loading TXT resource returns raw text."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    txt_file = skill_dir / 'notes.txt'
+    txt_content = 'These are notes.\nMultiple lines.'
+    txt_file.write_text(txt_content)
+
+    resource = create_file_based_resource(
+        name='notes.txt',
+        uri=str(txt_file.resolve()),
+    )
+
+    result = await resource.load(ctx=None, args=None)
+
+    # Should return raw text
+    assert isinstance(result, str)
+    assert result == txt_content
+
+
+async def test_load_markdown_resource_as_text(tmp_path: Path) -> None:
+    """Test loading markdown resource returns raw text."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    md_file = skill_dir / 'README.md'
+    md_content = '# README\n\nSome markdown content.'
+    md_file.write_text(md_content)
+
+    resource = create_file_based_resource(
+        name='README.md',
+        uri=str(md_file.resolve()),
+    )
+
+    result = await resource.load(ctx=None, args=None)
+
+    # Should return raw text (markdown is not parsed)
+    assert isinstance(result, str)
+    assert result == md_content
+
+
 # ==================== SkillsToolset Tests ====================
 
 
@@ -731,6 +1102,7 @@ async def test_read_skill_resource_tool(sample_skills_dir: Path) -> None:
 
     # Check that resources can be read
     for resource in skill.resources:
+        assert resource.uri is not None
         resource_path = Path(resource.uri)
         assert resource_path.exists()
         assert resource_path.is_file()
@@ -751,6 +1123,152 @@ async def test_read_skill_resource_not_found(sample_skills_dir: Path) -> None:
     assert 'NONEXISTENT.md' not in resource_names
 
 
+async def test_toolset_with_json_resources(tmp_path: Path) -> None:
+    """Test SkillsToolset with JSON resources."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Skill with JSON
+---
+
+Use data.json for configuration.
+""")
+
+    json_data = {'api_key': 'test123', 'timeout': 30}
+    (skill_dir / 'data.json').write_text('{"api_key": "test123", "timeout": 30}')
+
+    toolset = SkillsToolset(directories=[tmp_path])
+    skill = toolset.get_skill('test-skill')
+
+    assert skill.resources is not None and len(skill.resources) == 1
+    resource = skill.resources[0]
+    assert resource.name == 'data.json'
+    from pathlib import Path
+
+    assert Path(resource.name).suffix == '.json'
+
+    # Load and verify it's parsed as dict
+    result = await resource.load(ctx=None, args=None)
+    assert isinstance(result, dict)
+    assert result == json_data
+
+
+async def test_toolset_with_yaml_resources(tmp_path: Path) -> None:
+    """Test SkillsToolset with YAML resources."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Skill with YAML
+---
+
+Use config.yaml for settings.
+""")
+
+    (skill_dir / 'config.yaml').write_text('database:\n  host: localhost\n  port: 5432')
+
+    toolset = SkillsToolset(directories=[tmp_path])
+    skill = toolset.get_skill('test-skill')
+
+    assert skill.resources is not None and len(skill.resources) == 1
+    resource = skill.resources[0]
+    assert resource.name == 'config.yaml'
+    from pathlib import Path
+
+    assert Path(resource.name).suffix == '.yaml'
+
+    # Load and verify it's parsed as dict
+    result = await resource.load(ctx=None, args=None)
+    assert isinstance(result, dict)
+    assert result == {'database': {'host': 'localhost', 'port': 5432}}
+
+
+async def test_toolset_with_csv_resources(tmp_path: Path) -> None:
+    """Test SkillsToolset with CSV resources."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Skill with CSV
+---
+
+Use data.csv for samples.
+""")
+
+    csv_content = 'name,age,city\nAlice,30,NYC\nBob,25,SF'
+    (skill_dir / 'data.csv').write_text(csv_content)
+
+    toolset = SkillsToolset(directories=[tmp_path])
+    skill = toolset.get_skill('test-skill')
+
+    assert skill.resources is not None and len(skill.resources) == 1
+    resource = skill.resources[0]
+    assert resource.name == 'data.csv'
+    from pathlib import Path
+
+    assert Path(resource.name).suffix == '.csv'
+
+    # Load and verify it's returned as text
+    result = await resource.load(ctx=None, args=None)
+    assert isinstance(result, str)
+    assert result == csv_content
+
+
+async def test_toolset_with_multiple_file_types(tmp_path: Path) -> None:
+    """Test SkillsToolset with multiple resource file types."""
+    skill_dir = tmp_path / 'test-skill'
+    skill_dir.mkdir()
+
+    (skill_dir / 'SKILL.md').write_text("""---
+name: test-skill
+description: Multi-format skill
+---
+
+Multiple resource formats available.
+""")
+
+    # Create resources of different types
+    (skill_dir / 'README.md').write_text('# Documentation')
+    (skill_dir / 'config.json').write_text('{"key": "value"}')
+    (skill_dir / 'settings.yaml').write_text('option: enabled')
+    (skill_dir / 'data.csv').write_text('a,b\n1,2')
+    (skill_dir / 'schema.xml').write_text('<schema/>')
+    (skill_dir / 'notes.txt').write_text('Notes here')
+
+    toolset = SkillsToolset(directories=[tmp_path])
+    skill = toolset.get_skill('test-skill')
+
+    assert skill.resources is not None and len(skill.resources) == 6
+
+    # Check all resources are discovered with correct extensions
+    from pathlib import Path
+
+    resource_map = {r.name: r for r in skill.resources}
+    assert Path(resource_map['README.md'].name).suffix == '.md'
+    assert Path(resource_map['config.json'].name).suffix == '.json'
+    assert Path(resource_map['settings.yaml'].name).suffix == '.yaml'
+    assert Path(resource_map['data.csv'].name).suffix == '.csv'
+    assert Path(resource_map['schema.xml'].name).suffix == '.xml'
+    assert Path(resource_map['notes.txt'].name).suffix == '.txt'
+
+    # Test loading and parsing behavior
+    json_result = await resource_map['config.json'].load(ctx=None, args=None)
+    assert isinstance(json_result, dict)
+
+    yaml_result = await resource_map['settings.yaml'].load(ctx=None, args=None)
+    assert isinstance(yaml_result, dict)
+
+    md_result = await resource_map['README.md'].load(ctx=None, args=None)
+    assert isinstance(md_result, str)
+
+    csv_result = await resource_map['data.csv'].load(ctx=None, args=None)
+    assert isinstance(csv_result, str)
+
+
 async def test_run_skill_script_tool(sample_skills_dir: Path) -> None:
     """Test the run_skill_script tool."""
     toolset = SkillsToolset(directories=[sample_skills_dir])
@@ -766,6 +1284,7 @@ async def test_run_skill_script_tool(sample_skills_dir: Path) -> None:
 
     # Check that scripts can be found
     for script in skill.scripts:
+        assert script.uri is not None
         script_path = Path(script.uri)
         assert script_path.exists()
         assert script_path.is_file()
@@ -959,7 +1478,9 @@ Another skill from a different source.
     assert 'skill-four' in toolset.skills  # From second_dir
 
     # Verify skill-three is from second directory (last occurrence overrides)
-    assert 'second' in toolset.skills['skill-three'].uri
+    skill_three_uri = toolset.skills['skill-three'].uri
+    assert skill_three_uri is not None
+    assert 'second' in skill_three_uri
 
 
 # ==================== New Combined Mode Tests ====================

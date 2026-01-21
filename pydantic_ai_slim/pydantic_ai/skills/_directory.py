@@ -145,8 +145,16 @@ def _parse_skill_md(content: str) -> tuple[dict[str, Any], str]:
 def _discover_resources(skill_folder: Path) -> list[SkillResource]:
     """Discover resource files in a skill folder.
 
-    Resources are markdown files other than SKILL.md in the root directory
+    Resources are text files other than SKILL.md in the root directory
     or in any subdirectory (e.g., references/, assets/).
+
+    Supported file types:
+    - Markdown: .md
+    - JSON: .json
+    - YAML: .yaml, .yml
+    - CSV: .csv
+    - XML: .xml
+    - Text: .txt
 
     Args:
         skill_folder: Path to the skill directory.
@@ -156,18 +164,22 @@ def _discover_resources(skill_folder: Path) -> list[SkillResource]:
     """
     resources: list[SkillResource] = []
 
-    # Find all .md files recursively, excluding SKILL.md
-    for md_file in skill_folder.rglob('*.md'):
-        if md_file.name.upper() != 'SKILL.MD':
-            rel_path = md_file.relative_to(skill_folder)
-            # Always use relative path for consistency and better context
-            name = str(rel_path)
-            resources.append(
-                create_file_based_resource(
-                    name=name,
-                    uri=str(md_file.resolve()),
+    # Supported textual file extensions
+    supported_extensions = ['.md', '.json', '.yaml', '.yml', '.csv', '.xml', '.txt']
+
+    # Find all supported files recursively, excluding SKILL.md
+    for extension in supported_extensions:
+        for resource_file in skill_folder.rglob(f'*{extension}'):
+            if resource_file.name.upper() != 'SKILL.MD':
+                rel_path = resource_file.relative_to(skill_folder)
+                # Always use relative path for consistency and better context
+                name = str(rel_path)
+                resources.append(
+                    create_file_based_resource(
+                        name=name,
+                        uri=str(resource_file.resolve()),
+                    )
                 )
-            )
 
     return resources
 
@@ -313,7 +325,9 @@ def _discover_skills(
             # Extract standard fields and remaining metadata
             license_field = frontmatter.get('license')
             compatibility_field = frontmatter.get('compatibility')
-            metadata = {k: v for k, v in frontmatter.items() if k not in ('name', 'description', 'license', 'compatibility')}
+            metadata = {
+                k: v for k, v in frontmatter.items() if k not in ('name', 'description', 'license', 'compatibility')
+            }
 
             # Validate metadata
             if validate:

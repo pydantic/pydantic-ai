@@ -2,6 +2,8 @@
 
 This guide covers creating file-based Agent Skills - modular directories that agents can discover and load from the filesystem. For programmatic skills created in code, see [Using Skills - Programmatic Skills](using-skills.md#programmatic-skills).
 
+For the complete Agent Skills specification, see [agentskills.io](https://agentskills.io).
+
 ## Skill Structure
 
 Every skill is a directory with at minimum a `SKILL.md` file. For the complete specification, see [Agent Skills Specification](https://agentskills.io/specification).
@@ -85,13 +87,34 @@ The [Agent Skills specification](https://agentskills.io/specification#name-field
 
 ## Resource Discovery
 
-Resources are discovered automatically. For the complete specification, see [Optional directories](https://agentskills.io/specification#optional-directories).
+Resources are discovered automatically from various file types. For the complete specification, see [Optional directories](https://agentskills.io/specification#optional-directories).
 
-1. **Root-level markdown files** (except SKILL.md):
-   - `REFERENCE.md`, `FORMS.md`, `GUIDE.md`, etc.
-   - Referenced as: `"REFERENCE.md"`
+### Supported File Types
 
-2. **Files in optional subdirectories** (`references/`, `assets/`, recursive with depth limits):
+The following file types are automatically discovered as skill resources:
+
+- **Markdown** (`.md`): Documentation, guides, and formatted text
+- **JSON** (`.json`): Configuration data, structured content (auto-parsed to dict)
+- **YAML** (`.yaml`, `.yml`): Configuration files, structured data (auto-parsed to dict)
+- **CSV** (`.csv`): Tabular data, datasets (returned as text)
+- **XML** (`.xml`): Structured documents, schemas (returned as text)
+- **Text** (`.txt`): Plain text files, notes (returned as text)
+
+### Content Parsing
+
+When resources are loaded:
+
+- **JSON and YAML files** are automatically parsed into Python dictionaries for structured data access
+- If parsing fails, the raw text content is returned as fallback
+- **All other file types** (Markdown, CSV, XML, TXT) are returned as UTF-8 text strings
+
+### Resource Locations
+
+1. **Root-level files** (except SKILL.md):
+   - `REFERENCE.md`, `FORMS.md`, `data.json`, `config.yaml`, etc.
+   - Referenced as: `"REFERENCE.md"`, `"data.json"`
+
+2. **Files in optional subdirectories** (`references/`, `assets/`, etc. — recursive discovery):
    - `references/technical.md`
    - `assets/schema.json`
    - `assets/data/sample.csv`
@@ -99,24 +122,26 @@ Resources are discovered automatically. For the complete specification, see [Opt
 
 **Example structure:**
 
-```markdown
+```
 my-skill/
 ├── SKILL.md
 ├── FORMS.md              # Referenced as "FORMS.md"
 ├── REFERENCE.md          # Referenced as "REFERENCE.md"
+├── config.json           # Referenced as "config.json" (parsed as dict)
+├── settings.yaml         # Referenced as "settings.yaml" (parsed as dict)
 ├── references/
 │   └── technical.md      # Referenced as "references/technical.md"
 └── assets/
-    ├── schema.json       # Referenced as "assets/schema.json"
+    ├── schema.xml        # Referenced as "assets/schema.xml" (text)
     └── data/
-        └── sample.csv    # Referenced as "assets/data/sample.csv"
+        └── sample.csv    # Referenced as "assets/data/sample.csv" (text)
 ```
 
 **Usage:**
 
 Resources can be accessed by their path:
 
-- Root-level: `FORMS.md`
+- Root-level: `FORMS.md`, `config.json`
 - Nested: `assets/data/sample.csv`
 
 ## Adding Scripts to Skills
@@ -170,7 +195,7 @@ def main():
         default='json',
         help='Output format (default: json)'
     )
-    
+
     args = parser.parse_args()
 
     try:

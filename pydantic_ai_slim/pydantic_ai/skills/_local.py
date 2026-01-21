@@ -16,6 +16,7 @@ Implementations:
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import anyio
+import yaml
 
 from .._utils import is_async_callable, run_in_executor
 from ._exceptions import SkillResourceLoadError, SkillScriptExecutionError
@@ -40,12 +42,17 @@ class FileBasedSkillResource(SkillResource):
     async def load(self, ctx: Any, args: dict[str, Any] | None = None) -> Any:
         """Load resource content from file.
 
+        JSON and YAML files are automatically parsed into Python dicts.
+        If parsing fails, the raw text content is returned instead.
+        All other file types are returned as UTF-8 text strings.
+
         Args:
             ctx: RunContext for accessing dependencies (unused for file-based resources).
             args: Named arguments (unused for file-based resources).
 
         Returns:
-            File content as string.
+            - For JSON/YAML: Parsed dict or fallback to text
+            - For other files: UTF-8 text string
 
         Raises:
             SkillResourceLoadError: If file cannot be read or path is invalid.
@@ -56,9 +63,31 @@ class FileBasedSkillResource(SkillResource):
         resource_path = Path(self.uri)
 
         try:
-            return resource_path.read_text(encoding='utf-8')
+            content = resource_path.read_text(encoding='utf-8')
         except OSError as e:
             raise SkillResourceLoadError(f"Failed to read resource '{self.name}': {e}") from e
+
+        # Extract file extension from the resource name
+        file_extension = Path(self.name).suffix.lower()
+
+        # Attempt to parse JSON files
+        if file_extension == '.json':
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                # Fall back to returning raw text if parsing fails
+                return content
+
+        # Attempt to parse YAML files
+        elif file_extension in ('.yaml', '.yml'):
+            try:
+                return yaml.safe_load(content)
+            except yaml.YAMLError:
+                # Fall back to returning raw text if parsing fails
+                return content
+
+        # All other file types return as text
+        return content
 
 
 class LocalSkillScriptExecutor:
@@ -218,7 +247,7 @@ def create_file_based_resource(
     """Create a file-based resource.
 
     Args:
-        name: Resource name (e.g., "FORMS.md").
+        name: Resource name (e.g., "FORMS.md", "data.json").
         uri: Path to the resource file.
         description: Optional resource description.
 
