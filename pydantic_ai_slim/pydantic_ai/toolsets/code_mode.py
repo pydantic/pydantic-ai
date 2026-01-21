@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import monty
+import asyncio
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
@@ -191,7 +192,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     parameters_json_schema=_CODE_ADAPTER.json_schema(),
                     description=description,
                 ),
-                max_retries=3,
+                max_retries=3, # -> Should allow to be overrideable? 3 tries are plenty but not sure if a specially dumb model might need more attempts to get the code right?
                 args_validator=cast(SchemaValidatorProt, _CODE_ADAPTER.validator),
             )
         }
@@ -204,17 +205,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert isinstance(tool, _CodeModeTool)
         assert isinstance(code, str)
 
-        # Log the generated code for debugging visibility
-        # TODO: There is no execution timeout or step budget for Monty runs here.
-        # Example: `for _ in range(10**9): pass` can hang the agent run indefinitely.
-        # TODO: Monty supports a limited Python subset (no while loops, list comprehensions, lambdas).
-        # Consider documenting supported syntax so we do not gen incorrect code.
+
+        #
+        #
+        # Adding this to mitigate potential infinite loops or resource exhaustion
+        # Or maybe just something dubious by the model which could hang this
+        #
+        monty_limits = monty.ResourceLimits(
+            max_duration_secs=60
+        )
+
         try:
             m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
             # Type check the code before execution
             prefix = _build_type_check_prefix(self._cached_signatures)
             m.type_check(prefix_code=prefix)
-            result = m.start()
+            result = m.start(limits=monty_limits)
         except monty.MontyTypingError as e:
             error_msg = e.display('concise')
             raise ModelRetry(f'Type error in generated code:\n{error_msg}')
