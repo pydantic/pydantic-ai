@@ -12,7 +12,7 @@ from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
 from .._signature_from_schema import signature_from_function, signature_from_schema
-from ..exceptions import ModelRetry
+from ..exceptions import ApprovalRequired, ModelRetry
 from ..tools import ToolDefinition
 from .abstract import SchemaValidatorProt, ToolsetTool
 from .function import FunctionToolset, FunctionToolsetTool
@@ -56,7 +56,7 @@ How to do that:
 - Use for loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
 - The last expression evaluated becomes the return value - make it the final answer
 
-Syntax restrictions (the runtime uses a restricted Python subset):
+CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
 - No imports - use only the provided functions and builtins (len, sum, str, etc.)
 - No while loops - use for loops instead
 - No comprehensions (list/dict/set) or generator expressions - use explicit for loops
@@ -206,6 +206,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert isinstance(tool, _CodeModeTool)
         assert isinstance(code, str)
 
+        # Do we have a previous checkpoint we can resume from?
+        checkpoint: dict[str, Any] | None = None
+
+        if ctx.tool_call_approved and ctx.tool_call_metadata:
+            checkpoint = ctx.tool_call_metadata.get('code_mode')
+
         # Adding this to mitigate potential infinite loops or resource exhaustion
         # Or maybe just something dubious by the model which could hang this
         #
@@ -215,10 +221,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         try:
             m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
-            # Type check the code before execution
-            prefix = _build_type_check_prefix(self._cached_signatures)
-            m.type_check(prefix_code=prefix)
-            result = m.start(limits=monty_limits)
+
+            result: monty.MontySnapshot | monty.MontyComplete | None = None
+            if checkpoint:
+                result = monty.MontySnapshot.load(checkpoint['checkpoint_dump'])
+
+            if not result:
+                prefix = _build_type_check_prefix(self._cached_signatures)
+                m.type_check(prefix_code=prefix)
+                result = m.start(limits=monty_limits)
         except monty.MontyTypingError as e:
             error_msg = e.display('concise')
             raise ModelRetry(f'Type error in generated code:\n{error_msg}')
@@ -229,6 +240,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # Timeouts are also caught here
             error_msg = e.display('traceback')
             raise ModelRetry(f'Runtime error in generated code:\n{error_msg}')
+
+        # Only the first inner tool call after approval is marked approved. This keeps
+        # approval scoped to a single tool call, not the entire code execution.
+        next_call_approved = (checkpoint is not None)
 
         while isinstance(result, monty.MontySnapshot):
             tool_name = result.function_name
@@ -243,26 +258,40 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 for i, arg in enumerate(result.args):
                     if i < len(param_names):
                         tool_kwargs[param_names[i]] = arg
-            inner_ctx = replace(ctx, tool_name=tool_name)
+            # NOTE: we intentionally do not propagate outer approval beyond a single call.
+            # When resuming from checkpoint, pass only the inner tool's original metadata
+            # to avoid leaking code_mode's checkpoint data into the inner tool's context.
+            inner_metadata = ctx.tool_call_metadata.get('original_metadata') if checkpoint else None
+            inner_ctx = replace(ctx, tool_name=tool_name, tool_call_approved=next_call_approved, tool_call_metadata=inner_metadata)
+            next_call_approved = False
 
-            # TODO: Approval/defer flows are handled by the outer tool call, so inner tool approvals
-            # (ApprovalRequired/CallDeferred) currently fail the entire run_code call instead of
-            # surfacing a per-tool approval step. Cloudflare-style proxying would allow pausing after
-            # each tool call. Example:
-            #   run_code: "result = dangerous_tool(action='delete')"
-            # Ideally yields: a pending approval for dangerous_tool, rather than a failed run_code call.
-            # Create span for inner tool call with code_mode.inner_tool attribute
-            span_attributes = {
-                'gen_ai.tool.name': tool_name,
-                'code_mode.inner_tool': True,
-                'logfire.msg': f'code mode calling: {tool_name}',
-            }
+            try:
+                span_attributes = {
+                    'gen_ai.tool.name': tool_name,
+                    'code_mode.inner_tool': True,
+                    'logfire.msg': f'code mode calling: {tool_name}',
+                }
 
-            # TODO: Consider moving this to tool manager(Discussion with Douwe)?
-            span_name = f'code_mode_tool:{tool_name}'
-            with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
-                tool_return_value = await super().call_tool(tool_name, tool_kwargs, inner_ctx, original_tool)
-
+                # TODO: Consider letting tool manager handle the span(Discussion with Douwe)?
+                span_name = f'code_mode_tool:{tool_name}'
+                with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
+                    tool_return_value = await super().call_tool(tool_name, tool_kwargs, inner_ctx, original_tool)
+            except ApprovalRequired as e:
+                # The inner tool needs approval - dump Monty state into the metadata and re-raise.
+                # ToolApproved.override_args cannot affect this inner call without applying
+                # overrides to the checkpointed tool_args before resuming.
+                # We keep 'original_metadata' separate to avoid key collisions when passing
+                # metadata back to the inner tool on resume.
+                raise ApprovalRequired(
+                    metadata={
+                        'code_mode': {
+                            'checkpoint_dump': result.dump(),
+                            'tool_name': tool_name,
+                            'tool_args': tool_kwargs,
+                        },
+                        'original_metadata': e.metadata,
+                    }
+                )
             try:
                 result = result.resume(return_value=tool_return_value)
             except monty.MontyRuntimeError as e:
