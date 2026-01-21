@@ -525,9 +525,6 @@ from pydantic_ai import Embedder
 embedder = Embedder('bedrock:us.amazon.titan-embed-text-v2:0')
 ```
 
-!!! note "Token Counting"
-    Bedrock embedding models do not support the `count_tokens()` method because AWS Bedrock's token counting API only works with text generation models (Claude, Llama, etc.), not embedding models. Calling `count_tokens()` will raise `NotImplementedError`.
-
 #### Using a Custom Provider
 
 For advanced configuration like explicit credentials or a custom boto3 client, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly. See the [Bedrock provider documentation](models/bedrock.md#provider-argument) for more details.
@@ -546,6 +543,9 @@ provider = BedrockProvider(
 model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=provider)
 embedder = Embedder(model)
 ```
+
+!!! note "Token Counting"
+    Bedrock embedding models do not support the `count_tokens()` method because AWS Bedrock's token counting API only works with text generation models (Claude, Llama, etc.), not embedding models. Calling `count_tokens()` will raise `NotImplementedError`.
 
 ### Sentence Transformers (Local)
 
@@ -626,7 +626,7 @@ embedder = Embedder(model)
 [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] provides common configuration options that work across providers:
 
 - `dimensions`: Reduce the output embedding dimensions (supported by OpenAI, Google, Cohere, VoyageAI)
-- `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, VoyageAI)
+- `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, Bedrock, VoyageAI)
 
 Settings can be specified at the embedder level (applied to all calls) or per-call:
 
