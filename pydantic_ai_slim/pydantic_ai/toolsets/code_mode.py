@@ -7,7 +7,6 @@ from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import monty
-import asyncio
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
@@ -52,7 +51,8 @@ def build_code_mode_prompt(*, signatures: list[str]) -> str:
     return f"""\
 You should consider writing Python code to accomplish multiple tasks in one go instead of using multiple tools one by one.
 
-CRITICAL:
+How to do that:
+- ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
 - The last expression evaluated becomes the return value - make it the final answer
 
@@ -178,6 +178,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Example: hundreds of MCP tools can push tens of thousands of tokens into the prompt,
         # defeating the progressive-disclosure approach described in code-mode references.
         # Consider: progressive discovery (list tool names first, fetch signatures on demand).
+        # David to look into this
         description = self.prompt_builder(signatures=available_functions)
         # TODO: Ideally we'd use kind='output' to make the code result be the final answer
         # without a second LLM call. However, output tools are treated differently by models -
@@ -192,7 +193,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     parameters_json_schema=_CODE_ADAPTER.json_schema(),
                     description=description,
                 ),
-                max_retries=3, # -> Should allow to be overrideable? 3 tries are plenty but not sure if a specially dumb model might need more attempts to get the code right?
+                max_retries=3, # -> Should allow to be overrideable? 3 tries are plenty but not sure if a specially dumb model might need more attempts to get the code right with repeated ModelRetries?
                 args_validator=cast(SchemaValidatorProt, _CODE_ADAPTER.validator),
             )
         }
@@ -205,14 +206,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert isinstance(tool, _CodeModeTool)
         assert isinstance(code, str)
 
-
-        #
-        #
         # Adding this to mitigate potential infinite loops or resource exhaustion
         # Or maybe just something dubious by the model which could hang this
         #
         monty_limits = monty.ResourceLimits(
-            max_duration_secs=60
+            max_duration_secs=60 # Allow for this to be configurable?
         )
 
         try:
@@ -228,6 +226,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             error_msg = e.display()
             raise ModelRetry(f'Syntax error in generated code:\n{error_msg}')
         except monty.MontyRuntimeError as e:
+            # Timeouts are also caught here
             error_msg = e.display('traceback')
             raise ModelRetry(f'Runtime error in generated code:\n{error_msg}')
 
@@ -237,10 +236,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
             tool_kwargs = dict(result.kwargs)
             if result.args:
-                # TODO: Positional args currently map using JSON schema property order, which may
-                # not match the tool's intended parameter order (especially for MCP tools). This
-                # can silently swap arguments; consider enforcing keyword-only or deriving a stable
-                # ordering from the tool source.
+                # Positional args are mapped using JSON schema property order, which may not match
+                # the tool's actual parameter order. The prompt instructs models to use keyword
+                # arguments only, but we handle positional args as a fallback for non-compliant models.
                 param_names = list(original_tool.tool_def.parameters_json_schema.get('properties', {}).keys())
                 for i, arg in enumerate(result.args):
                     if i < len(param_names):

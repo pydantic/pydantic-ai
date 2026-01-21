@@ -61,7 +61,8 @@ class MisorderedParamsToolset(AbstractToolset[None]):
 @pytest.mark.xfail(
     reason=(
         'CodeModeToolset maps positional args to JSON schema property order, '
-        'which can differ from actual parameter order for external tools.'
+        'which can differ from actual parameter order for external tools. '
+        'Mitigated by prompt instructing models to use keyword args only.'
     )
 )
 async def test_code_mode_positional_args_respects_signature_order():

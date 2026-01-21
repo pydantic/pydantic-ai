@@ -146,9 +146,10 @@ async def test_signature_includes_raise_not_implemented():
 
     description = tools['run_code'].tool_def.description or ''
     assert description == snapshot('''\
-Write Python code to accomplish the ENTIRE task in a SINGLE code block.
+You should consider writing Python code to accomplish multiple tasks in one go instead of using multiple tools one by one.
 
-CRITICAL:
+How to:
+- ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
 - The last expression evaluated becomes the return value - make it the final answer
 
