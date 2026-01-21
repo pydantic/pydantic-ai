@@ -8,7 +8,6 @@ than raw JSON schemas.
 from __future__ import annotations
 
 import ast
-import asyncio
 import copy
 import dataclasses
 import inspect
@@ -190,6 +189,8 @@ def _generate_typeddict_defs_from_collected(collected_types: dict[str, Any], too
                 context.set_defs(schema['$defs'])
                 _process_defs(schema['$defs'], context)
             if '$ref' in schema:
+                # TODO: Review by codex: For David's reference - a schema like {'$ref': '#/$defs/User'}
+                # skips generation entirely, so no TypedDict is produced for User unless it appears elsewhere.
                 pass
             elif schema.get('type') == 'object' and 'properties' in schema:
                 _generate_typeddict(type_name, schema, context)
@@ -199,7 +200,7 @@ def _generate_typeddict_defs_from_collected(collected_types: dict[str, Any], too
 
 def _is_async_function(func: Callable[..., Any]) -> bool:
     """Check if a function is async."""
-    if inspect.iscoroutinefunction(func): # -> Changed from asyncio.iscoroutinefunction which got deprecated
+    if inspect.iscoroutinefunction(func):  # -> Changed from asyncio.iscoroutinefunction which got deprecated
         return True
     if inspect.ismethod(func):
         return inspect.iscoroutinefunction(func.__func__)
@@ -371,6 +372,8 @@ class _ConversionContext:
     def generate_name(self, base: str) -> str:
         """Generate a unique TypedDict name."""
         self._counter += 1
+        # TODO: Review by codex: For David's reference - the counter is unused, so repeated
+        # object properties like `address` in different branches can collide as the same name.
         return f'{_to_pascal_case(self.tool_name)}{_to_pascal_case(base)}'
 
 
@@ -413,6 +416,8 @@ def _schema_to_params(
         elif is_required:
             required_params.append(f'{prop_name}: {type_str}')
         else:
+            # TODO: Review by codex: For David's reference - this always appends `| None`,
+            # even when schema already allows null (e.g., type: ["string", "null"]).
             optional_params.append(f'{prop_name}: {type_str} | None = None')
 
     params.extend(required_params)
@@ -521,6 +526,9 @@ def _schema_to_type(schema: dict[str, Any], context: _ConversionContext, prop_na
     if 'allOf' in schema:
         if len(schema['allOf']) == 1:
             return _schema_to_type(schema['allOf'][0], context, prop_name)
+        # TODO: Review by codex: For David's reference - allOf with multiple entries (e.g.,
+        # [{"$ref": "#/$defs/User"}, {"type": "object", "properties": {"age": {"type": "integer"}}}])
+        # loses information and returns Any instead of merging.
         return 'Any'
 
     if 'const' in schema:
@@ -553,6 +561,8 @@ def _type_from_schema_type(
     if schema_type == 'object':
         return _handle_object_type(schema, context, prop_name)
     if isinstance(schema_type, list):
+        # TODO: Review by codex: For David's reference - schema like {"type": ["object", "null"],
+        # "properties": {"name": {"type": "string"}}} ignores properties and returns `dict | None`.
         return _handle_type_list(schema_type)
     return 'Any'
 
@@ -561,6 +571,9 @@ def _handle_array_type(schema: dict[str, Any], context: _ConversionContext, prop
     """Handle array type schema."""
     items = schema.get('items', {})
     if items:
+        # TODO: Review by codex: For David's reference - tuple schemas like
+        # {"items": [{"type": "string"}, {"type": "integer"}]} are lists, not dicts, and
+        # will error or mis-format because `_schema_to_type` expects a dict.
         item_type = _schema_to_type(items, context, f'{prop_name}Item')
         return f'list[{item_type}]'
     return 'list[Any]'
