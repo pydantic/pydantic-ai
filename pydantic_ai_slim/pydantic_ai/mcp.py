@@ -1170,16 +1170,13 @@ class MCPServerSSE(_MCPServerHTTP):
             raise ValueError('`http_client` is mutually exclusive with `headers`.')
 
         if self.http_client is not None:
-            # sse_client's McpHttpClientFactory type expects -> AsyncClient, but we use
-            # @asynccontextmanager to prevent closing the user's client. Works at runtime.
-            @asynccontextmanager
-            async def httpx_client_factory(
+            def httpx_client_factory(
                 headers: dict[str, str] | None = None,
                 timeout: httpx.Timeout | None = None,
                 auth: httpx.Auth | None = None,
             ) -> AsyncIterator[httpx.AsyncClient]:
                 assert self.http_client is not None
-                yield self.http_client
+                return self.http_client
 
             async with sse_client(
                 url=self.url,
@@ -1266,24 +1263,21 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
             MemoryObjectSendStream[SessionMessage],
         ]
     ]:
-        # The new streamable_http_client API only accepts url and http_client.
-        # We need to create an httpx.AsyncClient with the desired timeout and headers.
+        aexit_stack = AsyncExitStack()
         if self.http_client is not None:
-            async with streamable_http_client(self.url, http_client=self.http_client) as (
-                read_stream,
-                write_stream,
-                *_,
-            ):
-                yield read_stream, write_stream
+            http_client = self.http_client
         else:
             timeout = httpx.Timeout(self.timeout, read=self.read_timeout)
-            async with httpx.AsyncClient(timeout=timeout, headers=self.headers) as client:
-                async with streamable_http_client(self.url, http_client=client) as (
-                    read_stream,
-                    write_stream,
-                    *_,
-                ):
-                    yield read_stream, write_stream
+            http_client = await aexit_stack.enter_async_context(
+                httpx.AsyncClient(timeout=timeout, headers=self.headers)
+            )
+        read_stream, write_stream, *_ = aexit_stack.enter_async_context(
+            streamable_http_client(self.url, http_client=client)
+        )
+            try:
+                yield read_stream, write_stream
+            finally:
+                # unwrap the aexit
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url
