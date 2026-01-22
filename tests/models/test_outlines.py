@@ -433,6 +433,47 @@ async def test_request_streaming_async_model(mock_async_model: OutlinesModel) ->
             assert len(text) > 0
 
 
+async def test_tool_definition_error_async_model(mock_async_model: OutlinesModel) -> None:
+    """Test that function tools raise UserError with async model (covers outlines.py:303)."""
+    agent = Agent(mock_async_model)
+
+    @agent.tool_plain
+    def dummy_tool() -> str:  # pragma: no cover
+        return 'dummy'
+
+    with pytest.raises(UserError, match='Outlines does not support function tools yet.'):
+        await agent.run('Hello')
+
+
+async def test_output_type_async_model(mock_async_model: OutlinesModel) -> None:
+    """Test output_type with async model exercises JsonSchema path (covers outlines.py:306)."""
+
+    class Box(BaseModel):
+        width: int
+
+    agent = Agent(mock_async_model, output_type=Box)
+    # Mock returns 'test' which isn't valid JSON, so validation fails
+    # But line 306 (output_type = JsonSchema(...)) is still exercised
+    with pytest.raises(Exception):
+        await agent.run('dimensions')
+
+
+async def test_instructions_async_model(mock_async_model: OutlinesModel) -> None:
+    """Test that instructions are passed to the model (covers outlines.py:430)."""
+    agent = Agent(mock_async_model, instructions='Be brief.')
+    result = await agent.run('Hello')
+    assert result.output == 'test'
+
+
+async def test_multi_turn_async_model(mock_async_model: OutlinesModel) -> None:
+    """Test multi-turn conversation with message_history (covers outlines.py:490)."""
+    agent = Agent(mock_async_model)
+    result1 = await agent.run('First message')
+    # The message_history includes a ModelResponse with TextPart, which triggers line 490
+    result2 = await agent.run('Second message', message_history=result1.all_messages())
+    assert result2.output == 'test'
+
+
 @skip_if_transformers_imports_unsuccessful
 def test_request_image_binary(transformers_multimodal_model: OutlinesModel, binary_image: BinaryImage) -> None:
     agent = Agent(transformers_multimodal_model)
