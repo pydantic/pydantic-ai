@@ -781,13 +781,14 @@ class OpenAIChatModel(Model):
         # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        seen_fields: set[str] = set()
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
-            if not field_name:
+            if not field_name or field_name in seen_fields:
                 continue
+            seen_fields.add(field_name)
             reasoning: str | None = getattr(message, field_name, None)
             if reasoning:  # pragma: no branch
                 items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
-                return items
 
         return items or None
 
@@ -856,7 +857,7 @@ class OpenAIChatModel(Model):
         _model: OpenAIChatModel
 
         texts: list[str] = field(default_factory=list)
-        thinkings: list[str] = field(default_factory=list)
+        thinkings: dict[str, list[str]] = field(default_factory=dict)
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
@@ -888,10 +889,10 @@ class OpenAIChatModel(Model):
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
-            if profile.openai_chat_send_back_thinking_parts == 'field' and self.thinkings:
-                field = profile.openai_chat_thinking_field
-                if field:  # pragma: no branch (handled by profile validation)
-                    message_param[field] = '\n\n'.join(self.thinkings)
+            if profile.openai_chat_send_back_thinking_parts == 'field':
+                for field_name, content_list in self.thinkings.items():
+                    message_param[field_name] = '\n\n'.join(content_list)  # type: ignore
+
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
@@ -920,7 +921,16 @@ class OpenAIChatModel(Model):
                 start_tag, end_tag = self._model.profile.thinking_tags
                 self.texts.append('\n'.join([start_tag, item.content, end_tag]))
             elif include_method == 'field':
-                self.thinkings.append(item.content)
+                # Determine which field to use:
+                # 1. Use item.id if it's a known reasoning field (not 'content')
+                # 2. Fallback to the profile's configured field
+                field_name = (
+                    item.id
+                    if item.id and item.id != 'content'
+                    else profile.openai_chat_thinking_field
+                )
+                if field_name:
+                    self.thinkings.setdefault(field_name, []).append(item.content)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
@@ -2129,9 +2139,11 @@ class OpenAIStreamedResponse(StreamedResponse):
         # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        seen_fields: set[str] = set()
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
-            if not field_name:
+            if not field_name or field_name in seen_fields:
                 continue
+            seen_fields.add(field_name)
             reasoning: str | None = getattr(choice.delta, field_name, None)
             if reasoning:  # pragma: no branch
                 yield from self._parts_manager.handle_thinking_delta(
@@ -2140,7 +2152,6 @@ class OpenAIStreamedResponse(StreamedResponse):
                     content=reasoning,
                     provider_name=self.provider_name,
                 )
-                break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps text delta content to events.
