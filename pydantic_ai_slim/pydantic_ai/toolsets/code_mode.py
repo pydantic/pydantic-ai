@@ -69,7 +69,7 @@ CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
 - No comprehensions (list/dict/set) or generator expressions - use explicit for loops
 - No lambdas - define logic inline
 - No tuple unpacking (e.g., `a, b = 1, 2`) - assign variables separately
-- No list index assignment (e.g., `lst[0] = x`) - use list.append() to build lists
+- No list indexing or slicing (e.g., `lst[0]`, `lst[:10]`) - use for loops to iterate
 - No string methods (.join, .split, .upper, etc.) - return data structures, not formatted strings
 
 What DOES work:

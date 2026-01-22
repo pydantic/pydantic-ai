@@ -28,7 +28,7 @@ from .demo import MODELS, PROMPT, create_code_mode_agent, create_github_mcp, cre
 # IMPORTANT: Bump version when prompt changes!
 EVAL_NAME = 'pr_size_review_rounds_v1'
 
-RUNS_PER_CONFIG = 2
+RUNS_PER_CONFIG = 1
 
 
 class RunResult(BaseModel):
