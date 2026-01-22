@@ -3,6 +3,6 @@
 This module provides utilities for VCR cassette serialization used in testing.
 """
 
-from .json_body_serializer import deserialize, serialize
+from . import json_body_serializer
 
-__all__ = ['deserialize', 'serialize']
+__all__ = ['json_body_serializer']

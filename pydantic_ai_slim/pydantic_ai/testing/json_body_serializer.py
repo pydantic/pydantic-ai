@@ -111,7 +111,7 @@ def str_presenter(dumper: Dumper, data: str):
 LiteralDumper.add_representer(str, str_presenter)
 
 
-def deserialize(cassette_string: str):
+def deserialize(cassette_string: str) -> dict[str, Any]:
     """Deserialize a VCR cassette from YAML format.
 
     Converts the parsed_body back to the original body format expected by VCR.
@@ -132,7 +132,7 @@ def deserialize(cassette_string: str):
     return cassette_dict
 
 
-def serialize(cassette_dict: Any):  # pragma: lax no cover
+def serialize(cassette_dict: Any) -> str:  # pragma: lax no cover
     """Serialize a VCR cassette to YAML format.
 
     Processes the cassette to:
