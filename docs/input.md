@@ -164,14 +164,16 @@ model = AnthropicModel('claude-sonnet-4-5', provider=provider)
 
 # Upload a file using the provider's client
 with open('document.pdf', 'rb') as f:
-    client.beta.files.upload(file=f)
+    uploaded_file = provider.client.beta.files.upload(file=f)
 
 # Reference the uploaded file
 agent = Agent(model)
-result = agent.run_sync([
-    'Summarize this document',
-    UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
-])
+result = agent.run_sync(
+    [
+        'Summarize this document',
+        UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+    ]
+)
 print(result.output)
 ```
 
@@ -182,20 +184,23 @@ from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
+
 async def main():
     provider = OpenAIProvider()
     model = OpenAIChatModel('gpt-4o', provider=provider)
 
     # Upload a file using the provider's client
     with open('document.pdf', 'rb') as f:
-        provider.client.files.create(file=f, purpose='user_data')
+        uploaded_file = await provider.client.files.create(file=f, purpose='user_data')
 
     # Reference the uploaded file
     agent = Agent(model)
-    result = agent.run_sync([
-        'Summarize this document',
-        UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
-    ])
+    result = agent.run_sync(
+        [
+            'Summarize this document',
+            UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+        ]
+    )
     print(result.output)
 ```
 (This example is complete, it can be run "as is" — you'll need to add asyncio.run(main()) to run main)
@@ -203,7 +208,7 @@ async def main():
 ### Google
 
 ```py {title="uploaded_file_google.py" test="skip"}
-from pydantic_ai import Agent, DocumentUrl, UploadedFile
+from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
@@ -217,10 +222,12 @@ with open('document.pdf', 'rb') as f:
 
 # Reference the uploaded file by URI
 agent = Agent(model)
-result = agent.run_sync([
-    'Summarize this document',
-    DocumentUrl(url=file.uri, media_type=file.mime_type),
-])
+result = agent.run_sync(
+    [
+        'Summarize this document',
+        UploadedFile(file_id=file.uri, media_type=file.mime_type, provider_name=model.system),
+    ]
+)
 print(result.output)
 ```
 
