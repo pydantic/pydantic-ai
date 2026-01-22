@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import base64
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import ConfigDict, Discriminator, with_config
+from pydantic import ConfigDict, Discriminator, TypeAdapter, with_config
 from temporalio import workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai.messages import AudioUrl, BinaryContent, DocumentUrl, FileUrl, ImageUrl, VideoUrl
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -55,7 +54,7 @@ class _ModelRetry:
 
 @dataclass
 class _ToolReturn:
-    result: Any
+    result: BinaryContent | FileUrl | Sequence[BinaryContent | FileUrl | Any] | dict[str, Any] | Any
     kind: Literal['tool_return'] = 'tool_return'
 
 
@@ -65,23 +64,35 @@ CallToolResult = Annotated[
 ]
 
 
-def rehydrate_binary_content(value: Any) -> Any:
-    """Recursively convert dicts with kind='binary' back to BinaryContent after Temporal deserialization.
+# TypeAdapters for validating content types from dicts after Temporal deserialization.
+# Used by rehydrate_binary_content() to reconstruct typed objects identified by their 'kind' discriminator.
+_KIND_TO_ADAPTER: dict[str, TypeAdapter[BinaryContent | VideoUrl | AudioUrl | ImageUrl | DocumentUrl]] = {
+    'binary': TypeAdapter(BinaryContent),
+    'video-url': TypeAdapter(VideoUrl),
+    'audio-url': TypeAdapter(AudioUrl),
+    'image-url': TypeAdapter(ImageUrl),
+    'document-url': TypeAdapter(DocumentUrl),
+}
 
-    When tool results contain BinaryContent (either directly or nested in dicts/lists),
-    Temporal deserializes them as plain dicts. This function walks the structure and
-    reconstructs BinaryContent objects where appropriate.
+
+def rehydrate_binary_content(value: Any) -> Any:
+    """Recursively reconstruct BinaryContent/FileUrl objects from dicts after Temporal deserialization.
+
+    Why this is needed:
+    While `_ToolReturn.result` is typed as `BinaryContent | FileUrl | ...`, Pydantic only validates
+    top-level and list items against this union. When BinaryContent/FileUrl is nested inside a
+    `dict[str, Any]`, Pydantic doesn't recurse into the dict values to reconstruct typed objects.
+    This function handles that case by walking the structure and using TypeAdapters to reconstruct
+    objects identified by their `kind` discriminator.
+
+    Pydantic's `val_json_bytes='base64'` config on BinaryContent handles base64 decoding automatically.
     """
     if isinstance(value, dict):
         d = cast(dict[str, Any], value)
-        if d.get('kind') == 'binary' and 'data' in d and 'media_type' in d:
-            data = base64.b64decode(d['data']) if isinstance(d['data'], str) else d['data']
-            return BinaryContent(
-                data=data,
-                media_type=d['media_type'],
-                identifier=d.get('identifier'),
-                vendor_metadata=d.get('vendor_metadata'),
-            )
+        kind = d.get('kind')
+        adapter = _KIND_TO_ADAPTER.get(kind) if isinstance(kind, str) else None
+        if adapter is not None:
+            return adapter.validate_python(d)
         return {k: rehydrate_binary_content(v) for k, v in d.items()}
     elif isinstance(value, list):
         return [rehydrate_binary_content(v) for v in value]  # pyright: ignore[reportUnknownVariableType]

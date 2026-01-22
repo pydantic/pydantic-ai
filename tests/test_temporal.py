@@ -3142,7 +3142,7 @@ def test_binary_content_serializes_to_base64():
 def test_binary_content_serialization_round_trip():
     """Test full round-trip: BinaryContent -> to_json -> dict -> BinaryContent."""
     # PNG magic bytes - non-UTF8 binary data that would fail direct JSON serialization
-    binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    binary_data = b'\x89PNG\r\n\x1a\n'
     bc = BinaryContent(data=binary_data, media_type='image/png', identifier='test-file')
 
     # Wrap in _ToolReturn like Temporal toolset does
@@ -3157,7 +3157,7 @@ def test_binary_content_serialization_round_trip():
     # The result field will be a dict after JSON deserialization
     result = rehydrate_binary_content(deserialized['result'])
 
-    assert result == snapshot(BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png', _identifier='test-file'))
+    assert result == snapshot(BinaryContent(data=binary_data, media_type='image/png', _identifier='test-file'))
 
 
 def test_rehydrate_binary_content_nested_dict():
