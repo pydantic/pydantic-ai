@@ -240,9 +240,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Adding this to mitigate potential infinite loops or resource exhaustion
         # Or maybe just something dubious by the model which could hang this
         #
-        monty_limits = monty.ResourceLimits(
-            max_duration_secs=120  # Allow for this to be configurable?
-        )
+        # monty_limits = monty.ResourceLimits(
+        #     max_duration_secs=120  # Allow for this to be configurable?
+        # )
 
         if _find_await_expressions(code):
             raise ModelRetry(
@@ -259,7 +259,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if result is None:
                 prefix = _build_type_check_prefix(self._cached_signatures)
                 m.type_check(prefix_code=prefix)
-                result = m.start(limits=monty_limits)
+                # result = m.start(limits=monty_limits)
+                result = m.start()
         except monty.MontyTypingError as e:
             error_msg = e.display('concise')
             raise ModelRetry(f'Type error in generated code:\n{error_msg}')

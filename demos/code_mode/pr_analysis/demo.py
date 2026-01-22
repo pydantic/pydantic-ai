@@ -68,6 +68,7 @@ def create_code_mode_agent(github: MCPServerStreamableHTTP, model: str = DEFAULT
     agent: Agent[None, str] = Agent(
         model,
         toolsets=[code_toolset],
-        system_prompt='You are a GitHub PR analyst. Write Python Code to analyze PRs efficiently in a single block of python code.',
+        # system_prompt='You are a GitHub PR analyst. Write Python Code to analyze PRs efficiently in a single block of python code.',
+        system_prompt='You are a GitHub PR analyst. Use the available tools to analyze PRs.',
     )
     return agent
