@@ -60,6 +60,7 @@ outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_sys
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
+voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -98,6 +99,7 @@ dev = [
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
+    "exa-py>=2.0.0",
     "inline-snapshot>=0.19.3",
     "pytest>=9.0.0",
     "pytest-examples>=0.0.18",
@@ -222,6 +224,7 @@ executionEnvironments = [
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
 [tool.mypy]
@@ -263,7 +266,8 @@ include = [
 ]
 omit = [
     "tests/example_modules/*.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py",  # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     # TODO(Marcelo): Enable prefect coverage again.
     "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
     "tests/test_prefect.py",
