@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any, get_args
@@ -8,6 +9,11 @@ from unittest.mock import patch
 
 import pytest
 from inline_snapshot import snapshot
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
+else:
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 from pydantic_ai.embeddings import (
     Embedder,
@@ -45,6 +51,8 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as bedrock_imports_successful:
+    from botocore.exceptions import ClientError
+
     from pydantic_ai.embeddings.bedrock import (
         BedrockEmbeddingModel,
         BedrockEmbeddingSettings,
@@ -987,11 +995,37 @@ class TestBedrock:
         assert isinstance(model.base_url, str)
 
     async def test_regional_prefix_model_name(self, bedrock_provider: BedrockProvider):
-        """Test model with regional prefix (e.g., us.amazon.titan-embed-text-v2:0)."""
+        """Test model with regional prefix (e.g., us.amazon.titan-embed-text-v2:0) is handled correctly."""
         model = BedrockEmbeddingModel('us.amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        # Model name preserves the regional prefix
         assert model.model_name == 'us.amazon.titan-embed-text-v2:0'
+        # But handler config lookup uses normalized name (without prefix)
+        assert model._handler.config.max_input_tokens == 8192  # pyright: ignore[reportPrivateUsage]
+        assert model._handler.config.default_dimensions == 1024  # pyright: ignore[reportPrivateUsage]
+        # max_input_tokens() works correctly with regional prefix
         max_tokens = await model.max_input_tokens()
         assert max_tokens == snapshot(8192)
+
+    async def test_regional_prefix_embed(self, bedrock_provider: BedrockProvider):
+        """Test embedding with a regional prefix model ID using Cohere v4.
+
+        Cross-region inference profiles are supported for Cohere models on Bedrock.
+        """
+        model = BedrockEmbeddingModel('us.cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello from regional endpoint!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello from regional endpoint!'],
+                input_type='query',
+                model_name='us.cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
+                provider_response_id=IsStr(),
+            )
+        )
 
     async def test_unsupported_model_error(self, bedrock_provider: BedrockProvider):
         with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
@@ -1003,6 +1037,43 @@ class TestBedrock:
             model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider='bedrock')
             mock_infer.assert_called_once_with('bedrock')
             assert model.model_name == 'amazon.titan-embed-text-v2:0'
+
+    async def test_client_error_with_status_code(self, bedrock_provider: BedrockProvider):
+        """Test error handling when ClientError is raised with HTTP status code."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'ValidationException', 'Message': 'Invalid input'},
+            'ResponseMetadata': {'HTTPStatusCode': 400},
+        }
+        with patch.object(
+            model.client,
+            'invoke_model',
+            side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
+        ):
+            with pytest.raises(ExceptionGroup) as exc_info:
+                await model.embed(['test'], input_type='query')
+            assert len(exc_info.value.exceptions) == 1
+            assert isinstance(exc_info.value.exceptions[0], ModelHTTPError)
+            assert exc_info.value.exceptions[0].status_code == 400
+
+    async def test_client_error_without_status_code(self, bedrock_provider: BedrockProvider):
+        """Test error handling when ClientError is raised without HTTP status code."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'UnknownError', 'Message': 'Something went wrong'},
+            'ResponseMetadata': {},  # No HTTPStatusCode
+        }
+        with patch.object(
+            model.client,
+            'invoke_model',
+            side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
+        ):
+            with pytest.raises(ExceptionGroup) as exc_info:
+                await model.embed(['test'], input_type='query')
+            assert len(exc_info.value.exceptions) == 1
+            assert isinstance(exc_info.value.exceptions[0], ModelAPIError)
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
