@@ -2422,7 +2422,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), id='thinking'),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(input_tokens=664, output_tokens=747),

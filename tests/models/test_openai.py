@@ -3788,9 +3788,7 @@ async def test_openai_reasoning_roundtrip_custom_field_id(allow_model_requests: 
 
     mapped = m._map_model_response(resp)  # type: ignore[reportPrivateUsage]
 
-    assert mapped == snapshot(
-        {'role': 'assistant', 'content': 'hello', 'custom_reasoning_field': 'some reasoning'}
-    )
+    assert mapped == snapshot({'role': 'assistant', 'content': 'hello', 'custom_reasoning_field': 'some reasoning'})
 
 
 async def test_openai_reasoning_streaming_roundtrip(allow_model_requests: None):
@@ -3802,9 +3800,7 @@ async def test_openai_reasoning_streaming_roundtrip(allow_model_requests: None):
         ChatCompletionChunk(
             id='1',
             choices=[
-                ChunkChoice(
-                    delta=ChoiceDelta(role='assistant', reasoning_content='think'), finish_reason=None, index=0
-                )
+                ChunkChoice(delta=ChoiceDelta(role='assistant', reasoning_content='think'), finish_reason=None, index=0)
             ],
             created=0,
             model='foobar',

@@ -931,7 +931,8 @@ Score: 0.2418
 Based on the search results, the current weather in San Francisco is partly cloudy with a temperature of 17°C (62.6°F). \n\
 
 The weather in San Francisco today is partly cloudy with a high of 17°C (62.6°F).\
-"""
+""",
+                        id='reasoning',
                     ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
@@ -5450,7 +5451,8 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='We need to call with correct param name: name. Provide a non-existent name perhaps "nonexistent".'
+                        content='We need to call with correct param name: name. Provide a non-existent name perhaps "nonexistent".',
+                        id='reasoning',
                     ),
                     ToolCallPart(
                         tool_name='get_something_by_name',
@@ -5487,7 +5489,8 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user asked: "Please call the \'get_something_by_name\' tool with non-existent parameters to test error handling". They wanted to test error handling with non-existent parameters, but we corrected to proper parameters. The response from tool: "Something with name: nonexistent". Should we respond? Probably just output the result. Follow developer instruction: be concise, no fancy quotes. Use regular quotes only.'
+                        content='The user asked: "Please call the \'get_something_by_name\' tool with non-existent parameters to test error handling". They wanted to test error handling with non-existent parameters, but we corrected to proper parameters. The response from tool: "Something with name: nonexistent". Should we respond? Probably just output the result. Follow developer instruction: be concise, no fancy quotes. Use regular quotes only.',
+                        id='reasoning',
                     ),
                     TextPart(content='Something with name: nonexistent'),
                 ],
@@ -5681,7 +5684,8 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user asks: "What is the largest city in Mexico?" The system expects a JSON object conforming to CityLocation schema: properties city (string) and country (string), required both. Provide largest city in Mexico: Mexico City. So output JSON: {"city":"Mexico City","country":"Mexico"} in compact format, no extra text.'
+                        content='The user asks: "What is the largest city in Mexico?" The system expects a JSON object conforming to CityLocation schema: properties city (string) and country (string), required both. Provide largest city in Mexico: Mexico City. So output JSON: {"city":"Mexico City","country":"Mexico"} in compact format, no extra text.',
+                        id='reasoning',
                     ),
                     TextPart(content='{"city":"Mexico City","country":"Mexico"}'),
                 ],
@@ -5729,7 +5733,8 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='We need to respond with JSON object with properties city and country. The question: "What is the largest city in Mexico?" The answer: City is Mexico City, country is Mexico. Must output compact JSON without any extra text or markdown. So {"city":"Mexico City","country":"Mexico"} Ensure valid JSON.'
+                        content='We need to respond with JSON object with properties city and country. The question: "What is the largest city in Mexico?" The answer: City is Mexico City, country is Mexico. Must output compact JSON without any extra text or markdown. So {"city":"Mexico City","country":"Mexico"} Ensure valid JSON.',
+                        id='reasoning',
                     ),
                     TextPart(content='{"city":"Mexico City","country":"Mexico"}'),
                 ],
