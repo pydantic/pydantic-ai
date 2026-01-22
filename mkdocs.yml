@@ -173,6 +173,7 @@ nav:
           - api/ui/base.md
           - api/ui/vercel_ai.md
           - api/usage.md
+          - api/testing.md
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
