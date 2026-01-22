@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
@@ -34,6 +34,7 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ...agent import AbstractAgent
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults
 from .. import MessagesBuilder, UIAdapter, UIEventStream
@@ -66,8 +67,6 @@ from .response_types import BaseChunk
 if TYPE_CHECKING:
     from starlette.requests import Request
 
-    from ...agent import AbstractAgent
-
 __all__ = ['VercelAIAdapter']
 
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
@@ -76,6 +75,9 @@ request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 @dataclass
 class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, OutputDataT]):
     """UI adapter for the Vercel AI protocol."""
+
+    enable_tool_approval: bool = False
+    """Whether to enable tool approval streaming for human-in-the-loop workflows."""
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:

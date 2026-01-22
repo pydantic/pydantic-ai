@@ -85,6 +85,9 @@ def _json_dumps(obj: Any) -> str:
 class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Vercel AI protocol."""
 
+    enable_tool_approval: bool = False
+    """Whether tool approval streaming is enabled for human-in-the-loop workflows."""
+
     _step_started: bool = False
     _finish_reason: FinishReason = None
 
