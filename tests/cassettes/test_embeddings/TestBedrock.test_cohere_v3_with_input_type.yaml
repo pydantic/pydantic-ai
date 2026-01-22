@@ -1,18 +1,18 @@
 interactions:
 - request:
-    body: '{"texts": ["Test input type setting"], "input_type": "classification"}'
+    body: '{"texts": ["Test input type setting"], "input_type": "classification", "truncate": "NONE"}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        Y2E4NDMwNzAtYzQ4Yy00MmEwLWI4YjctM2VhOTFmMDZlNWYy
+        ZDA3MmZlMWItNjhlOS00ZTIxLTgwZDgtZWFiNjZiNmE0NWVm
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '70'
+      - '90'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -29,7 +29,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '4'
       x-amzn-bedrock-invocation-latency:
-      - '81'
+      - '60'
     parsed_body:
       embeddings:
       - - -0.021774292
@@ -1056,7 +1056,7 @@ interactions:
         - 0.031082153
         - -0.008331299
         - 0.028335571
-      id: f3426a42-0722-4f5d-80f3-e5a1d39bf692
+      id: 9c805bb5-ca53-475e-93f6-3a6bbe233ae8
       response_type: embeddings_floats
       texts:
       - test input type setting

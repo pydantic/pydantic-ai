@@ -503,10 +503,51 @@ class TestBedrock:
         assert model.model_name == 'amazon.titan-embed-text-v2:0'
         assert model.system == 'bedrock'
 
-    # ==================== Titan Tests ====================
+    # ==================== Titan V1 Tests ====================
+    # Titan V1 has fixed 1536 dimensions and does not support normalize or dimensions settings
 
-    async def test_titan_minimal(self, bedrock_provider: BedrockProvider):
-        """Test Titan with minimal request body (just inputText)."""
+    async def test_titan_v1_minimal(self, bedrock_provider: BedrockProvider):
+        """Test Titan V1 with default settings (fixed 1536 dimensions)."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v1', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                model_name='amazon.titan-embed-text-v1',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+            )
+        )
+
+    def test_titan_v1_dimensions_warning(self):
+        """Test that Titan V1 warns when dimensions setting is provided (unsupported)."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
+
+        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
+        settings = BedrockEmbeddingSettings(dimensions=256)
+
+        with pytest.warns(UserWarning, match='The `dimensions` setting is not supported by'):
+            handler.prepare_request(['test'], 'query', settings)
+
+    def test_titan_v1_normalize_warning(self):
+        """Test that Titan V1 warns when normalize setting is provided (unsupported)."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
+
+        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
+        settings = BedrockEmbeddingSettings(bedrock_titan_normalize=True)
+
+        with pytest.warns(UserWarning, match='The `bedrock_titan_normalize` setting is not supported by'):
+            handler.prepare_request(['test'], 'query', settings)
+
+    # ==================== Titan V2 Tests ====================
+    # Titan V2 supports: dimensions (default: 1024), normalize (default: True)
+
+    async def test_titan_v2_minimal(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 with default settings (1024 dimensions, normalize=True)."""
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!')
@@ -522,8 +563,8 @@ class TestBedrock:
             )
         )
 
-    async def test_titan_with_dimensions(self, bedrock_provider: BedrockProvider):
-        """Test Titan with dimensions setting."""
+    async def test_titan_v2_with_dimensions(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 with custom dimensions setting."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
@@ -541,27 +582,27 @@ class TestBedrock:
             )
         )
 
-    async def test_titan_with_normalize(self, bedrock_provider: BedrockProvider):
-        """Test Titan with bedrock_titan_normalize setting."""
+    async def test_titan_v2_with_normalize_false(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 with normalize=False (override default)."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
-        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_titan_normalize=True))
-        result = await embedder.embed_query('Test normalization')
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_titan_normalize=False))
+        result = await embedder.embed_query('Test normalization disabled')
         assert result == snapshot(
             EmbeddingResult(
                 embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
-                inputs=['Test normalization'],
+                inputs=['Test normalization disabled'],
                 input_type='query',
                 model_name='amazon.titan-embed-text-v2:0',
                 provider_name='bedrock',
                 timestamp=IsDatetime(),
-                usage=RequestUsage(input_tokens=3),
+                usage=RequestUsage(input_tokens=4),
             )
         )
 
-    async def test_titan_multiple_texts(self, bedrock_provider: BedrockProvider):
-        """Test Titan document embedding (multiple texts, sequential requests)."""
+    async def test_titan_v2_multiple_texts(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 document embedding (multiple texts, sequential requests)."""
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
         embedder = Embedder(model)
         result = await embedder.embed_documents(['hello', 'world'])
@@ -577,10 +618,12 @@ class TestBedrock:
             )
         )
 
-    # ==================== Cohere Tests ====================
+    # ==================== Cohere V3 Tests ====================
+    # Cohere V3 supports: input_type, truncate (default: NONE)
+    # Does NOT support: dimensions (fixed 1024), max_tokens
 
-    async def test_cohere_minimal(self, bedrock_provider: BedrockProvider):
-        """Test Cohere with minimal settings."""
+    async def test_cohere_v3_minimal(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V3 with default settings (1024 dimensions, truncate=NONE)."""
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!')
@@ -597,48 +640,8 @@ class TestBedrock:
             )
         )
 
-    async def test_cohere_with_truncate(self, bedrock_provider: BedrockProvider):
-        """Test Cohere with bedrock_cohere_truncate setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
-
-        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
-        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='END'))
-        result = await embedder.embed_query('Test truncation setting')
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
-                inputs=['Test truncation setting'],
-                input_type='query',
-                model_name='cohere.embed-v4:0',
-                provider_name='bedrock',
-                timestamp=IsDatetime(),
-                usage=RequestUsage(input_tokens=4),
-                provider_response_id=IsStr(),
-            )
-        )
-
-    async def test_cohere_with_base_truncate(self, bedrock_provider: BedrockProvider):
-        """Test Cohere with base truncate=True setting (maps to END)."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
-
-        model = BedrockEmbeddingModel('cohere.embed-multilingual-v3', provider=bedrock_provider)
-        embedder = Embedder(model, settings=BedrockEmbeddingSettings(truncate=True))
-        result = await embedder.embed_query('Test base truncate setting')
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
-                inputs=['Test base truncate setting'],
-                input_type='query',
-                model_name='cohere.embed-multilingual-v3',
-                provider_name='bedrock',
-                timestamp=IsDatetime(),
-                usage=RequestUsage(input_tokens=6),
-                provider_response_id=IsStr(),
-            )
-        )
-
-    async def test_cohere_with_input_type(self, bedrock_provider: BedrockProvider):
-        """Test Cohere with bedrock_cohere_input_type setting."""
+    async def test_cohere_v3_with_input_type(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V3 with custom input_type setting."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
@@ -657,17 +660,78 @@ class TestBedrock:
             )
         )
 
-    async def test_cohere_with_max_tokens(self, bedrock_provider: BedrockProvider):
-        """Test Cohere with bedrock_cohere_max_tokens setting (v4 only)."""
+    async def test_cohere_v3_with_truncate(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V3 with custom truncate setting."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
+        model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='END'))
+        result = await embedder.embed_query('Test truncation setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Test truncation setting'],
+                input_type='query',
+                model_name='cohere.embed-english-v3',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v3_with_base_truncate(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V3 with base truncate=True setting (maps to END)."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+        model = BedrockEmbeddingModel('cohere.embed-multilingual-v3', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(truncate=True))
+        result = await embedder.embed_query('Test base truncate setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Test base truncate setting'],
+                input_type='query',
+                model_name='cohere.embed-multilingual-v3',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=6),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    def test_cohere_v3_max_tokens_warning(self):
+        """Test that Cohere V3 warns when max_tokens setting is provided (unsupported)."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, CohereEmbeddingHandler
+
+        handler = CohereEmbeddingHandler('cohere.embed-english-v3')
+        settings = BedrockEmbeddingSettings(bedrock_cohere_max_tokens=1000)
+
+        with pytest.warns(UserWarning, match='The `bedrock_cohere_max_tokens` setting is not supported by'):
+            handler.prepare_request(['test'], 'query', settings)
+
+    def test_cohere_v3_dimensions_warning(self):
+        """Test that Cohere V3 warns when dimensions setting is provided (unsupported)."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, CohereEmbeddingHandler
+
+        handler = CohereEmbeddingHandler('cohere.embed-multilingual-v3')
+        settings = BedrockEmbeddingSettings(dimensions=512)
+
+        with pytest.warns(UserWarning, match='The `dimensions` setting is not supported by'):
+            handler.prepare_request(['test'], 'query', settings)
+
+    # ==================== Cohere V4 Tests ====================
+    # Cohere V4 supports: dimensions (default: 1536), max_tokens, input_type, truncate (default: NONE)
+
+    async def test_cohere_v4_minimal(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with default settings (1536 dimensions, truncate=NONE)."""
         model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
-        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_max_tokens=256))
-        result = await embedder.embed_query('Test max tokens setting')
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
             EmbeddingResult(
                 embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
-                inputs=['Test max tokens setting'],
+                inputs=['Hello, world!'],
                 input_type='query',
                 model_name='cohere.embed-v4:0',
                 provider_name='bedrock',
@@ -677,8 +741,8 @@ class TestBedrock:
             )
         )
 
-    async def test_cohere_with_dimensions(self, bedrock_provider: BedrockProvider):
-        """Test Cohere with dimensions setting."""
+    async def test_cohere_v4_with_dimensions(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with custom dimensions setting."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
@@ -697,8 +761,68 @@ class TestBedrock:
             )
         )
 
-    async def test_cohere_batch_documents(self, bedrock_provider: BedrockProvider):
-        """Test Cohere batch embedding (multiple texts in single request)."""
+    async def test_cohere_v4_with_max_tokens(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with max_tokens setting."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_max_tokens=256))
+        result = await embedder.embed_query('Test max tokens setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test max tokens setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_with_input_type(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with custom input_type setting."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_input_type='clustering'))
+        result = await embedder.embed_query('Test input type setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test input type setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_with_truncate(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with custom truncate setting."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='END'))
+        result = await embedder.embed_query('Test truncation setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test truncation setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_batch_documents(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 batch embedding (multiple texts in single request)."""
         model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
         embedder = Embedder(model)
         result = await embedder.embed_documents(['hello', 'world'])
@@ -716,9 +840,10 @@ class TestBedrock:
         )
 
     # ==================== Nova Tests ====================
+    # Nova supports: dimensions (default: 3072), truncate (default: NONE), embedding_purpose
 
     async def test_nova_minimal(self, bedrock_provider: BedrockProvider):
-        """Test Nova with minimal settings."""
+        """Test Nova with default settings (3072 dimensions, truncate=NONE)."""
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!')
@@ -734,30 +859,27 @@ class TestBedrock:
             )
         )
 
-    async def test_nova_with_purpose(self, bedrock_provider: BedrockProvider):
-        """Test Nova with bedrock_nova_embedding_purpose setting."""
+    async def test_nova_with_dimensions(self, bedrock_provider: BedrockProvider):
+        """Test Nova with custom dimensions setting."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
-        embedder = Embedder(
-            model,
-            settings=BedrockEmbeddingSettings(bedrock_nova_embedding_purpose='TEXT_RETRIEVAL'),
-        )
-        result = await embedder.embed_query('Test Nova settings')
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=256))
+        result = await embedder.embed_query('Test Nova dimensions')
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
-                inputs=['Test Nova settings'],
+                embeddings=IsList(IsList(IsFloat(), length=256), length=1),
+                inputs=['Test Nova dimensions'],
                 input_type='query',
                 model_name='amazon.nova-2-multimodal-embeddings-v1:0',
                 provider_name='bedrock',
                 timestamp=IsDatetime(),
-                usage=RequestUsage(input_tokens=22),
+                usage=RequestUsage(input_tokens=18),
             )
         )
 
     async def test_nova_with_truncate(self, bedrock_provider: BedrockProvider):
-        """Test Nova with bedrock_nova_truncate setting."""
+        """Test Nova with custom truncate setting."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
@@ -797,22 +919,25 @@ class TestBedrock:
             )
         )
 
-    async def test_nova_with_dimensions(self, bedrock_provider: BedrockProvider):
-        """Test Nova with dimensions setting."""
+    async def test_nova_with_embedding_purpose(self, bedrock_provider: BedrockProvider):
+        """Test Nova with custom embedding_purpose setting."""
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
-        embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=256))
-        result = await embedder.embed_query('Test Nova dimensions')
+        embedder = Embedder(
+            model,
+            settings=BedrockEmbeddingSettings(bedrock_nova_embedding_purpose='TEXT_RETRIEVAL'),
+        )
+        result = await embedder.embed_query('Test Nova settings')
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=256), length=1),
-                inputs=['Test Nova dimensions'],
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Test Nova settings'],
                 input_type='query',
                 model_name='amazon.nova-2-multimodal-embeddings-v1:0',
                 provider_name='bedrock',
                 timestamp=IsDatetime(),
-                usage=RequestUsage(input_tokens=18),
+                usage=RequestUsage(input_tokens=22),
             )
         )
 
@@ -852,17 +977,29 @@ class TestBedrock:
 
     # ==================== Max Input Tokens Tests ====================
 
-    async def test_titan_max_input_tokens(self, bedrock_provider: BedrockProvider):
+    async def test_titan_v1_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v1', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(8192)
+
+    async def test_titan_v2_max_input_tokens(self, bedrock_provider: BedrockProvider):
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
         embedder = Embedder(model)
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(8192)
 
-    async def test_cohere_max_input_tokens(self, bedrock_provider: BedrockProvider):
+    async def test_cohere_v3_max_input_tokens(self, bedrock_provider: BedrockProvider):
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
         embedder = Embedder(model)
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(512)
+
+    async def test_cohere_v4_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(128000)
 
     async def test_nova_max_input_tokens(self, bedrock_provider: BedrockProvider):
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
@@ -909,36 +1046,6 @@ class TestBedrock:
         # Test with regional prefix
         result = BedrockEmbeddingModel._normalize_model_name('us.amazon.titan-embed-text-v2:0')  # pyright: ignore[reportPrivateUsage]
         assert result == 'amazon.titan-embed-text-v2'
-
-    def test_titan_v1_dimensions_warning(self):
-        """Test that Titan v1 warns when dimensions setting is provided."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
-
-        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
-        settings = BedrockEmbeddingSettings(dimensions=256)
-
-        with pytest.warns(UserWarning, match='The `dimensions` setting is not supported by'):
-            handler.prepare_request(['test'], 'query', settings)
-
-    def test_titan_v1_normalize_warning(self):
-        """Test that Titan v1 warns when normalize setting is provided."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
-
-        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
-        settings = BedrockEmbeddingSettings(bedrock_titan_normalize=True)
-
-        with pytest.warns(UserWarning, match='The `bedrock_titan_normalize` setting is not supported by'):
-            handler.prepare_request(['test'], 'query', settings)
-
-    def test_titan_v2_defaults_normalize_true(self):
-        """Test that Titan v2 defaults normalize to True."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
-
-        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v2')
-        settings = BedrockEmbeddingSettings()
-
-        body = handler.prepare_request(['test'], 'query', settings)
-        assert body['normalize'] is True
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
@@ -1225,7 +1332,7 @@ class TestBedrockHandlers:
         """Test that Cohere handler supports batch."""
         from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
 
-        handler = CohereEmbeddingHandler()
+        handler = CohereEmbeddingHandler('cohere.embed-v4')
         assert handler.supports_batch is True
 
     def test_titan_handler_does_not_support_batch(self):
@@ -1246,7 +1353,7 @@ class TestBedrockHandlers:
         """Test Cohere handler parsing dict format embeddings (embedding_types response)."""
         from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
 
-        handler = CohereEmbeddingHandler()
+        handler = CohereEmbeddingHandler('cohere.embed-v4')
         # Dict format response when embedding_types is specified
         response_body = {
             'embeddings': {'float': [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]},
@@ -1260,7 +1367,7 @@ class TestBedrockHandlers:
         """Test Cohere handler parsing direct list format embeddings (default response)."""
         from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
 
-        handler = CohereEmbeddingHandler()
+        handler = CohereEmbeddingHandler('cohere.embed-v4')
         # List format response (default when embedding_types not specified)
         response_body = {
             'embeddings': [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
@@ -1275,7 +1382,7 @@ class TestBedrockHandlers:
         from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-        handler = CohereEmbeddingHandler()
+        handler = CohereEmbeddingHandler('cohere.embed-v4')
         response_body = {'id': 'test-id'}  # No embeddings field
         with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
             handler.parse_response(response_body)
@@ -1285,7 +1392,7 @@ class TestBedrockHandlers:
         from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-        handler = CohereEmbeddingHandler()
+        handler = CohereEmbeddingHandler('cohere.embed-v4')
         # Dict format but no 'float' key
         response_body = {'embeddings': {'int8': [[1, 2, 3]]}, 'id': 'test-id'}
         with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):
@@ -1296,7 +1403,7 @@ class TestBedrockHandlers:
         from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-        handler = CohereEmbeddingHandler()
+        handler = CohereEmbeddingHandler('cohere.embed-v4')
         # Embeddings is a string (unexpected type - neither dict nor list)
         response_body: dict[str, Any] = {'embeddings': 'unexpected', 'id': 'test-id'}
         with pytest.raises(UnexpectedModelBehavior, match='did not have an `embeddings` field'):

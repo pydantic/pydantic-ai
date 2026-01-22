@@ -1,18 +1,18 @@
 interactions:
 - request:
-    body: '{"inputText": "hello", "normalize": true}'
+    body: '{"inputText": "hello", "dimensions": 1024, "normalize": true}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        OGZiOTZiMWYtMjY5NS00MjMzLTg5MDEtMWE2NDk1YzQ2MjQ1
+        MzFiOTcxOWMtNzRmMC00M2EyLTljNDMtMmY4OTg2OGVjZmFm
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '41'
+      - '61'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -29,7 +29,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '2'
       x-amzn-bedrock-invocation-latency:
-      - '82'
+      - '74'
     parsed_body:
       embedding:
       - -0.0538589172065258
@@ -2087,19 +2087,19 @@ interactions:
       code: 200
       message: OK
 - request:
-    body: '{"inputText": "world", "normalize": true}'
+    body: '{"inputText": "world", "dimensions": 1024, "normalize": true}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        MWQ5NTljYTgtZmJhYi00NTZkLTk3NGMtNmM5YjlmNTFmOWY5
+        NzY5YzdkNDAtNjg3OC00ZmQ4LTk3YWMtN2I2YWQwNzE3OGVm
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '41'
+      - '61'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -2116,7 +2116,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '2'
       x-amzn-bedrock-invocation-latency:
-      - '114'
+      - '74'
     parsed_body:
       embedding:
       - -0.007851720787584782

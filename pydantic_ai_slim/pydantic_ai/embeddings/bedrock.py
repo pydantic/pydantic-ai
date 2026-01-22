@@ -59,6 +59,12 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     All settings are optional - if not specified, model defaults are used.
 
+    **Note on `dimensions` parameter support:**
+
+    - **Supported by:** `amazon.titan-embed-text-v2:0`, `cohere.embed-v4:0`, `amazon.nova-2-multimodal-embeddings-v1:0`
+    - **Not supported by:** `amazon.titan-embed-text-v1`, `cohere.embed-english-v3`, `cohere.embed-multilingual-v3`
+      (will issue a warning if provided)
+
     Example:
         ```python
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
@@ -66,10 +72,16 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
         # Use model defaults
         settings = BedrockEmbeddingSettings()
 
-        # Customize specific settings for Titan
+        # Customize specific settings for Titan v2:0
         settings = BedrockEmbeddingSettings(
             dimensions=512,
             bedrock_titan_normalize=True,
+        )
+
+        # Customize specific settings for Cohere v4
+        settings = BedrockEmbeddingSettings(
+            dimensions=512,
+            bedrock_cohere_max_tokens=1000,
         )
         ```
     """
@@ -79,18 +91,31 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     # ==================== Amazon Titan Settings ====================
 
     bedrock_titan_normalize: bool
-    """Whether to normalize embedding vectors for Titan v2:0 models.
+    """Whether to normalize embedding vectors for Titan models.
 
-    Defaults to `True`.
+    **Supported by:** `amazon.titan-embed-text-v2:0`
+
+    **Not supported by:** `amazon.titan-embed-text-v1` (will issue a warning if provided)
+
+    When enabled, vectors are normalized for direct cosine similarity calculations.
+    If not specified, defaults to `True` for v2 model.
     """
 
     # ==================== Cohere Settings ====================
 
     bedrock_cohere_max_tokens: int
-    """The maximum number of tokens to embed."""
+    """The maximum number of tokens to embed for Cohere models.
+
+    **Supported by:** `cohere.embed-v4:0`
+
+    **Not supported by:** `cohere.embed-english-v3`, `cohere.embed-multilingual-v3`
+    (will issue a warning if provided)
+    """
 
     bedrock_cohere_input_type: Literal['search_document', 'search_query', 'classification', 'clustering']
     """The input type for Cohere models.
+
+    **Supported by:** All Cohere models (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`, `cohere.embed-v4:0`)
 
     Defaults based on `input_type`:
     - `'query'` maps to `'search_query'`
@@ -102,6 +127,8 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     bedrock_cohere_truncate: Literal['NONE', 'START', 'END']
     """The truncation strategy for Cohere models. Overrides base `truncate` setting.
 
+    **Supported by:** All Cohere models (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`, `cohere.embed-v4:0`)
+
     - `'NONE'` (default): Raise an error if input exceeds max tokens.
     - `'START'`: Truncate the start of the input.
     - `'END'`: Truncate the end of the input.
@@ -111,6 +138,8 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     bedrock_nova_truncate: Literal['NONE', 'START', 'END']
     """The truncation strategy for Nova models. Overrides base `truncate` setting.
+
+    **Supported by:** `amazon.nova-2-multimodal-embeddings-v1:0`
 
     - `'NONE'` (default): Raise an error if input exceeds max tokens.
     - `'START'`: Truncate the start of the input.
@@ -125,6 +154,8 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
         'CLUSTERING',
     ]
     """The embedding purpose for Nova models.
+
+    **Supported by:** `amazon.nova-2-multimodal-embeddings-v1:0`
 
     Defaults based on `input_type`:
     - `'query'` maps to `'GENERIC_RETRIEVAL'` (optimized for search)
@@ -215,9 +246,8 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
                     UserWarning,
                 )
         else:
-            # Titan v2: Apply dimensions if provided
-            if dimensions is not None:
-                body['dimensions'] = dimensions
+            # Titan v2: Apply dimensions (default: 1024)
+            body['dimensions'] = dimensions if dimensions is not None else _TITAN_V2_DEFAULT_DIMENSIONS
 
             # Titan v2: Default normalize to True if not explicitly set
             if normalize is None:
@@ -238,6 +268,15 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
 class CohereEmbeddingHandler(BedrockEmbeddingHandler):
     """Handler for Cohere embedding models on Bedrock."""
 
+    def __init__(self, model_name: str):
+        """Initialize the handler with the model name.
+
+        Args:
+            model_name: The normalized model name (e.g., 'cohere.embed-v4').
+        """
+        self._model_name = model_name
+        self._is_v3 = 'v3' in model_name
+
     @property
     def supports_batch(self) -> bool:
         return True
@@ -257,17 +296,38 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
             'input_type': cohere_input_type,
         }
 
-        if max_tokens := settings.get('bedrock_cohere_max_tokens'):
-            body['max_tokens'] = max_tokens
+        max_tokens = settings.get('bedrock_cohere_max_tokens')
+        dimensions = settings.get('dimensions')
 
-        if dimensions := settings.get('dimensions'):
-            body['output_dimension'] = dimensions
+        if self._is_v3:
+            # Cohere v3 doesn't support max_tokens or dimensions parameters
+            if max_tokens is not None:
+                warnings.warn(
+                    f'The `bedrock_cohere_max_tokens` setting is not supported by {self._model_name} and will be ignored. '
+                    'Only Cohere v4 models support the max_tokens parameter.',
+                    UserWarning,
+                )
+            if dimensions is not None:
+                warnings.warn(
+                    f'The `dimensions` setting is not supported by {self._model_name} and will be ignored. '
+                    'Only Cohere v4 models support custom dimensions via the output_dimension parameter.',
+                    UserWarning,
+                )
+        else:
+            # Cohere v4: Apply parameters
+            if max_tokens is not None:
+                body['max_tokens'] = max_tokens
 
-        # Model-specific truncate takes precedence, then base truncate setting
+            # Cohere v4: Apply dimensions (default: 1536)
+            body['output_dimension'] = dimensions if dimensions is not None else _COHERE_V4_DEFAULT_DIMENSIONS
+
+        # Model-specific truncate takes precedence, then base truncate setting, then default to NONE
         if truncate := settings.get('bedrock_cohere_truncate'):
             body['truncate'] = truncate
         elif settings.get('truncate'):
             body['truncate'] = 'END'
+        else:
+            body['truncate'] = 'NONE'
 
         return body
 
@@ -354,8 +414,8 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
             'text': text_params,
         }
 
-        if dimensions := settings.get('dimensions'):
-            single_embedding_params['embeddingDimension'] = dimensions
+        # Nova: Apply dimensions (default: 3072)
+        single_embedding_params['embeddingDimension'] = settings.get('dimensions') or _NOVA_DEFAULT_DIMENSIONS
 
         body: dict[str, Any] = {
             'taskType': 'SINGLE_EMBEDDING',
@@ -394,7 +454,7 @@ def _get_handler_for_model(model_name: str) -> BedrockEmbeddingHandler:
     if normalized_name.startswith('amazon.titan-embed'):
         return TitanEmbeddingHandler(normalized_name)
     elif normalized_name.startswith('cohere.embed'):
-        return CohereEmbeddingHandler()
+        return CohereEmbeddingHandler(normalized_name)
     elif normalized_name.startswith('amazon.nova'):
         return NovaEmbeddingHandler()
     else:
@@ -414,6 +474,11 @@ _MAX_INPUT_TOKENS: dict[str, int] = {
     'cohere.embed-v4': 128000,
     'amazon.nova-2-multimodal-embeddings-v1': 8192,  # Per AWS documentation
 }
+
+# Default embedding dimensions for models that support configurable dimensions
+_TITAN_V2_DEFAULT_DIMENSIONS = 1024
+_COHERE_V4_DEFAULT_DIMENSIONS = 1536
+_NOVA_DEFAULT_DIMENSIONS = 3072
 
 
 @dataclass(init=False)

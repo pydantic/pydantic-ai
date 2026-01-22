@@ -438,12 +438,17 @@ Bedrock supports three families of embedding models via [`BedrockEmbeddingSettin
 
 ##### Amazon Titan
 
-- `amazon.titan-embed-text-v1` — 1536 dimensions, 8K tokens
-- `amazon.titan-embed-text-v2:0` — 256/384/1024 dimensions (configurable), 8K tokens
+- `amazon.titan-embed-text-v1` — 1536 dimensions (fixed), 8K tokens
+- `amazon.titan-embed-text-v2:0` — 256/384/1024 dimensions (configurable, default: 1024), 8K tokens
 
 **Titan-specific settings:**
 
-- `bedrock_titan_normalize` — Normalize embedding vectors for direct similarity calculations.
+- `bedrock_titan_normalize` — Normalize embedding vectors for direct similarity calculations. Defaults to `True` for v2:0 models. **Only supported by `amazon.titan-embed-text-v2:0`.** The v1 model will issue a warning if this setting is provided.
+
+**Base settings support:**
+
+- `dimensions` — **Only supported by `amazon.titan-embed-text-v2:0`.** The v1 model has a fixed dimension of 1536 and will issue a warning if provided.
+- `truncate` — **Not supported** by Titan models.
 
 ```python {title="bedrock_titan.py"}
 from pydantic_ai import Embedder
@@ -452,6 +457,7 @@ from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 embedder = Embedder(
     'bedrock:amazon.titan-embed-text-v2:0',
     settings=BedrockEmbeddingSettings(
+        dimensions=512,
         bedrock_titan_normalize=True,
     ),
 )
@@ -459,23 +465,31 @@ embedder = Embedder(
 
 ##### Cohere Embed
 
-- `cohere.embed-english-v3` — English-only, 512 tokens
-- `cohere.embed-multilingual-v3` — Multilingual, 512 tokens
-- `cohere.embed-v4:0` — Latest Cohere model, 128K tokens
+- `cohere.embed-english-v3` — English-only, 1024 dimensions (fixed), 512 tokens
+- `cohere.embed-multilingual-v3` — Multilingual, 1024 dimensions (fixed), 512 tokens
+- `cohere.embed-v4:0` — Latest Cohere model, 256/512/1024/1536 dimensions (configurable, default: 1536), 128K tokens
 
 **Cohere-specific settings:**
 
-- `bedrock_cohere_max_tokens` — Maximum number of tokens to embed.
-- `bedrock_cohere_input_type` — Input type: `'search_query'`, `'search_document'`, `'classification'`, or `'clustering'`. Defaults to `'search_query'` for `embed_query()` and `'search_document'` for `embed_documents()`.
-- `bedrock_cohere_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`. Overrides the base `truncate` setting if provided.
+- `bedrock_cohere_max_tokens` — Maximum number of tokens to embed. **Only supported by `cohere.embed-v4:0`.** v3 models will issue a warning if this setting is provided.
+- `bedrock_cohere_input_type` — Input type: `'search_query'`, `'search_document'`, `'classification'`, or `'clustering'`. Defaults to `'search_query'` for `embed_query()` and `'search_document'` for `embed_documents()`. **Supported by all Cohere models.**
+- `bedrock_cohere_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`. Overrides the base `truncate` setting if provided. **Supported by all Cohere models.**
+
+**Base settings support:**
+
+- `dimensions` — **Only supported by `cohere.embed-v4:0`.** v3 models have a fixed dimension of 1024 and will issue a warning if provided.
+- `truncate` — **Supported by all Cohere models.** Maps to `'END'`.
 
 ```python {title="bedrock_cohere.py"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
+# Cohere v4 with custom dimensions and max_tokens
 embedder = Embedder(
-    'bedrock:cohere.embed-english-v3',
+    'bedrock:cohere.embed-v4:0',
     settings=BedrockEmbeddingSettings(
+        dimensions=512,
+        bedrock_cohere_max_tokens=1000,
         bedrock_cohere_truncate='END',
     ),
 )
@@ -483,12 +497,17 @@ embedder = Embedder(
 
 ##### Amazon Nova
 
-- `amazon.nova-2-multimodal-embeddings-v1:0` — Multimodal embeddings, 8K tokens
+- `amazon.nova-2-multimodal-embeddings-v1:0` — 256/384/1024/3072 dimensions (configurable, default: 3072), 8K tokens
 
 **Nova-specific settings:**
 
 - `bedrock_nova_truncate` — Truncation strategy: `'NONE'` (default, raises error if input exceeds max tokens), `'START'`, or `'END'`. Overrides the base `truncate` setting if provided.
 - `bedrock_nova_embedding_purpose` — Embedding purpose. Defaults to `'GENERIC_RETRIEVAL'` for `embed_query()` and `'GENERIC_INDEX'` for `embed_documents()`. Other options: `'TEXT_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
+
+**Base settings support:**
+
+- `dimensions` — **Supported.** Nova supports 256, 384, 1024, and 3072 dimensions.
+- `truncate` — **Supported.** Maps to `'END'`.
 
 ```python {title="bedrock_nova.py"}
 from pydantic_ai import Embedder
@@ -497,7 +516,9 @@ from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 embedder = Embedder(
     'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
     settings=BedrockEmbeddingSettings(
+        dimensions=1024,
         bedrock_nova_embedding_purpose='TEXT_RETRIEVAL',
+        truncate=True,
     ),
 )
 ```

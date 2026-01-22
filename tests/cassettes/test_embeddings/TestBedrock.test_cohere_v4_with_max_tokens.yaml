@@ -1,51 +1,19 @@
 interactions:
 - request:
-    body: '{"texts": ["Test max tokens setting"], "input_type": "search_query", "max_tokens": 256}'
+    body: '{"texts": ["Test max tokens setting"], "input_type": "search_query", "max_tokens": 256, "output_dimension": 1536,
+      "truncate": "NONE"}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        Y2UwZThhMTItYWEzMi00MTc1LTk5NzctYmQyMDc2MzQ1YWY1
+        ZjhjZjdmOGQtZjM4Yi00MGZlLThlMjQtOTRmZDY5ZDM3YjAw
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '87'
-      content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/cohere.embed-english-v3/invoke
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '130'
-      content-type:
-      - application/json
-    parsed_body:
-      message: 'Malformed input request: #: extraneous key [max_tokens] is not permitted, please reformat your input and try
-        again.'
-    status:
-      code: 400
-      message: Bad Request
-- request:
-    body: '{"texts": ["Test max tokens setting"], "input_type": "search_query", "max_tokens": 256}'
-    headers:
-      accept:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-      amz-sdk-invocation-id:
-      - !!binary |
-        M2I2N2U2ZDUtMDFkYi00ZTY5LWJmMzktNzBlODY1OTI4ZTBi
-      amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
-      content-length:
-      - '87'
+      - '133'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -62,7 +30,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '4'
       x-amzn-bedrock-invocation-latency:
-      - '128'
+      - '96'
     parsed_body:
       embeddings:
         float:
@@ -1602,7 +1570,7 @@ interactions:
           - 0.032714844
           - -0.02355957
           - -0.023925781
-      id: 2f81729b-15a5-4a12-aa75-31b3a8d8e42c
+      id: 5dc54c70-8ab3-40d3-ac3f-d92a0855906f
       response_type: embeddings_by_type
       texts:
       - Test max tokens setting
