@@ -81,38 +81,11 @@ skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
     not transformer_imports_successful(), reason='transformers not available'
 )
 
-
-def _cpu_flags() -> set[str] | None:
-    """Best-effort CPU flags on Linux. Returns None if unknown."""
-    try:
-        with open('/proc/cpuinfo', encoding='utf-8') as f:
-            text = f.read().lower()
-        flags: set[str] = set()
-        for line in text.splitlines():
-            if line.startswith('flags'):
-                _, _, rest = line.partition(':')
-                flags.update(rest.strip().split())
-        return flags or None  # pragma: no cover
-    except OSError:  # pragma: no cover
-        return None
-
-
-def _cpu_supports_llama_cpp() -> bool:
-    """Conservative check: if unknown, return False to avoid hard-crashing CI with SIGILL."""
-    flags = _cpu_flags()
-    if flags is None:  # pragma: no cover
-        return False
-    required = {'avx', 'avx2', 'fma', 'f16c', 'bmi1', 'bmi2'}
-    return required.issubset(flags)
-
-
 # We only run this on the latest Python as the llama_cpp tests have been regularly failing in CI with `Fatal Python error: Illegal instruction`:
 # https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
 skip_if_llama_cpp_imports_unsuccessful = pytest.mark.skipif(
-    not llama_cpp_imports_successful()
-    or os.getenv('RUN_LLAMA_CPP_TESTS', 'true').lower() == 'false'
-    or not _cpu_supports_llama_cpp(),
-    reason='llama_cpp not available or CPU lacks required SIMD flags',
+    not llama_cpp_imports_successful() or os.getenv('RUN_LLAMA_CPP_TESTS', 'true').lower() == 'false',
+    reason='llama_cpp not available',
 )
 
 skip_if_vllm_imports_unsuccessful = pytest.mark.skipif(not vllm_imports_successful(), reason='vllm not available')
