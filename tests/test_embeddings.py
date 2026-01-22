@@ -613,7 +613,8 @@ class TestBedrock:
     async def test_titan_v2_multiple_texts(self, bedrock_provider: BedrockProvider):
         """Test Titan V2 document embedding (multiple texts, sequential requests)."""
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
-        embedder = Embedder(model)
+        # Use max_concurrency=1 to ensure deterministic request order for VCRpy
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_max_concurrency=1))
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
             EmbeddingResult(
@@ -940,7 +941,8 @@ class TestBedrock:
     async def test_nova_multiple_texts(self, bedrock_provider: BedrockProvider):
         """Test Nova document embedding (multiple texts, sequential requests)."""
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
-        embedder = Embedder(model)
+        # Use max_concurrency=1 to ensure deterministic request order for VCRpy
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_max_concurrency=1))
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
             EmbeddingResult(

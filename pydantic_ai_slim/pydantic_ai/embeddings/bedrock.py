@@ -602,7 +602,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
             return await self._embed_batch(inputs_list, input_type, settings_typed)
         else:
             # Models like Titan require individual requests
-            return await self._embed_sequential(inputs_list, input_type, settings_typed)
+            return await self._embed_concurrent(inputs_list, input_type, settings_typed)
 
     async def _embed_batch(
         self,
@@ -625,7 +625,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
             provider_response_id=response_id,
         )
 
-    async def _embed_sequential(
+    async def _embed_concurrent(
         self,
         inputs: list[str],
         input_type: EmbedInputType,
