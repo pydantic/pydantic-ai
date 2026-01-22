@@ -360,6 +360,16 @@ print(test_model.last_model_request_parameters.function_tools)
 _(This example is complete, it can be run "as is")_
 
 
+!!! tip "Debugging Tool Calls"
+    Understanding tool behavior is crucial for agent development. By instrumenting your agent with [Logfire](logfire.md), you can see:
+
+    - What arguments were passed to each tool
+    - What each tool returned
+    - How long each tool took to execute
+    - Any errors that occurred
+
+    This visibility helps you understand why an agent made specific decisions and identify issues in tool implementations.
+
 ## See Also
 
 For more tool features and integrations, see:
