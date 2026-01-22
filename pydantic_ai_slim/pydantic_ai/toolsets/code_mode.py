@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
@@ -47,14 +48,20 @@ def build_code_mode_prompt(*, signatures: list[str]) -> str:
         The complete prompt describing code mode capabilities and available functions.
     """
     functions_block = '\n\n'.join(signatures)
-    # TODO: The first line of the prompt should be customizeable by the user using Prompt Templates
+    # TODO: The first line of the prompt should be customizable by the user using Prompt Templates
     return f"""\
 You should consider writing Python code to accomplish multiple tasks in one go instead of using multiple tools one by one.
 
-How to do that:
+CRITICAL execution model:
+- Each run_code call is ISOLATED - variables do NOT persist between calls
+- Complete ALL related work in a SINGLE run_code call
+- If you need data from a previous call, you must fetch it again
+
+How to write effective code:
 - ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
-- Use for loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
-- The last expression evaluated becomes the return value - make it the final answer
+- Use for loops to handle multiple items
+- NEVER return raw tool results - always extract/filter to only what you need
+- The last expression evaluated becomes the return value - make it a processed summary, not raw data
 
 CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
 - No imports - use only the provided functions and builtins (len, sum, str, etc.)
@@ -78,18 +85,21 @@ Available functions:
 {functions_block}
 ```
 
-Example - completing a full aggregation task in one execution:
+Example - fetching, filtering, and summarizing in one execution:
 ```python
+# Fetch data
 items = get_items(category="electronics")
+
+# Process immediately - extract only needed fields
 results = []
 total = 0
-
 for item in items:
     details = get_item_details(id=item["id"])
     if details["status"] == "active":
-        total += details["price"]
+        total = total + details["price"]
         results.append({{"name": item["name"], "price": details["price"]}})
 
+# Return processed summary, NOT raw data
 {{"total": total, "count": len(results), "items": results}}
 ```"""
 
@@ -98,6 +108,16 @@ def _build_type_check_prefix(signatures: list[str]) -> str:
     """Build prefix code with imports and tool signatures for Monty type checking."""
     imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
     return imports + '\n\n'.join(signatures)
+
+
+# TODO remove when monty supports async (which we agreed we want to do)
+def _find_await_expressions(code: str) -> list[tuple[int, int]]:
+    """Return list of (line, col) for any await expressions in code."""
+    try:
+        tree = ast.parse(code)
+        return [(node.lineno, node.col_offset) for node in ast.walk(tree) if isinstance(node, ast.Await)]
+    except SyntaxError:
+        return []
 
 
 @dataclass(kw_only=True)
@@ -162,9 +182,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         prompt_builder: Optional callback to build a custom prompt. If not provided,
             uses `build_code_mode_prompt`. The callback receives `signatures` as a
             keyword argument containing the list of Python function signatures.
+        max_retries: Maximum number of retries for code execution errors (type/syntax/runtime).
+            Defaults to 3. Increase for complex code generation tasks or less capable models.
     """
 
     prompt_builder: Callable[..., str] = build_code_mode_prompt
+    max_retries: int = 3
     _cached_signatures: list[str] = field(default_factory=list, init=False, repr=False)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -179,7 +202,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # defeating the progressive-disclosure approach described in code-mode references.
         # Consider: progressive discovery (list tool names first, fetch signatures on demand).
         # David to look into this
-        description = self.prompt_builder(signatures=available_functions)
+        llm_signatures = [sig.replace('raise NotImplementedError()', '...') for sig in available_functions]
+        description = self.prompt_builder(signatures=llm_signatures)
         # TODO: Ideally we'd use kind='output' to make the code result be the final answer
         # without a second LLM call. However, output tools are treated differently by models -
         # they expect to provide structured output directly, not execute code. We need a way
@@ -193,7 +217,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     parameters_json_schema=_CODE_ADAPTER.json_schema(),
                     description=description,
                 ),
-                max_retries=3, # -> Should allow to be overrideable? 3 tries are plenty but not sure if a specially dumb model might need more attempts to get the code right with repeated ModelRetries?
+                max_retries=self.max_retries,
                 args_validator=cast(SchemaValidatorProt, _CODE_ADAPTER.validator),
             )
         }
@@ -216,8 +240,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Or maybe just something dubious by the model which could hang this
         #
         monty_limits = monty.ResourceLimits(
-            max_duration_secs=60 # Allow for this to be configurable?
+            max_duration_secs=60  # Allow for this to be configurable?
         )
+
+        if _find_await_expressions(code):
+            raise ModelRetry(
+                'await expressions are not supported. All functions are synchronous - call them directly without await.'
+            )
 
         try:
             m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
@@ -243,7 +272,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         # Only the first inner tool call after approval is marked approved. This keeps
         # approval scoped to a single tool call, not the entire code execution.
-        next_call_approved = (checkpoint is not None)
+        next_call_approved = checkpoint is not None
 
         while isinstance(result, monty.MontySnapshot):
             tool_name = result.function_name
@@ -262,7 +291,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # When resuming from checkpoint, pass only the inner tool's original metadata
             # to avoid leaking code_mode's checkpoint data into the inner tool's context.
             inner_metadata = ctx.tool_call_metadata.get('original_metadata') if checkpoint else None
-            inner_ctx = replace(ctx, tool_name=tool_name, tool_call_approved=next_call_approved, tool_call_metadata=inner_metadata)
+            inner_ctx = replace(
+                ctx, tool_name=tool_name, tool_call_approved=next_call_approved, tool_call_metadata=inner_metadata
+            )
             next_call_approved = False
 
             try:

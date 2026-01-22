@@ -135,8 +135,8 @@ def add(x: int, y: int) -> int:
     m.type_check(prefix_code=prefix)  # Should not raise
 
 
-async def test_signature_includes_raise_not_implemented():
-    """Generated signatures include raise NotImplementedError() for Monty type checking."""
+async def test_llm_sees_ellipsis_but_type_check_has_not_implemented():
+    """LLM-facing signatures use '...' but type-check prefix uses 'raise NotImplementedError()'."""
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(add, takes_ctx=False)
 
@@ -144,14 +144,27 @@ async def test_signature_includes_raise_not_implemented():
     ctx = build_run_context()
     tools = await code_mode.get_tools(ctx)
 
+    # LLM-facing description should have '...'
     description = tools['run_code'].tool_def.description or ''
+    assert '...' in description
+    assert 'raise NotImplementedError()' not in description
+
+    # Type-check prefix should still have 'raise NotImplementedError()'
+    assert any('raise NotImplementedError()' in sig for sig in code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
+
     assert description == snapshot('''\
 You should consider writing Python code to accomplish multiple tasks in one go instead of using multiple tools one by one.
 
-How to do that:
+CRITICAL execution model:
+- Each run_code call is ISOLATED - variables do NOT persist between calls
+- Complete ALL related work in a SINGLE run_code call
+- If you need data from a previous call, you must fetch it again
+
+How to write effective code:
 - ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
-- Use for loops to handle multiple items (e.g., for each user, fetch their orders and aggregate)
-- The last expression evaluated becomes the return value - make it the final answer
+- Use for loops to handle multiple items
+- NEVER return raw tool results - always extract/filter to only what you need
+- The last expression evaluated becomes the return value - make it a processed summary, not raw data
 
 CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
 - No imports - use only the provided functions and builtins (len, sum, str, etc.)
@@ -174,21 +187,24 @@ Available functions:
 ```python
 def add(x: int, y: int) -> int:
     """Add two integers."""
-    raise NotImplementedError()
+    ...
 ```
 
-Example - completing a full aggregation task in one execution:
+Example - fetching, filtering, and summarizing in one execution:
 ```python
+# Fetch data
 items = get_items(category="electronics")
+
+# Process immediately - extract only needed fields
 results = []
 total = 0
-
 for item in items:
     details = get_item_details(id=item["id"])
     if details["status"] == "active":
-        total += details["price"]
+        total = total + details["price"]
         results.append({"name": item["name"], "price": details["price"]})
 
+# Return processed summary, NOT raw data
 {"total": total, "count": len(results), "items": results}
 ```\
 ''')
