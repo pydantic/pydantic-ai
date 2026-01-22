@@ -4049,3 +4049,88 @@ def test_transformer_adds_properties_to_object_schemas():
     result = OpenAIJsonSchemaTransformer(schema, strict=None).walk()
 
     assert result['properties'] == {}
+
+
+def chunk_with_usage(
+    delta: list[ChoiceDelta],
+    finish_reason: FinishReason | None = None,
+    completion_tokens: int = 1,
+    prompt_tokens: int = 2,
+    total_tokens: int = 3,
+) -> chat.ChatCompletionChunk:
+    """Create a chunk with configurable usage stats for testing continuous_usage_stats."""
+    return chat.ChatCompletionChunk(
+        id='123',
+        choices=[
+            ChunkChoice(index=index, delta=delta, finish_reason=finish_reason) for index, delta in enumerate(delta)
+        ],
+        created=1704067200,  # 2024-01-01
+        model='gpt-4o-123',
+        object='chat.completion.chunk',
+        usage=CompletionUsage(completion_tokens=completion_tokens, prompt_tokens=prompt_tokens, total_tokens=total_tokens),
+    )
+
+
+async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
+    """Test that continuous_usage_stats replaces usage instead of accumulating.
+
+    When continuous_usage_stats=True, each chunk contains cumulative usage, not incremental.
+    The final usage should equal the last chunk's usage, not the sum of all chunks.
+    """
+    # Simulate cumulative usage: each chunk has higher tokens (cumulative, not incremental)
+    stream = [
+        chunk_with_usage([ChoiceDelta(content='hello ', role='assistant')], completion_tokens=5, prompt_tokens=10, total_tokens=15),
+        chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=10, prompt_tokens=10, total_tokens=20),
+        chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=15, prompt_tokens=10, total_tokens=25),
+        chunk_with_usage([], finish_reason='stop', completion_tokens=15, prompt_tokens=10, total_tokens=25),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('', model_settings={'openai_continuous_usage_stats': True}) as result:
+        chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert chunks == snapshot(['hello ', 'hello world', 'hello world!'])
+
+    # With continuous_usage_stats=True, we should get the LAST chunk's usage (15 output tokens)
+    # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+
+
+async def test_stream_without_continuous_usage_stats_accumulates(allow_model_requests: None):
+    """Test that without continuous_usage_stats, usage is accumulated (default behavior)."""
+    # With default behavior, each chunk's usage is added together
+    stream = [
+        chunk_with_usage([ChoiceDelta(content='hello ', role='assistant')], completion_tokens=5, prompt_tokens=10, total_tokens=15),
+        chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=5, prompt_tokens=0, total_tokens=5),
+        chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=5, prompt_tokens=0, total_tokens=5),
+        chunk_with_usage([], finish_reason='stop', completion_tokens=0, prompt_tokens=0, total_tokens=0),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert chunks == snapshot(['hello ', 'hello world', 'hello world!'])
+
+    # Without continuous_usage_stats, usage is accumulated: 5+5+5+0 = 15 output tokens, 10+0+0+0 = 10 input tokens
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+
+
+def test_get_stream_options_with_continuous_usage_stats(allow_model_requests: None):
+    """Test that _get_stream_options includes continuous_usage_stats when set."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='test', role='assistant')))
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Without continuous_usage_stats
+    options = m._get_stream_options(cast(OpenAIChatModelSettings, {}))
+    assert options == {'include_usage': True}
+
+    # With continuous_usage_stats=False (explicit)
+    options = m._get_stream_options(cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': False}))
+    assert options == {'include_usage': True}
+
+    # With continuous_usage_stats=True
+    options = m._get_stream_options(cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True}))
+    assert options == {'include_usage': True, 'continuous_usage_stats': True}

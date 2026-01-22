@@ -661,7 +661,7 @@ class OpenAIChatModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 stream=stream,
-                stream_options=self._get_stream_options(stream, model_settings),
+                stream_options=self._get_stream_options(model_settings) if stream else OMIT,
                 stop=model_settings.get('stop_sequences', OMIT),
                 max_completion_tokens=model_settings.get('max_tokens', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
@@ -842,20 +842,15 @@ class OpenAIChatModel(Model):
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
-    def _get_stream_options(
-        self, stream: bool, model_settings: OpenAIChatModelSettings
-    ) -> dict[str, bool] | Omit:
+    def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
 
-        Returns OMIT for non-streaming requests, otherwise returns a dict with
-        include_usage=True and optionally continuous_usage_stats if configured.
+        Returns a dict with include_usage=True and optionally continuous_usage_stats if configured.
         """
-        if not stream:
-            return OMIT
         options: dict[str, bool] = {'include_usage': True}
         if model_settings.get('openai_continuous_usage_stats'):
             options['continuous_usage_stats'] = True
-        return options
+        return cast(chat.ChatCompletionStreamOptionsParam, options)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
