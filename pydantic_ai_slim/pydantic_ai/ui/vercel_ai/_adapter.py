@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
+from ...agent import AbstractAgent
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -34,7 +35,6 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ...agent import AbstractAgent
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults
 from .. import MessagesBuilder, UIAdapter, UIEventStream

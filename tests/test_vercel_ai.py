@@ -46,7 +46,6 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
-from pydantic_ai.usage import RequestUsage
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai._utils import dump_provider_metadata, load_provider_metadata
 from pydantic_ai.ui.vercel_ai.request_types import (
@@ -64,6 +63,7 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     UIMessage,
 )
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
 
@@ -2051,12 +2051,14 @@ async def test_tool_approval_request_emission():
                         timestamp=IsDatetime(),
                     )
                 ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='delete_file', args='{"path": "test.txt"}', tool_call_id='delete_1')],
                 usage=RequestUsage(input_tokens=50, output_tokens=5),
                 model_name='function::stream_function',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
         ]
     )
