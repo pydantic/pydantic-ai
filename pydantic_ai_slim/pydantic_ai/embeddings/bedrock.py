@@ -319,9 +319,8 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
                     UserWarning,
                 )
         else:
-            # Cohere v4: Apply parameters
-            if max_tokens is not None:
-                body['max_tokens'] = max_tokens
+            # Cohere v4: Apply max_tokens (default to max_input_tokens from config)
+            body['max_tokens'] = max_tokens if max_tokens is not None else self.config.max_input_tokens
 
             # Cohere v4: Apply dimensions (default from config)
             assert self.config.default_dimensions is not None, 'Cohere v4 must have default_dimensions in config'
