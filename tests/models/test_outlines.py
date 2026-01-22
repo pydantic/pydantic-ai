@@ -85,9 +85,7 @@ skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
 # that lack SIMD extensions required by llama_cpp wheels, causing unrecoverable SIGILL crashes.
 # See: https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
 skip_if_llama_cpp_imports_unsuccessful = pytest.mark.skipif(
-    not llama_cpp_imports_successful()
-    or os.getenv('RUN_LLAMA_CPP_TESTS', 'true').lower() == 'false'
-    or os.getenv('CI') == 'true',
+    not llama_cpp_imports_successful() or os.getenv('CI') == 'true',
     reason='llama_cpp not available or skipped in CI due to SIGILL risk',
 )
 
