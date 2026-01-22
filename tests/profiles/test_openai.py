@@ -7,6 +7,8 @@ Tests verify model profile detection for different OpenAI models, particularly:
 
 from __future__ import annotations as _annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from ..conftest import try_import
@@ -19,55 +21,47 @@ pytestmark = [
 ]
 
 
-class TestSamplingParamsSupport:
-    """Tests for sampling parameter support based on model reasoning capabilities."""
+@dataclass
+class SamplingParamsCase:
+    model: str
+    supports_reasoning: bool = False
+    supports_reasoning_effort_none: bool = False
 
-    def test_o_series_supports_reasoning(self):
-        """o-series models (o1, o3, etc.) always have reasoning enabled."""
-        for model in ['o1', 'o1-mini', 'o3', 'o3-mini', 'o4-mini']:
-            profile = openai_model_profile(model)
-            assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_reasoning is True
-            assert profile.openai_supports_reasoning_effort_none is False
 
-    def test_gpt_5_supports_reasoning(self):
-        """GPT-5 (not 5.1+) always has reasoning enabled."""
-        for model in ['gpt-5', 'gpt-5-pro', 'gpt-5-turbo']:
-            profile = openai_model_profile(model)
-            assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_reasoning is True
-            assert profile.openai_supports_reasoning_effort_none is False
+SAMPLING_PARAMS_CASES = [
+    # o-series: reasoning enabled, no effort_none
+    SamplingParamsCase(model='o1', supports_reasoning=True),
+    SamplingParamsCase(model='o1-mini', supports_reasoning=True),
+    SamplingParamsCase(model='o3', supports_reasoning=True),
+    SamplingParamsCase(model='o3-mini', supports_reasoning=True),
+    SamplingParamsCase(model='o4-mini', supports_reasoning=True),
+    # gpt-5 (not 5.1+): reasoning enabled, no effort_none
+    SamplingParamsCase(model='gpt-5', supports_reasoning=True),
+    SamplingParamsCase(model='gpt-5-pro', supports_reasoning=True),
+    SamplingParamsCase(model='gpt-5-turbo', supports_reasoning=True),
+    # gpt-5.1+: reasoning + effort_none
+    SamplingParamsCase(model='gpt-5.1', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.1-turbo', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.1-mini', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.1-codex-max', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.2', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.2-turbo', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.2-mini', supports_reasoning=True, supports_reasoning_effort_none=True),
+    # no reasoning
+    SamplingParamsCase(model='gpt-5-chat'),
+    SamplingParamsCase(model='gpt-4o'),
+    SamplingParamsCase(model='gpt-4o-mini'),
+    SamplingParamsCase(model='gpt-4o-2024-08-06'),
+]
 
-    def test_gpt_5_1_supports_reasoning_with_effort_none(self):
-        """GPT-5.1 models support reasoning with reasoning_effort='none' (the default)."""
-        for model in ['gpt-5.1', 'gpt-5.1-turbo', 'gpt-5.1-mini', 'gpt-5.1-codex-max']:
-            profile = openai_model_profile(model)
-            assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_reasoning is True
-            assert profile.openai_supports_reasoning_effort_none is True
 
-    def test_gpt_5_2_supports_reasoning_with_effort_none(self):
-        """GPT-5.2 models support reasoning with reasoning_effort='none' (the default)."""
-        for model in ['gpt-5.2', 'gpt-5.2-turbo', 'gpt-5.2-mini']:
-            profile = openai_model_profile(model)
-            assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_reasoning is True
-            assert profile.openai_supports_reasoning_effort_none is True
-
-    def test_gpt_5_chat_no_reasoning(self):
-        """GPT-5-chat models don't have reasoning and support all sampling params."""
-        profile = openai_model_profile('gpt-5-chat')
-        assert isinstance(profile, OpenAIModelProfile)
-        assert profile.openai_supports_reasoning is False
-        assert profile.openai_supports_reasoning_effort_none is False
-
-    def test_gpt_4o_no_reasoning(self):
-        """GPT-4o models don't have reasoning and support all sampling params."""
-        for model in ['gpt-4o', 'gpt-4o-mini', 'gpt-4o-2024-08-06']:
-            profile = openai_model_profile(model)
-            assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_reasoning is False
-            assert profile.openai_supports_reasoning_effort_none is False
+@pytest.mark.parametrize('case', SAMPLING_PARAMS_CASES, ids=lambda c: c.model)
+def test_sampling_params_support(case: SamplingParamsCase):
+    """Test reasoning capability flags for OpenAI models."""
+    profile = openai_model_profile(case.model)
+    assert isinstance(profile, OpenAIModelProfile)
+    assert profile.openai_supports_reasoning is case.supports_reasoning
+    assert profile.openai_supports_reasoning_effort_none is case.supports_reasoning_effort_none
 
 
 class TestEncryptedReasoningContent:
