@@ -88,6 +88,11 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_encrypted_reasoning_content: bool = False
     """Whether the model supports including encrypted reasoning content in the response."""
 
+    openai_supports_reasoning: bool = False
+    """Whether the model supports reasoning (o-series, GPT-5, GPT-5.1+).
+
+    When True, sampling parameters may need to be dropped depending on reasoning_effort setting."""
+
     openai_supports_reasoning_effort_none: bool = False
     """Whether the model supports sampling parameters (temperature, top_p, etc.) when reasoning_effort='none'.
 
@@ -129,34 +134,29 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     thinking_always_enabled = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name)
 
-    # Check if the model supports web search (only specific search-preview models)
-    supports_web_search = '-search-preview' in model_name
-    supports_image_output = is_gpt_5 or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
-
-    # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
-    # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
-    # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
-
-    # For models that always have reasoning on (o-series, GPT-5), sampling params are unsupported.
-    # For GPT-5.1+ models, sampling params support depends on reasoning_effort setting (handled by `_warn_about_dropped_sampling_params`).
-    if thinking_always_enabled:
-        openai_unsupported_model_settings = tuple(sp for sp in SAMPLING_PARAMS)
-    else:
-        openai_unsupported_model_settings = ()
+    supports_reasoning = thinking_always_enabled or is_gpt_5_1_plus
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
     openai_system_prompt_role = 'user' if model_name.startswith('o1-mini') else None
 
+    # Check if the model supports web search (only specific search-preview models)
+    supports_web_search = '-search-preview' in model_name
+    supports_image_output = is_gpt_5 or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
+
+    # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
+    # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
+    # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
+    # the `NativeOutput` marker, so an error from the API is acceptable.
     return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
-        openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
-        openai_supports_encrypted_reasoning_content=thinking_always_enabled or is_gpt_5_1_plus,
+        openai_supports_encrypted_reasoning_content=supports_reasoning,
+        openai_supports_reasoning=supports_reasoning,
         openai_supports_reasoning_effort_none=is_gpt_5_1_plus,
     )
 

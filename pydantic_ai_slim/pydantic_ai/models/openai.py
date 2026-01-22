@@ -263,14 +263,18 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
-def _warn_about_dropped_sampling_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
-    """Warn when sampling params will be dropped due to reasoning being enabled.
+def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
+    """Drop sampling params when reasoning is enabled on models that support it.
 
-    For models that support reasoning_effort='none' (GPT-5.1+), sampling params are only
-    supported when reasoning is off. This warns users when their params will be ignored.
+    Reasoning models (o-series, GPT-5, GPT-5.1+) don't support sampling parameters when
+    reasoning is active. For models that support reasoning_effort='none' (GPT-5.1+),
+    sampling params are allowed when reasoning is off.
     """
+    if not profile.openai_supports_reasoning:
+        return
+
     reasoning_effort = model_settings.get('openai_reasoning_effort', 'none')
-    if not profile.openai_supports_reasoning_effort_none or reasoning_effort == 'none':
+    if profile.openai_supports_reasoning_effort_none and reasoning_effort == 'none':
         return
 
     if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
@@ -280,10 +284,17 @@ def _warn_about_dropped_sampling_params(profile: OpenAIModelProfile, model_setti
             UserWarning,
         )
 
-    # we would drop them later in the `openai_unsupported_model_settings` loop
-    # but it's clearer to do it here
     for k in SAMPLING_PARAMS:
         model_settings.pop(k, None)
+
+
+def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
+    """Drop unsupported parameters based on model profile.
+
+    Used currently only by Cerebras
+    """
+    for setting in profile.openai_unsupported_model_settings:
+        model_settings.pop(setting, None)
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -657,10 +668,9 @@ class OpenAIChatModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        _warn_about_dropped_sampling_params(profile, model_settings)
+        _drop_sampling_params_for_reasoning(profile, model_settings)
 
-        for setting in profile.openai_unsupported_model_settings:
-            model_settings.pop(setting, None)
+        _drop_unsupported_params(profile, model_settings)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -1506,10 +1516,9 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        _warn_about_dropped_sampling_params(profile, model_settings)
+        _drop_sampling_params_for_reasoning(profile, model_settings)
 
-        for setting in profile.openai_unsupported_model_settings:
-            model_settings.pop(setting, None)
+        _drop_unsupported_params(profile, model_settings)
 
         include: list[responses.ResponseIncludable] = []
         if profile.openai_supports_encrypted_reasoning_content:
