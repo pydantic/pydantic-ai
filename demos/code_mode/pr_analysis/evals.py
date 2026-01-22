@@ -1,6 +1,6 @@
 """PR Analysis Evals - Compare code mode vs traditional mode.
 
-Runs 3 models × 3 runs × 2 modes = 18 runs to compare efficiency.
+Runs 3 models × 2 runs × 2 modes = 12 runs to compare efficiency.
 
 Usage:
     source .env && uv run python demos/code_mode/pr_analysis/evals.py
@@ -17,6 +17,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 
+import logfire
 from pydantic import BaseModel
 
 from pydantic_ai.messages import ModelResponse, RetryPromptPart
@@ -27,7 +28,7 @@ from .demo import MODELS, PROMPT, create_code_mode_agent, create_github_mcp, cre
 # IMPORTANT: Bump version when prompt changes!
 EVAL_NAME = 'pr_size_review_rounds_v1'
 
-RUNS_PER_CONFIG = 3
+RUNS_PER_CONFIG = 2
 
 
 class RunResult(BaseModel):
@@ -56,57 +57,58 @@ class EvalConfig:
 
 async def run_eval(config: EvalConfig, github: MCPServerStreamableHTTP) -> RunResult:
     """Run a single eval with the given configuration."""
-    try:
-        if config.mode == 'code_mode':
-            agent = create_code_mode_agent(github, model=config.model)
-            # CodeModeToolset needs context manager for sandbox lifecycle
-            code_toolset = agent.toolsets[0]
-            async with code_toolset:
+    with logfire.span('eval_run', model=config.model, mode=config.mode, run_number=config.run_number):
+        try:
+            if config.mode == 'code_mode':
+                agent = create_code_mode_agent(github, model=config.model)
+                # CodeModeToolset needs context manager for sandbox lifecycle
+                code_toolset = agent.toolsets[0]
+                async with code_toolset:
+                    result = await agent.run(PROMPT)
+            else:
+                agent = create_traditional_agent(github, model=config.model)
                 result = await agent.run(PROMPT)
-        else:
-            agent = create_traditional_agent(github, model=config.model)
-            result = await agent.run(PROMPT)
 
-        # Count metrics from messages
-        request_count = 0
-        total_input = 0
-        total_output = 0
-        retry_count = 0
+            # Count metrics from messages
+            request_count = 0
+            total_input = 0
+            total_output = 0
+            retry_count = 0
 
-        for msg in result.all_messages():
-            if isinstance(msg, ModelResponse):
-                request_count += 1
-                total_input += msg.usage.input_tokens
-                total_output += msg.usage.output_tokens
-            # Count retries
-            for part in getattr(msg, 'parts', []):
-                if isinstance(part, RetryPromptPart):
-                    retry_count += 1
+            for msg in result.all_messages():
+                if isinstance(msg, ModelResponse):
+                    request_count += 1
+                    total_input += msg.usage.input_tokens
+                    total_output += msg.usage.output_tokens
+                # Count retries
+                for part in getattr(msg, 'parts', []):
+                    if isinstance(part, RetryPromptPart):
+                        retry_count += 1
 
-        return RunResult(
-            model=config.model,
-            mode=config.mode,
-            run_number=config.run_number,
-            request_count=request_count,
-            total_input_tokens=total_input,
-            total_output_tokens=total_output,
-            retry_count=retry_count,
-            success=True,
-            output_preview=result.output[:200] if result.output else None,
-        )
+            return RunResult(
+                model=config.model,
+                mode=config.mode,
+                run_number=config.run_number,
+                request_count=request_count,
+                total_input_tokens=total_input,
+                total_output_tokens=total_output,
+                retry_count=retry_count,
+                success=True,
+                output_preview=result.output[:200] if result.output else None,
+            )
 
-    except Exception as e:
-        return RunResult(
-            model=config.model,
-            mode=config.mode,
-            run_number=config.run_number,
-            request_count=0,
-            total_input_tokens=0,
-            total_output_tokens=0,
-            retry_count=0,
-            success=False,
-            error=str(e),
-        )
+        except Exception as e:
+            return RunResult(
+                model=config.model,
+                mode=config.mode,
+                run_number=config.run_number,
+                request_count=0,
+                total_input_tokens=0,
+                total_output_tokens=0,
+                retry_count=0,
+                success=False,
+                error=str(e),
+            )
 
 
 async def main():
@@ -168,8 +170,11 @@ async def main():
     print()
     print('=' * 70)
     print(f'Completed: {datetime.now().isoformat()}')
+    print('View traces at https://logfire.pydantic.dev')
     print('=' * 70)
 
 
 if __name__ == '__main__':
+    logfire.configure(service_name='pr-analysis-eval')
+    logfire.instrument_pydantic_ai()
     asyncio.run(main())
