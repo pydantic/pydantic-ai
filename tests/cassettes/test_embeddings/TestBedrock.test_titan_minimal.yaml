@@ -1,18 +1,18 @@
 interactions:
 - request:
-    body: '{"inputText": "Hello, world!"}'
+    body: '{"inputText": "Hello, world!", "normalize": true}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        MTg0ZjIzYmUtNzQxNi00MWNkLTg1ZGMtYTdiZTI2YTEwMTVl
+        OTM3NWEwMjItY2QwYi00NWJjLThlNjgtMDljNzdjNTc1MGVj
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '30'
+      - '49'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -29,7 +29,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '5'
       x-amzn-bedrock-invocation-latency:
-      - '90'
+      - '87'
     parsed_body:
       embedding:
       - -0.05289186164736748

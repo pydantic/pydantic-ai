@@ -7,7 +7,7 @@ interactions:
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        OWU1NDVjYjctYTEwNy00Yjk2LWFlNTgtNWU4NjM5MDU3YTA5
+        YWYzNzQwM2ItY2ZlYy00NGMwLWE3YjAtZjBhZTkxYzk1Yjhh
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -29,7 +29,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '3'
       x-amzn-bedrock-invocation-latency:
-      - '103'
+      - '85'
     parsed_body:
       embedding:
       - -0.06844071298837662

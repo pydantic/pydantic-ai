@@ -910,6 +910,36 @@ class TestBedrock:
         result = BedrockEmbeddingModel._normalize_model_name('us.amazon.titan-embed-text-v2:0')  # pyright: ignore[reportPrivateUsage]
         assert result == 'amazon.titan-embed-text-v2'
 
+    def test_titan_v1_dimensions_warning(self):
+        """Test that Titan v1 warns when dimensions setting is provided."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
+
+        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
+        settings = BedrockEmbeddingSettings(dimensions=256)
+
+        with pytest.warns(UserWarning, match='The `dimensions` setting is not supported by'):
+            handler.prepare_request(['test'], 'query', settings)
+
+    def test_titan_v1_normalize_warning(self):
+        """Test that Titan v1 warns when normalize setting is provided."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
+
+        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
+        settings = BedrockEmbeddingSettings(bedrock_titan_normalize=True)
+
+        with pytest.warns(UserWarning, match='The `bedrock_titan_normalize` setting is not supported by'):
+            handler.prepare_request(['test'], 'query', settings)
+
+    def test_titan_v2_defaults_normalize_true(self):
+        """Test that Titan v2 defaults normalize to True."""
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
+
+        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v2')
+        settings = BedrockEmbeddingSettings()
+
+        body = handler.prepare_request(['test'], 'query', settings)
+        assert body['normalize'] is True
+
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
 @pytest.mark.vcr
@@ -1202,7 +1232,7 @@ class TestBedrockHandlers:
         """Test that Titan handler does not support batch."""
         from pydantic_ai.embeddings.bedrock import TitanEmbeddingHandler
 
-        handler = TitanEmbeddingHandler()
+        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v2')
         assert handler.supports_batch is False
 
     def test_nova_handler_does_not_support_batch(self):

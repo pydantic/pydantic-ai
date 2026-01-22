@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import json
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -78,9 +79,9 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     # ==================== Amazon Titan Settings ====================
 
     bedrock_titan_normalize: bool
-    """Whether to normalize embedding vectors for Titan models.
+    """Whether to normalize embedding vectors for Titan v2:0 models.
 
-    Normalized vectors can be used directly for similarity calculations.
+    Defaults to `True`.
     """
 
     # ==================== Cohere Settings ====================
@@ -174,6 +175,15 @@ class BedrockEmbeddingHandler(ABC):
 class TitanEmbeddingHandler(BedrockEmbeddingHandler):
     """Handler for Amazon Titan embedding models."""
 
+    def __init__(self, model_name: str):
+        """Initialize the handler with the model name.
+
+        Args:
+            model_name: The normalized model name (e.g., 'amazon.titan-embed-text-v2').
+        """
+        self._model_name = model_name
+        self._is_v1 = 'v1' in model_name
+
     @property
     def supports_batch(self) -> bool:
         return False  # Titan only supports single text per request
@@ -187,14 +197,33 @@ class TitanEmbeddingHandler(BedrockEmbeddingHandler):
         assert len(texts) == 1, 'Titan only supports single text per request'
         body: dict[str, Any] = {'inputText': texts[0]}
 
-        # Optional: Set output dimensions (Titan v2 only)
-        # Titan v2 supports: 256, 384, 1024 (model default is 1024)
-        if dimensions := settings.get('dimensions'):
-            body['dimensions'] = dimensions
+        dimensions = settings.get('dimensions')
+        normalize = settings.get('bedrock_titan_normalize')
 
-        # Optional: Normalize embedding vectors for direct similarity calculations
-        if (normalize := settings.get('bedrock_titan_normalize')) is not None:
-            body['normalize'] = normalize
+        if self._is_v1:
+            # Titan v1 doesn't support dimensions or normalize parameters
+            if dimensions is not None:
+                warnings.warn(
+                    f'The `dimensions` setting is not supported by {self._model_name} and will be ignored. '
+                    'Only Titan v2 models support custom dimensions.',
+                    UserWarning,
+                )
+            if normalize is not None:
+                warnings.warn(
+                    f'The `bedrock_titan_normalize` setting is not supported by {self._model_name} and will be ignored. '
+                    'Only Titan v2 models support the normalize parameter.',
+                    UserWarning,
+                )
+        else:
+            # Titan v2: Apply dimensions if provided
+            if dimensions is not None:
+                body['dimensions'] = dimensions
+
+            # Titan v2: Default normalize to True if not explicitly set
+            if normalize is None:
+                body['normalize'] = True
+            else:
+                body['normalize'] = normalize
 
         return body
 
@@ -363,7 +392,7 @@ def _get_handler_for_model(model_name: str) -> BedrockEmbeddingHandler:
     normalized_name = remove_bedrock_geo_prefix(model_name)
 
     if normalized_name.startswith('amazon.titan-embed'):
-        return TitanEmbeddingHandler()
+        return TitanEmbeddingHandler(normalized_name)
     elif normalized_name.startswith('cohere.embed'):
         return CohereEmbeddingHandler()
     elif normalized_name.startswith('amazon.nova'):
