@@ -1,18 +1,19 @@
 interactions:
 - request:
-    body: '{"texts": ["Test truncation setting"], "input_type": "search_query", "output_dimension": 1536, "truncate": "END"}'
+    body: '{"texts": ["Test truncation setting"], "input_type": "search_query", "max_tokens": 128000, "output_dimension":
+      1536, "truncate": "END"}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        MmYxNjBmNTEtZGMzYS00NzM1LTkxYzItMjhhZGRkMTg1ODVm
+        YmE4YzM5M2QtNGZlNy00YmZkLWI1YzAtMWVmMjNmYjk4Zjdi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '113'
+      - '135'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -29,7 +30,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '4'
       x-amzn-bedrock-invocation-latency:
-      - '94'
+      - '132'
     parsed_body:
       embeddings:
         float:
@@ -1569,7 +1570,7 @@ interactions:
           - -0.021606445
           - -0.033447266
           - 0.0018539429
-      id: 8567942a-fa1e-46a6-89f3-69b1a4ff8c17
+      id: 3e645e2d-b985-421a-ab4a-73eb8f29aaf3
       response_type: embeddings_by_type
       texts:
       - Test truncation setting

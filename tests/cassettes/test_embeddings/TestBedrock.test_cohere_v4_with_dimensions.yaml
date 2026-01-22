@@ -1,18 +1,19 @@
 interactions:
 - request:
-    body: '{"texts": ["Test dimensions setting"], "input_type": "search_query", "output_dimension": 512, "truncate": "NONE"}'
+    body: '{"texts": ["Test dimensions setting"], "input_type": "search_query", "max_tokens": 128000, "output_dimension":
+      512, "truncate": "NONE"}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        MTZiYjk5YzItNTVmNy00ZTA1LWFiNDUtMDNiMmZiMWIyMzAw
+        YWNiMWRiMTQtZTlhMi00OWIxLTkyZGMtZWZhMGIxOTIxMGRm
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '113'
+      - '135'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -29,7 +30,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '3'
       x-amzn-bedrock-invocation-latency:
-      - '100'
+      - '118'
     parsed_body:
       embeddings:
         float:
@@ -545,7 +546,7 @@ interactions:
           - -0.009460449
           - -0.018920898
           - 0.059326172
-      id: 1bc9c16f-3f8b-44c6-8dc1-e1a351f7ab27
+      id: 1f0e2c71-ee87-4e5e-aec2-0b85a669300b
       response_type: embeddings_by_type
       texts:
       - Test dimensions setting
