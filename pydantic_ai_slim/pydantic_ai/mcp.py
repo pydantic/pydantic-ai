@@ -1157,7 +1157,8 @@ class MCPServerSSE(_MCPServerHTTP):
 
     # sse_client has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811)
     # that prevents testing SSE transport in CI.
-    # Remove pragma once https://github.com/modelcontextprotocol/python-sdk/pull/1838 is released.
+    # TODO: Remove pragma and add a test
+    # once https://github.com/modelcontextprotocol/python-sdk/pull/1838 is released.
     @asynccontextmanager
     async def client_streams(  # pragma: no cover
         self,
