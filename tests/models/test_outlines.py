@@ -15,7 +15,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -432,7 +432,7 @@ async def test_request_streaming_async_model(mock_async_model: OutlinesModel) ->
 
 
 async def test_tool_definition_error_async_model(mock_async_model: OutlinesModel) -> None:
-    """Test that function tools raise UserError with async model (covers outlines.py:303)."""
+    """Test that function tools raise UserError with async model."""
     agent = Agent(mock_async_model)
 
     @agent.tool_plain
@@ -444,30 +444,39 @@ async def test_tool_definition_error_async_model(mock_async_model: OutlinesModel
 
 
 async def test_output_type_async_model(mock_async_model: OutlinesModel) -> None:
-    """Test output_type with async model exercises JsonSchema path (covers outlines.py:306)."""
+    """Test output_type with async model exercises JsonSchema path."""
 
     class Box(BaseModel):
         width: int
 
     agent = Agent(mock_async_model, output_type=Box)
     # Mock returns 'test' which isn't valid JSON, so validation fails
-    # But line 306 (output_type = JsonSchema(...)) is still exercised
-    with pytest.raises(Exception):
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries .* for output validation'):
         await agent.run('dimensions')
 
 
 async def test_instructions_async_model(mock_async_model: OutlinesModel) -> None:
-    """Test that instructions are passed to the model (covers outlines.py:430)."""
+    """Test that instructions are passed to the model."""
     agent = Agent(mock_async_model, instructions='Be brief.')
     result = await agent.run('Hello')
     assert result.output == 'test'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                instructions='Be brief.',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(parts=[TextPart(content='test')], timestamp=IsDatetime(), run_id=IsStr()),
+        ]
+    )
 
 
 async def test_multi_turn_async_model(mock_async_model: OutlinesModel) -> None:
-    """Test multi-turn conversation with message_history (covers outlines.py:490)."""
+    """Test multi-turn conversation with message_history."""
     agent = Agent(mock_async_model)
     result1 = await agent.run('First message')
-    # The message_history includes a ModelResponse with TextPart, which triggers line 490
     result2 = await agent.run('Second message', message_history=result1.all_messages())
     assert result2.output == 'test'
 
