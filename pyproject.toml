@@ -271,6 +271,9 @@ omit = [
     # TODO(Marcelo): Enable prefect coverage again.
     "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
     "tests/test_prefect.py",
+    # outlines tests skipped in CI due to llama_cpp SIGILL crashes on some GitHub Actions runners
+    "pydantic_ai_slim/pydantic_ai/models/outlines.py",
+    "tests/models/test_outlines.py",
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

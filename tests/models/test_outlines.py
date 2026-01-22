@@ -72,8 +72,11 @@ with try_import() as mlxlm_imports_successful:
     import mlx_lm  # pyright: ignore[reportMissingImports]
 
 
+# Entire test file is skipped in CI due to llama_cpp SIGILL crashes causing coverage gaps.
+# These tests can still be run locally.
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='outlines not installed'),
+    pytest.mark.skipif(os.getenv('CI') == 'true', reason='skipped in CI due to llama_cpp SIGILL risk'),
     pytest.mark.anyio,
 ]
 
