@@ -4,7 +4,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -41,7 +41,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=613
+      - gfet4t7; dur=537
       transfer-encoding:
       - chunked
       vary:
@@ -50,7 +50,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 4.6268978621810675e-06
+      - avgLogprobs: 2.937536919489503e-06
         content:
           parts:
           - functionCall:
@@ -60,7 +60,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: HvcgaemfJcmfz7IPtIOW-Qg
+      responseId: MEVVacqALbzVz7IP84PssAg
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:
@@ -79,11 +79,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '581'
+      - '577'
       content-type:
       - application/json
       host:
@@ -99,7 +99,7 @@ interactions:
             args:
               age: 20
             name: get_chinese_zodiac
-          thoughtSignature: context_engineering_is_the_way_to_go
+          thoughtSignature: skip_thought_signature_validator
         role: model
       - parts:
         - functionResponse:
@@ -129,7 +129,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=339
+      - gfet4t7; dur=570
       transfer-encoding:
       - chunked
       vary:
@@ -138,7 +138,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -1.7258870814527783e-05
+      - avgLogprobs: -0.00032264060739959987
         content:
           parts:
           - text: |
@@ -146,7 +146,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: H_cgaYSjBuaEz7IPu7HpoAc
+      responseId: MUVVacvUKIuEz7IP_cTy2Qc
       usageMetadata:
         candidatesTokenCount: 7
         candidatesTokensDetails:
@@ -165,7 +165,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -198,11 +198,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '775'
+      - '777'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=540
+      - gfet4t7; dur=779
       transfer-encoding:
       - chunked
       vary:
@@ -211,7 +211,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 2.42325768340379e-06
+      - avgLogprobs: 4.404195351526141e-06
         content:
           parts:
           - functionCall:
@@ -221,7 +221,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: H_cgabuRMOvjz7IPgrfWgAw
+      responseId: MkVVae65ML2tz7IPmqOAkAk
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:
@@ -240,11 +240,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '797'
+      - '793'
       content-type:
       - application/json
       host:
@@ -260,7 +260,7 @@ interactions:
             args:
               age: 17
             name: get_chinese_zodiac
-          thoughtSignature: context_engineering_is_the_way_to_go
+          thoughtSignature: skip_thought_signature_validator
         role: model
       - parts:
         - functionResponse:
@@ -301,11 +301,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '778'
+      - '729'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=662
+      - gfet4t7; dur=666
       transfer-encoding:
       - chunked
       vary:
@@ -314,25 +314,24 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.11466393163127284
+      - avgLogprobs: -0.07295973527999151
         content:
           parts:
-          - text: I am sorry, I cannot provide you with your Chinese zodiac sign because you are not old enough. You must
-              be at least 18 years old.
+          - text: I am sorry, I cannot fulfill this request. The age needs to be greater than 18.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: IPcgab7GFJXQz7IP-uPC-Ac
+      responseId: M0VVafrNJ7-fz7IPvqPoqAg
       usageMetadata:
-        candidatesTokenCount: 31
+        candidatesTokenCount: 21
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 31
+          tokenCount: 21
         promptTokenCount: 113
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 113
-        totalTokenCount: 144
+        totalTokenCount: 134
     status:
       code: 200
       message: OK

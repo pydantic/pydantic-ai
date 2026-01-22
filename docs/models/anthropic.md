@@ -78,6 +78,75 @@ agent = Agent(model)
 ...
 ```
 
+## Cloud Platform Integrations
+
+You can use Anthropic models through cloud platforms by passing a custom client to [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider].
+
+### AWS Bedrock
+
+To use Claude models via [AWS Bedrock](https://aws.amazon.com/bedrock/claude/), follow the [Anthropic documentation](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock) on how to set up an `AsyncAnthropicBedrock` client and then pass it to `AnthropicProvider`:
+
+```python {test="skip"}
+from anthropic import AsyncAnthropicBedrock
+
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+
+bedrock_client = AsyncAnthropicBedrock()  # Uses AWS credentials from environment
+provider = AnthropicProvider(anthropic_client=bedrock_client)
+model = AnthropicModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider)
+agent = Agent(model)
+...
+```
+
+!!! note "Bedrock vs BedrockConverseModel"
+    This approach uses Anthropic's SDK with AWS Bedrock credentials. For an alternative using AWS SDK (boto3) directly, see [`BedrockConverseModel`](bedrock.md).
+
+### Google Vertex AI
+
+To use Claude models via [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude), follow the [Anthropic documentation](https://docs.anthropic.com/en/api/claude-on-vertex-ai) on how to set up an `AsyncAnthropicVertex` client and then pass it to `AnthropicProvider`:
+
+```python {test="skip"}
+from anthropic import AsyncAnthropicVertex
+
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+
+vertex_client = AsyncAnthropicVertex(region='us-east5', project_id='your-project-id')
+provider = AnthropicProvider(anthropic_client=vertex_client)
+model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+agent = Agent(model)
+...
+```
+
+!!! note "Vertex vs GoogleModel"
+    This approach uses Anthropic's SDK with Vertex AI credentials. For an alternative using Google's Vertex AI SDK directly, see [`GoogleModel`](google.md).
+
+### Microsoft Foundry
+
+To use Claude models via [Microsoft Foundry](https://ai.azure.com/), follow the [Anthropic documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) on how to set up an `AsyncAnthropicFoundry` client and then pass it to `AnthropicProvider`:
+
+```python {test="skip"}
+from anthropic import AsyncAnthropicFoundry
+
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+
+foundry_client = AsyncAnthropicFoundry(
+    api_key='your-foundry-api-key',  # Or set ANTHROPIC_FOUNDRY_API_KEY
+    resource='your-resource-name',
+)
+provider = AnthropicProvider(anthropic_client=foundry_client)
+model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+agent = Agent(model)
+...
+```
+
+See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) for setup instructions including Entra ID authentication.
+
 ## Prompt Caching
 
 Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI provides four ways to use prompt caching:

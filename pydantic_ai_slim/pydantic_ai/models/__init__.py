@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, get_args, overload
 
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
@@ -51,6 +51,13 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+
+DEFAULT_HTTP_TIMEOUT: int = 600
+"""Default HTTP timeout in seconds for API requests.
+
+This matches the default timeout used by OpenAI's Python client.
+See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
+"""
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -109,6 +116,7 @@ KnownModelName = TypeAliasType(
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'bedrock:us.amazon.nova-2-lite-v1:0',
         'bedrock:us.amazon.nova-lite-v1:0',
         'bedrock:us.amazon.nova-micro-v1:0',
         'bedrock:us.amazon.nova-pro-v1:0',
@@ -198,6 +206,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:mistral.mistral-large-2402-v1:0',
         'gateway/bedrock:mistral.mistral-large-2407-v1:0',
         'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'gateway/bedrock:us.amazon.nova-2-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-micro-v1:0',
         'gateway/bedrock:us.amazon.nova-pro-v1:0',
@@ -391,7 +400,6 @@ KnownModelName = TypeAliasType(
         'groq:playai-tts',
         'groq:playai-tts-arabic',
         'groq:qwen/qwen-3-32b',
-        'heroku:amazon-rerank-1-0',
         'heroku:claude-3-5-haiku',
         'heroku:claude-3-5-sonnet-latest',
         'heroku:claude-3-7-sonnet',
@@ -399,8 +407,13 @@ KnownModelName = TypeAliasType(
         'heroku:claude-4-5-haiku',
         'heroku:claude-4-5-sonnet',
         'heroku:claude-4-sonnet',
-        'heroku:cohere-rerank-3-5',
+        'heroku:claude-opus-4-5',
         'heroku:gpt-oss-120b',
+        'heroku:kimi-k2-thinking',
+        'heroku:minimax-m2',
+        'heroku:qwen3-235b',
+        'heroku:qwen3-coder-480b',
+        'heroku:nova-2-lite',
         'heroku:nova-lite',
         'heroku:nova-pro',
         'huggingface:deepseek-ai/DeepSeek-R1',
@@ -517,6 +530,43 @@ KnownModelName = TypeAliasType(
 
 `KnownModelName` is provided as a concise way to specify a model.
 """
+
+OpenAIChatCompatibleProvider = TypeAliasType(
+    'OpenAIChatCompatibleProvider',
+    Literal[
+        'alibaba',
+        'azure',
+        'cerebras',
+        'deepseek',
+        'fireworks',
+        'github',
+        'grok',
+        'heroku',
+        'litellm',
+        'moonshotai',
+        'nebius',
+        'ollama',
+        'openrouter',
+        'ovhcloud',
+        'sambanova',
+        'together',
+        'vercel',
+    ],
+)
+OpenAIResponsesCompatibleProvider = TypeAliasType(
+    'OpenAIResponsesCompatibleProvider',
+    Literal[
+        'azure',
+        'deepseek',
+        'fireworks',
+        'grok',
+        'nebius',
+        'openrouter',
+        'ovhcloud',
+        'sambanova',
+        'together',
+    ],
+)
 
 
 @dataclass(repr=False, kw_only=True)
@@ -1064,36 +1114,25 @@ def infer_model(  # noqa: C901
         )
         provider_name = 'google-vertex'
 
-    provider: Provider[Any] = provider_factory(provider_name)
+    provider = provider_factory(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider
 
-        model_kind = provider_name.removeprefix('gateway/')
         model_kind = normalize_gateway_provider(model_kind)
-    if model_kind in (
-        'openai',
-        'azure',
-        'deepseek',
-        'fireworks',
-        'github',
-        'grok',
-        'heroku',
-        'moonshotai',
-        'ollama',
-        'together',
-        'vercel',
-        'litellm',
-        'nebius',
-        'ovhcloud',
-        'alibaba',
-    ):
-        model_kind = 'openai-chat'
-    elif model_kind in ('google-gla', 'google-vertex'):
-        model_kind = 'google'
 
-    if model_kind == 'openai-chat':
+    # OpenRouter and Cerebras need to be checked before OpenAI,
+    # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
+    if model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
+    elif model_kind == 'cerebras':
+        from .cerebras import CerebrasModel
+
+        return CerebrasModel(model_name, provider=provider)
+    elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
@@ -1101,7 +1140,7 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind == 'google':
+    elif model_kind in ('google', 'google-gla', 'google-vertex'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
@@ -1117,10 +1156,6 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
-    elif model_kind == 'openrouter':
-        from .openrouter import OpenRouterModel
-
-        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -1133,15 +1168,13 @@ def infer_model(  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
-    elif model_kind == 'cerebras':
-        from .cerebras import CerebrasModel
-
-        return CerebrasModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     """Cached HTTPX async client that creates a separate client for each provider.
 
     The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
@@ -1157,7 +1190,7 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
     client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    if client.is_closed:
+    if client.is_closed:  # pragma: no cover
         # This happens if the context manager is used, so we need to create a new client.
         # Since there is no API from `functools.cache` to clear the cache for a specific
         #  key, clear the entire cache here as a workaround.
@@ -1167,7 +1200,9 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
 
 
 @cache
-def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def _cached_async_http_client(
+    provider: str | None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},

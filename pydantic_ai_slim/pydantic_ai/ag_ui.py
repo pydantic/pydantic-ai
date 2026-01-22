@@ -13,6 +13,7 @@ from typing import Any
 
 from . import DeferredToolResults
 from .agent import AbstractAgent
+from .agent.abstract import AgentMetadata
 from .messages import ModelMessage
 from .models import KnownModelName, Model
 from .output import OutputSpec
@@ -60,6 +61,7 @@ async def handle_ag_ui_request(
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
     usage: RunUsage | None = None,
+    metadata: AgentMetadata[AgentDepsT] | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
@@ -79,6 +81,8 @@ async def handle_ag_ui_request(
         model_settings: Optional settings to use for this model's request.
         usage_limits: Optional limits on model request count or token usage.
         usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+        metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+            [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
         infer_name: Whether to try to infer the agent name from the call frame if it's not set.
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
@@ -98,6 +102,7 @@ async def handle_ag_ui_request(
         model_settings=model_settings,
         usage_limits=usage_limits,
         usage=usage,
+        metadata=metadata,
         infer_name=infer_name,
         toolsets=toolsets,
         on_complete=on_complete,
@@ -117,6 +122,7 @@ def run_ag_ui(
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
     usage: RunUsage | None = None,
+    metadata: AgentMetadata[AgentDepsT] | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
@@ -137,6 +143,8 @@ def run_ag_ui(
         model_settings: Optional settings to use for this model's request.
         usage_limits: Optional limits on model request count or token usage.
         usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+        metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+            [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
         infer_name: Whether to try to infer the agent name from the call frame if it's not set.
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
@@ -156,6 +164,7 @@ def run_ag_ui(
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
+            metadata=metadata,
             infer_name=infer_name,
             toolsets=toolsets,
             on_complete=on_complete,

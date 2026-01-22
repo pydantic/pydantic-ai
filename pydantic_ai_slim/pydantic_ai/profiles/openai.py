@@ -70,6 +70,13 @@ class OpenAIModelProfile(ModelProfile):
     - `'uri'`: Data URI (e.g. `data:audio/wav;base64,...`).
     """
 
+    openai_chat_supports_file_urls: bool = False
+    """Whether the Chat API supports file URLs directly in the `file_data` field.
+
+    OpenAI's native Chat API only supports base64-encoded data, but some providers
+    like OpenRouter support passing URLs directly.
+    """
+
     openai_supports_encrypted_reasoning_content: bool = False
     """Whether the model supports including encrypted reasoning content in the response."""
 
@@ -248,13 +255,15 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 self.is_strict_compatible = False
 
         if schema_type == 'object':
+            # Always ensure 'properties' key exists - OpenAI drops objects without it
+            if 'properties' not in schema:
+                schema['properties'] = dict[str, Any]()
+
             if self.strict is True:
                 # additional properties are disallowed
                 schema['additionalProperties'] = False
 
                 # all properties are required
-                if 'properties' not in schema:
-                    schema['properties'] = dict[str, Any]()
                 schema['required'] = list(schema['properties'].keys())
 
             elif self.strict is None:

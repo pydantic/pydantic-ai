@@ -191,7 +191,7 @@ clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 
 When using `--agent`, the agent's configured model becomes the default. CLI models (`-m`) are additional options. Without `--agent`, the first `-m` model is the default.
 
-The web chat UI can also be launched programmatically using [`Agent.to_web()`][pydantic_ai.Agent.to_web], see the [Web UI documentation](web.md).
+The web chat UI can also be launched programmatically using [`Agent.to_web()`][pydantic_ai.agent.Agent.to_web], see the [Web UI documentation](web.md).
 
 Run the `web` command with `--help` to see all available options:
 

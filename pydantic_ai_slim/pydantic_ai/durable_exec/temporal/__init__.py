@@ -42,15 +42,23 @@ except ImportError:
 
 
 def _data_converter(converter: DataConverter | None) -> DataConverter:
-    if converter and converter.payload_converter_class not in (
-        DefaultPayloadConverter,
-        PydanticPayloadConverter,
-    ):
-        warnings.warn(  # pragma: no cover
-            'A non-default Temporal data converter was used which has been replaced with the Pydantic data converter.'
+    if converter is None:
+        return pydantic_data_converter
+
+    # If the payload converter class is already a subclass of PydanticPayloadConverter,
+    # the converter is already compatible with Pydantic AI - return it as-is.
+    if issubclass(converter.payload_converter_class, PydanticPayloadConverter):
+        return converter
+
+    # If using a non-Pydantic payload converter, warn and replace just the payload converter class,
+    # preserving any custom payload_codec or failure_converter_class.
+    if converter.payload_converter_class is not DefaultPayloadConverter:
+        warnings.warn(
+            'A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter. '
+            'To suppress this warning, ensure your payload_converter_class inherits from PydanticPayloadConverter.'
         )
 
-    return pydantic_data_converter
+    return replace(converter, payload_converter_class=PydanticPayloadConverter)
 
 
 def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:

@@ -168,7 +168,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | Google | ✅ | Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Anthropic | ✅ | |
 | Groq | ❌ | |
-| Bedrock | ❌ | |
+| Bedrock | ✅ | Only available for Nova 2.0 models. |
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |

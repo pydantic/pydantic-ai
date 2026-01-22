@@ -471,7 +471,8 @@ def _map_openrouter_provider_details(
     provider_details: dict[str, Any] = {}
 
     provider_details['downstream_provider'] = response.provider
-    provider_details['finish_reason'] = response.choices[0].native_finish_reason
+    if native_finish_reason := response.choices[0].native_finish_reason:
+        provider_details['finish_reason'] = native_finish_reason
 
     if usage := response.usage:
         if cost := usage.cost:
@@ -565,12 +566,12 @@ class OpenRouterModel(OpenAIChatModel):
             return super()._process_thinking(message)
 
     @override
-    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
+    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         assert isinstance(response, _OpenRouterChatCompletion)
 
-        provider_details = super()._process_provider_details(response)
+        provider_details = super()._process_provider_details(response) or {}
         provider_details.update(_map_openrouter_provider_details(response))
-        return provider_details
+        return provider_details or None
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
@@ -686,9 +687,9 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
         assert isinstance(chunk, _OpenRouterChatCompletionChunk)
 
-        if provider_details := super()._map_provider_details(chunk):
-            provider_details.update(_map_openrouter_provider_details(chunk))
-            return provider_details
+        provider_details = super()._map_provider_details(chunk) or {}
+        provider_details.update(_map_openrouter_provider_details(chunk))
+        return provider_details or None
 
     @override
     def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]

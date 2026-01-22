@@ -97,7 +97,7 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
     return ToolReturn(
         return_value=f'Successfully clicked at ({x}, {y})',
         content=[
-            f'Clicked at coordinates ({x}, {y}). Here's the comparison:',
+            f'Clicked at coordinates ({x}, {y}). Here\'s the comparison:',
             'Before:',
             BinaryContent(data=before_screenshot, media_type='image/png'),
             'After:',

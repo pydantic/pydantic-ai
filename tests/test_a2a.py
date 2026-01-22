@@ -1,4 +1,5 @@
 import uuid
+from datetime import timezone
 
 import anyio
 import httpx
@@ -21,7 +22,7 @@ from pydantic_ai import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsStr, try_import
+from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
@@ -579,6 +580,7 @@ async def test_a2a_multiple_tasks_same_context():
                 [
                     ModelRequest(
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
                     )
                 ]
@@ -618,6 +620,7 @@ async def test_a2a_multiple_tasks_same_context():
                 [
                     ModelRequest(
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
                     ),
                     ModelResponse(
@@ -641,6 +644,7 @@ async def test_a2a_multiple_tasks_same_context():
                             ),
                             UserPromptPart(content='Second message', timestamp=IsDatetime()),
                         ],
+                        timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
                     ),
                 ]

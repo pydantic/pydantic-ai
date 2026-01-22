@@ -75,7 +75,11 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                 )
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        tool_activity_config = self.activity_config | tool_activity_config
+        activity_config: ActivityConfig = {
+            'summary': f'call tool: {self.id}:{name}',
+            **self.activity_config,
+            **tool_activity_config,
+        }
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(
             await workflow.execute_activity(
@@ -89,6 +93,6 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     ),
                     ctx.deps,
                 ],
-                **tool_activity_config,
+                **activity_config,
             )
         )
