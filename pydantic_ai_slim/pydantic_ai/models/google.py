@@ -730,10 +730,10 @@ class GoogleModel(Model):
                         content.append(part_dict)  # pragma: lax no cover
                 elif isinstance(item, UploadedFile):
                     # Verify provider matches
-                    if item.provider_name not in ('google-gla', 'google-vertex'):
+                    if item.provider_name != self.system:
                         raise UserError(
                             f'UploadedFile with provider_name={item.provider_name!r} cannot be used with GoogleModel. '
-                            f'Expected provider_name to be "google-gla" or "google-vertex".'
+                            f'Expected provider_name to be "google-gla"'
                         )
                     # UploadedFile.file_id should be a file URI from the Google Files API
                     # e.g., 'https://generativelanguage.googleapis.com/v1beta/files/abc123'

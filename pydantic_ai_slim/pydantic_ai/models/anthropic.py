@@ -1116,10 +1116,10 @@ class AnthropicModel(Model):
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
                 elif isinstance(item, UploadedFile):
                     # Verify provider matches
-                    if item.provider_name not in ('anthropic', 'anthropic-bedrock'):
+                    if item.provider_name != 'anthropic':
                         raise UserError(
                             f'UploadedFile with provider_name={item.provider_name!r} cannot be used with AnthropicModel. '
-                            f'Expected provider_name to be "anthropic" or "anthropic-bedrock".'
+                            f'Expected provider_name to be "anthropic"'
                         )
                     yield BetaRequestDocumentBlockParam(
                         source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),

@@ -134,9 +134,8 @@ DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 
 Some model providers have their own file storage APIs where you can upload files and reference them by ID or URL.
 
-- For providers that return a **file ID** (Anthropic, OpenAI), use [`UploadedFile`][pydantic_ai.UploadedFile]
-- For providers that return a **file URL** (Google Files API), use [`DocumentUrl`][pydantic_ai.DocumentUrl]
-- For S3 URLs with Bedrock, use [`UploadedFile`][pydantic_ai.UploadedFile]
+- For all supported provider (Anthropic, OpenAI, Google Files API, S3 URLs with Bedrock ), you can use [`UploadedFile`][pydantic_ai.UploadedFile]
+- For providers that return a **file URL** (Google Files API), you can also use [`DocumentUrl`][pydantic_ai.DocumentUrl]
 
 ### Supported Models
 
@@ -151,6 +150,10 @@ Some model providers have their own file storage APIs where you can upload files
 
 ### Anthropic
 
+When using [`UploadedFile`][pydantic_ai.UploadedFile] you must set the provider name. Uploaded files are specific to the system they are uploaded to and are not transferrable across providers. Trying to use a message that contains an `UploadedFile` in a different provider will result in an error. 
+
+If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends you can use a [history processor][pydantic_ai.agent.Agent.history_processors] to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
+
 ```py {title="uploaded_file_anthropic.py" test="skip"}
 from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -161,13 +164,13 @@ model = AnthropicModel('claude-sonnet-4-5', provider=provider)
 
 # Upload a file using the provider's client
 with open('document.pdf', 'rb') as f:
-    uploaded_file = provider.client.files.create(file=f, purpose='user_data')
+    client.beta.files.upload(file=f)
 
 # Reference the uploaded file
 agent = Agent(model)
 result = agent.run_sync([
     'Summarize this document',
-    UploadedFile(file_id=uploaded_file.id, provider_name='anthropic'),
+    UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
 ])
 print(result.output)
 ```
@@ -179,28 +182,28 @@ from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-provider = OpenAIProvider()
-model = OpenAIChatModel('gpt-4o', provider=provider)
+async def main():
+    provider = OpenAIProvider()
+    model = OpenAIChatModel('gpt-4o', provider=provider)
 
-# Upload a file using the provider's client
-with open('document.pdf', 'rb') as f:
-    uploaded_file = provider.client.files.create(file=f, purpose='user_data')
+    # Upload a file using the provider's client
+    with open('document.pdf', 'rb') as f:
+        provider.client.files.create(file=f, purpose='user_data')
 
-# Reference the uploaded file
-agent = Agent(model)
-result = agent.run_sync([
-    'Summarize this document',
-    UploadedFile(file_id=uploaded_file.id, provider_name='openai'),
-])
-print(result.output)
+    # Reference the uploaded file
+    agent = Agent(model)
+    result = agent.run_sync([
+        'Summarize this document',
+        UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+    ])
+    print(result.output)
 ```
+(This example is complete, it can be run "as is" — you'll need to add asyncio.run(main()) to run main)
 
 ### Google
 
-Google's Files API returns a URI, so you can use [`DocumentUrl`][pydantic_ai.DocumentUrl] directly:
-
 ```py {title="uploaded_file_google.py" test="skip"}
-from pydantic_ai import Agent, DocumentUrl
+from pydantic_ai import Agent, DocumentUrl, UploadedFile
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
@@ -208,8 +211,9 @@ provider = GoogleProvider()
 model = GoogleModel('gemini-2.0-flash', provider=provider)
 
 # Upload a file using the provider's client
-file = provider.client.files.upload(file='document.pdf')
-assert file.uri is not None
+with open('document.pdf', 'rb') as f:
+    file = provider.client.files.upload(file='document.pdf')
+    assert file.uri is not None
 
 # Reference the uploaded file by URI
 agent = Agent(model)

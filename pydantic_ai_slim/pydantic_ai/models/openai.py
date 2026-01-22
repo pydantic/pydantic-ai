@@ -1145,7 +1145,7 @@ class OpenAIChatModel(Model):
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 elif isinstance(item, UploadedFile):
                     # Verify provider matches
-                    if item.provider_name != 'openai':
+                    if item.provider_name != self.system:
                         raise UserError(
                             f'UploadedFile with provider_name={item.provider_name!r} cannot be used with OpenAIChatModel. '
                             f'Expected provider_name to be "openai".'

@@ -2528,6 +2528,10 @@ async def test_uploaded_file_media_type_inference(bedrock_provider: BedrockProvi
                     },
                 ],
             }
+        ]
+    )
+
+
 async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
