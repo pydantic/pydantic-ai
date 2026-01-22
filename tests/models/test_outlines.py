@@ -92,15 +92,15 @@ def _cpu_flags() -> set[str] | None:
             if line.startswith('flags'):
                 _, _, rest = line.partition(':')
                 flags.update(rest.strip().split())
-        return flags or None
-    except OSError:
+        return flags or None  # pragma: no cover
+    except OSError:  # pragma: no cover
         return None
 
 
 def _cpu_supports_llama_cpp() -> bool:
     """Conservative check: if unknown, return False to avoid hard-crashing CI with SIGILL."""
     flags = _cpu_flags()
-    if flags is None:
+    if flags is None:  # pragma: no cover
         return False
     return 'avx2' in flags and 'avx' in flags
 

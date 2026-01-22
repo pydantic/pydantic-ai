@@ -12,6 +12,7 @@ from datetime import timedelta
 from typing import Any, Literal
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -3122,13 +3123,20 @@ def test_binary_content_serializes_to_base64():
     binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     bc = BinaryContent(data=binary_data, media_type='image/png')
 
-    # BinaryContent now serializes directly without wrapper
     serialized = to_json(bc)
     deserialized = json.loads(serialized)
 
+    # Verify bytes -> base64 conversion explicitly
     assert deserialized['data'] == base64.b64encode(binary_data).decode('ascii')
-    assert deserialized['media_type'] == 'image/png'
-    assert deserialized['kind'] == 'binary'
+    assert deserialized == snapshot(
+        {
+            'data': 'iVBORw0KGgo=',
+            'media_type': 'image/png',
+            'vendor_metadata': None,
+            'kind': 'binary',
+            'identifier': '4caece',
+        }
+    )
 
 
 def test_binary_content_serialization_round_trip():
@@ -3150,3 +3158,40 @@ def test_binary_content_serialization_round_trip():
     result = rehydrate_binary_content(deserialized['result'])
 
     assert result == snapshot(BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png', _identifier='test-file'))
+
+
+def test_rehydrate_binary_content_nested_dict():
+    """Test rehydration of BinaryContent nested inside a dict wrapper (covers line 85)."""
+    binary_data = bytes([0x89, 0x50, 0x4E, 0x47])
+    bc = BinaryContent(data=binary_data, media_type='image/png')
+
+    # Nest BinaryContent inside a wrapper dict
+    wrapped = _ToolReturn(result={'image': bc, 'label': 'test'})
+    serialized = to_json(wrapped)
+    deserialized = json.loads(serialized)
+
+    result = rehydrate_binary_content(deserialized['result'])
+
+    assert result == snapshot(
+        {
+            'image': BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+            'label': 'test',
+        }
+    )
+
+
+def test_rehydrate_binary_content_in_list():
+    """Test rehydration of BinaryContent inside a list (covers line 87)."""
+    binary_data = bytes([0x89, 0x50, 0x4E, 0x47])
+    bc = BinaryContent(data=binary_data, media_type='image/png')
+
+    # Put BinaryContent inside a list
+    wrapped = _ToolReturn(result=[bc, 'other-item'])
+    serialized = to_json(wrapped)
+    deserialized = json.loads(serialized)
+
+    result = rehydrate_binary_content(deserialized['result'])
+
+    assert result == snapshot(
+        [BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'), 'other-item']
+    )
