@@ -591,9 +591,7 @@ class OpenAIChatModel(Model):
             model_request_parameters,
         )
         model_settings_cast = cast(OpenAIChatModelSettings, model_settings or {})
-        response = await self._completions_create(
-            messages, True, model_settings_cast, model_request_parameters
-        )
+        response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
@@ -828,7 +826,9 @@ class OpenAIChatModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
-            _continuous_usage_stats=bool(model_settings.get('openai_continuous_usage_stats')) if model_settings else False,
+            _continuous_usage_stats=bool(model_settings.get('openai_continuous_usage_stats'))
+            if model_settings
+            else False,
         )
 
     @property

@@ -4067,7 +4067,9 @@ def chunk_with_usage(
         created=1704067200,  # 2024-01-01
         model='gpt-4o-123',
         object='chat.completion.chunk',
-        usage=CompletionUsage(completion_tokens=completion_tokens, prompt_tokens=prompt_tokens, total_tokens=total_tokens),
+        usage=CompletionUsage(
+            completion_tokens=completion_tokens, prompt_tokens=prompt_tokens, total_tokens=total_tokens
+        ),
     )
 
 
@@ -4079,7 +4081,12 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
     """
     # Simulate cumulative usage: each chunk has higher tokens (cumulative, not incremental)
     stream = [
-        chunk_with_usage([ChoiceDelta(content='hello ', role='assistant')], completion_tokens=5, prompt_tokens=10, total_tokens=15),
+        chunk_with_usage(
+            [ChoiceDelta(content='hello ', role='assistant')],
+            completion_tokens=5,
+            prompt_tokens=10,
+            total_tokens=15,
+        ),
         chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=10, prompt_tokens=10, total_tokens=20),
         chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=15, prompt_tokens=10, total_tokens=25),
         chunk_with_usage([], finish_reason='stop', completion_tokens=15, prompt_tokens=10, total_tokens=25),
@@ -4088,7 +4095,8 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    async with agent.run_stream('', model_settings={'openai_continuous_usage_stats': True}) as result:
+    settings = cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True})
+    async with agent.run_stream('', model_settings=settings) as result:
         chunks = [c async for c in result.stream_text(debounce_by=None)]
         assert chunks == snapshot(['hello ', 'hello world', 'hello world!'])
 
@@ -4101,7 +4109,12 @@ async def test_stream_without_continuous_usage_stats_accumulates(allow_model_req
     """Test that without continuous_usage_stats, usage is accumulated (default behavior)."""
     # With default behavior, each chunk's usage is added together
     stream = [
-        chunk_with_usage([ChoiceDelta(content='hello ', role='assistant')], completion_tokens=5, prompt_tokens=10, total_tokens=15),
+        chunk_with_usage(
+            [ChoiceDelta(content='hello ', role='assistant')],
+            completion_tokens=5,
+            prompt_tokens=10,
+            total_tokens=15,
+        ),
         chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=5, prompt_tokens=0, total_tokens=5),
         chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=5, prompt_tokens=0, total_tokens=5),
         chunk_with_usage([], finish_reason='stop', completion_tokens=0, prompt_tokens=0, total_tokens=0),
@@ -4124,13 +4137,13 @@ def test_get_stream_options_with_continuous_usage_stats(allow_model_requests: No
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
     # Without continuous_usage_stats
-    options = m._get_stream_options(cast(OpenAIChatModelSettings, {}))
+    options = m._get_stream_options(cast(OpenAIChatModelSettings, {}))  # pyright: ignore[reportPrivateUsage]
     assert options == {'include_usage': True}
 
     # With continuous_usage_stats=False (explicit)
-    options = m._get_stream_options(cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': False}))
+    options = m._get_stream_options(cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': False}))  # pyright: ignore[reportPrivateUsage]
     assert options == {'include_usage': True}
 
     # With continuous_usage_stats=True
-    options = m._get_stream_options(cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True}))
+    options = m._get_stream_options(cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True}))  # pyright: ignore[reportPrivateUsage]
     assert options == {'include_usage': True, 'continuous_usage_stats': True}
