@@ -102,7 +102,7 @@ def _cpu_supports_llama_cpp() -> bool:
     flags = _cpu_flags()
     if flags is None:  # pragma: no cover
         return False
-    required = {'avx', 'avx2', 'fma', 'f16c'}
+    required = {'avx', 'avx2', 'fma', 'f16c', 'bmi1', 'bmi2'}
     return required.issubset(flags)
 
 
