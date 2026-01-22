@@ -695,12 +695,6 @@ class UploadedFile:
 
     _: KW_ONLY
 
-    media_type: str | None = None
-    """Optional media type hint for the file.
-
-    Required by some providers (e.g., Google) for certain file types.
-    """
-
     vendor_metadata: dict[str, Any] | None = None
     """Vendor-specific metadata for the file.
 
@@ -708,6 +702,10 @@ class UploadedFile:
     - `GoogleModel`: used as `video_metadata` for video files
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `vendor_metadata['detail']` is used as `detail` setting for images
     """
+
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
         compare=False, default=None
@@ -726,14 +724,28 @@ class UploadedFile:
         identifier: str | None = None,
         kind: Literal['uploaded-file'] = 'uploaded-file',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
         _identifier: str | None = None,
     ) -> None:
         self.file_id = file_id
         self.provider_name = provider_name
-        self.media_type = media_type
+        self._media_type = media_type or _media_type
         self.vendor_metadata = vendor_metadata
         self._identifier = identifier or _identifier
         self.kind = kind
+
+    @pydantic.computed_field
+    @property
+    def media_type(self) -> str | None:
+        """Return the media type of the file, inferred from `file_id` if not explicitly provided.
+
+        Required by some providers (e.g., Google) for certain file types.
+        """
+        if self._media_type:
+            return self._media_type
+        parsed = urlparse(self.file_id)
+        mime_type, _ = mimetypes.guess_type(parsed.path)
+        return mime_type
 
     @pydantic.computed_field
     @property

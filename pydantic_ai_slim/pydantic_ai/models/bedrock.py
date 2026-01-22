@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
-from mimetypes import guess_type
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
@@ -169,6 +168,15 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
+
+
+def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
+    """Parse an S3 URL into a Bedrock DocumentSourceTypeDef."""
+    parsed = urlparse(url)
+    s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+    if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+        s3_location['bucketOwner'] = bucket_owner
+    return {'s3Location': s3_location}
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -814,11 +822,7 @@ class BedrockConverseModel(Model):
                 elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
                     source: DocumentSourceTypeDef
                     if item.url.startswith('s3://'):
-                        parsed = urlparse(item.url)
-                        s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
-                        if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
-                            s3_location['bucketOwner'] = bucket_owner
-                        source = {'s3Location': s3_location}
+                        source = _parse_s3_source(item.url)
                     else:
                         downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
                         source = {'bytes': downloaded_item['data']}
@@ -867,18 +871,9 @@ class BedrockConverseModel(Model):
                         raise UserError(
                             f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
                         )
-                    parsed = urlparse(item.file_id)
-                    s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
-                    if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
-                        s3_location['bucketOwner'] = bucket_owner
-                    source: DocumentSourceTypeDef = {'s3Location': s3_location}
+                    source = _parse_s3_source(item.file_id)
 
-                    # Determine file type from media_type or extension
                     media_type = item.media_type
-                    if not media_type:
-                        # Try to infer from the URL path
-
-                        media_type, _ = guess_type(parsed.path)
                     if not media_type:
                         raise UserError(
                             'UploadedFile for Bedrock requires a media_type when the file extension is ambiguous.'
