@@ -735,7 +735,7 @@ def _process_response_from_parts(
     for part in parts:
         if 'text' in part:
             if part.get('thought'):
-                items.append(ThinkingPart(content=part['text']))
+                items.append(ThinkingPart(content=part['text'], id='thinking'))
             else:
                 items.append(TextPart(content=part['text']))
         elif 'function_call' in part:

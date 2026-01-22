@@ -1104,7 +1104,7 @@ def _process_response_from_parts(
             if len(part.text) == 0 and not provider_details:
                 continue
             if part.thought:
-                item = ThinkingPart(content=part.text)
+                item = ThinkingPart(content=part.text, id='thinking')
             else:
                 item = TextPart(content=part.text)
         elif part.function_call:

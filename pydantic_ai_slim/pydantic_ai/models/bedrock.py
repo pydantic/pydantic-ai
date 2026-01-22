@@ -403,6 +403,7 @@ class BedrockConverseModel(Model):
                                 content=reasoning_text['text'],
                                 signature=signature,
                                 provider_name=self.system if signature else None,
+                                id='thinking',
                             )
                         )
                 if text := item.get('text'):

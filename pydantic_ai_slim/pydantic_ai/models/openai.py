@@ -891,9 +891,15 @@ class OpenAIChatModel(Model):
             # shouldn't merge multiple texts into one unless you switch models between runs:
             if profile.openai_chat_send_back_thinking_parts == 'field':
                 message_param_dict = cast(dict[str, Any], message_param)
-                for field_name, content_list in self.thinkings.items():
-                    message_param_dict[field_name] = '\n\n'.join(content_list)
+                target_field = profile.openai_chat_thinking_field or 'reasoning_content'
+                # Combine multiple thinking IDs into their respective fields
+                combined_thinkings: dict[str, list[str]] = {}
+                for id_, content_list in self.thinkings.items():
+                    field_name = target_field if id_ in ('thinking', 'reasoning', 'reasoning_content') else id_
+                    combined_thinkings.setdefault(field_name, []).extend(content_list)
 
+                for field_name, combined_content_list in combined_thinkings.items():
+                    message_param_dict[field_name] = '\n\n'.join(combined_content_list)
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:

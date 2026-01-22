@@ -1001,7 +1001,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
+                parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr(), id='thinking')],
                 usage=RequestUsage(input_tokens=12, output_tokens=693),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
@@ -1031,7 +1031,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
+                parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr(), id='thinking')],
                 usage=RequestUsage(input_tokens=33, output_tokens=907),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
@@ -1069,6 +1069,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
+                        id='thinking',
                         signature=IsStr(),
                         provider_name='bedrock',
                     ),
@@ -1106,6 +1107,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
+                        id='thinking',
                         signature=IsStr(),
                         provider_name='bedrock',
                     ),
@@ -1442,6 +1444,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
+                        id='thinking',
                         signature=IsStr(),
                         provider_name='bedrock',
                     ),

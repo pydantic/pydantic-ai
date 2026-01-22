@@ -1463,7 +1463,8 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
 **Calculating the Simple**
 
 Okay, here we go. Someone's asking a pretty straightforward arithmetic question. It's really just a simple calculation. Nothing fancy, just plug in the numbers and get the result.  No need to overthink it. It's a quick win, a chance to flex some basic math muscles before getting into anything more complex. Just a matter of applying the right operation and moving on.
-"""
+""",
+                        id='thinking',
                     ),
                     TextPart(content='2 + 2 = 4'),
                 ],

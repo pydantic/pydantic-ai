@@ -2065,7 +2065,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), id='thinking'),
                     TextPart(
                         content=IsStr(),
                         provider_details={'thought_signature': IsStr()},
@@ -2104,7 +2104,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), id='thinking'),
                     TextPart(
                         content=IsStr(),
                         provider_details={'thought_signature': IsStr()},
@@ -2208,7 +2208,7 @@ async def test_google_model_thinking_part_from_other_model(
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), id='thinking'),
                     TextPart(
                         content=IsStr(),
                         provider_details={'thought_signature': IsStr()},
