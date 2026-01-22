@@ -1896,8 +1896,6 @@ async def test_tool_output_denied_chunk_emission():
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1908,7 +1906,6 @@ async def test_tool_output_denied_chunk_emission():
                     ToolCallPart(tool_name='delete_file', args={'path': 'test.txt'}, tool_call_id='delete_1'),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
