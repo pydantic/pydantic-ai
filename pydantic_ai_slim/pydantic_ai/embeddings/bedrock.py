@@ -384,24 +384,11 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
         else:
             truncate = 'NONE'
 
-        # Build text params based on input type
-        # Nova supports both direct text values and S3 URIs
-        if text.startswith('s3://'):
-            # S3 URI format: s3://bucket/key
-            text_params: dict[str, Any] = {
-                'source': {
-                    's3Location': {
-                        'uri': text,
-                    },
-                },
-                'truncationMode': truncate,
-            }
-        else:
-            # Direct text value
-            text_params = {
-                'value': text,
-                'truncationMode': truncate,
-            }
+        # Build text params
+        text_params: dict[str, Any] = {
+            'value': text,
+            'truncationMode': truncate,
+        }
 
         # Nova requires embeddingPurpose - default based on input_type
         # - queries default to GENERIC_RETRIEVAL (optimized for search)

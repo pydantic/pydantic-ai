@@ -523,19 +523,6 @@ embedder = Embedder(
 )
 ```
 
-Nova also supports S3 URIs as input for embedding files stored in S3:
-
-```python {title="bedrock_nova_s3.py" test="skip"}
-from pydantic_ai import Embedder
-
-embedder = Embedder('bedrock:amazon.nova-2-multimodal-embeddings-v1:0')
-
-
-async def main():
-    result = await embedder.embed_query('s3://pydantic-ai-test-bucket/hello-world.txt')
-    print(len(result.embeddings[0]))
-```
-
 #### Regional Prefixes (Cross-Region Inference)
 
 Bedrock supports cross-region inference using geographic prefixes like `us.`, `eu.`, or `apac.`:
