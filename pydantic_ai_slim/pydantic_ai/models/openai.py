@@ -890,8 +890,9 @@ class OpenAIChatModel(Model):
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
             if profile.openai_chat_send_back_thinking_parts == 'field':
+                message_param_dict = cast(dict[str, Any], message_param)
                 for field_name, content_list in self.thinkings.items():
-                    message_param[field_name] = '\n\n'.join(content_list)  # type: ignore
+                    message_param_dict[field_name] = '\n\n'.join(content_list)
 
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
