@@ -226,7 +226,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if checkpoint:
                 result = monty.MontySnapshot.load(checkpoint['checkpoint_dump'])
 
-            if not result:
+            if result is None:
                 prefix = _build_type_check_prefix(self._cached_signatures)
                 m.type_check(prefix_code=prefix)
                 result = m.start(limits=monty_limits)
@@ -267,9 +267,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 if override_args:
                     tool_kwargs = override_args
 
-            # NOTE: we intentionally do not propagate outer approval beyond a single call.
+            # NOTE: we intentionally do not propagate outer approval beyond a single call, approval was for one call
             # When resuming from checkpoint, pass only the inner tool's original metadata
-            # to avoid leaking code_mode's checkpoint data into the inner tool's context.
+            # to avoid leaking code_mode's checkpoint data into the inner tool's context for no reason.
             inner_metadata = ctx.tool_call_metadata.get('original_metadata') if checkpoint else None
             inner_ctx = replace(ctx, tool_name=tool_name, tool_call_approved=next_call_approved, tool_call_metadata=inner_metadata)
             next_call_approved = False
@@ -287,8 +287,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     tool_return_value = await super().call_tool(tool_name, tool_kwargs, inner_ctx, original_tool)
             except ApprovalRequired as e:
                 # The inner tool needs approval - dump Monty state into the metadata and re-raise.
-                # ToolApproved.override_args cannot affect this inner call without applying
-                # overrides to the checkpointed tool_args before resuming.
                 # We keep 'original_metadata' separate to avoid key collisions when passing
                 # metadata back to the inner tool on resume.
                 # '_approval_call' tells the agent graph to surface the inner tool name/args
