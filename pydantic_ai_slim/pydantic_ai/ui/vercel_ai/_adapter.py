@@ -109,16 +109,20 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError:
-                            media_type_prefix = part.media_type.split('/', 1)[0]
-                            match media_type_prefix:
-                                case 'image':
-                                    file = ImageUrl(url=part.url, media_type=part.media_type)
-                                case 'video':
-                                    file = VideoUrl(url=part.url, media_type=part.media_type)
-                                case 'audio':
-                                    file = AudioUrl(url=part.url, media_type=part.media_type)
-                                case _:
-                                    file = DocumentUrl(url=part.url, media_type=part.media_type)
+                            uploaded_file = _uploaded_file_from_uri(part.url, part.media_type)
+                            if uploaded_file is not None:
+                                file = uploaded_file
+                            else:
+                                media_type_prefix = part.media_type.split('/', 1)[0]
+                                match media_type_prefix:
+                                    case 'image':
+                                        file = ImageUrl(url=part.url, media_type=part.media_type)
+                                    case 'video':
+                                        file = VideoUrl(url=part.url, media_type=part.media_type)
+                                    case 'audio':
+                                        file = AudioUrl(url=part.url, media_type=part.media_type)
+                                    case _:
+                                        file = DocumentUrl(url=part.url, media_type=part.media_type)
                         user_prompt_content.append(file)
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
@@ -428,8 +432,8 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
             elif isinstance(item, UploadedFile):
-                # UploadedFile references provider-hosted files, skip for UI conversion as we don't have the URL
-                pass
+                media_type = item.media_type or 'application/octet-stream'
+                ui_parts.append(FileUIPart(url=_uploaded_file_uri(item), media_type=media_type))
             elif isinstance(item, CachePoint):
                 # CachePoint is metadata for prompt caching, skip for UI conversion
                 pass
@@ -437,3 +441,23 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 assert_never(item)
 
     return ui_parts
+
+
+_UPLOADED_FILE_SCHEME_PREFIX = 'x-'
+_UPLOADED_FILE_SCHEME_SUFFIX = '-file-id'
+
+
+def _uploaded_file_uri(item: UploadedFile) -> str:
+    return f'{_UPLOADED_FILE_SCHEME_PREFIX}{item.provider_name}{_UPLOADED_FILE_SCHEME_SUFFIX}:{item.file_id}'
+
+
+def _uploaded_file_from_uri(url: str, media_type: str) -> UploadedFile | None:
+    scheme, separator, rest = url.partition(':')
+    if not separator:
+        return None
+    if not (scheme.startswith(_UPLOADED_FILE_SCHEME_PREFIX) and scheme.endswith(_UPLOADED_FILE_SCHEME_SUFFIX)):
+        return None
+    provider_name = scheme[len(_UPLOADED_FILE_SCHEME_PREFIX) : -len(_UPLOADED_FILE_SCHEME_SUFFIX)]
+    if not provider_name:
+        return None
+    return UploadedFile(file_id=rest, provider_name=provider_name, media_type=media_type)

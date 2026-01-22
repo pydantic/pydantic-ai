@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -2759,6 +2760,57 @@ async def test_convert_user_prompt_part_only_urls():
         [
             FileUIPart(media_type='image/png', url='https://example.com/img.png'),
             FileUIPart(media_type='video/mp4', url='https://example.com/vid.mp4'),
+        ]
+    )
+
+
+async def test_convert_user_prompt_part_uploaded_file():
+    """Test converting a user prompt with UploadedFile content."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(
+        content=[UploadedFile(file_id='file-abc123', provider_name='openai', media_type='application/pdf')]
+    )
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [
+            FileUIPart(media_type='application/pdf', url='x-openai-file-id:file-abc123'),
+        ]
+    )
+
+
+async def test_adapter_load_messages_uploaded_file():
+    """Test loading UploadedFile from custom URI scheme."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='application/pdf',
+                    url='x-openai-file-id:file-abc123',
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            UploadedFile(
+                                file_id='file-abc123',
+                                provider_name='openai',
+                                media_type='application/pdf',
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
         ]
     )
 
