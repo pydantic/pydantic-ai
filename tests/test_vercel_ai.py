@@ -2216,8 +2216,6 @@ async def test_tool_output_denied_chunk_emission():
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2228,7 +2226,6 @@ async def test_tool_output_denied_chunk_emission():
                     ToolCallPart(tool_name='delete_file', args={'path': 'test.txt'}, tool_call_id='delete_1'),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2937,9 +2934,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                         'state': 'input-available',
                         'input': '{"query":"orphan query"}',
                         'provider_executed': True,
-                        'call_provider_metadata': {
-                            'pydantic_ai': {'provider_name': 'openai'}
-                        },
+                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
                         'approval': None,
                     }
                 ],
@@ -3828,6 +3823,7 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                             }
                         },
                         'preliminary': None,
+                        'approval': None,
                     }
                 ],
             },
@@ -4037,6 +4033,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                             }
                         },
                         'preliminary': None,
+                        'approval': None,
                     }
                 ],
             },
@@ -4111,6 +4108,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                                 },
                             }
                         },
+                        'approval': None,
                     }
                 ],
             },
@@ -4369,6 +4367,7 @@ Fix the errors and try again.\
                                 'provider_details': {'attempt': 1},
                             }
                         },
+                        'approval': None,
                     }
                 ],
             },
