@@ -1073,8 +1073,8 @@ class AnthropicModel(Model):
         else:
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
-    @staticmethod
     async def _map_user_prompt(  # noqa: C901
+        self,
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
@@ -1116,7 +1116,7 @@ class AnthropicModel(Model):
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
                 elif isinstance(item, UploadedFile):
                     # Verify provider matches
-                    if item.provider_name != 'anthropic':
+                    if item.provider_name != self.system:
                         raise UserError(
                             f'UploadedFile with provider_name={item.provider_name!r} cannot be used with AnthropicModel. '
                             f'Expected provider_name to be "anthropic"'

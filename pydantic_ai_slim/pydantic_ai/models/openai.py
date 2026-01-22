@@ -1983,8 +1983,7 @@ class OpenAIResponsesModel(Model):
             response_format_param['strict'] = o.strict
         return response_format_param
 
-    @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
+    async def _map_user_prompt(self, part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
@@ -2060,7 +2059,7 @@ class OpenAIResponsesModel(Model):
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 elif isinstance(item, UploadedFile):
                     # Verify provider matches
-                    if item.provider_name != 'openai':
+                    if item.provider_name != self.system:
                         raise UserError(
                             f'UploadedFile with provider_name={item.provider_name!r} cannot be used with OpenAIResponsesModel. '
                             f'Expected provider_name to be "openai".'

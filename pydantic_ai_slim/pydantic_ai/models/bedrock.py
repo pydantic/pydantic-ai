@@ -68,10 +68,8 @@ if TYPE_CHECKING:
         ConverseStreamOutputTypeDef,
         ConverseStreamResponseTypeDef,
         CountTokensRequestTypeDef,
-        DocumentBlockTypeDef,
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
-        ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
         MessageUnionTypeDef,
         PerformanceConfigurationTypeDef,
@@ -86,8 +84,30 @@ if TYPE_CHECKING:
         ToolSpecificationTypeDef,
         ToolTypeDef,
         ToolUseBlockOutputTypeDef,
-        VideoBlockTypeDef,
     )
+
+
+_SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
+_SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+_SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+
+
+def _make_image_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+    if format not in _SUPPORTED_IMAGE_FORMATS:
+        raise UserError(f'Unsupported image format: {format}')
+    return {'image': {'format': format, 'source': source}}
+
+
+def _make_video_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+    if format not in _SUPPORTED_VIDEO_FORMATS:
+        raise UserError(f'Unsupported video format: {format}')
+    return {'video': {'format': format, 'source': source}}
+
+
+def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+    if format not in _SUPPORTED_DOCUMENT_FORMATS:
+        raise UserError(f'Unsupported document format: {format}')
+    return {'document': {'name': name, 'format': format, 'source': source}}
 
 
 LatestBedrockModelNames = Literal[
@@ -792,8 +812,8 @@ class BedrockConverseModel(Model):
             return None
         return content
 
-    @staticmethod
     async def _map_user_prompt(  # noqa: C901
+        self,
         part: UserPromptPart,
         document_count: Iterator[int],
         supports_prompt_caching: bool,
@@ -807,20 +827,16 @@ class BedrockConverseModel(Model):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
                     format = item.format
+                    source: DocumentSourceTypeDef = {'bytes': item.data}
                     if item.is_document:
-                        name = f'Document {next(document_count)}'
-                        assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
-                        content.append({'document': {'name': name, 'format': format, 'source': {'bytes': item.data}}})
+                        content.append(_make_document_block(f'Document {next(document_count)}', format, source))
                     elif item.is_image:
-                        assert format in ('jpeg', 'png', 'gif', 'webp')
-                        content.append({'image': {'format': format, 'source': {'bytes': item.data}}})
+                        content.append(_make_image_block(format, source))
                     elif item.is_video:
-                        assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
-                        content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
+                        content.append(_make_video_block(format, source))
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
                 elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
-                    source: DocumentSourceTypeDef
                     if item.url.startswith('s3://'):
                         source = _parse_s3_source(item.url)
                     else:
@@ -828,40 +844,16 @@ class BedrockConverseModel(Model):
                         source = {'bytes': downloaded_item['data']}
 
                     if item.kind == 'image-url':
-                        format = item.media_type.split('/')[1]
-                        assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'image': image})
-
+                        content.append(_make_image_block(item.media_type.split('/')[1], source))
                     elif item.kind == 'document-url':
-                        name = f'Document {next(document_count)}'
-                        document: DocumentBlockTypeDef = {
-                            'name': name,
-                            'format': item.format,
-                            'source': source,
-                        }
-                        content.append({'document': document})
-
+                        content.append(_make_document_block(f'Document {next(document_count)}', item.format, source))
                     elif item.kind == 'video-url':  # pragma: no branch
-                        format = item.media_type.split('/')[1]
-                        assert format in (
-                            'mkv',
-                            'mov',
-                            'mp4',
-                            'webm',
-                            'flv',
-                            'mpeg',
-                            'mpg',
-                            'wmv',
-                            'three_gp',
-                        ), f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'video': video})
+                        content.append(_make_video_block(item.media_type.split('/')[1], source))
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, UploadedFile):
                     # Verify provider matches
-                    if item.provider_name != 'bedrock':
+                    if item.provider_name != self.system:
                         raise UserError(
                             f'UploadedFile with provider_name={item.provider_name!r} cannot be used with BedrockConverseModel. '
                             f'Expected provider_name to be "bedrock".'
@@ -880,35 +872,17 @@ class BedrockConverseModel(Model):
                         )
 
                     if media_type.startswith('image/'):
-                        format = media_type.split('/')[1]
-                        assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'image': image})
+                        content.append(_make_image_block(media_type.split('/')[1], source))
                     elif media_type.startswith('video/'):
                         format = _video_format_lookup.get(media_type)
-                        assert format in (
-                            'mkv',
-                            'mov',
-                            'mp4',
-                            'webm',
-                            'flv',
-                            'mpeg',
-                            'mpg',
-                            'wmv',
-                            'three_gp',
-                        ), f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'video': video})
+                        if format is None:
+                            raise UserError(f'Unsupported video media type for Bedrock UploadedFile: {media_type}')
+                        content.append(_make_video_block(format, source))
                     else:
                         format = _document_format_lookup.get(media_type)
                         if format is None:
                             raise UserError(f'Unsupported media type for Bedrock UploadedFile: {media_type}')
-                        document: DocumentBlockTypeDef = {
-                            'format': format,
-                            'name': item.identifier,
-                            'source': source,
-                        }
-                        content.append({'document': document})
+                        content.append(_make_document_block(item.identifier, format, source))
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
