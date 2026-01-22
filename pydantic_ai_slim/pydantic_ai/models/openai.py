@@ -896,7 +896,7 @@ class OpenAIChatModel(Model):
                         field_contents.setdefault(field_name, []).append(content)
                     for field_name, contents in field_contents.items():
                         message_param[field_name] = '\n\n'.join(contents)
-                elif profile.openai_chat_send_back_thinking_parts == 'field':
+                elif profile.openai_chat_send_back_thinking_parts == 'field':  # pragma: no branch
                     # Validated in OpenAIModelProfile.__post_init__, cast for type checker
                     field = cast(str, profile.openai_chat_thinking_field)
                     message_param[field] = '\n\n'.join(content for _, content in self.thinkings)
