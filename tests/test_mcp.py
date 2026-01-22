@@ -2254,6 +2254,17 @@ async def test_custom_http_client_not_closed():
     assert not custom_http_client.is_closed
 
 
+async def test_http_client_mutually_exclusive_with_headers():
+    server = MCPServerStreamableHTTP(
+        url='https://example.com/mcp',
+        http_client=cached_async_http_client(),
+        headers={'Authorization': 'Bearer token'},
+    )
+    with pytest.raises(ValueError, match='`http_client` is mutually exclusive with `headers`'):
+        async with server:
+            pass
+
+
 # ============================================================================
 # Tool and Resource Caching Tests
 # ============================================================================
