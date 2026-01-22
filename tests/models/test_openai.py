@@ -4104,11 +4104,12 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
             usage_at_each_step.append(response.usage)
 
         # Each step should have the cumulative usage from that chunk (not accumulated)
-        # chunk 1: 5 output, chunk 2: 10 output, chunk 3: 15 output, chunk 4: 15 output
+        # The stream emits responses for each content chunk plus final
         assert usage_at_each_step == snapshot(
             [
                 RequestUsage(input_tokens=10, output_tokens=5),
                 RequestUsage(input_tokens=10, output_tokens=10),
+                RequestUsage(input_tokens=10, output_tokens=15),
                 RequestUsage(input_tokens=10, output_tokens=15),
                 RequestUsage(input_tokens=10, output_tokens=15),
             ]
