@@ -4100,7 +4100,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
     async with agent.run_stream('', model_settings=settings) as result:
         # Verify usage is updated at each step via stream_responses
         usage_at_each_step: list[RequestUsage] = []
-        async for response, is_last in result.stream_responses(debounce_by=None):
+        async for response, _ in result.stream_responses(debounce_by=None):
             usage_at_each_step.append(response.usage)
 
         # Each step should have the cumulative usage from that chunk (not accumulated)
