@@ -3131,61 +3131,6 @@ def test_binary_content_serializes_to_base64():
     assert deserialized['kind'] == 'binary'
 
 
-def test_rehydrate_binary_content_from_dict():
-    """Test that a dict with kind='binary' is rehydrated back to BinaryContent."""
-    binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-    # Simulate what Temporal deserialization produces
-    dict_result = {
-        'data': base64.b64encode(binary_data).decode('ascii'),
-        'media_type': 'image/png',
-        'identifier': 'test-id',
-        'vendor_metadata': None,
-        'kind': 'binary',
-    }
-
-    result = rehydrate_binary_content(dict_result)
-
-    assert result == snapshot(BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png', _identifier='test-id'))
-
-
-def test_rehydrate_binary_content_nested_in_dict():
-    """Test that nested BinaryContent in dicts is recursively rehydrated."""
-    binary_data = bytes([0x89, 0x50, 0x4E, 0x47])
-    nested = {
-        'image': {
-            'data': base64.b64encode(binary_data).decode('ascii'),
-            'media_type': 'image/png',
-            'kind': 'binary',
-        },
-        'other': 'value',
-    }
-
-    result = rehydrate_binary_content(nested)
-
-    assert isinstance(result['image'], BinaryContent)
-    assert result['image'].data == binary_data
-    assert result['other'] == 'value'
-
-
-def test_rehydrate_binary_content_nested_in_list():
-    """Test that BinaryContent in lists is recursively rehydrated."""
-    binary_data = bytes([0x89, 0x50, 0x4E, 0x47])
-    nested = [
-        {
-            'data': base64.b64encode(binary_data).decode('ascii'),
-            'media_type': 'image/png',
-            'kind': 'binary',
-        },
-        'plain_string',
-    ]
-
-    result = rehydrate_binary_content(nested)
-
-    assert isinstance(result[0], BinaryContent)
-    assert result[0].data == binary_data
-    assert result[1] == 'plain_string'
-
-
 def test_binary_content_serialization_round_trip():
     """Test full round-trip: BinaryContent -> to_json -> dict -> BinaryContent."""
     # PNG magic bytes - non-UTF8 binary data that would fail direct JSON serialization

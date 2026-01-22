@@ -238,7 +238,7 @@ async def test_image_output_json_schema():
         {
             'description': "Binary content that's guaranteed to be an image.",
             'properties': {
-                'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                 'media_type': {
                     'anyOf': [
                         {
@@ -305,7 +305,7 @@ distinguish multiple files.\
                 {
                     'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
-                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
                                 {
@@ -443,7 +443,7 @@ async def test_deferred_output_json_schema():
                 {
                     'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
-                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
                                 {

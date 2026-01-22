@@ -813,7 +813,7 @@ class BaseToolReturnPart:
     tool_name: str
     """The name of the "tool" was called."""
 
-    content: BinaryContent | list[BinaryContent | Any] | dict[str, Any] | Any
+    content: BinaryContent | FileUrl | list[BinaryContent | FileUrl | Any] | dict[str, Any] | Any
     """The return value."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
