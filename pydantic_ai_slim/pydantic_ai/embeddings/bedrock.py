@@ -362,7 +362,7 @@ class CohereEmbeddingHandler(BedrockEmbeddingHandler):
                 # Direct float embeddings response
                 embeddings = cast(list[Sequence[float]], raw_embeddings)
 
-        if embeddings is None:
+        if embeddings is None:  # pragma: no cover
             raise UnexpectedModelBehavior(
                 'The Cohere Bedrock embeddings response did not have an `embeddings` field holding a list of floats',
                 str(response_body),
@@ -428,7 +428,7 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
     ) -> tuple[list[Sequence[float]], str | None]:
         # Nova returns embeddings in format: {"embeddings": [{"embeddingType": "TEXT", "embedding": [...]}]}
         embeddings_list = response_body.get('embeddings', [])
-        if not embeddings_list:
+        if not embeddings_list:  # pragma: no cover
             raise UnexpectedModelBehavior(
                 'The Nova Bedrock embeddings response did not have an `embeddings` field',
                 str(response_body),
@@ -436,7 +436,7 @@ class NovaEmbeddingHandler(BedrockEmbeddingHandler):
 
         # Extract the embedding vector from the first item
         embedding = embeddings_list[0].get('embedding')
-        if embedding is None:
+        if embedding is None:  # pragma: no cover
             raise UnexpectedModelBehavior(
                 'The Nova Bedrock embeddings response did not have an `embedding` field in the first item',
                 str(response_body),

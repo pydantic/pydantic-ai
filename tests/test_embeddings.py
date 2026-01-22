@@ -610,6 +610,24 @@ class TestBedrock:
             )
         )
 
+    async def test_titan_v2_with_normalize_true(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 with explicit normalize=True setting."""
+
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_titan_normalize=True))
+        result = await embedder.embed_query('Test explicit normalization')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Test explicit normalization'],
+                input_type='query',
+                model_name='amazon.titan-embed-text-v2:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+            )
+        )
+
     async def test_titan_v2_multiple_texts(self, bedrock_provider: BedrockProvider):
         """Test Titan V2 document embedding (multiple texts, sequential requests)."""
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
@@ -822,6 +840,45 @@ class TestBedrock:
             )
         )
 
+    async def test_cohere_v4_with_truncate_start(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with truncate START setting."""
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='START'))
+        result = await embedder.embed_query('Test truncation start setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test truncation start setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_truncate_priority(self, bedrock_provider: BedrockProvider):
+        """Test that bedrock_cohere_truncate takes precedence over base truncate."""
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        # Both settings provided - model-specific should win (START over END from truncate=True)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='START', truncate=True))
+        result = await embedder.embed_query('Test truncate priority')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test truncate priority'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=3),
+                provider_response_id=IsStr(),
+            )
+        )
+
     async def test_cohere_v4_batch_documents(self, bedrock_provider: BedrockProvider):
         """Test Cohere V4 batch embedding (multiple texts in single request)."""
         model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
@@ -896,6 +953,27 @@ class TestBedrock:
                 provider_name='bedrock',
                 timestamp=IsDatetime(),
                 usage=RequestUsage(input_tokens=19),
+            )
+        )
+
+    async def test_nova_with_truncate_start(self, bedrock_provider: BedrockProvider):
+        """Test Nova with truncate START setting."""
+
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(
+            model,
+            settings=BedrockEmbeddingSettings(bedrock_nova_truncate='START'),
+        )
+        result = await embedder.embed_query('Test Nova truncate start')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Test Nova truncate start'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=20),
             )
         )
 
