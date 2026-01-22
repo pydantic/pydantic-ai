@@ -93,7 +93,7 @@ from ._local import (
     FileBasedSkillScript,
     LocalSkillScriptExecutor,
 )
-from ._types import Skill, SkillResource, SkillScript
+from ._types import Skill, SkillResource, SkillScript, SkillWrapper, normalize_skill_name
 
 # SkillsToolset is imported from toolsets module in __all__ for convenience
 # but not imported here to avoid circular dependencies
@@ -105,6 +105,8 @@ __all__ = (
     'Skill',
     'SkillResource',
     'SkillScript',
+    'SkillWrapper',
+    'normalize_skill_name',
     # Filesystem implementations
     'FileBasedSkillResource',
     'FileBasedSkillScript',

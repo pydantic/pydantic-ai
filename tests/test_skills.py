@@ -1626,3 +1626,390 @@ async def test_toolset_combined_mode_tools(sample_skills_dir: Path) -> None:
     # Test load_skill for directory skill
     result = await toolset.tools['load_skill'].function(ctx, skill_name='skill-one')
     assert 'Skill One' in result
+
+
+# ==================== Decorator-based Skills Tests ====================
+
+
+def test_skill_decorator_basic() -> None:
+    """Test basic decorator usage with default name derivation."""
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill
+    def data_analyzer() -> str:
+        """Analyze data from various sources."""
+        return 'Use this skill for data analysis tasks.'
+
+    # Check skill was registered
+    assert 'data-analyzer' in toolset.skills
+    skill = toolset.skills['data-analyzer']
+
+    # Check properties
+    assert skill.name == 'data-analyzer'
+    assert skill.description == 'Analyze data from various sources.'
+    assert skill.content == 'Use this skill for data analysis tasks.'
+    assert skill.uri is None  # Programmatic skills have no URI
+
+
+def test_skill_decorator_with_name_override() -> None:
+    """Test decorator with explicit name parameter."""
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill(name='custom-skill-name')
+    def my_function() -> str:
+        """Custom skill."""
+        return 'Custom content.'
+
+    # Check skill uses provided name, not function name
+    assert 'custom-skill-name' in toolset.skills
+    assert 'my-function' not in toolset.skills
+    assert 'my_function' not in toolset.skills
+
+    skill = toolset.skills['custom-skill-name']
+    assert skill.name == 'custom-skill-name'
+    assert skill.description == 'Custom skill.'
+
+
+def test_skill_decorator_name_normalization() -> None:
+    """Test that function names are properly normalized."""
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill
+    def my_cool_skill() -> str:
+        """A cool skill."""
+        return 'Cool content.'
+
+    # Underscores should be replaced with hyphens
+    assert 'my-cool-skill' in toolset.skills
+    assert 'my_cool_skill' not in toolset.skills
+
+
+def test_skill_decorator_invalid_name() -> None:
+    """Test that invalid skill names raise SkillValidationError."""
+    toolset = SkillsToolset(skills=[])
+
+    # Names with special characters should raise error
+    with pytest.raises(SkillValidationError, match='invalid'):
+
+        @toolset.skill(name='invalid name with spaces')
+        def my_skill() -> str:
+            """Invalid skill."""
+            return 'Content'
+
+
+def test_skill_decorator_with_metadata() -> None:
+    """Test decorator with metadata parameter."""
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill(metadata={'version': '1.0', 'author': 'Test'})
+    def test_skill() -> str:
+        """Test skill."""
+        return 'Content.'
+
+    skill = toolset.skills['test-skill']
+    assert skill.metadata == {'version': '1.0', 'author': 'Test'}
+
+
+def test_skill_decorator_with_license_and_compatibility() -> None:
+    """Test decorator with license and compatibility parameters."""
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill(
+        license='Apache-2.0',
+        compatibility='Requires Python 3.10+ and pandas',
+    )
+    def licensed_skill() -> str:
+        """Licensed skill."""
+        return 'Content.'
+
+    skill = toolset.skills['licensed-skill']
+    assert skill.license == 'Apache-2.0'
+    assert skill.compatibility == 'Requires Python 3.10+ and pandas'
+
+
+def test_skill_decorator_with_description_override() -> None:
+    """Test that explicit description overrides docstring."""
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill(description='Custom description')
+    def my_skill() -> str:
+        """Docstring description."""
+        return 'Content.'
+
+    skill = toolset.skills['my-skill']
+    assert skill.description == 'Custom description'
+
+
+async def test_skill_decorator_with_resource() -> None:
+    """Test attaching resources to decorator-defined skills."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MyDeps:
+        value: str
+
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill
+    def data_skill() -> str:
+        """Data skill."""
+        return 'Use for data operations.'
+
+    @data_skill.resource
+    def get_static() -> str:
+        """Get static data."""
+        return 'Static resource content'
+
+    @data_skill.resource
+    async def get_dynamic(ctx: RunContext[MyDeps]) -> str:
+        """Get dynamic data."""
+        return f'Dynamic: {ctx.deps.value}'
+
+    # Check skill has resources
+    skill = toolset.skills['data-skill']
+    assert len(skill.resources) == 2
+
+    # Check resource names
+    resource_names = {r.name for r in skill.resources}
+    assert resource_names == {'get_static', 'get_dynamic'}
+
+    # Test loading static resource
+    static_resource = next(r for r in skill.resources if r.name == 'get_static')
+    result = await static_resource.load(ctx=None, args=None)
+    assert result == 'Static resource content'
+
+    # Test loading dynamic resource
+    dynamic_resource = next(r for r in skill.resources if r.name == 'get_dynamic')
+    deps = MyDeps(value='test123')
+    ctx = InternalRunContext(deps=deps, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    result = await dynamic_resource.load(ctx=ctx, args=None)
+    assert result == 'Dynamic: test123'
+
+
+async def test_skill_decorator_with_script() -> None:
+    """Test attaching scripts to decorator-defined skills."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MyDeps:
+        multiplier: int
+
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill
+    def calc_skill() -> str:
+        """Calculation skill."""
+        return 'Use for calculations.'
+
+    @calc_skill.script
+    async def multiply(ctx: RunContext[MyDeps], value: int) -> str:
+        """Multiply a value."""
+        result = ctx.deps.multiplier * value
+        return f'Result: {result}'
+
+    # Check skill has script
+    skill = toolset.skills['calc-skill']
+    assert len(skill.scripts) == 1
+    assert skill.scripts[0].name == 'multiply'
+
+    # Test running script
+    deps = MyDeps(multiplier=5)
+    ctx = InternalRunContext(deps=deps, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    result = await skill.scripts[0].run(ctx=ctx, args={'value': 7})
+    assert result == 'Result: 35'
+
+
+async def test_skill_decorator_integration_with_agent() -> None:
+    """Test that decorator-defined skills integrate properly with agents."""
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill
+    def test_skill() -> str:
+        """Test skill for integration."""
+        return 'Integration test content.'
+
+    @test_skill.resource
+    def get_info() -> str:
+        """Get information."""
+        return 'Resource info'
+
+    # Create agent with the toolset
+    agent = Agent(model=TestModel(), toolsets=[toolset])
+
+    # Check that skill tools are available
+    tool_names = {tool.name for tool in toolset.tools.values()}
+    assert 'list_skills' in tool_names
+    assert 'load_skill' in tool_names
+    assert 'read_skill_resource' in tool_names
+
+    # Get instructions - should include the decorator-defined skill
+    ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    instructions = await toolset.get_instructions(ctx)
+    assert instructions is not None
+    assert 'test-skill' in instructions
+    assert 'Test skill for integration' in instructions
+
+
+def test_skill_decorator_duplicate_warning() -> None:
+    """Test that duplicate skill names produce warnings."""
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill
+    def my_skill() -> str:
+        """First skill."""
+        return 'First content.'
+
+    # Registering another skill with the same derived name should warn
+    with pytest.warns(UserWarning, match='Duplicate skill'):
+
+        @toolset.skill
+        def my_skill() -> str:  # Same function name
+            """Second skill."""
+            return 'Second content.'
+
+    # Last one should win
+    assert toolset.skills['my-skill'].content == 'Second content.'
+
+
+def test_skill_decorator_with_initial_resources() -> None:
+    """Test providing initial resources via decorator parameter."""
+    toolset = SkillsToolset(skills=[])
+
+    initial_resource = SkillResource(
+        name='initial',
+        description='Initial resource',
+        content='Initial content',
+    )
+
+    @toolset.skill(resources=[initial_resource])
+    def my_skill() -> str:
+        """Skill with initial resources."""
+        return 'Content.'
+
+    skill = toolset.skills['my-skill']
+    assert len(skill.resources) == 1
+    assert skill.resources[0].name == 'initial'
+
+    # Can still add more resources via decorator
+    @my_skill.resource
+    def additional() -> str:
+        """Additional resource."""
+        return 'More content'
+
+    skill = toolset.skills['my-skill']
+    assert len(skill.resources) == 2
+    resource_names = {r.name for r in skill.resources}
+    assert resource_names == {'initial', 'additional'}
+
+
+def test_skill_decorator_resource_with_custom_name() -> None:
+    """Test resource decorator with custom name parameter."""
+    toolset = SkillsToolset(skills=[])
+
+    @toolset.skill
+    def my_skill() -> str:
+        """Test skill."""
+        return 'Content.'
+
+    @my_skill.resource(name='custom-resource-name')
+    def my_function() -> str:
+        """Resource function."""
+        return 'Resource content'
+
+    skill = toolset.skills['my-skill']
+    assert len(skill.resources) == 1
+    assert skill.resources[0].name == 'custom-resource-name'
+
+
+def test_normalize_skill_name_function() -> None:
+    """Test the normalize_skill_name function directly."""
+    from pydantic_ai.skills._types import normalize_skill_name
+
+    # Test basic normalization
+    assert normalize_skill_name('data_analyzer') == 'data-analyzer'
+    assert normalize_skill_name('my_cool_skill') == 'my-cool-skill'
+    assert normalize_skill_name('simple') == 'simple'
+    assert normalize_skill_name('with_multiple_words') == 'with-multiple-words'
+
+    # Test lowercase conversion
+    assert normalize_skill_name('MixedCase') == 'mixedcase'
+    assert normalize_skill_name('UPPERCASE') == 'uppercase'
+
+    # Test that already-hyphenated names work
+    assert normalize_skill_name('already-hyphenated') == 'already-hyphenated'
+
+    # Test invalid names raise errors
+    with pytest.raises(SkillValidationError, match='invalid'):
+        normalize_skill_name('has spaces')
+
+    with pytest.raises(SkillValidationError, match='invalid'):
+        normalize_skill_name('has-special-chars!')
+
+    with pytest.raises(SkillValidationError, match='invalid'):
+        normalize_skill_name('-starts-with-hyphen')
+
+    with pytest.raises(SkillValidationError, match='invalid'):
+        normalize_skill_name('ends-with-hyphen-')
+
+    # Test length validation
+    with pytest.raises(SkillValidationError, match='exceeds 64 characters'):
+        normalize_skill_name('a' * 100)
+
+
+def test_skill_wrapper_to_skill_conversion() -> None:
+    """Test that SkillWrapper properly converts to Skill dataclass."""
+    from pydantic_ai.skills import SkillWrapper
+
+    def content_func() -> str:
+        return 'Skill content here.'
+
+    wrapper = SkillWrapper(
+        function=content_func,
+        name='test-skill',
+        description='Test description',
+        license='MIT',
+        compatibility='Python 3.10+',
+        metadata={'version': '1.0'},
+        resources=[],
+        scripts=[],
+    )
+
+    skill = wrapper.to_skill()
+
+    # Check all fields are properly transferred
+    assert skill.name == 'test-skill'
+    assert skill.description == 'Test description'
+    assert skill.content == 'Skill content here.'
+    assert skill.license == 'MIT'
+    assert skill.compatibility == 'Python 3.10+'
+    assert skill.metadata == {'version': '1.0'}
+    assert skill.uri is None
+    assert skill.resources == []
+    assert skill.scripts == []
+
+
+async def test_skill_decorator_combined_with_directory_skills(sample_skills_dir: Path) -> None:
+    """Test that decorator-defined skills work alongside directory-based skills."""
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+
+    # Add a decorator-defined skill
+    @toolset.skill
+    def programmatic_skill() -> str:
+        """Programmatic skill."""
+        return 'Programmatic content.'
+
+    # Check both types of skills are present
+    assert 'skill-one' in toolset.skills  # From directory
+    assert 'skill-two' in toolset.skills  # From directory
+    assert 'programmatic-skill' in toolset.skills  # Decorator-defined
+
+    # Check they all work
+    ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+
+    # Test directory skill
+    result = await toolset.tools['load_skill'].function(ctx, skill_name='skill-one')
+    assert 'Skill One' in result
+
+    # Test decorator skill
+    result = await toolset.tools['load_skill'].function(ctx, skill_name='programmatic-skill')
+    assert 'Programmatic content' in result

@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import json
 import warnings
+from collections.abc import Callable
+from inspect import signature as get_signature
 from pathlib import Path
 from typing import Any
 
+from .._griffe import doc_descriptions
 from .._run_context import RunContext
-from ..skills import Skill, SkillResource, SkillScript, SkillsDirectory
-from ..skills._exceptions import SkillNotFoundError, SkillResourceNotFoundError
+from ..skills import Skill, SkillResource, SkillScript, SkillsDirectory, SkillWrapper, normalize_skill_name
+from ..skills._exceptions import SkillNotFoundError, SkillResourceNotFoundError, SkillValidationError
+from ..skills._types import _SKILL_NAME_PATTERN
 from .function import FunctionToolset
 
 # Default instruction template for skills system prompt
@@ -183,13 +187,7 @@ class SkillsToolset(FunctionToolset):
         # Load programmatic skills first
         if skills is not None:
             for skill in skills:
-                if skill.name in self._skills:
-                    warnings.warn(
-                        f"Duplicate skill '{skill.name}' found. Overriding previous occurrence.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                self._skills[skill.name] = skill
+                self._register_skill(skill)
 
         # Load directory-based skills
         if directories is not None:
@@ -521,3 +519,136 @@ class SkillsToolset(FunctionToolset):
 
         # Format template with skills list
         return template.format(skills_list=skills_list)
+
+    def skill(
+        self,
+        func: Callable[[], str] | None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        license: str | None = None,
+        compatibility: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        resources: list[SkillResource] | None = None,
+        scripts: list[SkillScript] | None = None,
+    ) -> Any:
+        """Decorator to define a skill using a function.
+
+        The decorated function should return a string containing the skill's instructions/content.
+        The skill name is derived from the function name (underscores replaced with hyphens)
+        unless explicitly provided via the `name` parameter.
+
+        Example:
+            ```python
+            from pydantic_ai import RunContext
+            from pydantic_ai.toolsets.skills import SkillsToolset
+
+            skills = SkillsToolset()
+
+            @skills.skill(resources=[], metadata={'version': '1.0'})
+            def data_analyzer() -> str:
+                '''Analyze data from various sources.'''
+                return '''
+                Use this skill for data analysis tasks.
+                The skill provides tools for querying and analyzing data.
+                '''
+
+            @data_analyzer.resource
+            async def get_schema(ctx: RunContext[MyDeps]) -> str:
+                return await ctx.deps.database.get_schema()
+
+            @data_analyzer.script
+            async def run_analysis(ctx: RunContext[MyDeps], query: str) -> str:
+                result = await ctx.deps.database.execute(query)
+                return str(result)
+            ```
+
+        Args:
+            func: The function that returns skill content (must return str).
+            name: Skill name (defaults to normalized function name: underscores → hyphens).
+            description: Skill description (inferred from docstring if not provided).
+            license: Optional license information (e.g., "Apache-2.0").
+            compatibility: Optional environment requirements (e.g., "Requires Python 3.10+").
+            metadata: Additional metadata fields as a dictionary.
+            resources: Initial list of resources to attach to the skill.
+            scripts: Initial list of scripts to attach to the skill.
+
+        Returns:
+            A SkillWrapper instance that can be used to attach resources and scripts.
+        """
+
+        def decorator(f: Callable[[], str]) -> SkillWrapper[Any]:
+            # Derive name from function name if not provided
+            if name is not None:
+                # Explicit name provided - validate it directly without normalization
+                skill_name = name
+                # Validate the explicit name
+                if not _SKILL_NAME_PATTERN.match(skill_name):
+                    raise SkillValidationError(
+                        f"Skill name '{skill_name}' is invalid. "
+                        'Skill names must contain only lowercase letters, numbers, and hyphens '
+                        '(no consecutive hyphens).'
+                    )
+                if len(skill_name) > 64:
+                    raise SkillValidationError(
+                        f"Skill name '{skill_name}' exceeds 64 characters ({len(skill_name)} chars)."
+                    )
+            else:
+                # Derive and normalize from function name
+                skill_name = normalize_skill_name(f.__name__)
+
+            # Extract description from docstring if not provided
+            skill_description = description
+            if skill_description is None:
+                sig = get_signature(f)
+                desc, _ = doc_descriptions(f, sig, docstring_format='auto')
+                skill_description = desc
+
+            # Create the skill wrapper
+            wrapper = SkillWrapper(
+                function=f,
+                name=skill_name,
+                description=skill_description,
+                license=license,
+                compatibility=compatibility,
+                metadata=metadata,
+                resources=list(resources) if resources else [],
+                scripts=list(scripts) if scripts else [],
+            )
+
+            # Register the skill immediately (execute function to get content)
+            self._register_skill(wrapper)
+
+            # Return the wrapper so resources/scripts can be attached
+            return wrapper
+
+        if func is None:
+            # Called with arguments: @skills.skill(name="custom")
+            return decorator
+        else:
+            # Called without arguments: @skills.skill
+            return decorator(func)
+
+    def _register_skill(self, skill: Skill | SkillWrapper[Any]) -> None:
+        """Register a skill with the toolset.
+
+        Converts SkillWrapper instances to Skill dataclasses before registering.
+        Warns about duplicate skill names (last occurrence wins).
+
+        Args:
+            skill: Skill or SkillWrapper instance to register.
+        """
+        # Convert SkillWrapper to Skill if needed
+        if isinstance(skill, SkillWrapper):
+            skill = skill.to_skill()
+
+        # Warn about duplicates
+        if skill.name in self._skills:
+            warnings.warn(
+                f"Duplicate skill '{skill.name}' found. Overriding previous occurrence.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        # Register the skill
+        self._skills[skill.name] = skill
