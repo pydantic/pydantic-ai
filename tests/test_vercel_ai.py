@@ -2051,14 +2051,12 @@ async def test_tool_approval_request_emission():
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='delete_file', args='{"path": "test.txt"}', tool_call_id='delete_1')],
                 usage=RequestUsage(input_tokens=50, output_tokens=5),
                 model_name='function::stream_function',
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
         ]
     )
