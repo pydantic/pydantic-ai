@@ -525,7 +525,7 @@ embedder = Embedder(
 
 #### Concurrency Settings
 
-Models that don't support batch embedding (Titan, Nova) make individual API requests for each input text. By default, these requests run concurrently with a maximum of 5 parallel requests.
+Models that don't support batch embedding (Titan and Nova) make individual API requests for each input text. By default, these requests run concurrently with a maximum of 5 parallel requests.
 
 You can adjust this with the `bedrock_max_concurrency` setting:
 
@@ -545,9 +545,6 @@ embedder = Embedder(
     settings=BedrockEmbeddingSettings(bedrock_max_concurrency=2),
 )
 ```
-
-!!! note "Batch vs Concurrent Requests"
-    Cohere models on Bedrock support true batch embedding (multiple texts in a single API request), so `bedrock_max_concurrency` does not apply to them.
 
 #### Regional Prefixes (Cross-Region Inference)
 
