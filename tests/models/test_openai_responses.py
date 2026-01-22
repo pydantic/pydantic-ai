@@ -2317,6 +2317,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
+                        id='thinking',
                         signature=IsStr(),
                         provider_name='anthropic',
                     ),

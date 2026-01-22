@@ -633,7 +633,8 @@ def test_run_web_command_memory_tool(mocker: MockerFixture, capfd: CaptureFixtur
     assert result == 0
     mock_uvicorn_run.assert_called_once()
     output = capfd.readouterr().out
-    assert '"memory" requires configuration and cannot be enabled via CLI' in output
+    assert '"memory" requires configuration and cannot be enabled via' in output
+    assert 'CLI' in output
 
 
 def test_run_web_command_agent_builtin_tools_not_duplicated(

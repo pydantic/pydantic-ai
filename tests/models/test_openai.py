@@ -3729,11 +3729,14 @@ async def test_openai_reasoning_roundtrip_multiple_fields(allow_model_requests: 
     # More importantly, it tests that our logic correctly partitions them.
     c = completion_message(
         ChatCompletionMessage.model_construct(
-            content='response',
-            role='assistant',
-            # DeepSeek style + Ollama style
-            reasoning_content='reasoning from deepseek',
-            **{'reasoning': 'reasoning from ollama'},
+            None,
+            **{
+                'content': 'response',
+                'role': 'assistant',
+                # DeepSeek style + Ollama style
+                'reasoning_content': 'reasoning from deepseek',
+                'reasoning': 'reasoning from ollama',
+            }
         )
     )
 
@@ -3775,7 +3778,7 @@ async def test_openai_reasoning_roundtrip_custom_field_id(allow_model_requests: 
 
     m = OpenAIChatModel(
         'foobar',
-        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(None)),
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock([])),
         profile=OpenAIModelProfile(
             openai_chat_thinking_field='thought',  # Profile default set to 'thought'
             openai_chat_send_back_thinking_parts='field',
@@ -3804,7 +3807,7 @@ async def test_openai_reasoning_roundtrip_cross_provider_mapping(allow_model_req
     # when switching models.
     m = OpenAIChatModel(
         'foobar',
-        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(None)),
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock([])),
         profile=OpenAIModelProfile(
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning_content',
