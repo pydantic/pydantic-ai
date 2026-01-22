@@ -925,11 +925,7 @@ class OpenAIChatModel(Model):
                 # Determine which field to use:
                 # 1. Use item.id if it's a known reasoning field (not 'content')
                 # 2. Fallback to the profile's configured field
-                field_name = (
-                    item.id
-                    if item.id and item.id != 'content'
-                    else profile.openai_chat_thinking_field
-                )
+                field_name = item.id if item.id and item.id != 'content' else profile.openai_chat_thinking_field
                 if field_name:
                     self.thinkings.setdefault(field_name, []).append(item.content)
 
