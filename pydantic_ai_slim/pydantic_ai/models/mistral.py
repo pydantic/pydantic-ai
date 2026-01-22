@@ -350,7 +350,7 @@ class MistralModel(Model):
         parts: list[ModelResponsePart] = []
         text, thinking = _map_content(content)
         for thought in thinking:
-            parts.append(ThinkingPart(content=thought))
+            parts.append(ThinkingPart(content=thought, id='thinking'))
         if text:
             parts.append(TextPart(content=text))
 

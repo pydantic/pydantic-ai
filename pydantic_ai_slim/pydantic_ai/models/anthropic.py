@@ -540,7 +540,11 @@ class AnthropicModel(Model):
                     ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name=self.system)
                 )
             elif isinstance(item, BetaThinkingBlock):
-                items.append(ThinkingPart(content=item.thinking, signature=item.signature, provider_name=self.system))
+                items.append(
+                    ThinkingPart(
+                        content=item.thinking, signature=item.signature, id='thinking', provider_name=self.system
+                    )
+                )
             elif isinstance(item, BetaMCPToolUseBlock):
                 call_part = _map_mcp_server_use_block(item, self.system)
                 builtin_tool_calls[call_part.tool_call_id] = call_part

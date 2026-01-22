@@ -322,7 +322,7 @@ class GroqModel(Model):
         items: list[ModelResponsePart] = []
         if choice.message.reasoning is not None:
             # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
-            items.append(ThinkingPart(content=choice.message.reasoning))
+            items.append(ThinkingPart(content=choice.message.reasoning, id='reasoning'))
         if choice.message.executed_tools:
             for tool in choice.message.executed_tools:
                 call_part, return_part = _map_executed_tool(tool, self.system)
