@@ -135,7 +135,7 @@ DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 
 Some model providers have their own file storage APIs where you can upload files and reference them by ID or URL.
 
-- For all supported provider (Anthropic, OpenAI, Google Files API, S3 URLs with Bedrock ), you can use [`UploadedFile`][pydantic_ai.UploadedFile]
+- For all supported providers (Anthropic, OpenAI, Google Files API, S3 URLs with Bedrock, xAI), you can use [`UploadedFile`][pydantic_ai.UploadedFile]
 - For providers that return a **file URL** (Google Files API), you can also use [`DocumentUrl`][pydantic_ai.DocumentUrl]
 
 ### Supported Models
@@ -147,6 +147,7 @@ Some model providers have their own file storage APIs where you can upload files
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ `UploadedFile` via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ `DocumentUrl` via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | ✅ `UploadedFile` via S3 URLs (`s3://bucket/key`) |
+| [`XaiModel`][pydantic_ai.models.xai.XaiModel] | ✅ `UploadedFile` via [xAI Files API](https://docs.x.ai/docs/guides/files) |
 | Other models | ❌ Not supported |
 
 ### Anthropic
@@ -165,7 +166,7 @@ model = AnthropicModel('claude-sonnet-4-5', provider=provider)
 
 # Upload a file using the provider's client
 with open('document.pdf', 'rb') as f:
-    uploaded_file = provider.client.beta.files.upload(file=f)
+    uploaded_file = provider.client.beta.files.upload(file=f.read())
 
 # Reference the uploaded file
 agent = Agent(model)
@@ -192,7 +193,7 @@ async def main():
 
     # Upload a file using the provider's client
     with open('document.pdf', 'rb') as f:
-        uploaded_file = await provider.client.files.create(file=f, purpose='user_data')
+        uploaded_file = await provider.client.files.create(file=f.read(), purpose='user_data')
 
     # Reference the uploaded file
     agent = Agent(model)
@@ -218,7 +219,7 @@ model = GoogleModel('gemini-2.0-flash', provider=provider)
 
 # Upload a file using the provider's client
 with open('document.pdf', 'rb') as f:
-    file = provider.client.files.upload(file='document.pdf')
+    file = provider.client.files.upload(file=f.read())
     assert file.uri is not None
 
 # Reference the uploaded file by URI
@@ -255,3 +256,28 @@ print(result.output)
 
 !!! note
     For Bedrock, you can optionally specify a `bucketOwner` query parameter if the bucket is not owned by the account making the request: `s3://my-bucket/document.pdf?bucketOwner=123456789012`
+
+### xAI
+
+```py {title="uploaded_file_xai.py" test="skip"}
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+provider = XaiProvider()
+model = XaiModel('grok-4-fast', provider=provider)
+
+# Upload a file using the provider's client
+with open('document.pdf', 'rb') as f:
+    uploaded_file = provider.client.files.upload(f.read(), filename='document.pdf')
+
+# Reference the uploaded file
+agent = Agent(model)
+result = agent.run_sync(
+    [
+        'Summarize this document',
+        UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+    ]
+)
+print(result.output)
+```
