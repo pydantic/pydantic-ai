@@ -151,7 +151,7 @@ Some model providers have their own file storage APIs where you can upload files
 
 ### Anthropic
 
-When using [`UploadedFile`][pydantic_ai.UploadedFile] you must set the provider name. Uploaded files are specific to the system they are uploaded to and are not transferrable across providers. Trying to use a message that contains an `UploadedFile` in a different provider will result in an error. 
+When using [`UploadedFile`][pydantic_ai.UploadedFile] you must set the provider name. Uploaded files are specific to the system they are uploaded to and are not transferrable across providers. Trying to use a message that contains an `UploadedFile` in a different provider will result in an error.
 
 If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends you can use a [history processor][pydantic_ai.agent.Agent.history_processors] to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
 
