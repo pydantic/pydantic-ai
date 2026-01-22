@@ -826,9 +826,7 @@ class OpenAIChatModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
-            _continuous_usage_stats=bool(model_settings.get('openai_continuous_usage_stats'))
-            if model_settings
-            else False,
+            _model_settings=model_settings,
         )
 
     @property
@@ -2088,14 +2086,14 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
-    _continuous_usage_stats: bool = False
+    _model_settings: OpenAIChatModelSettings | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch
             self.provider_details = {'timestamp': self._provider_timestamp}
         async for chunk in self._validate_response():
             chunk_usage = self._map_usage(chunk)
-            if self._continuous_usage_stats:
+            if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
                 # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
                 # so we replace rather than increment to avoid double-counting.
                 self._usage = chunk_usage

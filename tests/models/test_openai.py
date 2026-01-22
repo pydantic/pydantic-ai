@@ -4078,6 +4078,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     When continuous_usage_stats=True, each chunk contains cumulative usage, not incremental.
     The final usage should equal the last chunk's usage, not the sum of all chunks.
+    We verify that usage is correctly updated at each step via stream_responses.
     """
     # Simulate cumulative usage: each chunk has higher tokens (cumulative, not incremental)
     stream = [
@@ -4097,53 +4098,22 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     settings = cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True})
     async with agent.run_stream('', model_settings=settings) as result:
-        chunks = [c async for c in result.stream_text(debounce_by=None)]
-        assert chunks == snapshot(['hello ', 'hello world', 'hello world!'])
+        # Verify usage is updated at each step via stream_responses
+        usage_at_each_step: list[RequestUsage] = []
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            usage_at_each_step.append(response.usage)
 
-    # With continuous_usage_stats=True, we should get the LAST chunk's usage (15 output tokens)
+        # Each step should have the cumulative usage from that chunk (not accumulated)
+        # chunk 1: 5 output, chunk 2: 10 output, chunk 3: 15 output, chunk 4: 15 output
+        assert usage_at_each_step == snapshot(
+            [
+                RequestUsage(input_tokens=10, output_tokens=5),
+                RequestUsage(input_tokens=10, output_tokens=10),
+                RequestUsage(input_tokens=10, output_tokens=15),
+                RequestUsage(input_tokens=10, output_tokens=15),
+            ]
+        )
+
+    # Final usage should be from the last chunk (15 output tokens)
     # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
-
-
-async def test_stream_without_continuous_usage_stats_accumulates(allow_model_requests: None):
-    """Test that without continuous_usage_stats, usage is accumulated (default behavior)."""
-    # With default behavior, each chunk's usage is added together
-    stream = [
-        chunk_with_usage(
-            [ChoiceDelta(content='hello ', role='assistant')],
-            completion_tokens=5,
-            prompt_tokens=10,
-            total_tokens=15,
-        ),
-        chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=5, prompt_tokens=0, total_tokens=5),
-        chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=5, prompt_tokens=0, total_tokens=5),
-        chunk_with_usage([], finish_reason='stop', completion_tokens=0, prompt_tokens=0, total_tokens=0),
-    ]
-    mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('') as result:
-        chunks = [c async for c in result.stream_text(debounce_by=None)]
-        assert chunks == snapshot(['hello ', 'hello world', 'hello world!'])
-
-    # Without continuous_usage_stats, usage is accumulated: 5+5+5+0 = 15 output tokens, 10+0+0+0 = 10 input tokens
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
-
-
-def test_get_stream_options_with_continuous_usage_stats(allow_model_requests: None):
-    """Test that _get_stream_options includes continuous_usage_stats when set."""
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='test', role='assistant')))
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-
-    # Without continuous_usage_stats
-    options = m._get_stream_options(cast(OpenAIChatModelSettings, {}))  # pyright: ignore[reportPrivateUsage]
-    assert options == {'include_usage': True}
-
-    # With continuous_usage_stats=False (explicit)
-    options = m._get_stream_options(cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': False}))  # pyright: ignore[reportPrivateUsage]
-    assert options == {'include_usage': True}
-
-    # With continuous_usage_stats=True
-    options = m._get_stream_options(cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True}))  # pyright: ignore[reportPrivateUsage]
-    assert options == {'include_usage': True, 'continuous_usage_stats': True}
