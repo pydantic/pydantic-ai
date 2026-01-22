@@ -76,13 +76,13 @@ _KIND_TO_ADAPTER: dict[str, TypeAdapter[BinaryContent | VideoUrl | AudioUrl | Im
 
 
 def rehydrate_binary_content(value: Any) -> Any:
-    """Recursively reconstruct BinaryContent/FileUrl objects from dicts after Temporal deserialization.
+    """Recursively reconstruct `BinaryContent`/`FileUrl` objects from dicts after Temporal deserialization.
 
     Why this is needed:
     While `_ToolReturn.result` is typed as `BinaryContent | FileUrl | ...`, Pydantic only validates
     top-level and list items against this union. When BinaryContent/FileUrl is nested inside a
     `dict[str, Any]`, Pydantic doesn't recurse into the dict values to reconstruct typed objects.
-    This function handles that case by walking the structure and using TypeAdapters to reconstruct
+    This function handles that case by walking the structure and using `TypeAdapters` to reconstruct
     objects identified by their `kind` discriminator.
 
     Pydantic's `val_json_bytes='base64'` config on BinaryContent handles base64 decoding automatically.
