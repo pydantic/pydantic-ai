@@ -62,9 +62,21 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     **Note on `dimensions` parameter support:**
 
-    - **Supported by:** `amazon.titan-embed-text-v2:0`, `cohere.embed-v4:0`, `amazon.nova-2-multimodal-embeddings-v1:0`
-    - **Not supported by:** `amazon.titan-embed-text-v1`, `cohere.embed-english-v3`, `cohere.embed-multilingual-v3`
-      (will issue a warning if provided)
+    - **Titan v1** (`amazon.titan-embed-text-v1`): Not supported (fixed: 1536)
+    - **Titan v2** (`amazon.titan-embed-text-v2:0`): Supported (default: 1024, accepts 256/384/1024)
+    - **Cohere v3** (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`): Not supported (fixed: 1024)
+    - **Cohere v4** (`cohere.embed-v4:0`): Supported (default: 1536, accepts 256/512/1024/1536)
+    - **Nova** (`amazon.nova-2-multimodal-embeddings-v1:0`): Supported (default: 3072, accepts 256/384/1024/3072)
+
+    Models will issue a warning if `dimensions` is provided but not supported.
+
+    **Note on `truncate` parameter support:**
+
+    - **Titan models** (`amazon.titan-embed-text-v1`, `amazon.titan-embed-text-v2:0`): Not supported
+    - **Cohere models** (all versions): Supported (default: `False`, maps to `'END'` when `True`)
+    - **Nova** (`amazon.nova-2-multimodal-embeddings-v1:0`): Supported (default: `False`, maps to `'END'` when `True`)
+
+    For fine-grained truncation control, use model-specific settings: `bedrock_cohere_truncate` or `bedrock_nova_truncate`.
 
     Example:
         ```python
@@ -94,12 +106,11 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     bedrock_titan_normalize: bool
     """Whether to normalize embedding vectors for Titan models.
 
-    **Supported by:** `amazon.titan-embed-text-v2:0`
+    **Supported by:** `amazon.titan-embed-text-v2:0` (default: `True`)
 
     **Not supported by:** `amazon.titan-embed-text-v1` (will issue a warning if provided)
 
     When enabled, vectors are normalized for direct cosine similarity calculations.
-    If not specified, defaults to `True` for v2 model.
     """
 
     # ==================== Cohere Settings ====================
@@ -107,7 +118,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     bedrock_cohere_max_tokens: int
     """The maximum number of tokens to embed for Cohere models.
 
-    **Supported by:** `cohere.embed-v4:0`
+    **Supported by:** `cohere.embed-v4:0` (default: 128000)
 
     **Not supported by:** `cohere.embed-english-v3`, `cohere.embed-multilingual-v3`
     (will issue a warning if provided)
@@ -118,11 +129,8 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     **Supported by:** All Cohere models (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`, `cohere.embed-v4:0`)
 
-    Defaults based on `input_type`:
-    - `'query'` maps to `'search_query'`
-    - `'document'` maps to `'search_document'`
-
-    Other options: `'classification'`, `'clustering'`.
+    By default, `embed_query()` uses `'search_query'` and `embed_documents()` uses `'search_document'`.
+    Also accepts `'classification'` or `'clustering'`.
     """
 
     bedrock_cohere_truncate: Literal['NONE', 'START', 'END']
@@ -130,7 +138,9 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     **Supported by:** All Cohere models (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`, `cohere.embed-v4:0`)
 
-    - `'NONE'` (default): Raise an error if input exceeds max tokens.
+    Default: `'NONE'`
+
+    - `'NONE'`: Raise an error if input exceeds max tokens.
     - `'START'`: Truncate the start of the input.
     - `'END'`: Truncate the end of the input.
     """
@@ -142,7 +152,9 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     **Supported by:** `amazon.nova-2-multimodal-embeddings-v1:0`
 
-    - `'NONE'` (default): Raise an error if input exceeds max tokens.
+    Default: `'NONE'`
+
+    - `'NONE'`: Raise an error if input exceeds max tokens.
     - `'START'`: Truncate the start of the input.
     - `'END'`: Truncate the end of the input.
     """
@@ -158,11 +170,8 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     **Supported by:** `amazon.nova-2-multimodal-embeddings-v1:0`
 
-    Defaults based on `input_type`:
-    - `'query'` maps to `'GENERIC_RETRIEVAL'` (optimized for search)
-    - `'document'` maps to `'GENERIC_INDEX'` (optimized for indexing)
-
-    Other options: `'TEXT_RETRIEVAL'`, `'CLASSIFICATION'`, `'CLUSTERING'`.
+    By default, `embed_query()` uses `'GENERIC_RETRIEVAL'` and `embed_documents()` uses `'GENERIC_INDEX'`.
+    Also accepts `'TEXT_RETRIEVAL'`, `'CLASSIFICATION'`, or `'CLUSTERING'`.
 
     Note: Multimodal-specific purposes (`'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`,
     `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`) are not supported as this
