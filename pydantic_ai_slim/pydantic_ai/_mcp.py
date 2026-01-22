@@ -35,14 +35,14 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
             # TODO(Marcelo): We can reuse the `_map_tool_result_part` from the mcp module here.
             if isinstance(content, mcp_types.TextContent):
                 user_part_content: str | Sequence[messages.UserContent] = content.text
-            elif isinstance(content, mcp_types.ImageContent):
+            elif isinstance(content, (mcp_types.ImageContent, mcp_types.AudioContent)):
                 user_part_content = [
                     messages.BinaryContent(data=base64.b64decode(content.data), media_type=content.mimeType)
                 ]
-            elif isinstance(
-                content, (list, mcp_types.AudioContent, mcp_types.ToolUseContent, mcp_types.ToolResultContent)
-            ):
-                raise NotImplementedError(f'Unsupported user content type: {type(content).__name__}')
+            elif isinstance(content, list):
+                raise NotImplementedError('list content type is not yet supported')
+            elif isinstance(content, (mcp_types.ToolUseContent, mcp_types.ToolResultContent)):
+                raise NotImplementedError(f'{type(content).__name__} cannot be used as user content')
             else:
                 assert_never(content)
 
@@ -133,4 +133,5 @@ def map_from_sampling_content(
     if isinstance(content, mcp_types.TextContent):  # pragma: no branch
         return messages.TextPart(content=content.text)
     else:
+        # TODO(Marcelo): Add support for Image/Audio using FilePart.
         raise NotImplementedError('Image and Audio responses in sampling are not yet supported')

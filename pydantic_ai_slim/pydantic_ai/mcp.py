@@ -1155,7 +1155,8 @@ class MCPServerSSE(_MCPServerHTTP):
             ),
         )
 
-    # sse_client has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811).
+    # sse_client has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811)
+    # that prevents testing SSE transport in CI.
     # Remove pragma once https://github.com/modelcontextprotocol/python-sdk/pull/1838 is released.
     @asynccontextmanager
     async def client_streams(  # pragma: no cover
@@ -1264,6 +1265,9 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
             MemoryObjectSendStream[SessionMessage],
         ]
     ]:
+        if self.http_client and self.headers:
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+
         aexit_stack = AsyncExitStack()
         http_client = self.http_client or await aexit_stack.enter_async_context(
             httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, read=self.read_timeout), headers=self.headers)
@@ -1274,7 +1278,6 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
         try:
             yield read_stream, write_stream
         finally:
-            # unwrap the aexit
             await aexit_stack.aclose()
 
     def __eq__(self, value: object, /) -> bool:

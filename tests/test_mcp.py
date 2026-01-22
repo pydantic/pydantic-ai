@@ -51,13 +51,13 @@ with try_import() as imports_successful:
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
     from mcp.types import (
-        AudioContent,
         CreateMessageRequestParams,
         ElicitRequestParams,
         ElicitResult,
         ImageContent,
         Implementation,
         TextContent,
+        ToolUseContent,
     )
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
@@ -1665,12 +1665,12 @@ def test_map_from_mcp_params_unsupported_user_content():
         messages=[
             SamplingMessage(
                 role='user',
-                content=AudioContent(type='audio', data='YXVkaW8=', mimeType='audio/wav'),
+                content=ToolUseContent(type='tool_use', id='123', name='tool', input={}),
             ),
         ],
         maxTokens=8,
     )
-    with pytest.raises(NotImplementedError, match='Unsupported user content type: AudioContent'):
+    with pytest.raises(NotImplementedError, match='ToolUseContent cannot be used as user content'):
         map_from_mcp_params(params)
 
 
