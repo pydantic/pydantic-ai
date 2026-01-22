@@ -54,6 +54,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UploadedFile,
+    UserError,
     UserPromptPart,
     VideoUrl,
     WebSearchTool,
@@ -1542,6 +1544,51 @@ async def test_xai_binary_content_document_input(allow_model_requests: None):
             }
         ]
     )
+
+
+async def test_uploaded_file_xai_model(allow_model_requests: None):
+    """Test that UploadedFile is correctly mapped in XaiModel."""
+    response = create_response(content='The file contains important data.')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='xai')])
+
+    assert result.output == 'The file contains important data.'
+
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {
+                        'content': [
+                            {'text': 'Analyze this file'},
+                            {'file': {'file_id': 'file-abc123'}},
+                        ],
+                        'role': 'ROLE_USER',
+                    }
+                ],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_wrong_provider_xai(allow_model_requests: None):
+    """Test that UploadedFile with wrong provider raises an error in XaiModel."""
+    response = create_response(content='Should not reach here.')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with XaiModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
 async def test_xai_audio_url_not_supported(allow_model_requests: None):

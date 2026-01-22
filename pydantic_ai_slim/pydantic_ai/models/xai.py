@@ -37,6 +37,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -473,6 +474,14 @@ class XaiModel(Model):
             elif isinstance(item, CachePoint):
                 # xAI doesn't support prompt caching via CachePoint, so we filter it out
                 pass
+            elif isinstance(item, UploadedFile):
+                if item.provider_name != 'xai':
+                    raise UserError(
+                        f'UploadedFile with provider_name={item.provider_name!r} cannot be used with XaiModel. '
+                        f'Expected provider_name to be "xai".'
+                    )
+                content_items.append(file(item.file_id))
+
             else:
                 assert_never(item)
 
