@@ -2391,6 +2391,16 @@ async def test_list_prompts() -> None:
             result = await server.list_prompts()
             assert result == []
 
+        # Test error handling when list_prompts raises an McpError
+        # Clear cache first to ensure the client is actually called
+        server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
+        mock_client = AsyncMock()
+        mock_client.list_prompts.side_effect = McpError(ErrorData(code=-1, message='Test error message'))
+        with patch.object(server, '_client', mock_client):
+            with pytest.raises(MCPError) as exc_info:
+                await server.list_prompts()
+            assert 'test error message' in str(exc_info.value).lower()
+
 
 async def test_get_prompt() -> None:
     """Test get_prompt() retrieves specific prompts and handles errors."""

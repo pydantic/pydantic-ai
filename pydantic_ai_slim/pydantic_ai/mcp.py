@@ -18,7 +18,7 @@ import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
@@ -215,6 +215,97 @@ class ResourceTemplate(BaseResource):
 
 
 @dataclass(repr=False, kw_only=True)
+class BasePrompt(ABC):
+    """Base class for MCP prompts."""
+
+    name: str
+    """The programmatic name of the prompt."""
+
+    title: str | None = None
+    """Human-readable title for prompt."""
+
+
+@dataclass(repr=False, kw_only=True)
+class PromptArgument(ABC):
+    """An argument for a prompt template."""
+
+    name: str
+    """The name of the argument."""
+    description: str | None = None
+    """A human-readable description of the argument."""
+    required: bool | None = None
+
+
+@dataclass(repr=False, kw_only=True)
+class Icon(ABC):
+    """An icon for display in user interfaces."""
+
+    src: str
+    """URL or data URI for the icon."""
+
+    mime_type: str | None = None
+    """Optional MIME type for the icon."""
+
+    sizes: list[str] | None = None
+    """Optional list of strings specifying icon dimensions (e.g., ["48x48", "96x96"])."""
+
+    model_config = ConfigDict(extra='allow')
+
+
+@dataclass(repr=False, kw_only=True)
+class Prompt(BasePrompt):
+    """A prompt or prompt template that the server offers."""
+
+    description: str | None = None
+    """An optional description of what this prompt provides."""
+    arguments: list[PromptArgument] | None = None
+    """A list of arguments to use for templating the prompt."""
+    icons: list[Icon] | None = None
+    """An optional list of icons for this prompt."""
+    meta: dict[str, Any] | None = Field(alias='_meta', default=None)
+    """
+    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
+    for notes on _meta usage.
+    """
+
+    @classmethod
+    def from_mcp_sdk(cls, mcp_prompt: mcp_types.Prompt) -> Prompt:
+        """Convert from MCP SDK Prompt to PydanticAI Prompt.
+
+        Args:
+            mcp_prompt: The MCP SDK Prompt object.
+        """
+        return cls(
+            name=mcp_prompt.name,
+            title=mcp_prompt.title,
+            description=mcp_prompt.description,
+            arguments=[
+                PromptArgument(
+                    name=arg.name,
+                    description=arg.description,
+                    required=arg.required,
+                )
+                for arg in mcp_prompt.arguments
+            ]
+            if mcp_prompt.arguments
+            else None,
+            icons=[
+                Icon(
+                    src=icon.src,
+                    mime_type=icon.mimeType,
+                    sizes=icon.sizes,
+                )
+                for icon in mcp_prompt.icons
+            ]
+            if mcp_prompt.icons
+            else None,
+            meta=mcp_prompt.meta,
+        )
+
+    model_config = ConfigDict(extra='allow')
+
+
+@dataclass(repr=False, kw_only=True)
 class ServerCapabilities:
     """Capabilities that an MCP server supports."""
 
@@ -376,7 +467,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _server_capabilities: ServerCapabilities
     _instructions: str | None
 
-    _cached_prompts: list[mcp_types.Prompt] | None
+    _cached_prompts: list[Prompt] | None
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
 
@@ -487,7 +578,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             )
         return self._instructions
 
-    async def list_prompts(self) -> list[mcp_types.Prompt]:
+    async def list_prompts(self) -> list[Prompt]:
         """Retrieve prompts that are currently active on the server.
 
         Prompts are cached by default, with cache invalidation on:
@@ -495,19 +586,26 @@ class MCPServer(AbstractToolset[Any], ABC):
         - Connection close (cache is cleared in `__aexit__`)
 
         Set `cache_prompts=False` for servers that change prompts without sending notifications.
+
+        Raises:
+            MCPError: If the server returns an error.
         """
         async with self:
             if not self.capabilities.prompts:
                 return []
-            if self.cache_prompts:
-                if self._cached_prompts is not None:
-                    return self._cached_prompts
-                result = await self._client.list_prompts()
-                self._cached_prompts = result.prompts
-                return result.prompts
-            else:
-                result = await self._client.list_prompts()
-                return result.prompts
+            try:
+                if self.cache_prompts:
+                    if self._cached_prompts is not None:
+                        return self._cached_prompts
+                    result = await self._client.list_prompts()
+                    prompts = [Prompt.from_mcp_sdk(p) for p in result.prompts]
+                    self._cached_prompts = prompts
+                    return prompts
+                else:
+                    result = await self._client.list_prompts()
+                    return [Prompt.from_mcp_sdk(p) for p in result.prompts]
+            except mcp_exceptions.McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
 
     async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> mcp_types.GetPromptResult:
         """Retrieve a specific prompt by name.
