@@ -102,7 +102,8 @@ def _cpu_supports_llama_cpp() -> bool:
     flags = _cpu_flags()
     if flags is None:  # pragma: no cover
         return False
-    return 'avx2' in flags and 'avx' in flags
+    required = {'avx', 'avx2', 'fma', 'f16c'}
+    return required.issubset(flags)
 
 
 # We only run this on the latest Python as the llama_cpp tests have been regularly failing in CI with `Fatal Python error: Illegal instruction`:
