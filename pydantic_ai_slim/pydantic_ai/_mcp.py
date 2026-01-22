@@ -133,5 +133,5 @@ def map_from_sampling_content(
     if isinstance(content, mcp_types.TextContent):  # pragma: no branch
         return messages.TextPart(content=content.text)
     else:
-        # TODO(Marcelo): Add support for Image/Audio using FilePart.
+        # TODO: Add support for Image/Audio using FilePart.
         raise NotImplementedError('Image and Audio responses in sampling are not yet supported')
