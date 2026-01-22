@@ -321,7 +321,7 @@ def test_model_loading_methods(model_loading_function_name: str, args: Callable[
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-async def test_request_async(llamacpp_model: OutlinesModel) -> None:
+async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     agent = Agent(llamacpp_model, instructions='Answer in one word.')
     result = await agent.run('What is the capital of France?', model_settings=ModelSettings(max_tokens=100))
     assert result.all_messages() == snapshot(
@@ -372,7 +372,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-def test_request_sync(llamacpp_model: OutlinesModel) -> None:
+def test_request_sync(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     agent = Agent(llamacpp_model)
     result = agent.run_sync('What is the capital of France?', model_settings=ModelSettings(max_tokens=100))
     assert result.all_messages() == snapshot(
@@ -393,7 +393,7 @@ def test_request_sync(llamacpp_model: OutlinesModel) -> None:
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-async def test_request_streaming(llamacpp_model: OutlinesModel) -> None:
+async def test_request_streaming(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     agent = Agent(llamacpp_model)
     async with agent.run_stream(
         'What is the capital of the UK?', model_settings=ModelSettings(max_tokens=100)
@@ -533,7 +533,7 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-def test_tool_definition(llamacpp_model: OutlinesModel) -> None:
+def test_tool_definition(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     # builtin tools
     agent = Agent(llamacpp_model, builtin_tools=[WebSearchTool()])
     with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
@@ -562,7 +562,7 @@ def test_tool_definition(llamacpp_model: OutlinesModel) -> None:
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-def test_output_type(llamacpp_model: OutlinesModel) -> None:
+def test_output_type(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     class Box(BaseModel):
         width: int
         height: int
@@ -696,7 +696,7 @@ def test_model_settings_transformers(transformers_model: OutlinesModel) -> None:
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-def test_model_settings_llamacpp(llamacpp_model: OutlinesModel) -> None:
+def test_model_settings_llamacpp(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     # unsupported arguments removed
     kwargs = llamacpp_model.format_inference_kwargs(
         ModelSettings(
