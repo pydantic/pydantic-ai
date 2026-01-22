@@ -23,10 +23,54 @@ Analyze correlation: **PR size vs review rounds** for pydantic/pydantic-ai
 
 | File | Purpose |
 |------|---------|
-| `demos/code_mode/pr_analysis/demo.py` | Web UI demo (traditional vs code mode) |
-| `demos/code_mode/pr_analysis/evals.py` | CLI evals with pydantic_evals |
+| `demo.py` | Shared code: prompt, constants, agent factories, datetime helpers |
+| `web.py` | Web UI on ports 7934 (traditional) / 7935 (code mode) |
+| `evals.py` | CLI evals: 3 models × 3 runs × 2 modes |
 
-## Demo Code (~50 lines)
+## How to Run
+
+### Prerequisites
+
+```bash
+# Set GitHub token in .env
+echo 'GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxx' >> .env
+```
+
+### Web UI Demo
+
+```bash
+source .env && uv run python -m demos.code_mode.pr_analysis.web
+```
+
+Opens two web UIs:
+- http://localhost:7934 — Traditional mode (direct tool calls)
+- http://localhost:7935 — Code mode (Python code generation)
+
+**What to do:**
+1. Open both URLs in separate tabs
+2. Paste the prompt (shown in terminal) into both
+3. Compare in Logfire: request count, token usage, tool call patterns
+4. Code mode should show `run_code` → nested tool calls; traditional shows many individual calls
+
+### CLI Evals
+
+```bash
+source .env && uv run python -m demos.code_mode.pr_analysis.evals
+```
+
+Runs 18 evaluations (3 models × 3 runs × 2 modes) and prints summary table.
+
+### Prompt to Use
+
+```
+Analyze pydantic/pydantic-ai PRs:
+- Closed PRs from last month, >3 files changed, max 100
+- Find: PR size vs review rounds correlation
+- Include: PR duration (days from open to close)
+- Return: stats + top 10 PRs with most reviews (summarize what/why)
+```
+
+## Code Overview
 
 ```python
 from pydantic_ai import Agent
