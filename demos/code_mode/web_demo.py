@@ -16,10 +16,9 @@ Example prompts to try:
 
 from __future__ import annotations
 
-from typing import TypedDict
-
 import logfire
 import uvicorn
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
@@ -323,7 +322,6 @@ Always complete the ENTIRE analysis in a single code execution.
 
 if __name__ == '__main__':
     import threading
-    import webbrowser
 
     # Configure Logfire for tracing
     logfire.configure(service_name='code-mode-demo')

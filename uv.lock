@@ -3783,7 +3783,7 @@ wheels = [
 [[package]]
 name = "monty-python"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/pydantic/monty.git?subdirectory=crates%2Fmonty-python#f31bc78c78e678b4085c2f93e151b59cbc371c36" }
+source = { git = "ssh://git@github.com/pydantic/monty.git?subdirectory=crates%2Fmonty-python#2baa2789f6bbc693895f72a48210d9fc7476c5f5" }
 
 [[package]]
 name = "more-itertools"
