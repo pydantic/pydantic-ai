@@ -3723,6 +3723,128 @@ response\
     )
 
 
+async def test_openai_reasoning_roundtrip_multiple_fields(allow_model_requests: None):
+    # Simulate a response from a model that returns both 'reasoning' and 'reasoning_content'
+    # This might happen in some experimental or aggregated models.
+    # More importantly, it tests that our logic correctly partitions them.
+    c = completion_message(
+        ChatCompletionMessage.model_construct(
+            content='response',
+            role='assistant',
+            # DeepSeek style + Ollama style
+            reasoning_content='reasoning from deepseek',
+            **{'reasoning': 'reasoning from ollama'},
+        )
+    )
+
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
+        ),
+    )
+
+    resp = await m.request(
+        messages=[], model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters()
+    )
+
+    # Check that we got two ThinkingParts
+    assert len([p for p in resp.parts if isinstance(p, ThinkingPart)]) == 2
+
+    mapped_back = m._map_model_response(resp)  # type: ignore[reportPrivateUsage]
+
+    # It should have both fields now!
+    assert mapped_back == snapshot(
+        {
+            'role': 'assistant',
+            'content': 'response',
+            'reasoning': 'reasoning from ollama',
+            'reasoning_content': 'reasoning from deepseek',
+        }
+    )
+
+
+async def test_openai_reasoning_roundtrip_custom_field_id(allow_model_requests: None):
+    # Test that if a ThinkingPart has an ID that matches neither 'content' nor the default profile field,
+    # it is still preserved in its original field name.
+
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(None)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='thought',  # Profile default set to 'thought'
+            openai_chat_send_back_thinking_parts='field',
+        ),
+    )
+
+    # Manually construct a ModelResponse with a ThinkingPart that has a different ID
+    # This simulates a part that came from a different model or was manually injected/preserved.
+    resp = ModelResponse(
+        parts=[ThinkingPart(content='some reasoning', id='custom_reasoning_field'), TextPart(content='hello')],
+        model_name='foobar',
+    )
+
+    mapped = m._map_model_response(resp)  # type: ignore[reportPrivateUsage]
+
+    assert mapped == snapshot(
+        {'role': 'assistant', 'content': 'hello', 'custom_reasoning_field': 'some reasoning'}
+    )
+
+
+async def test_openai_reasoning_streaming_roundtrip(allow_model_requests: None):
+    # Test that streaming also preserves the field ID
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta
+
+    # Define chunks for a streamed response with 'reasoning_content'
+    chunks = [
+        ChatCompletionChunk(
+            id='1',
+            choices=[
+                ChunkChoice(
+                    delta=ChoiceDelta(role='assistant', reasoning_content='think'), finish_reason=None, index=0
+                )
+            ],
+            created=0,
+            model='foobar',
+            object='chat.completion.chunk',
+        ),
+        ChatCompletionChunk(
+            id='1',
+            choices=[ChunkChoice(delta=ChoiceDelta(content='hello'), finish_reason='stop', index=0)],
+            created=1,
+            model='foobar',
+            object='chat.completion.chunk',
+        ),
+    ]
+
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(chunks)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
+        ),
+    )
+
+    async with m.request_stream(
+        messages=[], model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters()
+    ) as stream:
+        # Consume the stream
+        async for _ in stream:
+            pass
+        resp = stream.get()
+
+    # The final response should have a ThinkingPart with id='reasoning_content'
+    thinking_parts = [p for p in resp.parts if isinstance(p, ThinkingPart)]
+    assert thinking_parts[0].id == 'reasoning_content'
+
+    # And round-trip should work
+    mapped = m._map_model_response(resp)  # type: ignore[reportPrivateUsage]
+    assert mapped['reasoning_content'] == 'think'
+
+
 def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     body = {
         'error': {
