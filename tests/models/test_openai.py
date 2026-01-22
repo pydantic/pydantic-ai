@@ -3928,6 +3928,26 @@ async def test_openai_auto_mode_multiple_thinking_parts_same_field(allow_model_r
     assert mapped == snapshot({'role': 'assistant', 'reasoning': 'first thought', 'content': 'response'})
 
 
+async def test_openai_field_mode_with_thinking_and_text(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response text', reasoning='thinking content', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning',
+            openai_chat_send_back_thinking_parts='field',
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    mapped = m._map_model_response(resp)  # type: ignore[reportPrivateUsage]
+    assert mapped == snapshot({'role': 'assistant', 'reasoning': 'thinking content', 'content': 'response text'})
+
+
 def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     body = {
         'error': {
