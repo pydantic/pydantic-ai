@@ -45,7 +45,13 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as bedrock_imports_successful:
-    from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+    from pydantic_ai.embeddings.bedrock import (
+        BedrockEmbeddingModel,
+        BedrockEmbeddingSettings,
+        CohereEmbeddingHandler,
+        NovaEmbeddingHandler,
+        TitanEmbeddingHandler,
+    )
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as google_imports_successful:
@@ -525,7 +531,6 @@ class TestBedrock:
 
     def test_titan_v1_dimensions_warning(self):
         """Test that Titan V1 warns when dimensions setting is provided (unsupported)."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
 
         handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
         settings = BedrockEmbeddingSettings(dimensions=256)
@@ -535,7 +540,6 @@ class TestBedrock:
 
     def test_titan_v1_normalize_warning(self):
         """Test that Titan V1 warns when normalize setting is provided (unsupported)."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, TitanEmbeddingHandler
 
         handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
         settings = BedrockEmbeddingSettings(bedrock_titan_normalize=True)
@@ -565,7 +569,6 @@ class TestBedrock:
 
     async def test_titan_v2_with_dimensions(self, bedrock_provider: BedrockProvider):
         """Test Titan V2 with custom dimensions setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=256))
@@ -584,7 +587,6 @@ class TestBedrock:
 
     async def test_titan_v2_with_normalize_false(self, bedrock_provider: BedrockProvider):
         """Test Titan V2 with normalize=False (override default)."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_titan_normalize=False))
@@ -642,7 +644,6 @@ class TestBedrock:
 
     async def test_cohere_v3_with_input_type(self, bedrock_provider: BedrockProvider):
         """Test Cohere V3 with custom input_type setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_input_type='classification'))
@@ -662,7 +663,6 @@ class TestBedrock:
 
     async def test_cohere_v3_with_truncate(self, bedrock_provider: BedrockProvider):
         """Test Cohere V3 with custom truncate setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='END'))
@@ -682,7 +682,6 @@ class TestBedrock:
 
     async def test_cohere_v3_with_base_truncate(self, bedrock_provider: BedrockProvider):
         """Test Cohere V3 with base truncate=True setting (maps to END)."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-multilingual-v3', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(truncate=True))
@@ -702,7 +701,6 @@ class TestBedrock:
 
     def test_cohere_v3_max_tokens_warning(self):
         """Test that Cohere V3 warns when max_tokens setting is provided (unsupported)."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, CohereEmbeddingHandler
 
         handler = CohereEmbeddingHandler('cohere.embed-english-v3')
         settings = BedrockEmbeddingSettings(bedrock_cohere_max_tokens=1000)
@@ -712,7 +710,6 @@ class TestBedrock:
 
     def test_cohere_v3_dimensions_warning(self):
         """Test that Cohere V3 warns when dimensions setting is provided (unsupported)."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings, CohereEmbeddingHandler
 
         handler = CohereEmbeddingHandler('cohere.embed-multilingual-v3')
         settings = BedrockEmbeddingSettings(dimensions=512)
@@ -743,7 +740,6 @@ class TestBedrock:
 
     async def test_cohere_v4_with_dimensions(self, bedrock_provider: BedrockProvider):
         """Test Cohere V4 with custom dimensions setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=512))
@@ -763,7 +759,6 @@ class TestBedrock:
 
     async def test_cohere_v4_with_max_tokens(self, bedrock_provider: BedrockProvider):
         """Test Cohere V4 with max_tokens setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_max_tokens=256))
@@ -783,7 +778,6 @@ class TestBedrock:
 
     async def test_cohere_v4_with_input_type(self, bedrock_provider: BedrockProvider):
         """Test Cohere V4 with custom input_type setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_input_type='clustering'))
@@ -803,7 +797,6 @@ class TestBedrock:
 
     async def test_cohere_v4_with_truncate(self, bedrock_provider: BedrockProvider):
         """Test Cohere V4 with custom truncate setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='END'))
@@ -861,7 +854,6 @@ class TestBedrock:
 
     async def test_nova_with_dimensions(self, bedrock_provider: BedrockProvider):
         """Test Nova with custom dimensions setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=256))
@@ -880,7 +872,6 @@ class TestBedrock:
 
     async def test_nova_with_truncate(self, bedrock_provider: BedrockProvider):
         """Test Nova with custom truncate setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
         embedder = Embedder(
@@ -902,7 +893,6 @@ class TestBedrock:
 
     async def test_nova_with_base_truncate(self, bedrock_provider: BedrockProvider):
         """Test Nova with base truncate=True setting (maps to END)."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
         embedder = Embedder(model, settings=BedrockEmbeddingSettings(truncate=True))
@@ -921,7 +911,6 @@ class TestBedrock:
 
     async def test_nova_with_embedding_purpose(self, bedrock_provider: BedrockProvider):
         """Test Nova with custom embedding_purpose setting."""
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
 
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
         embedder = Embedder(
@@ -1313,28 +1302,24 @@ class TestBedrockHandlers:
 
     def test_cohere_handler_supports_batch(self):
         """Test that Cohere handler supports batch."""
-        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
 
         handler = CohereEmbeddingHandler('cohere.embed-v4')
         assert handler.supports_batch is True
 
     def test_titan_handler_does_not_support_batch(self):
         """Test that Titan handler does not support batch."""
-        from pydantic_ai.embeddings.bedrock import TitanEmbeddingHandler
 
         handler = TitanEmbeddingHandler('amazon.titan-embed-text-v2')
         assert handler.supports_batch is False
 
     def test_nova_handler_does_not_support_batch(self):
         """Test that Nova handler does not support batch."""
-        from pydantic_ai.embeddings.bedrock import NovaEmbeddingHandler
 
         handler = NovaEmbeddingHandler()
         assert handler.supports_batch is False
 
     def test_cohere_handler_parse_response_dict_format(self):
         """Test Cohere handler parsing dict format embeddings (embedding_types response)."""
-        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
 
         handler = CohereEmbeddingHandler('cohere.embed-v4')
         # Dict format response when embedding_types is specified
@@ -1348,7 +1333,6 @@ class TestBedrockHandlers:
 
     def test_cohere_handler_parse_response_list_format(self):
         """Test Cohere handler parsing direct list format embeddings (default response)."""
-        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
 
         handler = CohereEmbeddingHandler('cohere.embed-v4')
         # List format response (default when embedding_types not specified)
@@ -1362,7 +1346,6 @@ class TestBedrockHandlers:
 
     def test_cohere_handler_parse_response_missing_embeddings(self):
         """Test Cohere handler raises error when embeddings field is missing."""
-        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
         handler = CohereEmbeddingHandler('cohere.embed-v4')
@@ -1372,7 +1355,6 @@ class TestBedrockHandlers:
 
     def test_cohere_handler_parse_response_empty_dict_embeddings(self):
         """Test Cohere handler raises error when embeddings dict has no float key."""
-        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
         handler = CohereEmbeddingHandler('cohere.embed-v4')
@@ -1383,7 +1365,6 @@ class TestBedrockHandlers:
 
     def test_cohere_handler_parse_response_unexpected_embeddings_type(self):
         """Test Cohere handler raises error when embeddings is unexpected type."""
-        from pydantic_ai.embeddings.bedrock import CohereEmbeddingHandler
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
         handler = CohereEmbeddingHandler('cohere.embed-v4')
@@ -1394,7 +1375,6 @@ class TestBedrockHandlers:
 
     def test_nova_handler_parse_response_empty_embeddings(self):
         """Test Nova handler raises error when embeddings list is empty."""
-        from pydantic_ai.embeddings.bedrock import NovaEmbeddingHandler
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
         handler = NovaEmbeddingHandler()
@@ -1404,7 +1384,6 @@ class TestBedrockHandlers:
 
     def test_nova_handler_parse_response_missing_embedding(self):
         """Test Nova handler raises error when embedding field is missing in response item."""
-        from pydantic_ai.embeddings.bedrock import NovaEmbeddingHandler
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
         handler = NovaEmbeddingHandler()
