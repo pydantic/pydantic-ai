@@ -37,9 +37,15 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CodeExecutionCallPart,
+    CodeExecutionReturnPart,
     DocumentUrl,
     FilePart,
+    FileSearchCallPart,
+    FileSearchReturnPart,
     FinishReason,
+    ImageGenerationCallPart,
+    ImageGenerationReturnPart,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -55,6 +61,8 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    WebSearchCallPart,
+    WebSearchReturnPart,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
@@ -2686,7 +2694,7 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
 
 def _map_code_interpreter_tool_call(
     item: responses.ResponseCodeInterpreterToolCall, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart, list[FilePart]]:
+) -> tuple[CodeExecutionCallPart, CodeExecutionReturnPart, list[FilePart]]:
     result: dict[str, Any] = {
         'status': item.status,
     }
@@ -2711,7 +2719,7 @@ def _map_code_interpreter_tool_call(
         result['logs'] = logs
 
     return (
-        BuiltinToolCallPart(
+        CodeExecutionCallPart(
             tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,
             args={
@@ -2720,7 +2728,7 @@ def _map_code_interpreter_tool_call(
             },
             provider_name=provider_name,
         ),
-        BuiltinToolReturnPart(
+        CodeExecutionReturnPart(
             tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,
             content=result,
@@ -2732,7 +2740,7 @@ def _map_code_interpreter_tool_call(
 
 def _map_web_search_tool_call(
     item: responses.ResponseFunctionWebSearch, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+) -> tuple[WebSearchCallPart, WebSearchReturnPart]:
     args: dict[str, Any] | None = None
 
     result = {
@@ -2748,13 +2756,13 @@ def _map_web_search_tool_call(
             result['sources'] = sources
 
     return (
-        BuiltinToolCallPart(
+        WebSearchCallPart(
             tool_name=WebSearchTool.kind,
             tool_call_id=item.id,
             args=args,
             provider_name=provider_name,
         ),
-        BuiltinToolReturnPart(
+        WebSearchReturnPart(
             tool_name=WebSearchTool.kind,
             tool_call_id=item.id,
             content=result,
@@ -2766,7 +2774,7 @@ def _map_web_search_tool_call(
 def _map_file_search_tool_call(
     item: responses.ResponseFileSearchToolCall,
     provider_name: str,
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+) -> tuple[FileSearchCallPart, FileSearchReturnPart]:
     args = {'queries': item.queries}
 
     result: dict[str, Any] = {
@@ -2776,13 +2784,13 @@ def _map_file_search_tool_call(
         result['results'] = [r.model_dump(mode='json') for r in item.results]
 
     return (
-        BuiltinToolCallPart(
+        FileSearchCallPart(
             tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
             args=args,
             provider_name=provider_name,
         ),
-        BuiltinToolReturnPart(
+        FileSearchReturnPart(
             tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
             content=result,
@@ -2793,7 +2801,7 @@ def _map_file_search_tool_call(
 
 def _map_image_generation_tool_call(
     item: responses.response_output_item.ImageGenerationCall, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart, FilePart | None]:
+) -> tuple[ImageGenerationCallPart, ImageGenerationReturnPart, FilePart | None]:
     result = {
         'status': item.status,
     }
@@ -2824,12 +2832,12 @@ def _map_image_generation_tool_call(
         result['status'] = 'completed'
 
     return (
-        BuiltinToolCallPart(
+        ImageGenerationCallPart(
             tool_name=ImageGenerationTool.kind,
             tool_call_id=item.id,
             provider_name=provider_name,
         ),
-        BuiltinToolReturnPart(
+        ImageGenerationReturnPart(
             tool_name=ImageGenerationTool.kind,
             tool_call_id=item.id,
             content=result,

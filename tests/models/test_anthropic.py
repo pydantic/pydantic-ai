@@ -21,6 +21,8 @@ from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CodeExecutionCallPart,
+    CodeExecutionReturnPart,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
@@ -44,6 +46,10 @@ from pydantic_ai import (
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
+    WebFetchCallPart,
+    WebFetchReturnPart,
+    WebSearchCallPart,
+    WebSearchReturnPart,
 )
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
@@ -1741,7 +1747,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 241a70',
-                        tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
@@ -2869,13 +2875,13 @@ I should search for San Francisco weather today to get the most current informat
                         signature='Et0ECkYIBxgCKkCXTXBKWJ3QYffHphenTDDE5jxo/vbyyvFuY7Gi5PGLYFdjxF0KQ4BGT7bGzB53hSRPgJtjUD975U7TZ4f9IheWEgy4pMKmvEJ0D9XDrxsaDDpjMZqhX/EnpJmjGyIwreKtd2Xj+RpguF1YI50dldiwk6qQNW2rK+xLwmWY5qF75b7WZrmOZ3endXYEQjBMKsQDmsnYnUODvD5Uh/yRIUgOp+6P5JrYjLabtsC3wfuIISLVe5QhC/3Ep7K/x55u97qy/DIhCAOz38x4YId37Pqq8XARrRq5CPwzxBzsMfPwpeV5eRHLQmasZxpOhivd1lMLC7B6D9EdpWefKWE+Ux1cMxpfaQj45cpMn93qLyCLGtNqnZJ2nPT7eoOtavZ9VvN5LsJOIWYEkxK+iq/6XYSJE5JlqBtDt9Y5P1QT/QnhFwfxjD/Cs3+RrGzKp2loEjmeYzNBwEfbY+pyKHJUS3bsxWyyi0d9Gc6Zfj4Xiuf/G0ninvXpSQheXi5gcvqIir6ZhcC40vHwvdVtJipSLkqMoPQcppCTOa2ATFyLKZIlug2OjoWIHrC5xnkCuKLXVMtHTF0mdrW0R/SgecnequYprzPeCc+Niqf4CVk62qtp+H06oWKQvHbP+s7kuAbdnhJjkcETiN8fP7+eLzKjRFAVnT0tixaNFjB6lWbg2ePyQDhqeVn6i/ULCzKyoY/hSIfZXUFwTCSDW42WvITFfPfWBBW+p6R/8peJ/KS2q0wHT2G3N4N7xFaNLOTXE0iPPtWsdqZw4cNQi9IUGKayqZ+/02tJYaEYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args={'query': 'San Francisco weather today'},
-                        tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
+                        tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -2949,7 +2955,7 @@ I should search for San Francisco weather today to get the most current informat
                                 'url': 'https://abc7news.com/weather/',
                             },
                         ],
-                        tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -3075,13 +3081,13 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         signature='EqgCCkYIBxgCKkAhyrWtc4MfwZtLCpH/f41h3xS0UBTKetW5LA6ADj/q/8G5GiD+31L8MWU5+8QbLKrdzKIr5RZTEmval6pjPCxwEgygcM1WHSKHKa3PiscaDDtaNmY6L04w/DaCFSIw4mjvUNimq2ShpHNyVrezsnnXaRyyt2Ei4Iik2sCgzARFHGyDNzerHS/aCxzMR8MFKo8BVo7IxMBObxJIn43oG4aHroTyH4tX0IB3HPE1L1O/RZ9HfrmCc/KJwvIc79klaolMdyFvc343GJbssZxF1YJ+8YgGJtrzsKaawjsNelJBqkNWdF/TFwY0G+zGS90yWmHp4hFylIib5OTYz1Dm8O066biiZps8EDkINIoiIfkslPdnP3FWiCl9g6+gSiJd+WwYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args={'query': 'Mexico City weather today'},
-                        tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
+                        tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -3155,7 +3161,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                                 'url': 'https://weather.com/weather/tenday/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757',
                             },
                         ],
-                        tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -3294,13 +3300,13 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         signature='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args='{"query": "San Francisco weather today"}',
-                        tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                        tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -3374,20 +3380,20 @@ I should search for current weather in San Francisco. I'll include "today" in th
                                 'url': 'https://abc7news.com/weather/',
                             },
                         ],
-                        tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
                     ),
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args='{"query": "San Francisco weather September 16 2025"}',
-                        tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                        tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -3461,7 +3467,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                                 'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                             },
                         ],
-                        tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -3622,13 +3628,11 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     signature='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
                     provider_name='anthropic',
                 ),
-                next_part_kind='builtin-tool-call',
+                next_part_kind='web-search-call',
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h', provider_name='anthropic'
-                ),
+                part=WebSearchCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
@@ -3662,17 +3666,17 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather today"}',
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='web-search-return',
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=WebSearchReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -3746,13 +3750,13 @@ I should search for current weather in San Francisco. I'll include "today" in th
                             'url': 'https://abc7news.com/weather/',
                         },
                     ],
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='web-search-call',
             ),
-            PartStartEvent(index=3, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=3, part=TextPart(content='Base'), previous_part_kind='web-search-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d on the search results, I can see')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' that the information is a bit date')),
@@ -3769,13 +3773,11 @@ I should search for current weather in San Francisco. I'll include "today" in th
                 part=TextPart(
                     content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
                 ),
-                next_part_kind='builtin-tool-call',
+                next_part_kind='web-search-call',
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx', provider_name='anthropic'
-                ),
+                part=WebSearchCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
@@ -3818,17 +3820,17 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartEndEvent(
                 index=4,
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather September 16 2025"}',
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='web-search-return',
             ),
             PartStartEvent(
                 index=5,
-                part=BuiltinToolReturnPart(
+                part=WebSearchReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -3902,13 +3904,13 @@ I should search for current weather in San Francisco. I'll include "today" in th
                             'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                         },
                     ],
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='web-search-call',
             ),
-            PartStartEvent(index=6, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=6, part=TextPart(content='Base'), previous_part_kind='web-search-return'),
             PartDeltaEvent(
                 index=6,
                 delta=TextPartDelta(
@@ -4126,15 +4128,15 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather today"}',
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=WebSearchReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -4208,21 +4210,21 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                             'url': 'https://abc7news.com/weather/',
                         },
                     ],
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather September 16 2025"}',
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=WebSearchReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -4296,7 +4298,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                             'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
                         },
                     ],
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
@@ -4342,26 +4344,307 @@ Let me fetch the page first.\
                         signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    WebFetchCallPart(
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    WebFetchReturnPart(
                         tool_name='web_fetch',
                         content={
                             'content': {
                                 'citations': None,
                                 'source': {
-                                    'data': IsStr(),
+                                    'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
                                     'media_type': 'text/plain',
                                     'type': 'text',
                                 },
                                 'title': 'Pydantic AI',
                                 'type': 'document',
                             },
-                            'retrieved_at': IsStr(),
+                            'retrieved_at': '2025-11-14T23:34:21.151000+00:00',
                             'type': 'web_fetch_result',
                             'url': 'https://ai.pydantic.dev',
                         },
@@ -4425,26 +4708,307 @@ Let me fetch the page first.\
                         signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    WebFetchCallPart(
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    WebFetchReturnPart(
                         tool_name='web_fetch',
                         content={
                             'content': {
                                 'citations': None,
                                 'source': {
-                                    'data': IsStr(),
+                                    'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
                                     'media_type': 'text/plain',
                                     'type': 'text',
                                 },
                                 'title': 'Pydantic AI',
                                 'type': 'document',
                             },
-                            'retrieved_at': IsStr(),
+                            'retrieved_at': '2025-11-14T23:34:21.151000+00:00',
                             'type': 'web_fetch_result',
                             'url': 'https://ai.pydantic.dev',
                         },
@@ -4590,26 +5154,307 @@ async def test_anthropic_web_fetch_tool_stream(
                         signature='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    WebFetchCallPart(
                         tool_name='web_fetch',
                         args='{"url": "https://ai.pydantic.dev"}',
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    WebFetchReturnPart(
                         tool_name='web_fetch',
                         content={
                             'content': {
                                 'citations': None,
                                 'source': {
-                                    'data': IsStr(),
+                                    'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
                                     'media_type': 'text/plain',
                                     'type': 'text',
                                 },
                                 'title': 'Pydantic AI',
                                 'type': 'document',
                             },
-                            'retrieved_at': IsStr(),
+                            'retrieved_at': '2025-11-14T23:34:21.151000+00:00',
                             'type': 'web_fetch_result',
                             'url': 'https://ai.pydantic.dev',
                         },
@@ -4677,7 +5522,7 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
+                part=WebFetchCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
@@ -4703,7 +5548,7 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=WebFetchReturnPart(
                     tool_name='web_fetch',
                     content={
                         'content': {
@@ -4997,7 +5842,7 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                             'title': 'Pydantic AI',
                             'type': 'document',
                         },
-                        'retrieved_at': IsStr(),
+                        'retrieved_at': '2025-11-14T23:34:21.151000+00:00',
                         'type': 'web_fetch_result',
                         'url': 'https://ai.pydantic.dev',
                     },
@@ -5005,7 +5850,7 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='web-fetch-call',
             ),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ydantic AI is a')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Python')),
@@ -5726,7 +6571,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         signature='EvsDCkYIBxgCKkCSFDXODoOrOHU14Yv7+TNxuR4sDsJKw9y9C1gGPIWqslF6apNZ1xwJ94E9KsQBfXlZ/ELoBSTj3YT0liwueN6kEgxrakXTN1a+YafcnckaDC2EYhQsezxdE/P7XSIwczAl/PquNGpiOLqC5DnYKvD2+F0JhBQsbLe1bQi/VR0XCQdd+4DZ5dBU5AmuDcntKuICIMg145F3vP8bFnTdUMOIQY0NASypKRnHj6owIkuqWJ+pwu6OdpDt2a+Lr7R1dw860hcPjEp65eg5nwtyi8bw1pzfQJmC48DoiQn/OYeiXMWeNv5HoKEK/lkikqVPcTnD03MytUsNGRqUBfDvr4bxNgxqeAENi5pZ21ySnjxhC879gN0G3uriEM8o4LXj/X2DotKO1lvIEL/2RQZGrFulDLq5I2FW51YBY3kzHerK7zwFgs3t39VLsy7Q3T6sLi4yh4BbFxF4RaSOCicTRbMYC8UO85uhArSSm/0EDDhX+kxIGJZ91F6Vv0vSS4qLy+55buZ8Jj4/P86t9YMxBeylQ/tUNGzhISqc1+CZeQ4aZKiRyQmlfkA6bcM42JAFQT/c0EbM2JmDsiSpkM8d021E9hqrr2eIhasaOo4vG5yUz7f9aSaRc/Muy02mckNxxxS7UshBCxr8veoMa0HYnB/rBNFeGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    CodeExecutionCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -5734,10 +6579,10 @@ result = 3 * 12390
 print(f"3 * 12390 = {result}")\
 """
                         },
-                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
+                        tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
@@ -5746,7 +6591,7 @@ print(f"3 * 12390 = {result}")\
                             'stdout': '3 * 12390 = 37170\n',
                             'type': 'code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -5795,7 +6640,7 @@ print(f"3 * 12390 = {result}")\
                         signature='EucCCkYIBxgCKkDrAwZF3dM/a2UiJFMD/+Z5mdZOkFXxJ1vmAg7GWzC2YUTBKtKvys1yFaWmkUuBSYBC/kaTPYVj28qa94V0Q/ngEgw+4333itH5QH/0B6gaDHxUZy/HGNpU04RbZiIwmQeS7P+gLHlV9b0tRYciwVbpjZl8WkrunyWyD5xXTC7bzv/tQKv8kMjxRsRGZZH1Ks4BDiNK1tuAlz4x5LDAsui8/8vBDY1c+NRtc6y0bOgxSXFXSemv2BHm7VokC7JG8+iCQEY9HIyFtyjLeJ93niDCszU8YHPtAa4o2Orw8K4Tc4Y18U/TqfgnZulkjkeONhDJP9uUk4Db4woJiLpAx13X8W5TriwqHWMRM2+D0coqTTWTovC/xbVFFZZmwyqaz/h6V6qqokyLpbqb+5B5kw/uQfybUv28h3GqxFyuD62zM9OPyMqbd2GrAPbSLE2JETkJsp6GzxVEh1vNI3DMgdQYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    CodeExecutionCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -5803,10 +6648,10 @@ result = 4 * 12390
 print(f"4 * 12390 = {result}")\
 """
                         },
-                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
@@ -5815,7 +6660,7 @@ print(f"4 * 12390 = {result}")\
                             'stdout': '4 * 12390 = 49560\n',
                             'type': 'code_execution_result',
                         },
-                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -5892,13 +6737,13 @@ This is a computational task that requires precise calculations, so I should use
                     TextPart(
                         content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
                     ),
-                    BuiltinToolCallPart(
+                    CodeExecutionCallPart(
                         tool_name='code_execution',
                         args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
@@ -5916,7 +6761,7 @@ Results match: True
 """,
                             'type': 'code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -6102,13 +6947,13 @@ This is a computational task that requires precise calculations, so I should use
                 part=TextPart(
                     content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
                 ),
-                next_part_kind='builtin-tool-call',
+                next_part_kind='code-execution-call',
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 ),
                 previous_part_kind='text',
@@ -6120,7 +6965,7 @@ This is a computational task that requires precise calculations, so I should use
                 index=2,
                 delta=ToolCallPartDelta(
                     args_delta='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartDeltaEvent(
@@ -6137,7 +6982,7 @@ This is a computational task that requires precise calculations, so I should use
                 index=2,
                 delta=ToolCallPartDelta(
                     args_delta='.02255\\"\\nprint(f\\"Expression: {expression',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartDeltaEvent(
@@ -6214,14 +7059,14 @@ This is a computational task that requires precise calculations, so I should use
                 index=2,
                 delta=ToolCallPartDelta(
                     args_delta='3 = step2 - 6  # Second subtraction\\nprint',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
                     args_delta='(f\\"Step 3 - Second subtraction: {step2}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartDeltaEvent(
@@ -6238,7 +7083,7 @@ This is a computational task that requires precise calculations, so I should use
                 index=2,
                 delta=ToolCallPartDelta(
                     args_delta='1.02255  # Final addition\\nprint(f\\"Step ',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartDeltaEvent(
@@ -6267,7 +7112,7 @@ This is a computational task that requires precise calculations, so I should use
                 index=2,
                 delta=ToolCallPartDelta(
                     args_delta=' direct calculation\\ndirect_result = 65',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartDeltaEvent(
@@ -6280,7 +7125,7 @@ This is a computational task that requires precise calculations, so I should use
                 index=2,
                 delta=ToolCallPartDelta(
                     args_delta='6+1.02255\\nprint(f\\"\\\\nDirect calculation:',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartDeltaEvent(
@@ -6293,7 +7138,7 @@ This is a computational task that requires precise calculations, so I should use
                 index=2,
                 delta=ToolCallPartDelta(
                     args_delta='(f\\"Results match: {final_result == direct',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                 ),
             ),
             PartDeltaEvent(
@@ -6305,17 +7150,17 @@ This is a computational task that requires precise calculations, so I should use
             ),
             PartEndEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='code-execution-return',
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolReturnPart(
+                part=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={
                         'content': [],
@@ -6333,13 +7178,13 @@ Results match: True
 """,
                         'type': 'code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='code-execution-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The answer to'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=4, part=TextPart(content='The answer to'), previous_part_kind='code-execution-return'),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' **65465-6544 * ')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='65464-6+1.02255** is **')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-428,330,955.97745**.')),
@@ -6401,15 +7246,15 @@ Here's how it breaks down following the order of operations:
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={
                         'content': [],
@@ -6427,7 +7272,7 @@ Results match: True
 """,
                         'type': 'code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
@@ -6492,16 +7337,16 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
 
     result = await agent.run('How much is 3 * 12390?', model=google_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [[UserPromptPart], [CodeExecutionCallPart, CodeExecutionReturnPart, TextPart]]
     )
 
     result = await agent.run('Multiplied by 12390', model=anthropic_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [CodeExecutionCallPart, CodeExecutionReturnPart, TextPart],
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [CodeExecutionCallPart, CodeExecutionReturnPart, TextPart],
         ]
     )
 
@@ -6605,7 +7450,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6617,7 +7462,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                     ToolCallPart(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
-                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
+                        tool_call_id=IsStr(),
                     )
                 ],
                 usage=RequestUsage(
@@ -6644,7 +7489,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6717,7 +7562,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6812,7 +7657,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7085,9 +7930,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY', provider_name='anthropic'
-                ),
+                part=WebSearchCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'),
             ),
             PartDeltaEvent(
                 index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
@@ -7114,17 +7957,17 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args='{"query": "top world news today"}',
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='web-search-return',
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=WebSearchReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -7198,16 +8041,16 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                             'url': 'https://www.foxnews.com/',
                         },
                     ],
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='web-search-call',
             ),
             PartStartEvent(
                 index=2,
                 part=TextPart(content='Let me search for more specific breaking'),
-                previous_part_kind='builtin-tool-return',
+                previous_part_kind='web-search-return',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' news stories to get clearer headlines.')),
@@ -7216,13 +8059,11 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                 part=TextPart(
                     content='Let me search for more specific breaking news stories to get clearer headlines.'
                 ),
-                next_part_kind='builtin-tool-call',
+                next_part_kind='web-search-call',
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T', provider_name='anthropic'
-                ),
+                part=WebSearchCallPart(tool_name='web_search', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
@@ -7254,17 +8095,17 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartEndEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args='{"query": "breaking news headlines August 14 2025"}',
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='web-search-return',
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolReturnPart(
+                part=WebSearchReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -7338,13 +8179,13 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                             'url': 'https://www.democracynow.org/shows/2025/7/14',
                         },
                     ],
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='web-search-call',
             ),
-            PartStartEvent(index=5, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=5, part=TextPart(content='Base'), previous_part_kind='web-search-return'),
             PartDeltaEvent(
                 index=5, delta=TextPartDelta(content_delta='d on the search results, I can identify the top')
             ),
@@ -7425,74 +8266,52 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=', the White House swapped out pro')),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –")),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's")),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' NATO and EU bids')),
             PartEndEvent(
                 index=10,
-                part=TextPart(
-                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids"
-                ),
+                part=TextPart(content=IsStr()),
                 next_part_kind='text',
             ),
             PartStartEvent(
                 index=11,
-                part=TextPart(
-                    content="""\
-.
-
-**2. Trump's Federal Takeover of Washington D\
-"""
-                ),
+                part=TextPart(content=IsStr()),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='.C.**')),
             PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='\n')),
             PartEndEvent(
                 index=11,
-                part=TextPart(
-                    content="""\
-.
-
-**2. Trump's Federal Takeover of Washington D.C.**
-"""
-                ),
+                part=TextPart(content=IsStr()),
                 next_part_kind='text',
             ),
             PartStartEvent(
                 index=12,
-                part=TextPart(
-                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's tak"
-                ),
+                part=TextPart(content=IsStr()),
                 previous_part_kind='text',
             ),
-            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta="eover of the city's police entered its thir")),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='d night')),
             PartEndEvent(
                 index=12,
-                part=TextPart(
-                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night"
-                ),
+                part=TextPart(content=IsStr()),
                 next_part_kind='text',
             ),
             PartStartEvent(index=13, part=TextPart(content='. '), previous_part_kind='text'),
             PartEndEvent(index=13, part=TextPart(content='. '), next_part_kind='text'),
             PartStartEvent(
                 index=14,
-                part=TextPart(
-                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment an"
-                ),
+                part=TextPart(content=IsStr()),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=14, delta=TextPartDelta(content_delta='d federalization of local police to crack down on crime')
             ),
-            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=" in the nation's capital")),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(
                 index=14,
-                part=TextPart(
-                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital"
-                ),
+                part=TextPart(content=IsStr()),
                 next_part_kind='text',
             ),
             PartStartEvent(index=15, part=TextPart(content='. '), previous_part_kind='text'),
@@ -7502,12 +8321,10 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(content='Over 100 arrests made as National Guard rolls into DC under'),
                 previous_part_kind='text',
             ),
-            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" Trump's federal takeover")),
+            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(
                 index=16,
-                part=TextPart(
-                    content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover"
-                ),
+                part=TextPart(content=IsStr()),
                 next_part_kind='text',
             ),
             PartStartEvent(
@@ -7598,15 +8415,15 @@ These stories represent major international diplomatic developments, significant
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args='{"query": "top world news today"}',
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=WebSearchReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -7680,21 +8497,21 @@ These stories represent major international diplomatic developments, significant
                             'url': 'https://www.foxnews.com/',
                         },
                     ],
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args='{"query": "breaking news headlines August 14 2025"}',
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_call_id=IsStr(),
                     provider_name='anthropic',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=WebSearchReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -7768,7 +8585,7 @@ These stories represent major international diplomatic developments, significant
                             'url': 'https://www.democracynow.org/shows/2025/7/14',
                         },
                     ],
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )

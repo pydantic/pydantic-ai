@@ -18,7 +18,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import deprecated
+from typing_extensions import TypedDict, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -27,6 +27,352 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
+
+# =============================================================================
+# NORMALIZED SCHEMAS FOR BUILTIN TOOL RETURN CONTENT
+# =============================================================================
+# These TypedDicts define a provider-agnostic, normalized format for builtin tool
+# results. Use the `.normalized` property on return parts to access data in this
+# unified format, regardless of which provider generated the response.
+
+
+CodeExecutionStatus: TypeAlias = Literal['completed', 'failed', 'timeout', 'unknown']
+"""Status of a code execution result."""
+
+BuiltinToolStatus: TypeAlias = Literal['completed', 'failed', 'unknown']
+"""Generic status for builtin tool results."""
+
+
+class NormalizedCodeExecutionContent(TypedDict, total=False):
+    """Unified/normalized schema for code execution results.
+
+    Access via `part.normalized` for provider-agnostic field names.
+    """
+
+    status: CodeExecutionStatus
+    """Execution status: 'completed', 'failed', 'timeout', or 'unknown'."""
+    output: str
+    """Combined output from execution (stdout for Anthropic, output for Google, joined logs for OpenAI)."""
+    error: str
+    """Error output (stderr for Anthropic, not available for other providers)."""
+    exit_code: int
+    """Process exit code (return_code for Anthropic, not available for other providers)."""
+
+
+class NormalizedWebSearchSource(TypedDict, total=False):
+    """Unified schema for a single web search result source."""
+
+    title: str
+    """Title of the search result."""
+    url: str
+    """URL of the search result (normalized from 'uri' for Google)."""
+    snippet: str
+    """Snippet/preview text from the result."""
+    relevance_score: float
+    """Relevance score of the result."""
+
+
+class NormalizedWebSearchContent(TypedDict, total=False):
+    """Unified/normalized schema for web search results.
+
+    Access via `part.normalized` for provider-agnostic field names.
+    """
+
+    status: BuiltinToolStatus
+    """Search status: 'completed', 'failed', or 'unknown'."""
+    sources: list[NormalizedWebSearchSource]
+    """List of search result sources."""
+
+
+class NormalizedWebFetchPage(TypedDict, total=False):
+    """Unified schema for a single fetched web page."""
+
+    url: str
+    """URL of the fetched page (normalized from 'retrieved_url' for Google)."""
+    content: str
+    """The fetched page content/text."""
+    content_type: str
+    """MIME type of the content."""
+    fetched_at: str
+    """ISO timestamp when the page was fetched."""
+
+
+class NormalizedWebFetchContent(TypedDict, total=False):
+    """Unified/normalized schema for web fetch results.
+
+    Access via `part.normalized` for provider-agnostic field names.
+    """
+
+    status: BuiltinToolStatus
+    """Fetch status: 'completed', 'failed', or 'unknown'."""
+    pages: list[NormalizedWebFetchPage]
+    """List of fetched pages."""
+
+
+class NormalizedFileSearchResult(TypedDict, total=False):
+    """Unified schema for a single file search result."""
+
+    id: str
+    """Result ID."""
+    filename: str
+    """Filename of the matched file."""
+    content: str
+    """Matched text content."""
+    score: float
+    """Relevance score."""
+    file_store: str
+    """File store identifier."""
+
+
+class NormalizedFileSearchContent(TypedDict, total=False):
+    """Unified/normalized schema for file search results.
+
+    Access via `part.normalized` for provider-agnostic field names.
+    """
+
+    status: BuiltinToolStatus
+    """Search status: 'completed', 'failed', or 'unknown'."""
+    results: list[NormalizedFileSearchResult]
+    """List of search results."""
+
+
+class NormalizedImageGenerationContent(TypedDict, total=False):
+    """Unified/normalized schema for image generation results (OpenAI only).
+
+    Access via `part.normalized` for provider-agnostic field names.
+    Note: The actual image is returned as a separate FilePart, not in content.
+    """
+
+    status: Literal['completed', 'generating', 'failed', 'unknown']
+    """Generation status."""
+    revised_prompt: str
+    """The actual prompt used for generation (may differ from input)."""
+    size: str
+    """Image dimensions (e.g., '1024x1024')."""
+    quality: str
+    """Quality setting (e.g., 'high', 'standard')."""
+    background: str
+    """Background setting (e.g., 'opaque', 'transparent')."""
+
+
+# =============================================================================
+# NORMALIZATION FUNCTIONS
+# =============================================================================
+
+
+def normalize_code_execution_content(raw: dict[str, Any]) -> NormalizedCodeExecutionContent:
+    """Normalize code execution content from any provider to unified format.
+
+    Args:
+        raw: Raw provider-specific content.
+
+    Returns:
+        Normalized content with unified field names.
+    """
+    normalized: NormalizedCodeExecutionContent = {}
+
+    # Anthropic format: stdout, stderr, return_code
+    if 'stdout' in raw or 'stderr' in raw or 'return_code' in raw:
+        return_code = raw.get('return_code')
+        if return_code is not None:
+            normalized['status'] = 'completed' if return_code == 0 else 'failed'
+            normalized['exit_code'] = return_code
+        else:
+            normalized['status'] = 'unknown'
+        # Always include output/error (even if empty string) for consistency
+        normalized['output'] = raw.get('stdout', '')
+        if 'stderr' in raw:
+            normalized['error'] = raw.get('stderr', '')
+    # Google format: outcome, output
+    elif 'outcome' in raw:
+        outcome = raw.get('outcome', '')
+        outcome_map: dict[str, CodeExecutionStatus] = {
+            'OUTCOME_OK': 'completed',
+            'OUTCOME_TIMEOUT': 'timeout',
+            'OUTCOME_FAILED': 'failed',
+        }
+        normalized['status'] = outcome_map.get(outcome, 'unknown')
+        normalized['output'] = raw.get('output', '')
+    # OpenAI format: status, logs
+    elif 'logs' in raw:
+        status = raw.get('status', 'unknown')
+        normalized['status'] = 'completed' if status == 'completed' else 'failed' if status == 'failed' else 'unknown'
+        logs = raw.get('logs', [])
+        normalized['output'] = '\n'.join(logs) if logs else ''
+    # Unknown or empty format - provide defaults
+    else:
+        normalized['status'] = 'unknown'
+        normalized['output'] = ''
+
+    return normalized
+
+
+def _extract_web_search_source(item: dict[str, Any]) -> NormalizedWebSearchSource:
+    """Extract a normalized web search source from a provider-specific item."""
+    source: NormalizedWebSearchSource = {}
+    if title := item.get('title'):
+        source['title'] = title
+    # Normalize uri -> url
+    if url := item.get('url') or item.get('uri'):
+        source['url'] = url
+    if snippet := item.get('snippet'):
+        source['snippet'] = snippet
+    if (score := item.get('relevance_score')) is not None:
+        source['relevance_score'] = score
+    return source
+
+
+def normalize_web_search_content(
+    raw: dict[str, Any] | list[dict[str, Any]],
+) -> NormalizedWebSearchContent:
+    """Normalize web search content from any provider to unified format.
+
+    Args:
+        raw: Raw provider-specific content (dict or list).
+
+    Returns:
+        Normalized content with unified field names.
+    """
+    normalized: NormalizedWebSearchContent = {'status': 'completed', 'sources': []}
+
+    if isinstance(raw, list):
+        # Google/Anthropic: list of sources directly
+        for item in raw:
+            if source := _extract_web_search_source(item):
+                normalized['sources'].append(source)
+    else:
+        # Dict format
+        if status := raw.get('status'):
+            normalized['status'] = (
+                'completed' if status == 'completed' else 'failed' if status == 'failed' else 'unknown'
+            )
+        # OpenAI: sources array
+        if sources := raw.get('sources'):
+            for item in sources:
+                if source := _extract_web_search_source(item):
+                    normalized['sources'].append(source)
+        # Groq: results array
+        elif results := raw.get('results'):
+            for item in results:
+                if source := _extract_web_search_source(item):
+                    normalized['sources'].append(source)
+        # Groq fallback: output string
+        elif output := raw.get('output'):
+            normalized['sources'].append({'snippet': output})
+
+    return normalized
+
+
+def normalize_web_fetch_content(
+    raw: dict[str, Any] | list[dict[str, Any]],
+) -> NormalizedWebFetchContent:
+    """Normalize web fetch content from any provider to unified format.
+
+    Args:
+        raw: Raw provider-specific content (dict or list).
+
+    Returns:
+        Normalized content with unified field names.
+    """
+    normalized: NormalizedWebFetchContent = {'status': 'completed', 'pages': []}
+
+    def _extract_page(item: dict[str, Any]) -> NormalizedWebFetchPage:
+        page: NormalizedWebFetchPage = {}
+        # Normalize retrieved_url -> url
+        if url := item.get('url') or item.get('retrieved_url'):
+            page['url'] = url
+        if content := item.get('content'):
+            page['content'] = content
+        if content_type := item.get('type') or item.get('content_type'):
+            page['content_type'] = content_type
+        if fetched_at := item.get('retrieved_at') or item.get('fetched_at'):
+            page['fetched_at'] = fetched_at
+        return page
+
+    if isinstance(raw, list):
+        # Google: list of pages
+        for item in raw:
+            if page := _extract_page(item):
+                normalized['pages'].append(page)
+    else:
+        # Anthropic: single page dict
+        if page := _extract_page(raw):
+            normalized['pages'].append(page)
+
+    return normalized
+
+
+def normalize_file_search_content(
+    raw: dict[str, Any] | list[dict[str, Any]],
+) -> NormalizedFileSearchContent:
+    """Normalize file search content from any provider to unified format.
+
+    Args:
+        raw: Raw provider-specific content (dict or list).
+
+    Returns:
+        Normalized content with unified field names.
+    """
+    normalized: NormalizedFileSearchContent = {'status': 'completed', 'results': []}
+
+    def _extract_result(item: dict[str, Any]) -> NormalizedFileSearchResult:
+        result: NormalizedFileSearchResult = {}
+        if id_ := item.get('id') or item.get('file_id'):
+            result['id'] = id_
+        if filename := item.get('filename'):
+            result['filename'] = filename
+        # Normalize text -> content
+        if content := item.get('content') or item.get('text'):
+            result['content'] = content
+        if (score := item.get('score')) is not None:
+            result['score'] = score
+        if file_store := item.get('file_search_store') or item.get('file_store'):
+            result['file_store'] = file_store
+        return result
+
+    if isinstance(raw, list):
+        # Google: list of results directly
+        for item in raw:
+            if result := _extract_result(item):
+                normalized['results'].append(result)
+    else:
+        # OpenAI: dict with status and results
+        if status := raw.get('status'):
+            normalized['status'] = (
+                'completed' if status == 'completed' else 'failed' if status == 'failed' else 'unknown'
+            )
+        if results := raw.get('results'):
+            for item in results:
+                if result := _extract_result(item):
+                    normalized['results'].append(result)
+
+    return normalized
+
+
+def normalize_image_generation_content(raw: dict[str, Any]) -> NormalizedImageGenerationContent:
+    """Normalize image generation content to unified format.
+
+    Args:
+        raw: Raw provider-specific content.
+
+    Returns:
+        Normalized content with unified field names.
+    """
+    normalized: NormalizedImageGenerationContent = {}
+
+    if status := raw.get('status'):
+        normalized['status'] = status
+    if revised_prompt := raw.get('revised_prompt'):
+        normalized['revised_prompt'] = revised_prompt
+    if size := raw.get('size'):
+        normalized['size'] = size
+    if quality := raw.get('quality'):
+        normalized['quality'] = quality
+    if background := raw.get('background'):
+        normalized['background'] = background
+
+    return normalized
+
 
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
@@ -896,6 +1242,144 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
+@dataclass(repr=False)
+class CodeExecutionReturnPart(BuiltinToolReturnPart):
+    """A return part for code execution tool results.
+
+    The content field contains raw provider-specific data. Use the `normalized` property
+    for provider-agnostic access with unified field names.
+    """
+
+    part_kind: Literal['code-execution-return'] = 'code-execution-return'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def normalized(self) -> NormalizedCodeExecutionContent:
+        """Get normalized content with unified field names.
+
+        Returns provider-agnostic data with fields: status, output, error, exit_code.
+        """
+        return normalize_code_execution_content(cast(dict[str, Any], self.content))
+
+
+@dataclass(repr=False)
+class WebSearchReturnPart(BuiltinToolReturnPart):
+    """A return part for web search tool results.
+
+    The content field contains raw provider-specific data. Use the `normalized` property
+    for provider-agnostic access with unified field names.
+    """
+
+    part_kind: Literal['web-search-return'] = 'web-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def normalized(self) -> NormalizedWebSearchContent:
+        """Get normalized content with unified field names.
+
+        Returns provider-agnostic data with fields: status, sources.
+        Each source has: title, url, snippet, relevance_score.
+        """
+        return normalize_web_search_content(cast(dict[str, Any] | list[dict[str, Any]], self.content))
+
+
+@dataclass(repr=False)
+class WebFetchReturnPart(BuiltinToolReturnPart):
+    """A return part for web fetch tool results.
+
+    The content field contains raw provider-specific data. Use the `normalized` property
+    for provider-agnostic access with unified field names.
+    """
+
+    part_kind: Literal['web-fetch-return'] = 'web-fetch-return'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def normalized(self) -> NormalizedWebFetchContent:
+        """Get normalized content with unified field names.
+
+        Returns provider-agnostic data with fields: status, pages.
+        Each page has: url, content, content_type, fetched_at.
+        """
+        return normalize_web_fetch_content(cast(dict[str, Any] | list[dict[str, Any]], self.content))
+
+
+@dataclass(repr=False)
+class FileSearchReturnPart(BuiltinToolReturnPart):
+    """A return part for file search tool results.
+
+    The content field contains raw provider-specific data. Use the `normalized` property
+    for provider-agnostic access with unified field names.
+    """
+
+    part_kind: Literal['file-search-return'] = 'file-search-return'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def normalized(self) -> NormalizedFileSearchContent:
+        """Get normalized content with unified field names.
+
+        Returns provider-agnostic data with fields: status, results.
+        Each result has: id, filename, content, score, file_store.
+        """
+        return normalize_file_search_content(cast(dict[str, Any] | list[dict[str, Any]], self.content))
+
+
+@dataclass(repr=False)
+class ImageGenerationReturnPart(BuiltinToolReturnPart):
+    """A return part for image generation tool results (metadata only, image is in FilePart).
+
+    The content field contains raw provider-specific data. Use the `normalized` property
+    for provider-agnostic access with unified field names.
+    """
+
+    part_kind: Literal['image-generation-return'] = 'image-generation-return'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def normalized(self) -> NormalizedImageGenerationContent:
+        """Get normalized content with unified field names.
+
+        Returns provider-agnostic data with fields: status, revised_prompt, size, quality, background.
+        """
+        return normalize_image_generation_content(cast(dict[str, Any], self.content))
+
+
+# Mapping from tool_name to specialized return part class for migration
+_TOOL_NAME_TO_RETURN_PART_CLASS: dict[str, type[BuiltinToolReturnPart]] = {
+    'code_execution': CodeExecutionReturnPart,
+    'web_search': WebSearchReturnPart,
+    'web_fetch': WebFetchReturnPart,
+    'url_context': WebFetchReturnPart,  # Deprecated alias
+    'file_search': FileSearchReturnPart,
+    'image_generation': ImageGenerationReturnPart,
+}
+
+
+def _migrate_builtin_tool_return_part(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate old BuiltinToolReturnPart data to specific subclass based on tool_name.
+
+    This BeforeValidator upgrades old serialized data with part_kind='builtin-tool-return'
+    to the appropriate specialized subclass (e.g., 'code-execution-return').
+    """
+    if not isinstance(data, dict):
+        return data  # pragma: lax no cover
+
+    part_kind = data.get('part_kind')
+    tool_name = data.get('tool_name', '')
+
+    if part_kind == 'builtin-tool-return':
+        if tool_name in _TOOL_NAME_TO_RETURN_PART_CLASS:
+            new_class = _TOOL_NAME_TO_RETURN_PART_CLASS[tool_name]
+            data = dict(data)
+            data['part_kind'] = new_class.part_kind
+        # MCP and memory tools stay as base class (schemas not stable)
+        elif tool_name.startswith('mcp_server:') or tool_name in ('mcp_server', 'memory'):
+            pass
+
+    return data
+
+
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
@@ -1224,8 +1708,159 @@ class BuiltinToolCallPart(BaseToolCallPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
+@dataclass(repr=False)
+class CodeExecutionCallPart(BuiltinToolCallPart):
+    """A call part for code execution tool with normalized accessor properties."""
+
+    args: dict[str, Any] | str | None = None
+    """The code execution call arguments."""
+
+    part_kind: Literal['code-execution-call'] = 'code-execution-call'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def code(self) -> str | None:
+        """Get the code to be executed."""
+        args = self.args_as_dict()
+        return args.get('code')
+
+
+@dataclass(repr=False)
+class WebSearchCallPart(BuiltinToolCallPart):
+    """A call part for web search tool with normalized accessor properties."""
+
+    args: dict[str, Any] | str | None = None
+    """The web search call arguments."""
+
+    part_kind: Literal['web-search-call'] = 'web-search-call'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def query(self) -> str | None:
+        """Get the search query."""
+        args = self.args_as_dict()
+        return args.get('query')
+
+
+@dataclass(repr=False)
+class WebFetchCallPart(BuiltinToolCallPart):
+    """A call part for web fetch tool with normalized accessor properties."""
+
+    args: dict[str, Any] | str | None = None
+    """The web fetch call arguments."""
+
+    part_kind: Literal['web-fetch-call'] = 'web-fetch-call'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def urls(self) -> list[str]:
+        """Get the URLs to fetch."""
+        args = self.args_as_dict()
+        if 'urls' in args:
+            return args['urls']
+        if 'url' in args:
+            return [args['url']]
+        return []  # pragma: lax no cover
+
+
+@dataclass(repr=False)
+class FileSearchCallPart(BuiltinToolCallPart):
+    """A call part for file search tool with normalized accessor properties."""
+
+    args: dict[str, Any] | str | None = None
+    """The file search call arguments."""
+
+    part_kind: Literal['file-search-call'] = 'file-search-call'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def queries(self) -> list[str]:
+        """Get the search queries."""
+        args = self.args_as_dict()
+        if 'queries' in args:
+            return args['queries']
+        if 'query' in args:
+            return [args['query']]
+        return []  # pragma: lax no cover
+
+
+@dataclass(repr=False)
+class ImageGenerationCallPart(BuiltinToolCallPart):
+    """A call part for image generation tool (prompt comes from conversation context)."""
+
+    part_kind: Literal['image-generation-call'] = 'image-generation-call'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+# Mapping from tool_name to specialized call part class for migration
+_TOOL_NAME_TO_CALL_PART_CLASS: dict[str, type[BuiltinToolCallPart]] = {
+    'code_execution': CodeExecutionCallPart,
+    'web_search': WebSearchCallPart,
+    'web_fetch': WebFetchCallPart,
+    'url_context': WebFetchCallPart,  # Deprecated alias
+    'file_search': FileSearchCallPart,
+    'image_generation': ImageGenerationCallPart,
+}
+
+
+def _migrate_builtin_tool_call_part(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate old BuiltinToolCallPart data to specific subclass based on tool_name.
+
+    This BeforeValidator upgrades old serialized data with part_kind='builtin-tool-call'
+    to the appropriate specialized subclass (e.g., 'code-execution-call').
+    """
+    if not isinstance(data, dict):
+        return data  # pragma: lax no cover
+
+    part_kind = data.get('part_kind')
+    tool_name = data.get('tool_name', '')
+
+    if part_kind == 'builtin-tool-call':
+        if tool_name in _TOOL_NAME_TO_CALL_PART_CLASS:
+            new_class = _TOOL_NAME_TO_CALL_PART_CLASS[tool_name]
+            data = dict(data)
+            data['part_kind'] = new_class.part_kind
+        # MCP and memory tools stay as base class (schemas not stable)
+        elif tool_name.startswith('mcp_server:') or tool_name in ('mcp_server', 'memory'):
+            pass
+
+    return data
+
+
+# Union of all builtin tool call part types for the discriminator
+_BuiltinToolCallPartUnion = (
+    BuiltinToolCallPart
+    | CodeExecutionCallPart
+    | WebSearchCallPart
+    | WebFetchCallPart
+    | FileSearchCallPart
+    | ImageGenerationCallPart
+)
+
+# Union of all builtin tool return part types for the discriminator
+_BuiltinToolReturnPartUnion = (
+    BuiltinToolReturnPart
+    | CodeExecutionReturnPart
+    | WebSearchReturnPart
+    | WebFetchReturnPart
+    | FileSearchReturnPart
+    | ImageGenerationReturnPart
+)
+
+
+def _migrate_builtin_tool_parts(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate old BuiltinToolCallPart and BuiltinToolReturnPart data to specific subclasses.
+
+    This BeforeValidator upgrades old serialized data to the appropriate specialized subclass.
+    """
+    data = _migrate_builtin_tool_call_part(data)
+    data = _migrate_builtin_tool_return_part(data)
+    return data
+
+
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    TextPart | ToolCallPart | _BuiltinToolCallPartUnion | _BuiltinToolReturnPartUnion | ThinkingPart | FilePart,
+    pydantic.BeforeValidator(_migrate_builtin_tool_parts),
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -1810,7 +2445,25 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'file',
+            'code-execution-call',
+            'web-search-call',
+            'web-fetch-call',
+            'file-search-call',
+            'image-generation-call',
+            'code-execution-return',
+            'web-search-return',
+            'web-fetch-return',
+            'file-search-return',
+            'image-generation-return',
+        ]
+        | None
     ) = None
     """The kind of the previous part, if any.
 
@@ -1850,7 +2503,25 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'file',
+            'code-execution-call',
+            'web-search-call',
+            'web-fetch-call',
+            'file-search-call',
+            'image-generation-call',
+            'code-execution-return',
+            'web-search-return',
+            'web-fetch-return',
+            'file-search-return',
+            'image-generation-return',
+        ]
+        | None
     ) = None
     """The kind of the next part, if any.
 

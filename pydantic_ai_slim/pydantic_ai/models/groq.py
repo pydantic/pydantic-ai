@@ -37,6 +37,8 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    WebSearchCallPart,
+    WebSearchReturnPart,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
@@ -685,21 +687,21 @@ class _GroqToolUseFailedError(BaseModel):
 
 def _map_executed_tool(
     tool: ExecutedTool, provider_name: str, streaming: bool = False, tool_call_id: str | None = None
-) -> tuple[BuiltinToolCallPart | None, BuiltinToolReturnPart | None]:
+) -> tuple[WebSearchCallPart | None, WebSearchReturnPart | None]:
     if tool.type == 'search':
         if tool.search_results and (tool.search_results.images or tool.search_results.results):
-            results = tool.search_results.model_dump(mode='json')
+            results: dict[str, Any] = tool.search_results.model_dump(mode='json')
         else:
-            results = tool.output
+            results = {'output': tool.output} if tool.output else {}
 
         tool_call_id = tool_call_id or generate_tool_call_id()
-        call_part = BuiltinToolCallPart(
+        call_part = WebSearchCallPart(
             tool_name=WebSearchTool.kind,
             args=from_json(tool.arguments),
             provider_name=provider_name,
             tool_call_id=tool_call_id,
         )
-        return_part = BuiltinToolReturnPart(
+        return_part = WebSearchReturnPart(
             tool_name=WebSearchTool.kind,
             content=results,
             provider_name=provider_name,

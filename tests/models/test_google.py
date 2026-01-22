@@ -24,10 +24,12 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
+    CodeExecutionCallPart,
+    CodeExecutionReturnPart,
     DocumentUrl,
     FilePart,
+    FileSearchCallPart,
+    FileSearchReturnPart,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -49,6 +51,10 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
     VideoUrl,
+    WebFetchCallPart,
+    WebFetchReturnPart,
+    WebSearchCallPart,
+    WebSearchReturnPart,
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
@@ -357,7 +363,7 @@ async def test_google_model_builtin_code_execution_stream(
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    CodeExecutionCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -370,14 +376,14 @@ async def test_google_model_builtin_code_execution_stream(
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolCallPart(
+                    CodeExecutionCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -390,7 +396,7 @@ print(result)\
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                         tool_call_id=IsStr(),
@@ -424,7 +430,7 @@ print(result)\
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -440,7 +446,7 @@ print(result)\
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -453,22 +459,22 @@ print(result)\
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='code-execution-return',
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='code-execution-call',
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -481,11 +487,11 @@ print(result)\
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
-                previous_part_kind='builtin-tool-return',
+                previous_part_kind='code-execution-return',
             ),
             PartEndEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -498,26 +504,26 @@ print(result)\
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='code-execution-return',
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolReturnPart(
+                part=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='code-execution-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The result is'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=4, part=TextPart(content='The result is'), previous_part_kind='code-execution-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -428,330,955.977')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='45.')),
             PartEndEvent(index=4, part=TextPart(content='The result is -428,330,955.97745.')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -532,7 +538,7 @@ print(result)\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
@@ -541,7 +547,7 @@ print(result)\
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=CodeExecutionCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -556,7 +562,7 @@ print(result)\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=CodeExecutionReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
@@ -1126,13 +1132,13 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather in San Francisco today']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -1207,13 +1213,13 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args={'queries': ['current weather in Mexico City']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -1450,13 +1456,13 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather in Mexico City today']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -1557,13 +1563,13 @@ async def test_google_model_web_fetch_tool(
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    WebFetchCallPart(
                         tool_name='web_fetch',
                         args={'urls': ['https://ai.pydantic.dev']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    WebFetchReturnPart(
                         tool_name='web_fetch',
                         content=[
                             {
@@ -1638,13 +1644,13 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    WebFetchCallPart(
                         tool_name='web_fetch',
                         args={'urls': ['https://ai.pydantic.dev']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    WebFetchReturnPart(
                         tool_name='web_fetch',
                         content=[
                             {
@@ -1685,7 +1691,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=WebFetchCallPart(
                     tool_name='web_fetch',
                     args={'urls': ['https://ai.pydantic.dev']},
                     tool_call_id=IsStr(),
@@ -1694,17 +1700,17 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=WebFetchCallPart(
                     tool_name='web_fetch',
                     args={'urls': ['https://ai.pydantic.dev']},
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='web-fetch-return',
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=WebFetchReturnPart(
                     tool_name='web_fetch',
                     content=[
                         {
@@ -1716,14 +1722,14 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='web-fetch-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content=IsStr()), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=2, part=TextPart(content=IsStr()), previous_part_kind='web-fetch-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(index=2, part=TextPart(content=IsStr())),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=WebFetchCallPart(
                     tool_name='web_fetch',
                     args={'urls': ['https://ai.pydantic.dev']},
                     tool_call_id=IsStr(),
@@ -1731,7 +1737,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=WebFetchReturnPart(
                     tool_name='web_fetch',
                     content=[
                         {
@@ -1765,7 +1771,7 @@ async def test_google_model_code_execution_tool(allow_model_requests: None, goog
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    CodeExecutionCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -1791,7 +1797,7 @@ print(f"Today in Utrecht is {formatted_date}.")
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    CodeExecutionReturnPart(
                         tool_name='code_execution',
                         content={
                             'outcome': 'OUTCOME_OK',
@@ -1835,7 +1841,7 @@ print(f"Today in Utrecht is {formatted_date}.")
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    CodeExecutionCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -1849,12 +1855,9 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    CodeExecutionReturnPart(
                         tool_name='code_execution',
-                        content={
-                            'outcome': 'OUTCOME_OK',
-                            'output': 'Tomorrow is Wednesday, September 17, 2025.\n',
-                        },
+                        content={'outcome': 'OUTCOME_OK', 'output': 'Tomorrow is Wednesday, September 17, 2025.\n'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -1896,16 +1899,16 @@ async def test_google_model_server_tool_receive_history_from_another_provider(
 
     result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [[UserPromptPart], [TextPart, CodeExecutionCallPart, CodeExecutionReturnPart, TextPart]]
     )
 
     result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, CodeExecutionCallPart, CodeExecutionReturnPart, TextPart],
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, CodeExecutionCallPart, CodeExecutionReturnPart, TextPart],
         ]
     )
 
@@ -1924,8 +1927,8 @@ async def test_google_model_receive_web_search_history_from_another_provider(
         [
             [UserPromptPart],
             [
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                WebSearchCallPart,
+                WebSearchReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -1964,8 +1967,8 @@ async def test_google_model_receive_web_search_history_from_another_provider(
         [
             [UserPromptPart],
             [
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                WebSearchCallPart,
+                WebSearchReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -3708,13 +3711,13 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args={'queries': ['', 'current 5-day weather forecast for Mexico City and what to wear']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -4452,13 +4455,13 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        FileSearchCallPart(
                             tool_name='file_search',
                             args={},
                             tool_call_id=IsStr(),
                             provider_name='google-gla',
                         ),
-                        BuiltinToolReturnPart(
+                        FileSearchReturnPart(
                             tool_name='file_search',
                             content=[
                                 {
@@ -4511,13 +4514,13 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        FileSearchCallPart(
                             tool_name='file_search',
                             args={},
                             tool_call_id=IsStr(),
                             provider_name='google-gla',
                         ),
-                        BuiltinToolReturnPart(
+                        FileSearchReturnPart(
                             tool_name='file_search',
                             content=[
                                 {
@@ -4623,7 +4626,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        FileSearchCallPart(
                             tool_name='file_search',
                             args={'query': 'Capital of France'},
                             tool_call_id=IsStr(),
@@ -4632,7 +4635,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         TextPart(
                             content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.'
                         ),
-                        BuiltinToolReturnPart(
+                        FileSearchReturnPart(
                             tool_name='file_search',
                             content=[
                                 {
@@ -4670,7 +4673,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
             [
                 PartStartEvent(
                     index=0,
-                    part=BuiltinToolCallPart(
+                    part=FileSearchCallPart(
                         tool_name='file_search',
                         args={'query': 'Capital of France'},
                         tool_call_id=IsStr(),
@@ -4679,7 +4682,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 PartEndEvent(
                     index=0,
-                    part=BuiltinToolCallPart(
+                    part=FileSearchCallPart(
                         tool_name='file_search',
                         args={'query': 'Capital of France'},
                         tool_call_id=IsStr(),
@@ -4688,7 +4691,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     next_part_kind='text',
                 ),
                 PartStartEvent(
-                    index=1, part=TextPart(content='The capital of France'), previous_part_kind='builtin-tool-call'
+                    index=1, part=TextPart(content='The capital of France'), previous_part_kind='file-search-call'
                 ),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is Paris. The city is well-known for its')),
@@ -4700,11 +4703,11 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     part=TextPart(
                         content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.'
                     ),
-                    next_part_kind='builtin-tool-return',
+                    next_part_kind='file-search-return',
                 ),
                 PartStartEvent(
                     index=2,
-                    part=BuiltinToolReturnPart(
+                    part=FileSearchReturnPart(
                         tool_name='file_search',
                         content=[
                             {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
@@ -4716,7 +4719,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     previous_part_kind='text',
                 ),
                 BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                    part=BuiltinToolCallPart(
+                    part=FileSearchCallPart(
                         tool_name='file_search',
                         args={'query': 'Capital of France'},
                         tool_call_id=IsStr(),
@@ -4724,7 +4727,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     )
                 ),
                 BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                    result=BuiltinToolReturnPart(
+                    result=FileSearchReturnPart(
                         tool_name='file_search',
                         content=[
                             {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}

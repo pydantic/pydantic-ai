@@ -19,8 +19,6 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
@@ -40,6 +38,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    WebSearchCallPart,
+    WebSearchReturnPart,
 )
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
@@ -933,13 +933,13 @@ Based on the search results, the current weather in San Francisco is partly clou
 The weather in San Francisco today is partly cloudy with a high of 17°C (62.6°F).\
 """
                     ),
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args={'query': 'What is the weather in San Francisco today?'},
                         tool_call_id=IsStr(),
                         provider_name='groq',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content={
                             'images': None,
@@ -1116,13 +1116,13 @@ To find the current weather in San Francisco, I will use the search tool to look
 search(What is the weather in San Francisco today?)
 """
                     ),
-                    BuiltinToolCallPart(
+                    WebSearchCallPart(
                         tool_name='web_search',
                         args={'query': 'What is the weather in San Francisco today?'},
                         tool_call_id=IsStr(),
                         provider_name='groq',
                     ),
-                    BuiltinToolReturnPart(
+                    WebSearchReturnPart(
                         tool_name='web_search',
                         content={
                             'images': None,
@@ -1309,11 +1309,11 @@ To find the current weather in San Francisco, I will use the search tool to look
 search(What is the weather in San Francisco today?)
 """
                 ),
-                next_part_kind='builtin-tool-call',
+                next_part_kind='web-search-call',
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
                     tool_call_id=IsStr(),
@@ -1323,17 +1323,17 @@ search(What is the weather in San Francisco today?)
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
                     tool_call_id=IsStr(),
                     provider_name='groq',
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='web-search-return',
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=WebSearchReturnPart(
                     tool_name='web_search',
                     content={
                         'images': None,
@@ -1440,7 +1440,7 @@ search(What is the weather in San Francisco today?)
                     timestamp=IsDatetime(),
                     provider_name='groq',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='web-search-call',
             ),
             PartStartEvent(
                 index=3,
@@ -1530,7 +1530,7 @@ Score: 0.2700
 </output>
 """
                 ),
-                previous_part_kind='builtin-tool-return',
+                previous_part_kind='web-search-return',
             ),
             PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='</')),
             PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='think')),
@@ -1868,7 +1868,7 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=WebSearchCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
                     tool_call_id=IsStr(),
@@ -1876,7 +1876,7 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=WebSearchReturnPart(
                     tool_name='web_search',
                     content={
                         'images': None,
