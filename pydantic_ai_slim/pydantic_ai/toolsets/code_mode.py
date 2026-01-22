@@ -50,12 +50,12 @@ def build_code_mode_prompt(*, signatures: list[str]) -> str:
     functions_block = '\n\n'.join(signatures)
     # TODO: The first line of the prompt should be customizable by the user using Prompt Templates
     return f"""\
-You should consider writing Python code to accomplish multiple tasks in one go instead of using multiple tools one by one.
+ALWAYS use run_code to solve the ENTIRE task in a single code block. Do not call tools individually - write one comprehensive Python script that fetches all data, processes it, and returns the complete answer.
 
 CRITICAL execution model:
+- Solve the COMPLETE problem in ONE run_code call - not partial solutions
 - Each run_code call is ISOLATED - variables do NOT persist between calls
-- Complete ALL related work in a SINGLE run_code call
-- If you need data from a previous call, you must fetch it again
+- Plan your entire solution before writing code, then implement it all at once
 
 How to write effective code:
 - ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
@@ -241,7 +241,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Or maybe just something dubious by the model which could hang this
         #
         monty_limits = monty.ResourceLimits(
-            max_duration_secs=60  # Allow for this to be configurable?
+            max_duration_secs=120  # Allow for this to be configurable?
         )
 
         if _find_await_expressions(code):

@@ -26,12 +26,12 @@ Analyze all open PRs in pydantic/pydantic:
 """.lstrip()
 
 MODELS = [
-    'gateway/anthropic:claude-sonnet-4-5',
     'gateway/openai:gpt-5.2',
-    'gateway/gemini:gemini-3-flash-preview',
+    # 'gateway/anthropic:claude-sonnet-4-5',
+    # 'gateway/gemini:gemini-3-flash-preview',
 ]
 
-DEFAULT_MODEL = 'gateway/anthropic:claude-sonnet-4-5'
+DEFAULT_MODEL = 'gateway/anthropic:claude-opus-4-5'
 MAX_RETRIES = 5
 
 
@@ -68,6 +68,6 @@ def create_code_mode_agent(github: MCPServerStreamableHTTP, model: str = DEFAULT
     agent: Agent[None, str] = Agent(
         model,
         toolsets=[code_toolset],
-        system_prompt='You are a GitHub PR analyst. Write Python code to analyze PRs efficiently.',
+        system_prompt='You are a GitHub PR analyst. Write Python Code to analyze PRs efficiently in a single block of python code.',
     )
     return agent
