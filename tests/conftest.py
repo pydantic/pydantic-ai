@@ -421,6 +421,11 @@ def co_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def voyage_api_key() -> str:
+    return os.getenv('VOYAGE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def mistral_api_key() -> str:
     return os.getenv('MISTRAL_API_KEY', 'mock-api-key')
 

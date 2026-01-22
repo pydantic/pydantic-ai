@@ -52,6 +52,13 @@ from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
+DEFAULT_HTTP_TIMEOUT: int = 600
+"""Default HTTP timeout in seconds for API requests.
+
+This matches the default timeout used by OpenAI's Python client.
+See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
+"""
+
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
@@ -1165,7 +1172,9 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     """Cached HTTPX async client that creates a separate client for each provider.
 
     The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
@@ -1191,7 +1200,9 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
 
 
 @cache
-def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def _cached_async_http_client(
+    provider: str | None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
