@@ -2815,6 +2815,20 @@ async def test_adapter_load_messages_uploaded_file():
     )
 
 
+async def test_uploaded_file_from_uri_missing_separator():
+    """Ensure invalid URIs without separators return None."""
+    from pydantic_ai.ui.vercel_ai._adapter import _uploaded_file_from_uri  # pyright: ignore[reportPrivateUsage]
+
+    assert _uploaded_file_from_uri('x-openai-file-id', 'application/pdf') is None
+
+
+async def test_uploaded_file_from_uri_missing_provider():
+    """Ensure URIs with no provider name return None."""
+    from pydantic_ai.ui.vercel_ai._adapter import _uploaded_file_from_uri  # pyright: ignore[reportPrivateUsage]
+
+    assert _uploaded_file_from_uri('x--file-id:file-abc123', 'application/pdf') is None
+
+
 async def test_adapter_dump_messages_thinking_with_metadata():
     """Test dumping and loading messages with ThinkingPart metadata preservation."""
     original_messages = [
