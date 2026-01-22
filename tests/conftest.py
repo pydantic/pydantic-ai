@@ -287,7 +287,7 @@ def raise_if_exception(e: Any) -> None:
 
 
 def pytest_recording_configure(config: Any, vcr: VCR):
-    from . import json_body_serializer
+    from pydantic_ai.testing import json_body_serializer
 
     vcr.register_serializer('yaml', json_body_serializer)
 

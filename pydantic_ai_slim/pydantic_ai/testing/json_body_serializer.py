@@ -1,3 +1,12 @@
+"""VCR cassette serializer for pydantic-ai testing.
+
+This module provides custom YAML serialization for VCR cassettes that:
+- Parses and pretty-prints JSON bodies
+- Decompresses gzip/brotli encoded responses
+- Normalizes smart quotes and special characters
+- Filters sensitive headers and data
+"""
+
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 import gzip
 import json
@@ -6,8 +15,23 @@ import urllib.parse
 import zlib
 from typing import TYPE_CHECKING, Any
 
-import brotli
-import yaml
+try:
+    import brotli
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `brotli` to use the testing module, '
+        'you can use the `testing` optional group — '
+        'pip install "pydantic-ai-slim[testing]"'
+    ) from _import_error
+
+try:
+    import yaml
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `pyyaml` to use the testing module, '
+        'you can use the `testing` optional group — '
+        'pip install "pydantic-ai-slim[testing]"'
+    ) from _import_error
 
 # Smart quote and special character normalization.
 # LLM APIs sometimes return smart quotes and special Unicode characters in responses.
@@ -73,9 +97,7 @@ ALLOWED_HEADERS = {
 
 
 class LiteralDumper(Dumper):
-    """
-    A custom dumper that will represent multi-line strings using literal style.
-    """
+    """A custom dumper that will represent multi-line strings using literal style."""
 
 
 def str_presenter(dumper: Dumper, data: str):
@@ -90,6 +112,16 @@ LiteralDumper.add_representer(str, str_presenter)
 
 
 def deserialize(cassette_string: str):
+    """Deserialize a VCR cassette from YAML format.
+
+    Converts the parsed_body back to the original body format expected by VCR.
+
+    Args:
+        cassette_string: The YAML string of the cassette.
+
+    Returns:
+        The cassette dict with body restored from parsed_body.
+    """
     cassette_dict = yaml.load(cassette_string, Loader=SafeLoader)
     for interaction in cassette_dict['interactions']:
         for kind, data in interaction.items():
@@ -101,6 +133,20 @@ def deserialize(cassette_string: str):
 
 
 def serialize(cassette_dict: Any):  # pragma: lax no cover
+    """Serialize a VCR cassette to YAML format.
+
+    Processes the cassette to:
+    - Lowercase and filter headers
+    - Decompress and parse JSON bodies
+    - Normalize smart quotes and special characters
+    - Scrub sensitive data (access tokens, client secrets)
+
+    Args:
+        cassette_dict: The cassette dict from VCR.
+
+    Returns:
+        The YAML string representation of the cassette.
+    """
     for interaction in cassette_dict['interactions']:
         for _kind, data in interaction.items():
             headers: dict[str, list[str]] = data.get('headers', {})
