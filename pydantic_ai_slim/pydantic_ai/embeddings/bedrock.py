@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -204,6 +205,20 @@ _MAX_INPUT_TOKENS: dict[str, int] = {
 }
 
 
+def _extract_version(model_name: str) -> int | None:
+    """Extract the version number from a model name.
+
+    Examples:
+        - 'amazon.titan-embed-text-v1' -> 1
+        - 'amazon.titan-embed-text-v2:0' -> 2
+        - 'cohere.embed-english-v3' -> 3
+        - 'cohere.embed-v4:0' -> 4
+    """
+    if match := re.search(r'v(\d+)', model_name):
+        return int(match.group(1))
+    return None
+
+
 # ==================== Embedding Handlers ====================
 
 
@@ -256,7 +271,7 @@ class _TitanEmbeddingHandler(_BedrockEmbeddingHandler):
 
     def __init__(self, model_name: str):
         super().__init__(model_name)
-        self._is_v1 = 'v1' in model_name
+        self._version = _extract_version(model_name)
 
     def prepare_request(
         self,
@@ -270,19 +285,20 @@ class _TitanEmbeddingHandler(_BedrockEmbeddingHandler):
         dimensions = settings.get('dimensions')
         normalize = settings.get('bedrock_titan_normalize')
 
-        if self._is_v1:
-            # Titan v1 doesn't support dimensions or normalize parameters - silently ignored
-            pass
-        else:
-            # Titan v2: Apply dimensions if provided
-            if dimensions is not None:
-                body['dimensions'] = dimensions
+        match self._version:
+            case 1:
+                # Titan v1 doesn't support dimensions or normalize parameters - silently ignored
+                pass
+            case _:
+                # Titan v2+: Apply dimensions if provided
+                if dimensions is not None:
+                    body['dimensions'] = dimensions
 
-            # Titan v2: Default normalize to True if not explicitly set
-            if normalize is None:
-                body['normalize'] = True
-            else:
-                body['normalize'] = normalize
+                # Titan v2+: Default normalize to True if not explicitly set
+                if normalize is None:
+                    body['normalize'] = True
+                else:
+                    body['normalize'] = normalize
 
         return body
 
@@ -299,7 +315,7 @@ class _CohereEmbeddingHandler(_BedrockEmbeddingHandler):
 
     def __init__(self, model_name: str):
         super().__init__(model_name)
-        self._is_v3 = 'v3' in model_name
+        self._version = _extract_version(model_name)
 
     @property
     def supports_batch(self) -> bool:
@@ -324,17 +340,18 @@ class _CohereEmbeddingHandler(_BedrockEmbeddingHandler):
         max_tokens = settings.get('bedrock_cohere_max_tokens')
         dimensions = settings.get('dimensions')
 
-        if self._is_v3:
-            # Cohere v3 doesn't support max_tokens or dimensions parameters - silently ignored
-            pass
-        else:
-            # Cohere v4: Apply max_tokens if provided
-            if max_tokens is not None:
-                body['max_tokens'] = max_tokens
+        match self._version:
+            case 3:
+                # Cohere v3 doesn't support max_tokens or dimensions parameters - silently ignored
+                pass
+            case _:
+                # Cohere v4+: Apply max_tokens if provided
+                if max_tokens is not None:
+                    body['max_tokens'] = max_tokens
 
-            # Cohere v4: Apply dimensions if provided
-            if dimensions is not None:
-                body['output_dimension'] = dimensions
+                # Cohere v4+: Apply dimensions if provided
+                if dimensions is not None:
+                    body['output_dimension'] = dimensions
 
         # Model-specific truncate takes precedence, then base truncate setting, then default to NONE
         if truncate := settings.get('bedrock_cohere_truncate'):
