@@ -73,6 +73,7 @@ cohere = ["cohere>=5.18.0; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.56.0"]
 anthropic = ["anthropic>=0.75.0"]
+xai = ["xai-sdk>=1.5.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=2.8.0"]
 mistral = ["mistralai>=1.9.11"]
@@ -106,9 +107,9 @@ cli = [
     "pyperclip>=1.9.0",
 ]
 # MCP
-mcp = ["mcp>=1.18.0"]
+mcp = ["mcp>=1.25.0"]
 # FastMCP
-fastmcp = ["fastmcp>=2.12.0"]
+fastmcp = ["fastmcp>=2.14.0"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI
