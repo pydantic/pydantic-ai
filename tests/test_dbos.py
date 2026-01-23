@@ -120,36 +120,22 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
     assert str(exc_info.value) == exc_message
 
 
-DBOS_SQLITE_FILE = 'dbostest.sqlite'
-DBOS_CONFIG: DBOSConfig = {
-    'name': 'pydantic_dbos_tests',
-    'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
-    'run_admin_server': False,
-    # enable_otlp requires dbos>1.14
-    'enable_otlp': True,
-}
-
-
 @pytest.fixture(scope='module')
-def dbos() -> Generator[DBOS, Any, None]:
-    dbos = DBOS(config=DBOS_CONFIG)
+def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]:
+    dbos_sqlite_file = tmp_path_factory.mktemp('dbos') / 'dbostest.sqlite'
+    dbos_config: DBOSConfig = {
+        'name': 'pydantic_dbos_tests',
+        'system_database_url': f'sqlite:///{dbos_sqlite_file}',
+        'run_admin_server': False,
+        # enable_otlp requires dbos>1.14
+        'enable_otlp': True,
+    }
+    dbos = DBOS(config=dbos_config)
     DBOS.launch()
     try:
         yield dbos
     finally:
         DBOS.destroy()
-
-
-# Automatically clean up old DBOS sqlite files
-@pytest.fixture(autouse=True, scope='module')
-def cleanup_test_sqlite_file() -> Iterator[None]:
-    if os.path.exists(DBOS_SQLITE_FILE):
-        os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
-    try:
-        yield
-    finally:
-        if os.path.exists(DBOS_SQLITE_FILE):
-            os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
 
 
 model = OpenAIChatModel(
