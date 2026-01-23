@@ -3715,8 +3715,10 @@ async def test_cache_point_filtering(allow_model_requests: None):
 
 async def test_cache_point_filtering_responses_model():
     """Test that CachePoint is filtered out in OpenAI Responses API requests."""
-    # Test the static method directly to trigger line 1680
-    msg = await OpenAIResponsesModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='test-key'))
+
+    # Test the instance method directly to ensure CachePoint filtering
+    msg = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
         UserPromptPart(content=['text before', CachePoint(), 'text after'])
     )
 
