@@ -458,7 +458,7 @@ You can switch to **all-or-nothing** behavior by setting `partial_acceptance=Fal
 ```python
 from pydantic_ai import Agent, ToolPolicy
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 @agent.tool_plain(usage_policy=ToolPolicy(max_uses=3, partial_acceptance=False))
@@ -492,7 +492,7 @@ This is useful when your tool needs to behave differently based on how many time
 ```python
 from pydantic_ai import Agent, RunContext
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 @agent.tool
@@ -514,7 +514,7 @@ Here's a complete example showcasing multiple features working together:
 ```python
 from pydantic_ai import Agent, RunContext, ToolPolicy
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 @agent.tool(usage_policy=ToolPolicy(max_uses=3))
