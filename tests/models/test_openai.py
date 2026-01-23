@@ -1463,6 +1463,26 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
     )
 
 
+async def test_x_yaml_document_as_binary_content_input(allow_model_requests: None, openai_api_key: str):
+    x_yaml_content = BinaryContent(data=b'name: test\nversion: 1.0.0', media_type='application/x-yaml')
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What does this YAML describe?', x_yaml_content])
+    assert result.output == snapshot(
+        """\
+The provided YAML snippet is a basic descriptor for something labeled with the name "test" and a version number "1.0.0". Without additional context or accompanying fields, it's difficult to definitively say what specific application or resource this is describing. In a general sense, such a YAML configuration could be used for various purposes, including but not limited to:
+
+1. **Software/Application:** It could describe a software application or component called "test" with version 1.0.0.
+2. **Configuration Management:** It might be a part of a configuration management system for managing different versions of a service or application.
+3. **Package Information:** If used in a package management context, it might represent metadata for a package or library.
+4. **Service Definition:** It could represent a service or microservice within a larger system.
+
+Each of these interpretations would depend on the broader context in which this YAML file is used. Further fields in the YAML file would provide more specificity about its purpose and functionality.\
+"""
+    )
+
+
 async def test_document_as_binary_content_input_with_tool(
     allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
 ):
