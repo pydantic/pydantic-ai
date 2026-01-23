@@ -559,7 +559,7 @@ class OpenRouterModel(OpenAIChatModel):
                     body=error.get('message', 'Unknown OpenRouter Error'),
                 )
 
-        response_dict = self._normalize_openrouter_response(response_dict)
+        response_dict = self._normalize_openrouter_response(response_dict, 'chat.completion')
 
         return _OpenRouterChatCompletion.model_validate(response_dict)
 
@@ -580,7 +580,9 @@ class OpenRouterModel(OpenAIChatModel):
         provider_details.update(_map_openrouter_provider_details(response))
         return provider_details or None
 
-    def _normalize_openrouter_response(self, response_dict: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_openrouter_response(
+        self, response_dict: dict[str, Any], fallback_object_type: str
+    ) -> dict[str, Any]:
         """Normalize OpenRouter response.
 
         Actions:
@@ -605,7 +607,7 @@ class OpenRouterModel(OpenAIChatModel):
         if response_dict.get('model') is None:
             response_dict['model'] = self.model_name
         if response_dict.get('object') is None:
-            response_dict['object'] = 'chat.completion'
+            response_dict['object'] = fallback_object_type
         if not isinstance(response_dict.get('provider'), str):
             response_dict['provider'] = 'unknown'
 
@@ -688,7 +690,9 @@ class _OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
 class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     """Implementation of `StreamedResponse` for OpenRouter models."""
 
-    def _normalize_openrouter_response(self, response_dict: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_openrouter_response(
+        self, response_dict: dict[str, Any], fallback_object_type: str
+    ) -> dict[str, Any]:
         """Normalize OpenRouter response.
 
         Actions:
@@ -713,7 +717,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         if response_dict.get('model') is None:
             response_dict['model'] = self.model_name
         if response_dict.get('object') is None:
-            response_dict['object'] = 'chat.completion.chunk'
+            response_dict['object'] = fallback_object_type
         if not isinstance(response_dict.get('provider'), str):
             response_dict['provider'] = 'unknown'
 
@@ -740,7 +744,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                             model_name=self._model_name,
                             body=cast(str, error.get('message', 'Unknown OpenRouter Error')),
                         )
-                chunk_dict = self._normalize_openrouter_response(chunk_dict)
+                chunk_dict = self._normalize_openrouter_response(chunk_dict, 'chat.completion.chunk')
                 yield _OpenRouterChatCompletionChunk.model_validate(chunk_dict)
         except APIError as e:
             error = _OpenRouterError.model_validate(e.body)

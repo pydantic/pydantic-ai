@@ -760,9 +760,9 @@ async def test_openrouter_edge_cases_and_normalization() -> None:
         },
     }
 
-    normalized = model._normalize_openrouter_response(bad_response)  # type: ignore
+    normalized = model._normalize_openrouter_response(bad_response, 'chat.completion')  # type: ignore
 
     assert normalized['provider'] == 'HiddenProvider'
     assert normalized['choices'][0]['message']['content'] == 'foo'
     assert normalized['id'] == 'openrouter-fallback-id'  # Default applied
-    assert normalized['object'] == 'chat.completion.chunk'  # Default applied
+    assert normalized['object'] == 'chat.completion'  # Default applied
