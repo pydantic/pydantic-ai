@@ -1133,13 +1133,23 @@ async def _call_tools(  # noqa: C901
             ]
 
             try:
-                pending = tasks
-                while pending:
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                    for task in done:
-                        index = tasks.index(task)
+                if tool_manager.should_wait_all():
+                    # Wait for all tasks to complete before yielding any events.
+                    # This mode is useful for durable execution systems where event ordering
+                    # must be deterministic for replay.
+                    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+                    for index, task in enumerate(tasks):
                         if event := await handle_call_or_result(coro_or_task=task, index=index):
                             yield event
+                else:
+                    # Default parallel mode: yield events as each task completes
+                    pending = tasks
+                    while pending:
+                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            index = tasks.index(task)
+                            if event := await handle_call_or_result(coro_or_task=task, index=index):
+                                yield event
 
             except asyncio.CancelledError as e:
                 for task in tasks:

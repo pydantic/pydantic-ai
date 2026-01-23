@@ -1178,6 +1178,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             yield
 
     @staticmethod
+    @contextmanager
+    def parallel_wait_all_tool_calls() -> Iterator[None]:
+        """Run tool calls in parallel but wait for all to complete before yielding events.
+
+        This mode is useful for durable execution systems where event ordering
+        must be deterministic for replay. Tools still run concurrently for performance,
+        but all results are collected before any events are yielded.
+        """
+        with ToolManager.parallel_wait_all_tool_calls():
+            yield
+
+    @staticmethod
     def is_model_request_node(
         node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
     ) -> TypeIs[_agent_graph.ModelRequestNode[T, S]]:

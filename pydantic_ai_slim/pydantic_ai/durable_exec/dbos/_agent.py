@@ -46,6 +46,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         mcp_step_config: StepConfig | None = None,
         model_step_config: StepConfig | None = None,
+        sequential_tool_calls: bool = False,
     ):
         """Wrap an agent to enable it with DBOS durable workflows, by automatically offloading model requests, tool calls, and MCP server communication to DBOS steps.
 
@@ -57,11 +58,15 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
             mcp_step_config: The base DBOS step config to use for MCP server steps. If no config is provided, use the default settings of DBOS.
             model_step_config: The DBOS step config to use for model request steps. If no config is provided, use the default settings of DBOS.
+            sequential_tool_calls: If True, force tool calls to execute sequentially instead of in parallel.
+                By default (False), tools run in parallel but wait for all to complete before continuing,
+                which provides deterministic event ordering for DBOS replay while maintaining concurrency benefits.
         """
         super().__init__(wrapped)
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
+        self._sequential_tool_calls = sequential_tool_calls
         if self._name is None:
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps."
@@ -254,9 +259,13 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     @contextmanager
     def _dbos_overrides(self) -> Iterator[None]:
         # Override with DBOSModel and DBOSMCPServer in the toolsets.
+        # Use sequential or parallel_wait_all tool calls for deterministic event ordering during DBOS replay.
+        tool_call_mode = (
+            self.sequential_tool_calls() if self._sequential_tool_calls else self.parallel_wait_all_tool_calls()
+        )
         with (
             super().override(model=self._model, toolsets=self._toolsets, tools=[]),
-            self.sequential_tool_calls(),
+            tool_call_mode,
         ):
             yield
 

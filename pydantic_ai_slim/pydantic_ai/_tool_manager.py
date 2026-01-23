@@ -21,6 +21,7 @@ from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
 
 _sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
+_parallel_wait_all_tool_calls_ctx_var: ContextVar[bool] = ContextVar('parallel_wait_all_tool_calls', default=False)
 
 
 @dataclass
@@ -47,6 +48,21 @@ class ToolManager(Generic[AgentDepsT]):
             yield
         finally:
             _sequential_tool_calls_ctx_var.reset(token)
+
+    @classmethod
+    @contextmanager
+    def parallel_wait_all_tool_calls(cls) -> Iterator[None]:
+        """Run tool calls in parallel but wait for all to complete before yielding events.
+
+        This mode is useful for durable execution systems where event ordering
+        must be deterministic for replay. Tools still run concurrently for performance,
+        but all results are collected before any events are yielded.
+        """
+        token = _parallel_wait_all_tool_calls_ctx_var.set(True)
+        try:
+            yield
+        finally:
+            _parallel_wait_all_tool_calls_ctx_var.reset(token)
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
@@ -80,6 +96,10 @@ class ToolManager(Generic[AgentDepsT]):
         return _sequential_tool_calls_ctx_var.get() or any(
             tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))
         )
+
+    def should_wait_all(self) -> bool:
+        """Whether to wait for all parallel tool calls to complete before yielding events."""
+        return _parallel_wait_all_tool_calls_ctx_var.get()
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
