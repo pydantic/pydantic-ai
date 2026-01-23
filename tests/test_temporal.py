@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -82,10 +82,7 @@ try:
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
-    from pydantic_ai.durable_exec.temporal._toolset import (
-        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
-        rehydrate_binary_content,
-    )
+    from pydantic_ai.durable_exec.temporal._toolset import _ToolReturn  # pyright: ignore[reportPrivateUsage]
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -3119,14 +3116,12 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
 
 def test_binary_content_serializes_to_base64():
     """Test that BinaryContent serializes bytes as base64 via Pydantic."""
-    # PNG magic bytes - non-UTF8 binary data
-    binary_data = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    binary_data = b'\x89PNG\r\n\x1a\n'
     bc = BinaryContent(data=binary_data, media_type='image/png')
 
     serialized = to_json(bc)
     deserialized = json.loads(serialized)
 
-    # Verify bytes -> base64 conversion explicitly
     assert deserialized['data'] == base64.b64encode(binary_data).decode('ascii')
     assert deserialized == snapshot(
         {
@@ -3139,59 +3134,47 @@ def test_binary_content_serializes_to_base64():
     )
 
 
-def test_binary_content_serialization_round_trip():
-    """Test full round-trip: BinaryContent -> to_json -> dict -> BinaryContent."""
-    # PNG magic bytes - non-UTF8 binary data that would fail direct JSON serialization
+_tool_return_ta: TypeAdapter[_ToolReturn] = TypeAdapter(_ToolReturn)
+
+
+def test_binary_content_round_trip_direct():
+    """Test round-trip when BinaryContent is the direct result."""
     binary_data = b'\x89PNG\r\n\x1a\n'
     bc = BinaryContent(data=binary_data, media_type='image/png', identifier='test-file')
 
-    # Wrap in _ToolReturn like Temporal toolset does
     wrapped = _ToolReturn(result=bc)
-
-    # Serialize with to_json (what Temporal uses internally)
     serialized = to_json(wrapped)
+    deserialized = _tool_return_ta.validate_json(serialized)
 
-    # Deserialize (simulating Temporal's deserialization)
-    deserialized = json.loads(serialized)
-
-    # The result field will be a dict after JSON deserialization
-    result = rehydrate_binary_content(deserialized['result'])
-
-    assert result == snapshot(BinaryContent(data=binary_data, media_type='image/png', _identifier='test-file'))
+    assert isinstance(deserialized.result, BinaryContent)
+    assert deserialized.result.data == binary_data
 
 
-def test_rehydrate_binary_content_nested_dict():
-    """Test rehydration of BinaryContent nested inside a dict wrapper (covers line 85)."""
-    binary_data = bytes([0x89, 0x50, 0x4E, 0x47])
+def test_binary_content_round_trip_nested_in_dict():
+    """Test round-trip when BinaryContent is nested inside a dict."""
+    binary_data = b'\x89PNG'
     bc = BinaryContent(data=binary_data, media_type='image/png')
 
-    # Nest BinaryContent inside a wrapper dict
     wrapped = _ToolReturn(result={'image': bc, 'label': 'test'})
     serialized = to_json(wrapped)
-    deserialized = json.loads(serialized)
+    deserialized = _tool_return_ta.validate_json(serialized)
 
-    result = rehydrate_binary_content(deserialized['result'])
-
-    assert result == snapshot(
-        {
-            'image': BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
-            'label': 'test',
-        }
-    )
+    assert isinstance(deserialized.result, dict)
+    assert isinstance(deserialized.result['image'], BinaryContent)
+    assert deserialized.result['image'].data == binary_data
+    assert deserialized.result['label'] == 'test'
 
 
-def test_rehydrate_binary_content_in_list():
-    """Test rehydration of BinaryContent inside a list (covers line 87)."""
-    binary_data = bytes([0x89, 0x50, 0x4E, 0x47])
+def test_binary_content_round_trip_in_list():
+    """Test round-trip when BinaryContent is inside a list."""
+    binary_data = b'\x89PNG'
     bc = BinaryContent(data=binary_data, media_type='image/png')
 
-    # Put BinaryContent inside a list
     wrapped = _ToolReturn(result=[bc, 'other-item'])
     serialized = to_json(wrapped)
-    deserialized = json.loads(serialized)
+    deserialized = _tool_return_ta.validate_json(serialized)
 
-    result = rehydrate_binary_content(deserialized['result'])
-
-    assert result == snapshot(
-        [BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'), 'other-item']
-    )
+    assert isinstance(deserialized.result, list)
+    assert isinstance(deserialized.result[0], BinaryContent)
+    assert deserialized.result[0].data == binary_data
+    assert deserialized.result[1] == 'other-item'

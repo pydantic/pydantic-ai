@@ -845,7 +845,7 @@ class AnthropicModel(Model):
                                         type='web_search_tool_result',
                                         content=cast(
                                             BetaWebSearchToolResultBlockParamContentParam,
-                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                            response_part.content,
                                         ),
                                     )
                                 )
@@ -859,7 +859,7 @@ class AnthropicModel(Model):
                                         type='code_execution_tool_result',
                                         content=cast(
                                             BetaCodeExecutionToolResultBlockParamContentParam,
-                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                            response_part.content,
                                         ),
                                     )
                                 )
@@ -872,7 +872,7 @@ class AnthropicModel(Model):
                                         type='web_fetch_tool_result',
                                         content=cast(
                                             WebFetchToolResultBlockParamContent,
-                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                            response_part.content,
                                         ),
                                     )
                                 )
@@ -883,7 +883,7 @@ class AnthropicModel(Model):
                                     BetaMCPToolResultBlock(
                                         tool_use_id=tool_use_id,
                                         type='mcp_tool_result',
-                                        **cast(dict[str, Any], response_part.content),  # pyright: ignore[reportUnknownMemberType]
+                                        **response_part.content,
                                     )
                                 )
                     elif isinstance(response_part, FilePart):  # pragma: no cover

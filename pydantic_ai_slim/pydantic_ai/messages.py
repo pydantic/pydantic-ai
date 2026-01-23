@@ -20,7 +20,7 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import deprecated
+from typing_extensions import TypeAliasType, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -807,6 +807,41 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 
+if TYPE_CHECKING:
+    # Simpler non-recursive type for static analysis (pyright doesn't fully support recursive TypeAliasType)
+    ToolReturnContent: TypeAlias = (
+        BinaryContent
+        | VideoUrl
+        | AudioUrl
+        | ImageUrl
+        | DocumentUrl
+        | list[Any]
+        | dict[str, Any]
+        | str
+        | int
+        | float
+        | bool
+        | None
+    )
+else:
+    # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
+    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
+    ToolReturnContent = TypeAliasType(
+        'ToolReturnContent',
+        BinaryContent
+        | VideoUrl
+        | AudioUrl
+        | ImageUrl
+        | DocumentUrl
+        | list['ToolReturnContent']
+        | dict[str, 'ToolReturnContent']
+        | str
+        | int
+        | float
+        | bool
+        | None,
+    )
+
 
 @dataclass(repr=False)
 class BaseToolReturnPart:
@@ -815,7 +850,7 @@ class BaseToolReturnPart:
     tool_name: str
     """The name of the "tool" was called."""
 
-    content: BinaryContent | FileUrl | Sequence[BinaryContent | FileUrl | Any] | dict[str, Any] | Any
+    content: ToolReturnContent
     """The return value."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)

@@ -1034,7 +1034,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == provider_name:
                 if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
-                    part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
+                    part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)
                 elif item.tool_name == WebSearchTool.kind:
                     # Web search results are not sent back
                     pass
