@@ -193,18 +193,15 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
         return ApprovalRequiredToolset(self, approval_required_func)
 
-    def with_return_schema(self, include: bool = True) -> ReturnSchemaToolset[AgentDepsT]:
+    def with_return_schema(self) -> ReturnSchemaToolset[AgentDepsT]:
         """Returns a new toolset that includes return schemas in tool descriptions.
 
         When enabled, each tool's return schema (if available) will be appended to its description
         as a JSON schema. This helps LLMs understand what data a tool returns, enabling better
         planning for multi-step operations and tool chaining.
 
-        Args:
-            include: Whether to include return schemas in tool descriptions. Defaults to True.
-
         See [toolset docs](../toolsets.md#return-schema-toolset) for more information.
         """
         from .return_schema import ReturnSchemaToolset
 
-        return ReturnSchemaToolset(self, include_return_schema=include)
+        return ReturnSchemaToolset(self)
