@@ -69,7 +69,8 @@ def get_all_cassettes() -> dict[str, set[str]]:
         for subdir in cassette_dir.iterdir():
             if subdir.is_dir():
                 test_stem = subdir.name
-                cassette_names = {f.stem for f in subdir.glob('*.yaml')}
+                # Handle double extensions like .xai.yaml (xAI uses gRPC/protobuf, not HTTP)
+                cassette_names = {f.stem[:-4] if f.stem.endswith('.xai') else f.stem for f in subdir.glob('*.yaml')}
                 cassettes.setdefault(test_stem, set()).update(cassette_names)
 
     return cassettes
