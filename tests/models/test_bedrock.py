@@ -463,9 +463,10 @@ async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: No
         await agent.run('What is the current temperature in London?')
 
 
-async def test_bedrock_model_anthropic_model_without_tools(allow_model_requests: None):
-    provider = BedrockProvider()
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider)
+async def test_bedrock_model_anthropic_model_without_tools(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
@@ -574,9 +575,8 @@ async def test_bedrock_model_top_p(allow_model_requests: None, bedrock_provider:
     )
 
 
-async def test_bedrock_model_performance_config(allow_model_requests: None):
-    provider = BedrockProvider()
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=provider)
+async def test_bedrock_model_performance_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_performance_configuration={'latency': 'optimized'})
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
@@ -585,9 +585,8 @@ async def test_bedrock_model_performance_config(allow_model_requests: None):
     )
 
 
-async def test_bedrock_model_guardrail_config(allow_model_requests: None):
-    provider = BedrockProvider()
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
+async def test_bedrock_model_guardrail_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(
         bedrock_guardrail_config={
             'guardrailIdentifier': 'xbgw7g293v7o',
@@ -602,9 +601,8 @@ async def test_bedrock_model_guardrail_config(allow_model_requests: None):
     )
 
 
-async def test_bedrock_model_other_parameters(allow_model_requests: None):
-    provider = BedrockProvider()
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
+async def test_bedrock_model_other_parameters(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(
         bedrock_request_metadata={'test': 'test'},
     )
