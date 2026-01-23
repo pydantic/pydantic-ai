@@ -1,19 +1,18 @@
 interactions:
 - request:
-    body: '{"texts": ["Test truncate priority"], "input_type": "search_query", "max_tokens": 128000, "output_dimension": 1536,
-      "truncate": "START"}'
+    body: '{"texts": ["Test truncate priority"], "input_type": "search_query", "truncate": "START"}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        MTMyZmUyNzEtNDg0Ny00OWNhLWI1NjctYWU0YzJiMzViNDI1
+        MmZiYTg4NDAtN2QxOC00NDM0LWEwNmUtN2I0NWY3ODE0OTVh
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '136'
+      - '88'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -30,7 +29,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '3'
       x-amzn-bedrock-invocation-latency:
-      - '107'
+      - '229'
     parsed_body:
       embeddings:
         float:
@@ -1570,7 +1569,7 @@ interactions:
           - -0.026733398
           - -0.01940918
           - 0.000705719
-      id: 22f627f2-8d6c-41e2-a81e-af475dbe1651
+      id: 1e637c1e-b064-4dce-8207-d579b4ef58d5
       response_type: embeddings_by_type
       texts:
       - Test truncate priority

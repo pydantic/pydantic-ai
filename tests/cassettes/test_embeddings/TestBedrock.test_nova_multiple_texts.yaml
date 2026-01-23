@@ -1,19 +1,19 @@
 interactions:
 - request:
     body: '{"taskType": "SINGLE_EMBEDDING", "singleEmbeddingParams": {"embeddingPurpose": "GENERIC_INDEX", "text": {"value":
-      "hello", "truncationMode": "NONE"}, "embeddingDimension": 3072}}'
+      "hello", "truncationMode": "NONE"}}}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        NjgxODJhM2UtNjEyMy00YWQyLWFjODgtOTllNThhNzg4MDc3
+        NTA5ZjM0N2EtNTgyMy00YzUxLWE1NGUtODE0YWM0MTlhNTg3
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '178'
+      - '150'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -30,7 +30,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '3'
       x-amzn-bedrock-invocation-latency:
-      - '184'
+      - '180'
     parsed_body:
       embeddings:
       - embedding:
@@ -3112,19 +3112,19 @@ interactions:
       message: OK
 - request:
     body: '{"taskType": "SINGLE_EMBEDDING", "singleEmbeddingParams": {"embeddingPurpose": "GENERIC_INDEX", "text": {"value":
-      "world", "truncationMode": "NONE"}, "embeddingDimension": 3072}}'
+      "world", "truncationMode": "NONE"}}}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        NTBmOTFkMTctMGE4ZS00NzBiLWI3NDYtMzMzNGNhYWIxZDU4
+        ZjU2MjY1ODYtZGE0NS00ODM2LWE2ZjYtZjM2ZDdmYTlhNzg5
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '178'
+      - '150'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -3141,7 +3141,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '3'
       x-amzn-bedrock-invocation-latency:
-      - '197'
+      - '194'
     parsed_body:
       embeddings:
       - embedding:

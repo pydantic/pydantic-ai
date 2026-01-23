@@ -1,19 +1,18 @@
 interactions:
 - request:
-    body: '{"texts": ["Test max tokens setting"], "input_type": "search_query", "max_tokens": 256, "output_dimension": 1536,
-      "truncate": "NONE"}'
+    body: '{"texts": ["Test max tokens setting"], "input_type": "search_query", "max_tokens": 256, "truncate": "NONE"}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        ZjhjZjdmOGQtZjM4Yi00MGZlLThlMjQtOTRmZDY5ZDM3YjAw
+        YzU3OWE0NDMtYzA2Mi00Nzk4LWE4YzUtNzc3NmY4NTMyMzhl
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '133'
+      - '107'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -30,7 +29,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '4'
       x-amzn-bedrock-invocation-latency:
-      - '96'
+      - '189'
     parsed_body:
       embeddings:
         float:
@@ -1570,7 +1569,7 @@ interactions:
           - 0.032714844
           - -0.02355957
           - -0.023925781
-      id: 5dc54c70-8ab3-40d3-ac3f-d92a0855906f
+      id: e3b64827-3d57-405f-8a94-e6220650dfaa
       response_type: embeddings_by_type
       texts:
       - Test max tokens setting

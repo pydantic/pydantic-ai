@@ -1041,9 +1041,8 @@ class TestBedrock:
         model = BedrockEmbeddingModel('us.amazon.titan-embed-text-v2:0', provider=bedrock_provider)
         # Model name preserves the regional prefix
         assert model.model_name == 'us.amazon.titan-embed-text-v2:0'
-        # But handler config lookup uses normalized name (without prefix)
-        assert model._handler.config.max_input_tokens == 8192  # pyright: ignore[reportPrivateUsage]
-        assert model._handler.config.default_dimensions == 1024  # pyright: ignore[reportPrivateUsage]
+        # But handler uses normalized name (without prefix)
+        assert model._handler.model_name == 'amazon.titan-embed-text-v2:0'  # pyright: ignore[reportPrivateUsage]
         # max_input_tokens() works correctly with regional prefix
         max_tokens = await model.max_input_tokens()
         assert max_tokens == snapshot(8192)
@@ -1072,6 +1071,11 @@ class TestBedrock:
     async def test_unsupported_model_error(self, bedrock_provider: BedrockProvider):
         with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
             BedrockEmbeddingModel('unsupported.model', provider=bedrock_provider)
+
+    async def test_unknown_model_max_tokens_returns_none(self, bedrock_provider: BedrockProvider):
+        """Test that unknown models with valid prefixes return None for max_input_tokens."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v99:0', provider=bedrock_provider)
+        assert await model.max_input_tokens() is None
 
     def test_model_with_string_provider(self, bedrock_provider: BedrockProvider):
         """Test BedrockEmbeddingModel can be created with string provider."""

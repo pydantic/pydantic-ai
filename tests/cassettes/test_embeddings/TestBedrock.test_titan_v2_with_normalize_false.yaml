@@ -1,18 +1,18 @@
 interactions:
 - request:
-    body: '{"inputText": "Test normalization disabled", "dimensions": 1024, "normalize": false}'
+    body: '{"inputText": "Test normalization disabled", "normalize": false}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        ZmE1ZGQxZjQtNGZhYi00NTEzLWI3MTEtNTQ1NmI0MDg4MjI5
+        ZTNkZmZiMjgtODEwMC00Y2RkLWFlMWYtYmE2MjVlNmQyMTY5
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '84'
+      - '64'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -29,7 +29,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '4'
       x-amzn-bedrock-invocation-latency:
-      - '80'
+      - '83'
     parsed_body:
       embedding:
       - -0.09120181202888489

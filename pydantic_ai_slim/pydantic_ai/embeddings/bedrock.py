@@ -193,51 +193,14 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 # ==================== Model Configuration Constants ====================
 
 
-@dataclass
-class _BedrockModelConfig:
-    """Configuration for a Bedrock embedding model family."""
-
-    max_input_tokens: int
-    """Maximum number of input tokens the model accepts."""
-
-    supports_batch: bool = False
-    """Whether the model supports batch embedding in a single request."""
-
-    default_dimensions: int | None = None
-    """Default embedding dimensions. None means fixed dimensions (not configurable)."""
-
-
-# Model configuration lookup (keys are normalized model names as returned by remove_bedrock_geo_prefix)
-_MODEL_CONFIGS: dict[str, _BedrockModelConfig] = {
-    # Titan V1: Fixed 1536 dimensions, no batch support
-    'amazon.titan-embed-text-v1': _BedrockModelConfig(
-        max_input_tokens=8192,
-    ),
-    # Titan V2: Configurable dimensions (default 1024), no batch support
-    'amazon.titan-embed-text-v2:0': _BedrockModelConfig(
-        max_input_tokens=8192,
-        default_dimensions=1024,
-    ),
-    # Cohere V3: Fixed 1024 dimensions, batch support
-    'cohere.embed-english-v3': _BedrockModelConfig(
-        max_input_tokens=512,
-        supports_batch=True,
-    ),
-    'cohere.embed-multilingual-v3': _BedrockModelConfig(
-        max_input_tokens=512,
-        supports_batch=True,
-    ),
-    # Cohere V4: Configurable dimensions (default 1536), batch support
-    'cohere.embed-v4:0': _BedrockModelConfig(
-        max_input_tokens=128000,
-        supports_batch=True,
-        default_dimensions=1536,
-    ),
-    # Nova: Configurable dimensions (default 3072), no batch support
-    'amazon.nova-2-multimodal-embeddings-v1:0': _BedrockModelConfig(
-        max_input_tokens=8192,
-        default_dimensions=3072,
-    ),
+# Max input tokens lookup (keys are normalized model names as returned by remove_bedrock_geo_prefix)
+_MAX_INPUT_TOKENS: dict[str, int] = {
+    'amazon.titan-embed-text-v1': 8192,
+    'amazon.titan-embed-text-v2:0': 8192,
+    'cohere.embed-english-v3': 512,
+    'cohere.embed-multilingual-v3': 512,
+    'cohere.embed-v4:0': 128000,
+    'amazon.nova-2-multimodal-embeddings-v1:0': 8192,
 }
 
 
@@ -248,7 +211,6 @@ class _BedrockEmbeddingHandler(ABC):
     """Abstract handler for processing different Bedrock embedding model formats."""
 
     model_name: str
-    config: _BedrockModelConfig
 
     def __init__(self, model_name: str):
         """Initialize the handler with the model name.
@@ -257,10 +219,11 @@ class _BedrockEmbeddingHandler(ABC):
             model_name: The normalized model name (e.g., 'amazon.titan-embed-text-v2:0').
         """
         self.model_name = model_name
-        config = _MODEL_CONFIGS.get(model_name)
-        if config is None:
-            raise UserError(f'No config found for model: {model_name}. Supported models: {list(_MODEL_CONFIGS.keys())}')
-        self.config = config
+
+    @property
+    def supports_batch(self) -> bool:
+        """Whether this handler supports batch embedding in a single request."""
+        return False
 
     @abstractmethod
     def prepare_request(
@@ -311,9 +274,9 @@ class _TitanEmbeddingHandler(_BedrockEmbeddingHandler):
             # Titan v1 doesn't support dimensions or normalize parameters - silently ignored
             pass
         else:
-            # Titan v2: Apply dimensions (default from config)
-            assert self.config.default_dimensions is not None, 'Titan v2 must have default_dimensions in config'
-            body['dimensions'] = dimensions if dimensions is not None else self.config.default_dimensions
+            # Titan v2: Apply dimensions if provided
+            if dimensions is not None:
+                body['dimensions'] = dimensions
 
             # Titan v2: Default normalize to True if not explicitly set
             if normalize is None:
@@ -338,6 +301,11 @@ class _CohereEmbeddingHandler(_BedrockEmbeddingHandler):
         super().__init__(model_name)
         self._is_v3 = 'v3' in model_name
 
+    @property
+    def supports_batch(self) -> bool:
+        """Cohere models support batch embedding."""
+        return True
+
     def prepare_request(
         self,
         texts: list[str],
@@ -360,12 +328,13 @@ class _CohereEmbeddingHandler(_BedrockEmbeddingHandler):
             # Cohere v3 doesn't support max_tokens or dimensions parameters - silently ignored
             pass
         else:
-            # Cohere v4: Apply max_tokens (default to max_input_tokens from config)
-            body['max_tokens'] = max_tokens if max_tokens is not None else self.config.max_input_tokens
+            # Cohere v4: Apply max_tokens if provided
+            if max_tokens is not None:
+                body['max_tokens'] = max_tokens
 
-            # Cohere v4: Apply dimensions (default from config)
-            assert self.config.default_dimensions is not None, 'Cohere v4 must have default_dimensions in config'
-            body['output_dimension'] = dimensions if dimensions is not None else self.config.default_dimensions
+            # Cohere v4: Apply dimensions if provided
+            if dimensions is not None:
+                body['output_dimension'] = dimensions
 
         # Model-specific truncate takes precedence, then base truncate setting, then default to NONE
         if truncate := settings.get('bedrock_cohere_truncate'):
@@ -443,9 +412,9 @@ class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
             'text': text_params,
         }
 
-        # Nova: Apply dimensions (default from config)
-        assert self.config.default_dimensions is not None, 'Nova must have default_dimensions in config'
-        single_embedding_params['embeddingDimension'] = settings.get('dimensions') or self.config.default_dimensions
+        # Nova: Apply dimensions if provided
+        if (dims := settings.get('dimensions')) is not None:
+            single_embedding_params['embeddingDimension'] = dims
 
         body: dict[str, Any] = {
             'taskType': 'SINGLE_EMBEDDING',
@@ -589,7 +558,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
         inputs_list, settings_dict = self.prepare_embed(inputs, settings)
         settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
 
-        if self._handler.config.supports_batch:
+        if self._handler.supports_batch:
             # Models like Cohere support batch requests
             return await self._embed_batch(inputs_list, input_type, settings_typed)
         else:
@@ -684,4 +653,4 @@ class BedrockEmbeddingModel(EmbeddingModel):
 
     async def max_input_tokens(self) -> int | None:
         """Get the maximum number of tokens that can be input to the model."""
-        return self._handler.config.max_input_tokens
+        return _MAX_INPUT_TOKENS.get(self._handler.model_name, None)

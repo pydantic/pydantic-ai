@@ -1,19 +1,19 @@
 interactions:
 - request:
     body: '{"taskType": "SINGLE_EMBEDDING", "singleEmbeddingParams": {"embeddingPurpose": "GENERIC_RETRIEVAL", "text": {"value":
-      "Hello, world!", "truncationMode": "NONE"}, "embeddingDimension": 3072}}'
+      "Hello, world!", "truncationMode": "NONE"}}}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        ZjEyYTI5ZTctZjg0Ny00NjFiLWI3MTMtNDJjMWMxMzVlMmU5
+        YzNlNjQyMGMtYWQ3NS00NGQ3LWFiOWYtN2MwNzYwMWI1M2Q3
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '190'
+      - '162'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -30,7 +30,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '19'
       x-amzn-bedrock-invocation-latency:
-      - '216'
+      - '181'
     parsed_body:
       embeddings:
       - embedding:

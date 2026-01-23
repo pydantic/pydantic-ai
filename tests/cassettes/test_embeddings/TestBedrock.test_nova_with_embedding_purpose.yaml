@@ -1,19 +1,19 @@
 interactions:
 - request:
     body: '{"taskType": "SINGLE_EMBEDDING", "singleEmbeddingParams": {"embeddingPurpose": "TEXT_RETRIEVAL", "text": {"value":
-      "Test Nova settings", "truncationMode": "NONE"}, "embeddingDimension": 3072}}'
+      "Test Nova settings", "truncationMode": "NONE"}}}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        MTM4YmNjOGYtMjExNC00YTNiLTkxMGYtZTEwZmJiMDM4Zjc3
+        NTJhYzI1YzctNTFmNy00OTBlLThhZjMtMjNhNjQ0NTk3YzAz
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '192'
+      - '164'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -30,7 +30,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '22'
       x-amzn-bedrock-invocation-latency:
-      - '210'
+      - '181'
     parsed_body:
       embeddings:
       - embedding:

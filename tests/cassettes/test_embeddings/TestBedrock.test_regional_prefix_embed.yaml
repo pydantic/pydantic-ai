@@ -1,19 +1,18 @@
 interactions:
 - request:
-    body: '{"texts": ["Hello from regional endpoint!"], "input_type": "search_query", "output_dimension": 1536, "truncate":
-      "NONE"}'
+    body: '{"texts": ["Hello from regional endpoint!"], "input_type": "search_query", "truncate": "NONE"}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        OWU0MzA5NDktNDNjOS00ZDIzLWEzNjYtNWNkZGYxODUwMzdh
+        MGVlMjk2N2UtNGVmYy00ZjU3LTk5MDgtMDgwZTA2ZjczMzZj
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '120'
+      - '94'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -30,7 +29,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '5'
       x-amzn-bedrock-invocation-latency:
-      - '145'
+      - '159'
     parsed_body:
       embeddings:
         float:
@@ -1570,7 +1569,7 @@ interactions:
           - 0.020385742
           - 0.01586914
           - 0.012756348
-      id: 446b1754-086a-4467-b7aa-99e59a029e5d
+      id: 16d68a6b-ea33-4b4c-9da1-06fbdb1d5ee4
       response_type: embeddings_by_type
       texts:
       - Hello from regional endpoint!

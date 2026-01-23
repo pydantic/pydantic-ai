@@ -1,19 +1,19 @@
 interactions:
 - request:
     body: '{"taskType": "SINGLE_EMBEDDING", "singleEmbeddingParams": {"embeddingPurpose": "GENERIC_RETRIEVAL", "text": {"value":
-      "Test base truncate", "truncationMode": "END"}, "embeddingDimension": 3072}}'
+      "Test base truncate", "truncationMode": "END"}}}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        ZmZmN2MzNDQtNGUxMi00Yzk3LTk3MGItMWU3MzQzZDA5ZDNh
+        NWFiYjg4MDItNTI2ZC00ZmE2LTg5OGMtY2QyMWJhNDdiZjEx
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '194'
+      - '166'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -30,7 +30,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '19'
       x-amzn-bedrock-invocation-latency:
-      - '178'
+      - '193'
     parsed_body:
       embeddings:
       - embedding:

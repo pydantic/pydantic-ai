@@ -1,19 +1,18 @@
 interactions:
 - request:
-    body: '{"texts": ["Test truncation start setting"], "input_type": "search_query", "max_tokens": 128000, "output_dimension":
-      1536, "truncate": "START"}'
+    body: '{"texts": ["Test truncation start setting"], "input_type": "search_query", "truncate": "START"}'
     headers:
       accept:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
       amz-sdk-invocation-id:
       - !!binary |
-        YjVlYmM3NjAtMjY5MS00NzM2LWE2N2EtOWRhYjgyYjE2MjU2
+        NmFkZTYyNGYtMTZlMC00ODhiLTg0YmUtYTYzOGZlM2ZkMDdl
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '143'
+      - '95'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -30,7 +29,7 @@ interactions:
       x-amzn-bedrock-input-token-count:
       - '5'
       x-amzn-bedrock-invocation-latency:
-      - '97'
+      - '108'
     parsed_body:
       embeddings:
         float:
@@ -1570,7 +1569,7 @@ interactions:
           - -0.013427734
           - -0.036865234
           - 0.008483887
-      id: b76c291b-e51f-4db2-8c89-79207afada95
+      id: 3fb032e2-1cf4-4eea-8e76-b154d71304d4
       response_type: embeddings_by_type
       texts:
       - Test truncation start setting
