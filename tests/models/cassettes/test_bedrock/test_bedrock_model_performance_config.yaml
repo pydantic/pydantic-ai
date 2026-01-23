@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        N2Y4ZjAwNzUtYTZlYi00YWNhLThiMTAtZGU5M2U2N2Y1ZmJl
+        ODM0YzQyNjctN2JjMC00ZjdhLTljMmItZDQxYzJkYmJmMmIx
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -15,23 +15,23 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '550'
+      - '554'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 690
+        latencyMs: 669
       output:
         message:
           content:
-          - text: The capital of France is Paris. It is one of the most visited cities in the world and is renowned for its
-              rich history, culture, and landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral.
+          - text: The capital of France is Paris. It is one of the most visited cities in the world and is known for its rich
+              history, culture, and iconic landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral.
               Paris is also a major center for finance, diplomacy, commerce, fashion, science, and arts.
           role: assistant
       performanceConfig:
@@ -39,9 +39,9 @@ interactions:
       stopReason: end_turn
       usage:
         inputTokens: 13
-        outputTokens: 66
+        outputTokens: 67
         serverToolUsage: {}
-        totalTokens: 79
+        totalTokens: 80
     status:
       code: 200
       message: OK
