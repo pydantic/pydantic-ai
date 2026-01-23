@@ -1054,12 +1054,11 @@ async def process_tool_calls(  # noqa: C901
 
 def _handle_tool_calls_parts(
     tool_calls: list[_messages.ToolCallPart],
-    current_tool_calls: int,
+    *,
     output_parts: list[_messages.ModelRequestPart],
     tool_manager: ToolManager[DepsT],
     calls_to_run: list[_messages.ToolCallPart],
     projected_tool_uses: Counter[str],
-    projected_usage: _usage.RunUsage,
 ) -> Iterator[_messages.HandleResponseEvent]:
     accepted_per_tool: Counter[str] = Counter()
     total_accepted = 0
@@ -1118,7 +1117,11 @@ async def _call_tools(  # noqa: C901
 
     # Process tool calls with partial acceptance - accept as many as allowed by limits
     for event in _handle_tool_calls_parts(
-        tool_calls, usage.tool_calls, output_parts, tool_manager, calls_to_run, projected_tool_uses, projected_usage
+        tool_calls,
+        output_parts=output_parts,
+        tool_manager=tool_manager,
+        calls_to_run=calls_to_run,
+        projected_tool_uses=projected_tool_uses,
     ):
         yield event
 
