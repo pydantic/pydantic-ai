@@ -23,6 +23,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._tool_usage_policy import ToolPolicy
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -296,6 +297,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -317,6 +319,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -337,6 +340,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -381,6 +385,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -405,6 +410,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                tool_use_policy=tool_use_policy,
                 usage=usage,
                 metadata=metadata,
                 infer_name=infer_name,
@@ -427,6 +433,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -448,6 +455,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -468,6 +476,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -510,6 +519,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -529,6 +539,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            tool_use_policy=tool_use_policy,
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
@@ -551,6 +562,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -572,6 +584,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -593,6 +606,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -633,6 +647,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -653,6 +668,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            tool_use_policy=tool_use_policy,
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
@@ -676,6 +692,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -696,6 +713,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -715,6 +733,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -772,6 +791,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
@@ -793,6 +813,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            tool_use_policy=tool_use_policy,
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
@@ -813,6 +834,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -834,6 +856,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -855,6 +878,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -940,6 +964,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -972,6 +997,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            tool_use_policy=tool_use_policy,
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,

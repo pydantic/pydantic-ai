@@ -27,6 +27,7 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._tool_manager import ToolManager
+from .._tool_usage_policy import ToolPolicy
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
@@ -163,6 +164,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -184,6 +186,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -204,6 +207,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -246,6 +250,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -293,6 +298,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -314,6 +320,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -334,6 +341,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -375,6 +383,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -393,6 +402,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                tool_use_policy=tool_use_policy,
                 usage=usage,
                 metadata=metadata,
                 infer_name=False,
@@ -415,6 +425,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -436,6 +447,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -457,6 +469,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -508,6 +521,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -659,6 +673,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -679,6 +694,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -698,6 +714,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -751,6 +768,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -768,6 +786,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                tool_use_policy=tool_use_policy,
                 usage=usage,
                 metadata=metadata,
                 infer_name=infer_name,
@@ -793,6 +812,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -813,6 +833,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -832,6 +853,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -889,6 +911,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
@@ -910,6 +933,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            tool_use_policy=tool_use_policy,
             usage=usage,
             metadata=metadata,
             toolsets=toolsets,
@@ -928,6 +952,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -955,6 +980,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     deps=deps,
                     model_settings=model_settings,
                     usage_limits=usage_limits,
+                    tool_use_policy=tool_use_policy,
                     usage=usage,
                     metadata=metadata,
                     infer_name=False,
@@ -991,6 +1017,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -1011,6 +1038,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -1032,6 +1060,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -1116,6 +1145,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.

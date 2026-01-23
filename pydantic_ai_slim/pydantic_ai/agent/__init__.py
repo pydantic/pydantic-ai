@@ -162,6 +162,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
     _tool_timeout: float | None = dataclasses.field(repr=False)
+    _tool_use_policy: ToolPolicy | None = dataclasses.field(repr=False)
     _validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = dataclasses.field(repr=False)
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
@@ -196,6 +197,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        tool_use_policy: ToolPolicy | None = None,
     ) -> None: ...
 
     @overload
@@ -225,6 +227,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        tool_use_policy: ToolPolicy | None = None,
     ) -> None: ...
 
     def __init__(
@@ -252,6 +255,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -319,6 +323,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
+            tool_use_policy: Tool use policy for all tools in this agent (max calls, per-step limits, etc.).
         """
         if model is None or defer_model_check:
             self._model = model
@@ -354,6 +359,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._max_tool_retries = retries
         self._tool_timeout = tool_timeout
+        self._tool_use_policy = tool_use_policy
 
         self._validation_context = validation_context
 
@@ -466,6 +472,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -486,6 +493,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -506,6 +514,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -590,6 +599,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.

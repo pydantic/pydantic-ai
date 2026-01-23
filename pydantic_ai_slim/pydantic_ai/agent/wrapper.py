@@ -11,6 +11,7 @@ from .. import (
     usage as _usage,
 )
 from .._json_schema import JsonSchema
+from .._tool_usage_policy import ToolPolicy
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
@@ -85,6 +86,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -105,6 +107,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -125,6 +128,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -208,6 +212,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -222,6 +227,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            tool_use_policy=tool_use_policy,
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
