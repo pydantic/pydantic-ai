@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
@@ -1195,11 +1196,13 @@ async def test_repeated_run_hits_cache():
         ),
     )
 
-    prefect_agent.run_sync('What is 2+2?')
+    # Use unique prompt per test run to avoid cross-run cache hits
+    prompt = f'What is 2+2? {uuid.uuid4()}'
+    prefect_agent.run_sync(prompt)
     assert call_count == 1
 
     # Cache hit here, should not call the model again (cross-flow caching enabled)
-    prefect_agent.run_sync('What is 2+2?')
+    prefect_agent.run_sync(prompt)
     assert call_count == 1
 
 
