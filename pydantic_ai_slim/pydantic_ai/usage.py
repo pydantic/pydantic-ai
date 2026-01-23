@@ -344,8 +344,8 @@ class UsageLimits:
     ):
         self.request_limit = request_limit
         self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit or request_tokens_limit
-        self.output_tokens_limit = output_tokens_limit or response_tokens_limit
+        self.input_tokens_limit = request_tokens_limit if input_tokens_limit is None else input_tokens_limit
+        self.output_tokens_limit = response_tokens_limit if output_tokens_limit is None else output_tokens_limit
         self.total_tokens_limit = total_tokens_limit
         self.count_tokens_before_request = count_tokens_before_request
 
