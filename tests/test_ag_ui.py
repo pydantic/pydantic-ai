@@ -1287,7 +1287,7 @@ def _sync_part_timestamps(original_part: Any, new_part: Any) -> None:
 
 def _sync_timestamps(original: list[ModelMessage], reloaded: list[ModelMessage]) -> None:
     """Sync timestamps between original and reloaded messages for comparison."""
-    for o, n in zip(original, reloaded):
+    for o, n in zip(original, reloaded):  # pragma: no branch
         if isinstance(n, ModelResponse) and isinstance(o, ModelResponse):
             n.timestamp = o.timestamp
             for op, np in zip(o.parts, n.parts):
