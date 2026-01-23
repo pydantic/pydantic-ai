@@ -549,7 +549,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
-        response_dict = response.model_dump()
+        response_dict = cast(dict[str, Any], response.model_dump())
 
         if error := response_dict.get('error'):
             if isinstance(error, dict):
@@ -580,7 +580,7 @@ class OpenRouterModel(OpenAIChatModel):
         provider_details.update(_map_openrouter_provider_details(response))
         return provider_details or None
 
-    def _normalize_openrouter_response(self, response_dict: dict) -> dict:
+    def _normalize_openrouter_response(self, response_dict: dict[str, Any]) -> dict[str, Any]:
         """Normalize OpenRouter response.
 
         Actions:
@@ -593,9 +593,11 @@ class OpenRouterModel(OpenAIChatModel):
         provider_data = response_dict.get('provider')
         if response_dict.get('choices') is None and isinstance(provider_data, dict):
             if 'choices' in provider_data:
-                nested_provider_name = provider_data.pop('provider', 'unknown')
-            response_dict.update(provider_data)
-            response_dict['provider'] = nested_provider_name
+                # cast to dict to satisfy type checker
+                provider_data_dict = cast(dict[str, Any], provider_data)
+                nested_provider_name = provider_data_dict.pop('provider', 'unknown')
+                response_dict.update(provider_data_dict)
+                response_dict['provider'] = nested_provider_name
 
         # 2. Sanitize metadata
         if response_dict.get('id') is None:
@@ -686,7 +688,7 @@ class _OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
 class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     """Implementation of `StreamedResponse` for OpenRouter models."""
 
-    def _normalize_openrouter_response(self, response_dict: dict) -> dict:
+    def _normalize_openrouter_response(self, response_dict: dict[str, Any]) -> dict[str, Any]:
         """Normalize OpenRouter response.
 
         Actions:
@@ -699,9 +701,11 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         provider_data = response_dict.get('provider')
         if response_dict.get('choices') is None and isinstance(provider_data, dict):
             if 'choices' in provider_data:
-                nested_provider_name = provider_data.pop('provider', 'unknown')
-            response_dict.update(provider_data)
-            response_dict['provider'] = nested_provider_name
+                # cast to dict to satisfy type checker
+                provider_data_dict = cast(dict[str, Any], provider_data)
+                nested_provider_name = provider_data_dict.pop('provider', 'unknown')
+                response_dict.update(provider_data_dict)
+                response_dict['provider'] = nested_provider_name
 
         # 2. Sanitize metadata
         if response_dict.get('id') is None:
@@ -713,19 +717,28 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         if not isinstance(response_dict.get('provider'), str):
             response_dict['provider'] = 'unknown'
 
+        choices = response_dict.get('choices')
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                finish_reason = choice.get('finish_reason')
+                if finish_reason is not None and choice.get('native_finish_reason') is None:
+                    choice['native_finish_reason'] = finish_reason
+
         return response_dict
 
     @override
     async def _validate_response(self):
         try:
             async for chunk in self._response:
-                chunk_dict = chunk.model_dump()
+                chunk_dict = cast(dict[str, Any], chunk.model_dump())
                 if error := chunk_dict.get('error'):
                     if isinstance(error, dict):
                         raise ModelHTTPError(
-                            status_code=error.get('code', 500),
+                            status_code=cast(int, error.get('code', 500)),
                             model_name=self._model_name,
-                            body=error.get('message', 'Unknown OpenRouter Error'),
+                            body=cast(str, error.get('message', 'Unknown OpenRouter Error')),
                         )
                 chunk_dict = self._normalize_openrouter_response(chunk_dict)
                 yield _OpenRouterChatCompletionChunk.model_validate(chunk_dict)

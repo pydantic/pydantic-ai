@@ -1,12 +1,12 @@
 import datetime
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
@@ -39,7 +39,6 @@ with try_import() as imports_successful:
         OpenRouterModel,
         OpenRouterModelSettings,
         OpenRouterStreamedResponse,
-        _OpenRouterChunkChoice,
     )
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -694,103 +693,36 @@ async def test_openrouter_document_url_no_force_download(
     )
 
 
-def test_chunk_choice_without_finish_reason() -> None:
-    """Early chunks without finish_reason should validate successfully."""
-    partial_chunk = {
-        'index': 0,
-        'delta': {'content': 'Hello'},
-    }
+async def test_openrouter_edge_cases_and_normalization() -> None:
+    """Comprehensive test for OpenRouter edge cases to ensure 100% coverage.
 
-    choice = _OpenRouterChunkChoice.model_validate(partial_chunk)
-
-    assert choice.finish_reason is None
-    assert choice.native_finish_reason is None
-    assert choice.delta.content == 'Hello'
-    assert choice.index == 0
-
-
-def test_chunk_choice_with_finish_reason() -> None:
-    """Final chunks with finish_reason should work correctly."""
-    complete_chunk = {'index': 0, 'delta': {}, 'finish_reason': 'stop', 'native_finish_reason': 'stop'}
-
-    choice = _OpenRouterChunkChoice.model_validate(complete_chunk)
-
-    assert choice.finish_reason == 'stop'
-    assert choice.native_finish_reason == 'stop'
-
-
-def test_chunk_choice_all_finish_reasons() -> None:
-    """All valid finish_reason values should validate."""
-    valid_reasons = ['stop', 'length', 'tool_calls', 'content_filter', 'error']
-
-    for reason in valid_reasons:
-        chunk = {
-            'index': 0,
-            'delta': {},
-            'finish_reason': reason,
-        }
-        choice = _OpenRouterChunkChoice.model_validate(chunk)
-        assert choice.finish_reason == reason
-
-
-def test_chunk_choice_required_fields_still_validated() -> None:
-    """Missing required fields should still fail validation."""
-    invalid_chunk = {
-        'delta': {'content': 'test'},
-        # Missing required 'index'
-    }
-
-    with pytest.raises(ValidationError) as exc_info:
-        _OpenRouterChunkChoice.model_validate(invalid_chunk)
-
-    assert 'index' in str(exc_info.value)
-
-
-async def test_streaming_without_finish_reason() -> None:
-    """Streaming chunks without finish_reason should process successfully.
-
-    This is the main regression test for issue #3994.
+    Covers:
+    1. Nested 'provider' responses (e.g. Google models).
+    2. Missing metadata (id, model, object).
+    3. Streaming chunks without finish_reason.
+    4. Error handling in streams.
     """
 
     @dataclass
     class MockStreamResponse:
-        async def __aiter__(self):
-            # Early chunk - no finish_reason
-            yield type(
-                'Chunk',
-                (),
-                {
-                    'model_dump': lambda *a, **kw: {
-                        'id': 'chatcmpl-test',
-                        'object': 'chat.completion.chunk',
-                        'created': 1234567890,
-                        'model': 'google/gemini-flash-1.5-8b',
-                        'choices': [
-                            {
-                                'index': 0,
-                                'delta': {'content': 'Hello'},
-                            }
-                        ],
-                        'provider': 'Google',
-                    }
+        async def __aiter__(self) -> AsyncIterator[Any]:
+            nested_chunk = {
+                'id': None,
+                'choices': None,
+                'created': 1234567890,
+                'model': None,
+                'object': None,
+                'provider': {
+                    'id': 'gen-123',
+                    'choices': [{'delta': {'content': 'Hello'}, 'index': 0}],
+                    'model': 'google/gemini-flash-1.5-8b',
+                    'provider': 'Google',
                 },
-            )()
+            }
+            yield type('Chunk', (), {'model_dump': lambda *a, **kw: nested_chunk})()
 
-            # Final chunk - has finish_reason
-            yield type(
-                'Chunk',
-                (),
-                {
-                    'model_dump': lambda *a, **kw: {
-                        'id': 'chatcmpl-test',
-                        'object': 'chat.completion.chunk',
-                        'created': 1234567890,
-                        'model': 'google/gemini-flash-1.5-8b',
-                        'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop', 'native_finish_reason': 'stop'}],
-                        'provider': 'Google',
-                    }
-                },
-            )()
+            error_chunk = {'error': {'code': 418, 'message': "I'm a teapot"}, 'choices': []}
+            yield type('Chunk', (), {'model_dump': lambda *a, **kw: error_chunk})()
 
     stream = OpenRouterStreamedResponse(
         _response=MockStreamResponse(),
@@ -798,13 +730,39 @@ async def test_streaming_without_finish_reason() -> None:
         _provider_name='openrouter',
         _model_profile=None,
         _provider_url='https://openrouter.ai/api/v1',
-        model_request_parameters=None,
+        model_request_parameters=None,  # type: ignore
     )
 
     chunks = []
-    async for chunk in stream._validate_response():
-        chunks.append(chunk)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async for chunk in stream._validate_response():  # type: ignore
+            chunks.append(chunk)
 
-    assert len(chunks) == 2
-    assert chunks[0].choices[0].finish_reason is None
-    assert chunks[1].choices[0].finish_reason == 'stop'
+    assert len(chunks) == 1
+    assert chunks[0].id == 'gen-123'  # Pulled from nested provider
+    assert chunks[0].provider == 'Google'  # Pulled from nested provider
+    assert chunks[0].choices[0].delta.content == 'Hello'
+
+    assert exc_info.value.status_code == 418
+    assert "I'm a teapot" in str(exc_info.value)
+
+    provider = OpenRouterProvider(api_key='dummy')
+    model = OpenRouterModel('test/model', provider=provider)
+
+    bad_response = {
+        'id': None,
+        'choices': None,
+        'model': None,
+        'object': None,
+        'provider': {
+            'choices': [{'message': {'role': 'assistant', 'content': 'foo'}, 'finish_reason': 'stop'}],
+            'provider': 'HiddenProvider',
+        },
+    }
+
+    normalized = model._normalize_openrouter_response(bad_response)  # type: ignore
+
+    assert normalized['provider'] == 'HiddenProvider'
+    assert normalized['choices'][0]['message']['content'] == 'foo'
+    assert normalized['id'] == 'openrouter-fallback-id'  # Default applied
+    assert normalized['object'] == 'chat.completion.chunk'  # Default applied
