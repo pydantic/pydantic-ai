@@ -18,7 +18,7 @@ from pydantic_ai.embeddings import (
     TestEmbeddingModel,
     infer_embedding_model,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -37,11 +37,7 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
-    from pydantic_ai.embeddings.cohere import (
-        CohereEmbeddingModel,
-        CohereEmbeddingSettings,
-        LatestCohereEmbeddingModelNames,
-    )
+    from pydantic_ai.embeddings.cohere import CohereEmbeddingModel, LatestCohereEmbeddingModelNames
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as google_imports_successful:
@@ -52,14 +48,6 @@ with try_import() as google_imports_successful:
         LatestGoogleVertexEmbeddingModelNames,
     )
     from pydantic_ai.providers.google import GoogleProvider
-
-with try_import() as voyageai_imports_successful:
-    from pydantic_ai.embeddings.voyageai import (
-        LatestVoyageAIEmbeddingModelNames,
-        VoyageAIEmbeddingModel,
-        VoyageAIEmbeddingSettings,
-    )
-    from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as sentence_transformers_imports_successful:
     from sentence_transformers import SentenceTransformer
@@ -338,147 +326,6 @@ class TestCohere:
         with pytest.raises(ModelHTTPError, match='not found,'):
             await embedder.embed_query('Hello, world!')
 
-    async def test_query_with_cohere_truncate(self, co_api_key: str):
-        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
-        embedder = Embedder(model)
-        settings: CohereEmbeddingSettings = {'cohere_truncate': 'END'}
-        result = await embedder.embed_query('Hello, world!', settings=settings)
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
-                inputs=['Hello, world!'],
-                input_type='query',
-                usage=RequestUsage(input_tokens=4),
-                model_name='embed-v4.0',
-                timestamp=IsDatetime(),
-                provider_name='cohere',
-                provider_response_id=IsStr(),
-            )
-        )
-
-    async def test_query_with_truncate(self, co_api_key: str):
-        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
-        embedder = Embedder(model)
-        result = await embedder.embed_query('Hello, world!', settings={'truncate': True})
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
-                inputs=['Hello, world!'],
-                input_type='query',
-                usage=RequestUsage(input_tokens=4),
-                model_name='embed-v4.0',
-                timestamp=IsDatetime(),
-                provider_name='cohere',
-                provider_response_id=IsStr(),
-            )
-        )
-
-
-@pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
-@pytest.mark.vcr
-class TestVoyageAI:
-    async def test_infer_model(self, voyage_api_key: str):
-        with patch.dict(os.environ, {'VOYAGE_API_KEY': voyage_api_key}):
-            model = infer_embedding_model('voyageai:voyage-3.5')
-        assert isinstance(model, VoyageAIEmbeddingModel)
-        assert model.model_name == 'voyage-3.5'
-        assert model.system == 'voyageai'
-        assert model.base_url == 'https://api.voyageai.com/v1'
-        assert isinstance(model._provider, VoyageAIProvider)  # type: ignore[reportAttributeAccess]
-
-    async def test_query(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
-        embedder = Embedder(model)
-        result = await embedder.embed_query('Hello, world!')
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
-                inputs=['Hello, world!'],
-                input_type='query',
-                usage=RequestUsage(input_tokens=3),
-                model_name='voyage-3.5',
-                timestamp=IsDatetime(),
-                provider_name='voyageai',
-            )
-        )
-
-    async def test_query_voyage_4(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key=voyage_api_key))
-        embedder = Embedder(model)
-        result = await embedder.embed_query('Hello, world!')
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
-                inputs=['Hello, world!'],
-                input_type='query',
-                usage=RequestUsage(input_tokens=3),
-                model_name='voyage-4',
-                timestamp=IsDatetime(),
-                provider_name='voyageai',
-            )
-        )
-
-    async def test_documents(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
-        embedder = Embedder(model)
-        result = await embedder.embed_documents(['hello', 'world'])
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
-                inputs=['hello', 'world'],
-                input_type='document',
-                usage=RequestUsage(),
-                model_name='voyage-3.5',
-                timestamp=IsDatetime(),
-                provider_name='voyageai',
-            )
-        )
-
-    async def test_max_input_tokens(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
-        embedder = Embedder(model)
-        max_input_tokens = await embedder.max_input_tokens()
-        assert max_input_tokens == snapshot(32000)
-
-    async def test_embed_error(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('nonexistent', provider=VoyageAIProvider(api_key=voyage_api_key))
-        embedder = Embedder(model)
-        with pytest.raises(ModelAPIError, match='not supported'):
-            await embedder.embed_query('Hello, world!')
-
-    async def test_query_with_truncate(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
-        embedder = Embedder(model)
-        result = await embedder.embed_query('Hello, world!', settings={'truncate': True})
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
-                inputs=['Hello, world!'],
-                input_type='query',
-                usage=RequestUsage(input_tokens=3),
-                model_name='voyage-3.5',
-                timestamp=IsDatetime(),
-                provider_name='voyageai',
-            )
-        )
-
-    async def test_query_with_voyageai_input_type(self, voyage_api_key: str):
-        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
-        embedder = Embedder(model)
-        settings: VoyageAIEmbeddingSettings = {'voyageai_input_type': 'none'}
-        result = await embedder.embed_query('Hello, world!', settings=settings)
-        assert result == snapshot(
-            EmbeddingResult(
-                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
-                inputs=['Hello, world!'],
-                input_type='query',
-                usage=RequestUsage(input_tokens=4),
-                model_name='voyage-3.5',
-                timestamp=IsDatetime(),
-                provider_name='voyageai',
-            )
-        )
-
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
 @pytest.mark.vcr
@@ -716,10 +563,7 @@ class TestSentenceTransformers:
 
 
 @pytest.mark.skipif(
-    not openai_imports_successful()
-    or not cohere_imports_successful()
-    or not google_imports_successful()
-    or not voyageai_imports_successful(),
+    not openai_imports_successful() or not cohere_imports_successful() or not google_imports_successful(),
     reason='some embedding package was not installed',
 )
 def test_known_embedding_model_names():  # pragma: lax no cover
@@ -735,9 +579,8 @@ def test_known_embedding_model_names():  # pragma: lax no cover
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
     google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
     google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
-    voyageai_names = [f'voyageai:{n}' for n in get_model_names(LatestVoyageAIEmbeddingModelNames)]
 
-    generated_names = sorted(openai_names + cohere_names + google_gla_names + google_vertex_names + voyageai_names)
+    generated_names = sorted(openai_names + cohere_names + google_gla_names + google_vertex_names)
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
     if generated_names != known_model_names:

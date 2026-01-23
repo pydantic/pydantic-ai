@@ -96,7 +96,6 @@ class WebSearchTool(AbstractBuiltinTool):
     * OpenAI Responses
     * Groq
     * Google
-    * xAI
     """
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
@@ -125,7 +124,6 @@ class WebSearchTool(AbstractBuiltinTool):
 
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
-    * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
     """
 
     allowed_domains: list[str] | None = None
@@ -137,7 +135,6 @@ class WebSearchTool(AbstractBuiltinTool):
 
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
-    * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
     """
 
     max_uses: int | None = None
@@ -184,7 +181,6 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * OpenAI Responses
     * Google
     * Bedrock (Nova2.0)
-    * xAI
     """
 
     kind: str = 'code_execution'
@@ -377,7 +373,6 @@ class MCPServerTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     * Anthropic
-    * xAI
     """
 
     id: str
@@ -396,7 +391,6 @@ class MCPServerTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     * Anthropic
-    * xAI
     """
 
     description: str | None = None
@@ -405,7 +399,6 @@ class MCPServerTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
-    * xAI
     """
 
     allowed_tools: list[str] | None = None
@@ -415,7 +408,6 @@ class MCPServerTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     * Anthropic
-    * xAI
     """
 
     headers: dict[str, str] | None = None
@@ -426,7 +418,6 @@ class MCPServerTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
-    * xAI
     """
 
     kind: str = 'mcp_server'

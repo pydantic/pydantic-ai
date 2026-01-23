@@ -48,16 +48,6 @@ KnownEmbeddingModelName = TypeAliasType(
         'cohere:embed-english-light-v3.0',
         'cohere:embed-multilingual-v3.0',
         'cohere:embed-multilingual-light-v3.0',
-        'voyageai:voyage-4-large',
-        'voyageai:voyage-4',
-        'voyageai:voyage-4-lite',
-        'voyageai:voyage-3-large',
-        'voyageai:voyage-3.5',
-        'voyageai:voyage-3.5-lite',
-        'voyageai:voyage-code-3',
-        'voyageai:voyage-finance-2',
-        'voyageai:voyage-law-2',
-        'voyageai:voyage-code-2',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Embedder`][pydantic_ai.embeddings.Embedder].
@@ -114,10 +104,6 @@ def infer_embedding_model(
         from .sentence_transformers import SentenceTransformerEmbeddingModel
 
         return SentenceTransformerEmbeddingModel(model_name)
-    elif model_kind == 'voyageai':
-        from .voyageai import VoyageAIEmbeddingModel
-
-        return VoyageAIEmbeddingModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown embeddings model: {model}')  # pragma: no cover
 

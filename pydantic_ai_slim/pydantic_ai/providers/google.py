@@ -7,7 +7,7 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, cached_async_http_client, get_user_agent
+from pydantic_ai.models import cached_async_http_client, get_user_agent
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
@@ -110,18 +110,10 @@ class GoogleProvider(Provider[Client]):
             http_client = http_client or cached_async_http_client(
                 provider='google-vertex' if vertexai else 'google-gla'
             )
-            # Note: google-genai's HttpOptions.timeout defaults to None, which causes
-            # the SDK to explicitly pass timeout=None to httpx, overriding any timeout
-            # configured on the httpx client. We must set the timeout here to ensure
-            # requests actually time out. Read the timeout from the http_client if set,
-            # otherwise use the default. The value is converted from seconds to milliseconds.
-            timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT
-            timeout_ms = int(timeout_seconds * 1000)
             http_options = HttpOptions(
                 base_url=base_url,
                 headers={'User-Agent': get_user_agent()},
                 httpx_async_client=http_client,
-                timeout=timeout_ms,
             )
             if not vertexai:
                 if api_key is None:

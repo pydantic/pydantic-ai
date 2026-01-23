@@ -134,7 +134,6 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
-            openai_chat_supports_file_urls=True,
         ).update(profile)
 
     @overload
