@@ -4,12 +4,10 @@ import asyncio
 from asyncio import Lock
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from typing_extensions import Self
-
-from pydantic_ai._tool_usage_policy import ToolPolicy
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
@@ -75,29 +73,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                         f'{capitalized_toolset_label} defines a tool whose name conflicts with existing tool from {existing_tool.toolset.label}: {name!r}. {toolset.tool_name_conflict_hint}'
                     )
 
-                # Merge policy per-tool limits with the tool's own policy.
-                # The policy's per_tool allows overriding tool-level policy at runtime.
-                # This is intentional: policy limits take precedence over tool-defined limits,
-                # allowing agents/runs to increase or decrease limits without modifying tool code.
-                usage_policy: ToolPolicy | None = tool.usage_policy
-                if (tools_policy := ctx.tools_policy) is not None and (
-                    policy_limits := tools_policy.per_tool.get(name)
-                ) is not None:
-                    if usage_policy is None:
-                        # Tool has no policy defined, use policy limits directly
-                        usage_policy = policy_limits
-                    else:
-                        # Merge: non-None policy values override tool policy.
-                        # E.g., tool has max_uses=5, policy has max_uses=10 → result is max_uses=10.
-                        # This allows increasing limits at runtime when needed.
-                        overrides = {k: v for k, v in asdict(policy_limits).items() if v is not None}
-                        usage_policy = replace(usage_policy, **overrides)
-
                 all_tools[name] = _CombinedToolsetTool(
                     toolset=tool_toolset,
                     tool_def=tool.tool_def,
                     max_retries=tool.max_retries,
-                    usage_policy=usage_policy,
+                    usage_policy=tool.usage_policy,
                     args_validator=tool.args_validator,
                     source_toolset=toolset,
                     source_tool=tool,

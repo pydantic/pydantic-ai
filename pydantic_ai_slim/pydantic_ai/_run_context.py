@@ -11,7 +11,6 @@ from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_usage_policy import ToolsPolicy
 
 from . import _utils, messages as _messages
 
@@ -71,8 +70,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
-    tools_policy: ToolsPolicy | None = None
-    """The tools policy for this run, if not provided, the default policy will be used."""
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
 

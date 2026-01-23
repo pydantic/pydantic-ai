@@ -334,10 +334,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     """The maximum number of times to retry a tool call."""
 
     usage_policy: ToolPolicy | None
-    """Usage policy applied to each tool individually (each tool gets its own counter).
-
-    For aggregate limits across all tools, use `tools_policy` on the Agent instead.
-    """
+    """Usage policy applied to each tool individually (each tool gets its own counter)."""
 
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""

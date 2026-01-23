@@ -96,7 +96,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 in which case the ID will be used to identify the toolset's activities within the workflow.
             usage_policy: Usage policy for tools in this toolset (max calls, per-step limits, etc.).
                 Applies to all tools individually (each tool gets its own counter), unless overridden when adding a tool.
-                For aggregate limits across all tools, use `tools_policy` on the Agent instead.
         """
         self.max_retries = max_retries
         self.timeout = timeout

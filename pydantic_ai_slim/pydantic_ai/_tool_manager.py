@@ -333,11 +333,9 @@ class ToolManager(Generic[AgentDepsT]):
         projected_tool_uses: int,
         projected_usage: RunUsage,
     ) -> str | None:
-        """Check if a tool call is allowed, considering both aggregate and per-tool limits.
+        """Check if a tool call is allowed based on per-tool limits.
 
-        This is the unified check for partial acceptance. It checks:
-        1. Aggregate limits (policy-level max_uses across all tools)
-        2. Per-tool limits (max_uses for this specific tool)
+        This is the check for partial acceptance. It checks per-tool limits (max_uses for this specific tool).
 
         Args:
             tool_name: The name of the tool to check.
@@ -353,31 +351,6 @@ class ToolManager(Generic[AgentDepsT]):
         """
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-
-        ctx = self._assert_ctx()
-
-        policy = ctx.tools_policy
-
-        # All or nothing batches for all tool_calls
-        # If partial_acceptance is not allowed and the batch will exceed limits then we need to return here
-        if policy is not None and policy.partial_acceptance is False:
-            batch_size = projected_usage.tool_calls - current_tool_calls
-            if (policy.max_uses is not None and projected_usage.tool_calls > policy.max_uses) or (
-                policy.max_uses_per_step is not None and batch_size > policy.max_uses_per_step
-            ):
-                # TODO: Should be configurable via PromptConfig #3656
-                return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
-
-        # Check aggregate limits (policy-level) incrementally
-        if policy is not None:
-            if (policy.max_uses is not None) and (current_tool_calls + total_accepted_in_step == policy.max_uses):
-                # If already equal, going through with this call will put us over the limit
-                # TODO: Should be configurable via PromptConfig #3656
-                return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
-            if (policy.max_uses_per_step is not None) and (total_accepted_in_step == policy.max_uses_per_step):
-                # If already equal, going through with this call will put us over the limit
-                # TODO: Should be configurable via PromptConfig #3656
-                return 'Tool use limit reached for all tools. Please produce an output without calling any tools.'
 
         # For unknown tools, allow the call - error will be caught during execution
         # This provides a better error message than "tool limit reached" which would technically be incorrect.
@@ -395,11 +368,7 @@ class ToolManager(Generic[AgentDepsT]):
             max_uses is not None and projected_tool_uses + current_tool_uses > max_uses
         ):
             # If limits would be exceeded and partial acceptance is not allowed, reject all calls.
-            # For partial acceptance to work:
-            # 1. Policy must allow it (defaults to True; if no policy is set, we use the default True)
-            # 2. The tool's ToolPolicy must have partial_acceptance != False (None means inherit default True)
-            #    If the tool has no usage_policy, it inherits the policy-level setting (defaulting to True)
-            policy_allows_partial = policy is None or policy.partial_acceptance is not False
+            # The tool's ToolPolicy must have partial_acceptance != False (None means inherit default True)
             tool = self.tools.get(tool_name)
             # Tool allows partial if: no tool, no usage_policy (inherits default True),
             # or usage_policy.partial_acceptance is not explicitly False
@@ -408,7 +377,7 @@ class ToolManager(Generic[AgentDepsT]):
                 or tool.usage_policy is None  # No policy on tool - inherits default True behavior
                 or tool.usage_policy.partial_acceptance is not False  # None means inherit default True
             )
-            if not (policy_allows_partial and tool_allows_partial):
+            if not tool_allows_partial:
                 # TODO: Should be configurable via PromptConfig #3656
                 return f'Tool use limit reached for tool "{tool_name}".'
 

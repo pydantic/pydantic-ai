@@ -417,7 +417,7 @@ Async functions are run on the event loop, while sync functions are offloaded to
 
 ### Soft Tool Usage Limits
 
-Pydantic AI provides soft limit mechanisms that let the model decide how to proceed instead of raising an error. These are configured using [`ToolPolicy`][pydantic_ai.ToolPolicy] for individual tools and [`ToolsPolicy`][pydantic_ai.ToolsPolicy] for agent-wide limits.
+Pydantic AI provides soft limit mechanisms that let the model decide how to proceed instead of raising an error. These are configured using [`ToolPolicy`][pydantic_ai.ToolPolicy] for individual tools.
 
 #### Per-Tool Limits with `ToolPolicy`
 
@@ -449,69 +449,11 @@ result = agent.run_sync('Fetch records 1, 2, 3, and 4')
 
 This is useful when you want to limit specific expensive or rate-limited tools while leaving others unrestricted.
 
-#### Agent-Wide Limits with `ToolsPolicy`
-
-Use [`ToolsPolicy`][pydantic_ai.ToolsPolicy] to limit the total number of successful tool uses across all tools within a run. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
-
-```python
-from pydantic_ai import Agent, ToolsPolicy
-
-agent = Agent('anthropic:claude-sonnet-4-5', tools_policy=ToolsPolicy(max_uses=5))
-
-
-@agent.tool_plain
-def search(query: str) -> str:
-    return f'Results for: {query}'
-
-
-@agent.tool_plain
-def fetch(url: str) -> str:
-    return f'Content from: {url}'
-
-
-# Combined tool calls across both tools are limited to 5
-result = agent.run_sync('Search for Python docs, then fetch the top 3 results')
-print(result.output)
-#> I found the Python documentation and fetched the top 3 results...
-```
-
-You can override the policy per-run:
-
-```python
-from pydantic_ai import Agent, ToolsPolicy
-
-agent = Agent('test', tools_policy=ToolsPolicy(max_uses=5))
-
-# Use a stricter limit for this specific run
-result = agent.run_sync('Quick search only', tools_policy=ToolsPolicy(max_uses=2))
-```
-
-`ToolsPolicy` provides the following options:
-
-| Option | Description |
-| ------ | ----------- |
-| `max_uses` | Maximum total successful uses allowed across all tools for the entire run. |
-| `max_uses_per_step` | Maximum total successful uses allowed across all tools within a single step. |
-| `per_tool` | A dict mapping tool names to `ToolPolicy` for per-tool overrides. |
-| `partial_acceptance` | Master switch for partial acceptance behavior (default: `None`, inherits `True` behavior). |
-
 #### Partial Acceptance vs All-or-Nothing
 
 By default, when a model requests more tool calls than allowed, Pydantic AI uses **partial acceptance**: it accepts as many calls as the limits allow and rejects the rest individually. This lets the model make progress with the calls that succeeded.
 
-You can switch to **all-or-nothing** behavior by setting `partial_acceptance=False`. This rejects the entire batch if not all calls can be accepted:
-
-```python
-from pydantic_ai import Agent, ToolsPolicy
-
-# All-or-nothing: if the model requests 5 calls but only 4 are allowed, reject all 5
-agent = Agent(
-    'openai:gpt-4o',
-    tools_policy=ToolsPolicy(max_uses=4, partial_acceptance=False)
-)
-```
-
-For per-tool all-or-nothing behavior, set `partial_acceptance=False` on the tool's `ToolPolicy`. This is useful for tools that have transactional semantics or require all their calls to succeed together:
+You can switch to **all-or-nothing** behavior by setting `partial_acceptance=False` on the tool's `ToolPolicy`. This is useful for tools that have transactional semantics or require all their calls to succeed together:
 
 ```python
 from pydantic_ai import Agent, ToolPolicy
@@ -529,11 +471,6 @@ def batch_operation(item: str) -> str:
 # all 5 calls are rejected (not 3 accepted + 2 rejected)
 ```
 
-The two levels work hierarchically:
-
-- **`ToolsPolicy.partial_acceptance`** is the master switch. When `False`, no partial acceptance occurs anywhere—all tool calls in the batch are rejected if limits would be exceeded.
-- **`ToolPolicy.partial_acceptance`** controls individual tools, but only takes effect if the policy-level setting is `True`.
-
 #### Choosing the Right Limit
 
 All options count only **successful** tool invocations:
@@ -541,7 +478,6 @@ All options count only **successful** tool invocations:
 | Parameter | Scope | Behavior | Use Case |
 | --------- | ----- | -------- | -------- |
 | `ToolPolicy.max_uses` | Per-tool | Tool removed from available tools | Limit specific expensive or rate-limited tools |
-| `ToolsPolicy.max_uses` | All tools | Returns message to model | Soft limit where you want the model to adapt gracefully |
 | `UsageLimits.tool_calls_limit` | All tools | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop when you need to prevent runaway costs |
 
 #### Programmatic Usage Control
@@ -576,13 +512,9 @@ def get_secret(ctx: RunContext[None]) -> str:
 Here's a complete example showcasing multiple features working together:
 
 ```python
-from pydantic_ai import Agent, RunContext, ToolPolicy, ToolsPolicy
+from pydantic_ai import Agent, RunContext, ToolPolicy
 
-# Agent with aggregate limit (max 10 tool calls total) and per-step limit (max 5 per step)
-agent = Agent(
-    'openai:gpt-4o',
-    tools_policy=ToolsPolicy(max_uses=10, max_uses_per_step=5),
-)
+agent = Agent('openai:gpt-4o')
 
 
 @agent.tool(usage_policy=ToolPolicy(max_uses=3))
@@ -600,21 +532,14 @@ def get_api_key(ctx: RunContext[None]) -> str:
 
 @agent.tool
 def analyze_results(ctx: RunContext[None], data: str) -> str:
-    """Analyze search results. No per-tool limit, but counts toward aggregate."""
+    """Analyze search results. No per-tool limit."""
     # Check how many total tool calls have been made
     total_calls = sum(ctx.tools_use_counts.values())
     return f'Analysis complete. Total tool calls so far: {total_calls}'
 
 
-# Override per-tool limits at runtime without modifying tool code
 result = agent.run_sync(
     'Search for Python tutorials, get the API key, and analyze the results',
-    tools_policy=ToolsPolicy(
-        max_uses=10,
-        per_tool={
-            'search_api': ToolPolicy(max_uses=2),  # Stricter limit for this run
-        },
-    ),
 )
 ```
 

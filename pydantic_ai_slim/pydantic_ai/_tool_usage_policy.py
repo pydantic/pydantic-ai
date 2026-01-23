@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -19,17 +19,3 @@ class ToolPolicy:
 
     partial_acceptance: bool | None = None
     """If `False`, reject ALL calls when batch exceeds limits. Default (`None`) allows partial acceptance."""
-
-
-@dataclass
-class ToolsPolicy(ToolPolicy):
-    """Agent-wide policy for tool usage limits.
-
-    Extends [`ToolPolicy`][pydantic_ai.ToolPolicy] with aggregate limits across all tools
-    and run-time per-tool overrides. Set via the `tools_policy` parameter on
-    [`Agent`][pydantic_ai.Agent] or pass to `run()` / `run_sync()` / `run_stream()`.
-    See [soft tool usage limits](../tools-advanced.md#soft-tool-usage-limits) for examples.
-    """
-
-    per_tool: dict[str, ToolPolicy] = field(default_factory=dict)
-    """Run-time per-tool overrides. Takes precedence over tool-level `usage_policy` settings."""
