@@ -11,16 +11,23 @@ import monty
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
-from .._run_context import AgentDepsT, RunContext
-from .._signature_from_schema import signature_from_function, signature_from_schema
-from ..exceptions import ApprovalRequired, ModelRetry
-from ..tools import ToolDefinition
-from .abstract import SchemaValidatorProt, ToolsetTool
-from .function import FunctionToolset, FunctionToolsetTool
-from .wrapper import WrapperToolset
+from ..._run_context import AgentDepsT, RunContext
+from ...exceptions import ApprovalRequired, ModelRetry
+from ...tools import ToolDefinition
+from ..abstract import SchemaValidatorProt, ToolsetTool
+from ..function import FunctionToolset, FunctionToolsetTool
+from ..wrapper import WrapperToolset
+from .sanitization import ToolNameMapping
+from .signature import SignatureResult, signature_from_function, signature_from_schema
+
+# Type alias for description handler callback
+# Takes (description, tool_definition) and returns processed description
+DescriptionHandler = Callable[[str, ToolDefinition], str]
 
 __all__ = (
     'CodeModeToolset',
+    'DescriptionHandler',
+    'SignatureResult',
     'build_code_mode_prompt',
     'signature_from_function',
     'signature_from_schema',
@@ -126,11 +133,21 @@ class _CodeModeTool(ToolsetTool[AgentDepsT]):
     original_tools: dict[str, ToolsetTool[AgentDepsT]]
 
 
-def _get_tool_signature(tool: ToolsetTool[Any]) -> str:
+def _get_tool_signature(
+    tool: ToolsetTool[Any],
+    name_override: str | None = None,
+    description_handler: DescriptionHandler | None = None,
+) -> str:
     """Get a Python signature string for a tool.
 
     For native function tools, uses the original function's signature (including return type).
     For external tools (MCP, etc.), converts the JSON schema to a signature.
+
+    Args:
+        tool: The tool to generate a signature for.
+        name_override: Optional name to use instead of the tool's original name.
+            Used to show sanitized names (valid Python identifiers) to the LLM.
+        description_handler: Optional callback to process/truncate tool descriptions.
 
     Note: Code mode always includes return types because the model needs to know
     what structure each function returns to write correct code.
@@ -146,14 +163,21 @@ def _get_tool_signature(tool: ToolsetTool[Any]) -> str:
     # when: (1) get_tools() is called frequently during an agent run, (2) there are many
     # tools in the toolset, (3) the toolset is reused across multiple agent runs.
     # Consider storing the formatted signature string on FunctionToolsetTool at registration time.
+    signature_name = name_override or tool.tool_def.name
+
+    # Process description through handler if provided
+    description = tool.tool_def.description
+    if description and description_handler:
+        description = description_handler(description, tool.tool_def)
+
     if isinstance(tool, FunctionToolsetTool) and isinstance(tool.toolset, FunctionToolset):
         tool_name = tool.tool_def.name
         if tool_name in tool.toolset.tools:
             original_tool = tool.toolset.tools[tool_name]
             result = signature_from_function(
                 original_tool.function,
-                name=tool_name,
-                description=tool.tool_def.description,
+                name=signature_name,
+                description=description,
                 include_return_type=True,  # Always show return types in code mode
             )
             if result.typeddict_defs:
@@ -162,9 +186,9 @@ def _get_tool_signature(tool: ToolsetTool[Any]) -> str:
 
     # For external tools (MCP, etc.), convert JSON schema to signature
     result = signature_from_schema(
-        name=tool.tool_def.name,
+        name=signature_name,
         parameters_json_schema=tool.tool_def.parameters_json_schema,
-        description=tool.tool_def.description,
+        description=description,
         return_json_schema=tool.tool_def.return_schema,  # Always include if available
         namespace_defs=True,
     )
@@ -185,17 +209,46 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             keyword argument containing the list of Python function signatures.
         max_retries: Maximum number of retries for code execution errors (type/syntax/runtime).
             Defaults to 3. Increase for complex code generation tasks or less capable models.
+        tool_name_prefix: Optional prefix to add to all sanitized tool names (e.g., MCP server name).
+            Helps avoid name collisions when combining tools from multiple sources.
+        description_handler: Optional callback to process tool descriptions on a per-tool basis.
+            Takes (description, tool_definition) and returns the processed description.
+            Useful for truncating long descriptions, removing embedded JSON schemas, etc.
+
+            .. warning::
+                This callback is not serializable. If you need to serialize the toolset
+                (e.g., for distributed execution), you'll need to recreate it with the
+                callback after deserialization.
     """
 
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
+    tool_name_prefix: str | None = None
+    # TODO: description_handler is not serializable. For distributed execution scenarios,
+    # we may need an alternative approach (e.g., named handlers registered in a registry,
+    # or description processing at tool registration time rather than at signature generation).
+    description_handler: DescriptionHandler | None = None
     _cached_signatures: list[str] = field(default_factory=list, init=False, repr=False)
+    _name_mapping: ToolNameMapping = field(default_factory=ToolNameMapping, init=False, repr=False)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
-        # TODO: MCP tool names can include characters that aren't valid Python identifiers.
-        # We should sanitize names and maintain a mapping back to the original tool name.
-        available_functions = [_get_tool_signature(tool) for tool in wrapped_tools.values()]
+
+        # Sanitize tool names to valid Python identifiers and build mapping
+        self._name_mapping = ToolNameMapping(prefix=self.tool_name_prefix)
+        sanitized_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
+        available_functions: list[str] = []
+
+        for original_name, tool in wrapped_tools.items():
+            sanitized_name = self._name_mapping.add(original_name)
+            sanitized_tools[sanitized_name] = tool
+            signature = _get_tool_signature(
+                tool,
+                name_override=sanitized_name,
+                description_handler=self.description_handler,
+            )
+            available_functions.append(signature)
+
         self._cached_signatures = available_functions
 
         # TODO: This dumps all tool signatures up-front, which can bloat context for large toolsets.
@@ -212,7 +265,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return {
             _CODE_MODE_TOOL_NAME: _CodeModeTool(
                 toolset=self,
-                original_tools=wrapped_tools,
+                original_tools=sanitized_tools,
                 tool_def=ToolDefinition(
                     name=_CODE_MODE_TOOL_NAME,
                     parameters_json_schema=_CODE_ADAPTER.json_schema(),
@@ -223,7 +276,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
         }
 
-    async def call_tool(
+    async def call_tool(  # noqa: C901
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         code = tool_args['code']
@@ -277,8 +330,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         next_call_approved = checkpoint is not None
 
         while isinstance(result, monty.MontySnapshot):
-            tool_name = result.function_name
-            original_tool = tool.original_tools[tool_name]
+            sanitized_name = result.function_name
+            original_tool = tool.original_tools[sanitized_name]
+            # Map sanitized name back to original for calling the underlying toolset
+            original_name = self._name_mapping.get_original(sanitized_name) or sanitized_name
 
             tool_kwargs = dict(result.kwargs)
             if result.args:
@@ -303,21 +358,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # to avoid leaking code_mode's checkpoint data into the inner tool's context for no reason.
             inner_metadata = ctx.tool_call_metadata.get('original_metadata') if checkpoint else None
             inner_ctx = replace(
-                ctx, tool_name=tool_name, tool_call_approved=next_call_approved, tool_call_metadata=inner_metadata
+                ctx, tool_name=original_name, tool_call_approved=next_call_approved, tool_call_metadata=inner_metadata
             )
             next_call_approved = False
 
             try:
                 span_attributes = {
-                    'gen_ai.tool.name': tool_name,
+                    'gen_ai.tool.name': original_name,
                     'code_mode.inner_tool': True,
-                    'logfire.msg': f'code mode calling: {tool_name}',
+                    'code_mode.sanitized_name': sanitized_name,
+                    'logfire.msg': f'code mode calling: {original_name}',
                 }
 
                 # TODO: Consider letting tool manager handle the span(Discussion with Douwe)?
-                span_name = f'code_mode_tool:{tool_name}'
+                span_name = f'code_mode_tool:{original_name}'
                 with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
-                    tool_return_value = await super().call_tool(tool_name, tool_kwargs, inner_ctx, original_tool)
+                    tool_return_value = await super().call_tool(original_name, tool_kwargs, inner_ctx, original_tool)
             except ApprovalRequired as e:
                 # The inner tool needs approval - dump Monty state into the metadata and re-raise.
                 # We keep 'original_metadata' separate to avoid key collisions when passing
@@ -328,12 +384,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     metadata={
                         'code_mode': {
                             'checkpoint_dump': result.dump(),
-                            'tool_name': tool_name,
+                            'tool_name': original_name,
+                            'sanitized_name': sanitized_name,
                             'tool_args': tool_kwargs,
                         },
                         'original_metadata': e.metadata,
                         '_approval_call': {
-                            'tool_name': tool_name,
+                            'tool_name': original_name,
                             'args': tool_kwargs,
                         },
                     }
