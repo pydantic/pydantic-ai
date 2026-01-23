@@ -1025,6 +1025,11 @@ class ModelRequest:
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
+    resume_tool_group: int | None = None
+    """
+    The index of the tool group that needs to be resumed with `DeferredToolResults`.
+    """
+
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
