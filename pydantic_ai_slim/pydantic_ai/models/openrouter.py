@@ -558,7 +558,7 @@ class OpenRouterModel(OpenAIChatModel):
                     model_name=response_dict.get('model', self.model_name),
                     body=error.get('message', 'Unknown OpenRouter Error'),
                 )
-        
+
         response_dict = self._normalize_openrouter_response(response_dict)
 
         return _OpenRouterChatCompletion.model_validate(response_dict)
@@ -579,13 +579,14 @@ class OpenRouterModel(OpenAIChatModel):
         provider_details = super()._process_provider_details(response) or {}
         provider_details.update(_map_openrouter_provider_details(response))
         return provider_details or None
-    
+
     def _normalize_openrouter_response(self, response_dict: dict) -> dict:
-        """
-        Normalize OpenRouter response by:
+        """Normalize OpenRouter response.
+
+        Actions:
         1. Extracting nested provider data
         2. Sanitizing None metadata fields
-        
+
         Works for both regular and streaming responses.
         """
         # 1. Handle nested provider
@@ -595,7 +596,7 @@ class OpenRouterModel(OpenAIChatModel):
                 nested_provider_name = provider_data.pop('provider', 'unknown')
             response_dict.update(provider_data)
             response_dict['provider'] = nested_provider_name
-    
+
         # 2. Sanitize metadata
         if response_dict.get('id') is None:
             response_dict['id'] = 'openrouter-fallback-id'
@@ -605,7 +606,7 @@ class OpenRouterModel(OpenAIChatModel):
             response_dict['object'] = 'chat.completion'
         if not isinstance(response_dict.get('provider'), str):
             response_dict['provider'] = 'unknown'
-    
+
         return response_dict
 
     @dataclass
@@ -686,11 +687,12 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     """Implementation of `StreamedResponse` for OpenRouter models."""
 
     def _normalize_openrouter_response(self, response_dict: dict) -> dict:
-        """
-        Normalize OpenRouter response by:
+        """Normalize OpenRouter response.
+
+        Actions:
         1. Extracting nested provider data
         2. Sanitizing None metadata fields
-        
+
         Works for both regular and streaming responses.
         """
         # 1. Handle nested provider
@@ -700,7 +702,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                 nested_provider_name = provider_data.pop('provider', 'unknown')
             response_dict.update(provider_data)
             response_dict['provider'] = nested_provider_name
-    
+
         # 2. Sanitize metadata
         if response_dict.get('id') is None:
             response_dict['id'] = 'openrouter-fallback-id'
@@ -710,7 +712,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
             response_dict['object'] = 'chat.completion.chunk'
         if not isinstance(response_dict.get('provider'), str):
             response_dict['provider'] = 'unknown'
-    
+
         return response_dict
 
     @override

@@ -1,11 +1,12 @@
 import datetime
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
@@ -30,14 +31,16 @@ from pydantic_ai.models import ModelRequestParameters
 
 from ..conftest import try_import
 
-from dataclasses import dataclass
-from pydantic import ValidationError
-
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
 
-    from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings, _OpenRouterChunkChoice, OpenRouterStreamedResponse
+    from pydantic_ai.models.openrouter import (
+        OpenRouterModel,
+        OpenRouterModelSettings,
+        OpenRouterStreamedResponse,
+        _OpenRouterChunkChoice,
+    )
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -690,38 +693,36 @@ async def test_openrouter_document_url_no_force_download(
         }
     )
 
+
 def test_chunk_choice_without_finish_reason() -> None:
     """Early chunks without finish_reason should validate successfully."""
     partial_chunk = {
         'index': 0,
         'delta': {'content': 'Hello'},
     }
-    
+
     choice = _OpenRouterChunkChoice.model_validate(partial_chunk)
-    
+
     assert choice.finish_reason is None
     assert choice.native_finish_reason is None
     assert choice.delta.content == 'Hello'
     assert choice.index == 0
 
+
 def test_chunk_choice_with_finish_reason() -> None:
     """Final chunks with finish_reason should work correctly."""
-    complete_chunk = {
-        'index': 0,
-        'delta': {},
-        'finish_reason': 'stop',
-        'native_finish_reason': 'stop'
-    }
-    
+    complete_chunk = {'index': 0, 'delta': {}, 'finish_reason': 'stop', 'native_finish_reason': 'stop'}
+
     choice = _OpenRouterChunkChoice.model_validate(complete_chunk)
-    
+
     assert choice.finish_reason == 'stop'
     assert choice.native_finish_reason == 'stop'
+
 
 def test_chunk_choice_all_finish_reasons() -> None:
     """All valid finish_reason values should validate."""
     valid_reasons = ['stop', 'length', 'tool_calls', 'content_filter', 'error']
-    
+
     for reason in valid_reasons:
         chunk = {
             'index': 0,
@@ -731,72 +732,79 @@ def test_chunk_choice_all_finish_reasons() -> None:
         choice = _OpenRouterChunkChoice.model_validate(chunk)
         assert choice.finish_reason == reason
 
+
 def test_chunk_choice_required_fields_still_validated() -> None:
     """Missing required fields should still fail validation."""
     invalid_chunk = {
         'delta': {'content': 'test'},
         # Missing required 'index'
     }
-    
+
     with pytest.raises(ValidationError) as exc_info:
         _OpenRouterChunkChoice.model_validate(invalid_chunk)
-    
+
     assert 'index' in str(exc_info.value)
+
 
 async def test_streaming_without_finish_reason() -> None:
     """Streaming chunks without finish_reason should process successfully.
-    
+
     This is the main regression test for issue #3994.
     """
-    
+
     @dataclass
     class MockStreamResponse:
         async def __aiter__(self):
             # Early chunk - no finish_reason
-            yield type('Chunk', (), {
-                'model_dump': lambda *a, **kw: {
-                    "id": "chatcmpl-test",
-                    "object": "chat.completion.chunk",
-                    "created": 1234567890,
-                    "model": "google/gemini-flash-1.5-8b",
-                    "choices": [{
-                        "index": 0,
-                        "delta": {"content": "Hello"},
-                    }],
-                    "provider": "Google"
-                }
-            })()
-            
+            yield type(
+                'Chunk',
+                (),
+                {
+                    'model_dump': lambda *a, **kw: {
+                        'id': 'chatcmpl-test',
+                        'object': 'chat.completion.chunk',
+                        'created': 1234567890,
+                        'model': 'google/gemini-flash-1.5-8b',
+                        'choices': [
+                            {
+                                'index': 0,
+                                'delta': {'content': 'Hello'},
+                            }
+                        ],
+                        'provider': 'Google',
+                    }
+                },
+            )()
+
             # Final chunk - has finish_reason
-            yield type('Chunk', (), {
-                'model_dump': lambda *a, **kw: {
-                    "id": "chatcmpl-test",
-                    "object": "chat.completion.chunk",
-                    "created": 1234567890,
-                    "model": "google/gemini-flash-1.5-8b",
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop",
-                        "native_finish_reason": "stop"
-                    }],
-                    "provider": "Google"
-                }
-            })()
-    
+            yield type(
+                'Chunk',
+                (),
+                {
+                    'model_dump': lambda *a, **kw: {
+                        'id': 'chatcmpl-test',
+                        'object': 'chat.completion.chunk',
+                        'created': 1234567890,
+                        'model': 'google/gemini-flash-1.5-8b',
+                        'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop', 'native_finish_reason': 'stop'}],
+                        'provider': 'Google',
+                    }
+                },
+            )()
+
     stream = OpenRouterStreamedResponse(
         _response=MockStreamResponse(),
         _model_name='google/gemini-flash-1.5-8b',
         _provider_name='openrouter',
         _model_profile=None,
         _provider_url='https://openrouter.ai/api/v1',
-        model_request_parameters=None
+        model_request_parameters=None,
     )
-    
+
     chunks = []
     async for chunk in stream._validate_response():
         chunks.append(chunk)
-    
+
     assert len(chunks) == 2
     assert chunks[0].choices[0].finish_reason is None
-    assert chunks[1].choices[0].finish_reason == "stop"
+    assert chunks[1].choices[0].finish_reason == 'stop'
