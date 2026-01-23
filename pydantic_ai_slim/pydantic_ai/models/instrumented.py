@@ -329,13 +329,13 @@ class InstrumentationSettings:
         price_calculation: PriceCalculation | None,
         attributes: dict[str, AttributeValue],
     ):
-        for typ in ['input', 'output']:
+        for typ in ['input', 'output', 'cache_read']:
             if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-            if price_calculation:
-                cost = float(getattr(price_calculation, f'{typ}_price'))
+            if price_calculation and (cost_attr := getattr(price_calculation, f'{typ}_price', None)) is not None:
+                cost = float(cost_attr)
                 self.cost_histogram.record(cost, token_attributes)
 
 
