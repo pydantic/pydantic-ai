@@ -888,121 +888,26 @@ Found 2 errors in 1 file (checked 1 source file)
 
 Running `pyright` would identify the same issues.
 
-## System Prompts
+## Instructions and System Prompts
 
-System prompts are strings (or sequences of strings) that guide model behavior. Crafting the right system prompt is key to getting the model to behave as you want.
+### Instructions
 
-!!! warning "Behavior with `message_history`"
-    When you provide `message_history`, the current agent's `system_prompt` is **not added** to the request.
-    System prompts already in the history remain, but the current agent's are skipped (to avoid duplication).
+Both `instructions` and `system_prompt` guide model behavior through text, but they differ architecturally:
 
-    For most use cases, use [`instructions`](#instructions) instead — they're always included regardless of message history.
+- **`instructions`**: A property of [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions], re-evaluated on every model turn
+- **`system_prompt`**: Becomes a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] in [`ModelRequest.parts`][pydantic_ai.messages.ModelRequest.parts], part of message history
 
-System prompts fall into two categories:
+**Recommendation**: Use `instructions` by default. Use `system_prompt` only when you need prompts to persist across multiple agents or runs via `message_history`.
 
-1. **Static system prompts**: These are known when writing the code and can be defined via the `system_prompt` parameter of the [`Agent` constructor][pydantic_ai.agent.Agent.__init__].
-2. **Dynamic system prompts**: These depend in some way on context that isn't known until runtime, and should be defined via functions decorated with [`@agent.system_prompt`][pydantic_ai.agent.Agent.system_prompt].
+Instructions are re-evaluated on **every** model turn (including tool calls and retries) via the agent's `get_instructions()` method. When you pass `message_history`, the current agent's instructions are always used — any instructions from the previous agent are not carried over. This makes instructions ideal for multi-agent handoffs where each agent needs its own guidance.
 
-You can add both to a single agent; they're appended in the order they're defined at runtime.
+Instructions can be specified at different times:
 
-Here's an example using both types of system prompts:
+1. **Static instructions**: Known when writing the code; defined via the `instructions` parameter of the [`Agent` constructor][pydantic_ai.agent.Agent.__init__].
+2. **Dynamic instructions**: Rely on runtime context; defined using functions decorated with [`@agent.instructions`][pydantic_ai.agent.Agent.instructions]. Always re-evaluated, even when `message_history` is present.
+3. **Runtime instructions**: Additional instructions for a specific run; passed to one of the [run methods](#running-agents) using the `instructions` argument.
 
-```python {title="system_prompts.py"}
-from datetime import date
-
-from pydantic_ai import Agent, RunContext
-
-agent = Agent(
-    'openai:gpt-5',
-    deps_type=str,  # (1)!
-    system_prompt="Use the customer's name while replying to them.",  # (2)!
-)
-
-
-@agent.system_prompt  # (3)!
-def add_the_users_name(ctx: RunContext[str]) -> str:
-    return f"The user's name is {ctx.deps}."
-
-
-@agent.system_prompt
-def add_the_date() -> str:  # (4)!
-    return f'The date is {date.today()}.'
-
-
-result = agent.run_sync('What is the date?', deps='Frank')
-print(result.output)
-#> Hello Frank, the date today is 2032-01-02.
-```
-
-1. The agent expects a string dependency.
-2. Static system prompt defined at agent creation time.
-3. Dynamic system prompt defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
-4. Another dynamic system prompt, system prompts don't have to have the `RunContext` parameter.
-
-_(This example is complete, it can be run "as is")_
-
-## Instructions
-
-Instructions guide model behavior like system prompts, but handle `message_history` differently:
-
-| Feature | With `message_history` |
-|---------|------------------------|
-| `system_prompt` | Current agent's prompts are **skipped** (history's prompts remain) |
-| `instructions` | Current agent's instructions are **always included** (history's are ignored) |
-
-Use `instructions` by default. Use `system_prompt` only when you need prompts to accumulate across multiple agents or runs in a conversation.
-
-??? info "Example: payload structure across runs using both"
-    ```python
-    from pydantic_ai import Agent
-
-    agent_a = Agent('test', system_prompt='Be helpful')
-    agent_b = Agent('test', instructions='Speak French')
-
-    # Run 1: agent_a's system_prompt is added to the request
-    result1 = agent_a.run_sync('Hello')
-
-    # Run 2: agent_b uses message_history from run 1
-    # - agent_a's system_prompt remains in history
-    # - agent_b's instructions are added
-    result2 = agent_b.run_sync('How are you?', message_history=result1.all_messages())
-    ```
-
-    **Internal structure:**
-
-    - Run 1 creates: `ModelRequest(parts=[SystemPromptPart('Be helpful'), UserPromptPart('Hello')], instructions=None)`
-    - Run 2 creates: `ModelRequest(parts=[UserPromptPart('How are you?')], instructions='Speak French')`
-
-    **What gets sent to the provider (Run 2):**
-
-    - **OpenAI**: System prompts and instructions become separate messages:
-      ```python
-      [
-          {'role': 'system', 'content': 'Be helpful'},
-          {'role': 'system', 'content': 'Speak French'},
-          {'role': 'user', 'content': 'Hello'},
-          {'role': 'assistant', 'content': '...'},
-          {'role': 'user', 'content': 'How are you?'},
-      ]
-      ```
-
-    - **Anthropic / Google**: System prompts and instructions are concatenated:
-      ```python
-      system = 'Be helpful\n\nSpeak French'
-      messages = [
-          {'role': 'user', 'content': 'Hello'},
-          {'role': 'assistant', 'content': '...'},
-          {'role': 'user', 'content': 'How are you?'},
-      ]
-      ```
-
-Instructions, like system prompts, can be specified at different times:
-
-1. **Static instructions**: These are known when writing the code and can be defined via the `instructions` parameter of the [`Agent` constructor][pydantic_ai.agent.Agent.__init__].
-2. **Dynamic instructions**: These rely on context that is only available at runtime and should be defined using functions decorated with [`@agent.instructions`][pydantic_ai.agent.Agent.instructions]. Unlike dynamic system prompts, which may be reused when `message_history` is present, dynamic instructions are always reevaluated.
-3. **Runtime instructions*: These are additional instructions for a specific run that can be passed to one of the [run methods](#running-agents) using the `instructions` argument.
-
-All three types of instructions can be added to a single agent, and they are appended in the order they are defined at runtime.
+All three types can be combined on a single agent; they're appended in the order they're defined at runtime.
 
 Here's an example using a static instruction as well as dynamic instructions:
 
@@ -1043,6 +948,110 @@ print(result.output)
 _(This example is complete, it can be run "as is")_
 
 Note that returning an empty string will result in no instruction message added.
+
+### System Prompts
+
+System prompts become part of message history as [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] entries. They're only added on the **first turn** — when you pass `message_history`, the current agent's system prompts are skipped while any in the history remain. This allows prompts to persist across agents sharing conversation history. System prompts can also benefit from provider-specific prompt caching.
+
+System prompts fall into two categories:
+
+1. **Static system prompts**: Known when writing the code; defined via the `system_prompt` parameter of the [`Agent` constructor][pydantic_ai.agent.Agent.__init__].
+2. **Dynamic system prompts**: Depend on runtime context; defined via functions decorated with [`@agent.system_prompt`][pydantic_ai.agent.Agent.system_prompt].
+
+You can add both to a single agent; they're appended in the order they're defined at runtime.
+
+Here's an example using both types of system prompts:
+
+```python {title="system_prompts.py"}
+from datetime import date
+
+from pydantic_ai import Agent, RunContext
+
+agent = Agent(
+    'openai:gpt-5',
+    deps_type=str,  # (1)!
+    system_prompt="Use the customer's name while replying to them.",  # (2)!
+)
+
+
+@agent.system_prompt  # (3)!
+def add_the_users_name(ctx: RunContext[str]) -> str:
+    return f"The user's name is {ctx.deps}."
+
+
+@agent.system_prompt
+def add_the_date() -> str:  # (4)!
+    return f'The date is {date.today()}.'
+
+
+result = agent.run_sync('What is the date?', deps='Frank')
+print(result.output)
+#> Hello Frank, the date today is 2032-01-02.
+```
+
+1. The agent expects a string dependency.
+2. Static system prompt defined at agent creation time.
+3. Dynamic system prompt defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
+4. Another dynamic system prompt, system prompts don't have to have the `RunContext` parameter.
+
+_(This example is complete, it can be run "as is")_
+
+### Key Differences
+
+| Aspect | Instructions | System Prompts |
+|--------|--------------|----------------|
+| **Storage** | `ModelRequest.instructions` property | `SystemPromptPart` in `ModelRequest.parts` |
+| **Evaluated** | Every model turn | First turn only |
+| **With `message_history`** | Current agent's used | History's remain, current agent's skipped |
+| **Caching** | Via provider instructions field | Via provider prompt caching |
+
+Both can coexist: an agent can have `instructions` while using `message_history` that contains system prompts from a previous agent.
+
+??? info "Example: request property vs history part"
+    This example shows how `instructions` (a request property) and `system_prompt` (part of message history) behave differently when using `message_history`:
+
+    ```python
+    from pydantic_ai import Agent
+
+    agent_a = Agent('test', system_prompt='Be helpful')
+    agent_b = Agent('test', instructions='Speak French')
+
+    # Run 1: agent_a's system_prompt is added to the request
+    result1 = agent_a.run_sync('Hello')
+
+    # Run 2: agent_b uses message_history from run 1
+    # - agent_a's system_prompt remains in history
+    # - agent_b's instructions are added as request property
+    result2 = agent_b.run_sync('How are you?', message_history=result1.all_messages())
+    ```
+
+    **Internal structure:**
+
+    - Run 1 creates: `ModelRequest(parts=[SystemPromptPart('Be helpful'), UserPromptPart('Hello')], instructions=None)`
+    - Run 2 creates: `ModelRequest(parts=[UserPromptPart('How are you?')], instructions='Speak French')`
+
+    **What gets sent to the provider (Run 2):**
+
+    - **OpenAI**: System prompts and instructions become separate messages:
+      ```python
+      [
+          {'role': 'system', 'content': 'Be helpful'},
+          {'role': 'system', 'content': 'Speak French'},
+          {'role': 'user', 'content': 'Hello'},
+          {'role': 'assistant', 'content': '...'},
+          {'role': 'user', 'content': 'How are you?'},
+      ]
+      ```
+
+    - **Anthropic / Google**: System prompts and instructions are concatenated:
+      ```python
+      system = 'Be helpful\n\nSpeak French'
+      messages = [
+          {'role': 'user', 'content': 'Hello'},
+          {'role': 'assistant', 'content': '...'},
+          {'role': 'user', 'content': 'How are you?'},
+      ]
+      ```
 
 ## Reflection and self-correction
 
