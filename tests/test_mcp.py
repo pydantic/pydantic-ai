@@ -931,6 +931,7 @@ async def test_tool_returning_audio_resource_link(
                             tool_name='get_audio_resource_link',
                             args={},
                             tool_call_id=IsStr(),
+                            provider_name='google-gla',
                             provider_details={'thought_signature': IsStr()},
                         )
                     ],

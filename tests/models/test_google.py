@@ -595,6 +595,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         tool_name='get_capital',
                         args={'country': 'France'},
                         tool_call_id=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -628,6 +629,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         tool_name='get_capital',
                         args={'country': 'La France'},
                         tool_call_id=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -659,6 +661,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 parts=[
                     TextPart(
                         content='Paris',
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -767,11 +770,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             ),
             PartEndEvent(
                 index=0,
-                part=ToolCallPart(
-                    tool_name='get_capital',
-                    args={'country': 'France'},
-                    tool_call_id=IsStr(),
-                ),
+                part=ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr()),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
@@ -785,11 +784,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             ),
             PartEndEvent(
                 index=0,
-                part=ToolCallPart(
-                    tool_name='get_temperature',
-                    args={'city': 'Paris'},
-                    tool_call_id=IsStr(),
-                ),
+                part=ToolCallPart(tool_name='get_temperature', args={'city': 'Paris'}, tool_call_id=IsStr()),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
@@ -1706,7 +1701,11 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content=IsStr()), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(
+                index=2,
+                part=TextPart(content=IsStr()),
+                previous_part_kind='builtin-tool-return',
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(index=2, part=TextPart(content=IsStr())),
@@ -2052,6 +2051,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     ThinkingPart(content=IsStr()),
                     TextPart(
                         content=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -2092,6 +2092,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     ThinkingPart(content=IsStr()),
                     TextPart(
                         content=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -2145,11 +2146,31 @@ async def test_google_model_thinking_part_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
-                    TextPart(content=IsStr(), id='msg_68c1fb814fdc8196aec1a46164ddf7680c14a8a9087e8689'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c1fb814fdc8196aec1a46164ddf7680c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=45, output_tokens=1719, details={'reasoning_tokens': 1408}),
                 model_name='gpt-5-2025-08-07',
@@ -2194,6 +2215,7 @@ async def test_google_model_thinking_part_from_other_model(
                     ThinkingPart(content=IsStr()),
                     TextPart(
                         content=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -2249,6 +2271,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     ThinkingPart(content=IsStr()),
                     TextPart(
                         content=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -2305,6 +2328,7 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
                 index=1,
                 part=TextPart(
                     content='This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step',
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
                 previous_part_kind='thinking',
@@ -2365,6 +2389,7 @@ Once it's safe:
 
 The most important rule is to **stay alert and be predictable**. Always assume a driver might not see you.\
 """,
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
@@ -2568,13 +2593,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='final_result',
-                        args={'bar': 'hello'},
-                        tool_call_id=IsStr(),
-                    )
-                ],
+                parts=[ToolCallPart(tool_name='final_result', args={'bar': 'hello'}, tool_call_id=IsStr())],
                 usage=RequestUsage(
                     input_tokens=27, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27}
                 ),
@@ -3271,6 +3290,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                             media_type='image/jpeg',
                             _identifier='b6e95a',
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -3313,6 +3333,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                             media_type='image/jpeg',
                             _identifier='14bec0',
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -3463,6 +3484,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
 A little axolotl named Archie lived in a beautiful glass tank, but he always wondered what was beyond the clear walls. One day, he bravely peeked over the edge and discovered a whole new world of sunshine and potted plants.
 
 """,
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                     FilePart(
@@ -3472,6 +3494,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                             _identifier='00f2af',
                             identifier=IsStr(),
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -3582,6 +3605,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                             media_type='image/jpeg',
                             _identifier='4e5b3e',
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -3619,6 +3643,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
   "name": "Axolotl"
 } \
 """,
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -3723,6 +3748,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                             media_type='image/jpeg',
                             _identifier='787c28',
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -4668,12 +4694,18 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     next_part_kind='text',
                 ),
                 PartStartEvent(
-                    index=1, part=TextPart(content='The capital of France'), previous_part_kind='builtin-tool-call'
+                    index=1,
+                    part=TextPart(content='The capital of France'),
+                    previous_part_kind='builtin-tool-call',
                 ),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
-                PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is Paris. The city is well-known for its')),
                 PartDeltaEvent(
-                    index=1, delta=TextPartDelta(content_delta=' famous landmarks, including the Eiffel Tower.')
+                    index=1,
+                    delta=TextPartDelta(content_delta=' is Paris. The city is well-known for its'),
+                ),
+                PartDeltaEvent(
+                    index=1,
+                    delta=TextPartDelta(content_delta=' famous landmarks, including the Eiffel Tower.'),
                 ),
                 PartEndEvent(
                     index=1,
@@ -4875,10 +4907,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         provider_name='openai',
                     ),
                     ToolCallPart(
-                        tool_name='get_country',
-                        args='{}',
-                        tool_call_id=IsStr(),
-                        id=IsStr(),
+                        tool_name='get_country', args='{}', tool_call_id=IsStr(), id=IsStr(), provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(input_tokens=37, output_tokens=272, details={'reasoning_tokens': 256}),
@@ -4914,10 +4943,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='Mexico City (Ciudad de México).',
-                        id=IsStr(),
-                    ),
+                    TextPart(content='Mexico City (Ciudad de México).', id=IsStr(), provider_name='openai'),
                 ],
                 usage=RequestUsage(input_tokens=379, output_tokens=77, details={'reasoning_tokens': 64}),
                 model_name='gpt-5-2025-08-07',
@@ -4947,6 +4973,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
                         tool_call_id=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -5059,6 +5086,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                 parts=[
                     TextPart(
                         content='Hello! How can I help you today?',
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -5189,6 +5217,42 @@ def test_google_thought_signature_on_thinking_part():
     )
     assert old_google_response == new_google_response
 
+    # Test that thought_signature is used when item.provider_name matches even if ModelResponse.provider_name doesn't
+    response_with_item_provider_name = _content_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='text',
+                    provider_name='google-gla',
+                    provider_details={'thought_signature': signature},
+                ),
+            ],
+            provider_name=None,  # ModelResponse doesn't have provider_name set
+        ),
+        'google-gla',
+    )
+    assert response_with_item_provider_name == snapshot(
+        {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
+    )
+
+    # Also test when ModelResponse has a different provider_name (e.g., from another provider)
+    response_with_different_provider = _content_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='text',
+                    provider_name='google-gla',
+                    provider_details={'thought_signature': signature},
+                ),
+            ],
+            provider_name='openai',  # Different provider on ModelResponse
+        ),
+        'google-gla',
+    )
+    assert response_with_different_provider == snapshot(
+        {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
+    )
+
 
 def test_google_missing_tool_call_thought_signature():
     google_response = _content_model_response(
@@ -5252,6 +5316,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         tool_name='get_country',
                         args={},
                         tool_call_id=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -5301,6 +5366,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     tool_name='get_country',
                     args={},
                     tool_call_id=IsStr(),
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
@@ -5310,6 +5376,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     tool_name='get_country',
                     args={},
                     tool_call_id=IsStr(),
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
@@ -5318,6 +5385,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     tool_name='get_country',
                     args={},
                     tool_call_id=IsStr(),
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 )
             ),
