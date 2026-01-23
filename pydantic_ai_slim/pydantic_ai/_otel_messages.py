@@ -33,8 +33,17 @@ class ToolCallResponsePart(TypedDict):
 
 
 class MediaUrlPart(TypedDict):
-    type: Literal['image-url', 'audio-url', 'video-url', 'document-url', 'uploaded-file']
+    type: Literal['image-url', 'audio-url', 'video-url', 'document-url']
     url: NotRequired[str]
+
+
+class FilePart(TypedDict):
+    """Represents an external referenced file sent to the model by file id (OTel GenAI spec)."""
+
+    type: Literal['file']
+    modality: str
+    file_id: NotRequired[str]
+    mime_type: NotRequired[str]
 
 
 class BinaryDataPart(TypedDict):
@@ -48,7 +57,9 @@ class ThinkingPart(TypedDict):
     content: NotRequired[str]
 
 
-MessagePart: TypeAlias = 'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | BinaryDataPart | ThinkingPart'
+MessagePart: TypeAlias = (
+    'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | FilePart | BinaryDataPart | ThinkingPart'
+)
 
 
 Role = Literal['system', 'user', 'assistant']

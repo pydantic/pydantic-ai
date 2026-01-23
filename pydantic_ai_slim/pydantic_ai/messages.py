@@ -888,20 +888,22 @@ class UserPromptPart:
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
             elif isinstance(part, UploadedFile):
-                # UploadedFile references provider-hosted files
-                # Use a URI format: if file_id is already a URL, use it; otherwise use x-{provider}-file-id:{id}
-                file_id = part.file_id
-                if file_id.startswith('http://') or file_id.startswith('https://') or file_id.startswith('s3://'):
-                    uri = file_id
-                else:
-                    provider = part.provider_name or 'unknown'
-                    uri = f'x-{provider}-file-id:{file_id}'
-                parts.append(
-                    _otel_messages.MediaUrlPart(
-                        type='uploaded-file',
-                        **{'url': uri} if settings.include_content else {},
-                    )
-                )
+                # UploadedFile references provider-hosted files by file_id (OTel GenAI spec FilePart)
+                # Infer modality from media_type - OTel spec defines: image, video, audio (or any string)
+                modality = 'document'  # default for PDFs, text, etc.
+                if part.media_type:
+                    if part.media_type.startswith('image/'):
+                        modality = 'image'
+                    elif part.media_type.startswith('audio/'):
+                        modality = 'audio'
+                    elif part.media_type.startswith('video/'):
+                        modality = 'video'
+                file_part = _otel_messages.FilePart(type='file', modality=modality)
+                if settings.include_content:
+                    file_part['file_id'] = part.file_id
+                    if part.media_type:
+                        file_part['mime_type'] = part.media_type
+                parts.append(file_part)
             else:
                 parts.append({'type': part.kind})  # pragma: no cover
         return parts

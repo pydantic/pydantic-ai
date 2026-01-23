@@ -751,8 +751,12 @@ def test_uploaded_file_identifier_property():
 
 
 def test_uploaded_file_in_otel_message_parts():
-    """Test that UploadedFile is handled correctly in otel message parts conversion."""
-    # Test with file ID (should use x-{provider}-file-id:{id} format)
+    """Test that UploadedFile is handled correctly in otel message parts conversion.
+
+    Per OTel GenAI spec, UploadedFile maps to FilePart with type='file', modality, and file_id.
+    See: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-input-messages.json
+    """
+    # Test with file ID (OTel FilePart format) - no media_type means unknown modality
     part = UserPromptPart(
         content=['text before', UploadedFile(file_id='file-abc123', provider_name='anthropic'), 'text after']
     )
@@ -761,12 +765,12 @@ def test_uploaded_file_in_otel_message_parts():
     assert otel_parts == snapshot(
         [
             {'type': 'text', 'content': 'text before'},
-            {'type': 'uploaded-file', 'url': 'x-anthropic-file-id:file-abc123'},
+            {'type': 'file', 'modality': 'document', 'file_id': 'file-abc123'},
             {'type': 'text', 'content': 'text after'},
         ]
     )
 
-    # Test with URL file_id (should use the URL directly)
+    # Test with URL file_id (still uses file_id field per spec)
     part_url = UserPromptPart(
         content=[
             'analyze this',
@@ -780,11 +784,15 @@ def test_uploaded_file_in_otel_message_parts():
     assert otel_parts_url == snapshot(
         [
             {'type': 'text', 'content': 'analyze this'},
-            {'type': 'uploaded-file', 'url': 'https://generativelanguage.googleapis.com/v1beta/files/abc123'},
+            {
+                'type': 'file',
+                'modality': 'document',
+                'file_id': 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
+            },
         ]
     )
 
-    # Test with S3 URL (should use the URL directly)
+    # Test with S3 URL and media_type - should include modality and mime_type
     part_s3 = UserPromptPart(
         content=[
             'process this',
@@ -795,11 +803,27 @@ def test_uploaded_file_in_otel_message_parts():
     assert otel_parts_s3 == snapshot(
         [
             {'type': 'text', 'content': 'process this'},
-            {'type': 'uploaded-file', 'url': 's3://my-bucket/my-file.pdf'},
+            {
+                'type': 'file',
+                'modality': 'document',
+                'file_id': 's3://my-bucket/my-file.pdf',
+                'mime_type': 'application/pdf',
+            },
         ]
     )
 
-    # Test without include_content (should not include URL)
+    # Test with image media_type - should have image modality
+    part_image = UserPromptPart(
+        content=[UploadedFile(file_id='img-123', provider_name='openai', media_type='image/png')]
+    )
+    otel_parts_image = part_image.otel_message_parts(settings)
+    assert otel_parts_image == snapshot(
+        [{'type': 'file', 'modality': 'image', 'file_id': 'img-123', 'mime_type': 'image/png'}]
+    )
+
+    # Test without include_content (should only have type and modality)
     settings_no_content = InstrumentationSettings(include_content=False)
     otel_parts_no_content = part.otel_message_parts(settings_no_content)
-    assert otel_parts_no_content == snapshot([{'type': 'text'}, {'type': 'uploaded-file'}, {'type': 'text'}])
+    assert otel_parts_no_content == snapshot(
+        [{'type': 'text'}, {'type': 'file', 'modality': 'document'}, {'type': 'text'}]
+    )
