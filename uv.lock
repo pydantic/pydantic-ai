@@ -1474,7 +1474,7 @@ wheels = [
 
 [[package]]
 name = "dbos"
-version = "2.9.0"
+version = "2.10.0a4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },
@@ -1484,9 +1484,9 @@ dependencies = [
     { name = "typer-slim" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/77/ce/9c7692cd9341b82d2179371b12b701eb9fc1b7a5844e4e489c0472162c45/dbos-2.9.0.tar.gz", hash = "sha256:f4d80d3db9d410aa8a317db338cf189b2aa12009491ca3efe8e9582316be83ff", size = 228257, upload-time = "2026-01-19T17:29:59.267Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/a6/f51fd3a7370fa8e6d4ed0468e592cd40f4ae9a08e9670395b550bc46f577/dbos-2.10.0a4.tar.gz", hash = "sha256:d0d01baaf321676a3c4e85a1790edf9f825f6d4a61de96abf37dc3efe1100359", size = 232132, upload-time = "2026-01-23T00:28:35.397Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e0/d4/e0d58d1f9742586c8fa77db4e69be614775671c02d8329529ed5a274f847/dbos-2.9.0-py3-none-any.whl", hash = "sha256:7b43435d825915b177d2456c76b0418eae5ccc88ea83bf8a315d795984373b12", size = 143868, upload-time = "2026-01-19T17:29:57.722Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/f2/4603e37197c9a8838a0c4362fdf3dd9c4d34d84001ae708ee7bc71701d94/dbos-2.10.0a4-py3-none-any.whl", hash = "sha256:da96d0925658fb107e1e201251a578f1830dc55e3267dd4ae8cd471dd67e0498", size = 145384, upload-time = "2026-01-23T00:28:33.179Z" },
 ]
 
 [[package]]
@@ -6539,7 +6539,7 @@ requires-dist = [
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.14" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.18.0" },
-    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.9.0" },
+    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.10.0a4" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
