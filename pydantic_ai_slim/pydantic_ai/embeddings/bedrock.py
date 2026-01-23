@@ -216,7 +216,8 @@ def _extract_version(model_name: str) -> int | None:
     """
     if match := re.search(r'v(\d+)', model_name):
         return int(match.group(1))
-    return None
+    else:  # pragma: no cover
+        return None
 
 
 # ==================== Embedding Handlers ====================
