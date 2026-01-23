@@ -12,7 +12,7 @@ from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 
-from guard import PineconeGuardToolset
+from .guard import PineconeGuardToolset
 
 # =============================================================================
 # Configuration

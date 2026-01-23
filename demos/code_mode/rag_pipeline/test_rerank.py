@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from guard import PineconeGuardToolset
+from .guard import PineconeGuardToolset
 
 
 def test_truncation() -> None:

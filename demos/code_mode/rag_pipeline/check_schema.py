@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from demo import create_pinecone_mcp
+from .demo import create_pinecone_mcp
 
 
 async def main() -> None:
