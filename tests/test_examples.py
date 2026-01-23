@@ -186,6 +186,8 @@ def test_docs_examples(
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
+    env.set('VOYAGE_API_KEY', 'testing')
+    env.set('XAI_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -1017,7 +1019,9 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'text-embedding-3-small': 1536,
         'text-embedding-3-large': 3072,
         'embed-v4.0': 1024,
+        'voyage-3.5': 1024,
         'all-MiniLM-L6-v2': 384,
+        'gemini-embedding-001': 3072,
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)
