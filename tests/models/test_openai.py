@@ -1450,6 +1450,19 @@ async def test_text_document_as_binary_content_input(
     )
 
 
+async def test_yaml_document_as_binary_content_input(allow_model_requests: None, openai_api_key: str):
+    yaml_content = BinaryContent(
+        data=b'version: "3"\nservices:\n  web:\n    image: nginx', media_type='application/yaml'
+    )
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What type of configuration is this?', yaml_content])
+    assert result.output == snapshot(
+        'The configuration you provided is a YAML file for Docker Compose. Docker Compose is a tool used for defining and running multi-container Docker applications. In this specific configuration, the YAML file is specifying a single service called `web`, which uses the `nginx` Docker image. The file starts with specifying the Compose file version as "3", indicating the format version used for composing the services.'
+    )
+
+
 async def test_document_as_binary_content_input_with_tool(
     allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
 ):
