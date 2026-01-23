@@ -549,14 +549,15 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
-        response_dict = cast(dict[str, Any], response.model_dump())
+        response_dict = response.model_dump()
 
         if error := response_dict.get('error'):
             if isinstance(error, dict):
+                error_dict = cast(dict[str, Any], error)
                 raise ModelHTTPError(
-                    status_code=error.get('code', 500),
+                    status_code=cast(int, error_dict.get('code', 500)),
                     model_name=response_dict.get('model', self.model_name),
-                    body=error.get('message', 'Unknown OpenRouter Error'),
+                    body=cast(str, error_dict.get('message', 'Unknown OpenRouter Error')),
                 )
 
         response_dict = self._normalize_openrouter_response(response_dict, 'chat.completion')
@@ -723,26 +724,29 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
         choices = response_dict.get('choices')
         if isinstance(choices, list):
-            for choice in choices:
-                if not isinstance(choice, dict):
-                    continue
-                finish_reason = choice.get('finish_reason')
-                if finish_reason is not None and choice.get('native_finish_reason') is None:
-                    choice['native_finish_reason'] = finish_reason
-
+            valid_choices: list[dict[str, Any]] = []
+            for choice in cast(list[Any], choices):
+                if isinstance(choice, dict):
+                    choice_dict: dict[str, Any] = cast(dict[str, Any], choice)
+                    finish_reason = choice_dict.get('finish_reason')
+                    if finish_reason is not None and choice_dict.get('native_finish_reason') is None:
+                        choice_dict['native_finish_reason'] = finish_reason
+                    valid_choices.append(choice_dict)
+            response_dict['choices'] = valid_choices
         return response_dict
 
     @override
     async def _validate_response(self):
         try:
             async for chunk in self._response:
-                chunk_dict = cast(dict[str, Any], chunk.model_dump())
+                chunk_dict = chunk.model_dump()
                 if error := chunk_dict.get('error'):
                     if isinstance(error, dict):
+                        error_dict = cast(dict[str, Any], error)
                         raise ModelHTTPError(
-                            status_code=cast(int, error.get('code', 500)),
+                            status_code=cast(int, error_dict.get('code', 500)),
                             model_name=self._model_name,
-                            body=cast(str, error.get('message', 'Unknown OpenRouter Error')),
+                            body=cast(str, error_dict.get('message', 'Unknown OpenRouter Error')),
                         )
                 chunk_dict = self._normalize_openrouter_response(chunk_dict, 'chat.completion.chunk')
                 yield _OpenRouterChatCompletionChunk.model_validate(chunk_dict)

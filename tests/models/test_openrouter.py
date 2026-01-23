@@ -701,11 +701,15 @@ async def test_openrouter_edge_cases_and_normalization() -> None:
     2. Missing metadata (id, model, object).
     3. Streaming chunks without finish_reason.
     4. Error handling in streams.
+    5. Invalid provider types (non-string).
+    6. Native finish_reason fallback logic.
+    7. Non-dict choices handling.
     """
 
     @dataclass
     class MockStreamResponse:
         async def __aiter__(self) -> AsyncIterator[Any]:
+            # Test 1: Nested provider with missing metadata
             nested_chunk = {
                 'id': None,
                 'choices': None,
@@ -721,6 +725,47 @@ async def test_openrouter_edge_cases_and_normalization() -> None:
             }
             yield type('Chunk', (), {'model_dump': lambda *a, **kw: nested_chunk})()
 
+            # Test 2: Chunk with invalid provider type (should become 'unknown')
+            invalid_provider_chunk = {
+                'id': None,
+                'object': None,
+                'created': 1234567890,
+                'model': None,
+                'choices': [{'index': 0, 'delta': {'content': 'test'}}],
+                'provider': 123,  # Invalid type - should become 'unknown'
+            }
+            yield type('Chunk', (), {'model_dump': lambda *a, **kw: invalid_provider_chunk})()
+
+            # Test 3: Chunk with finish_reason but no native_finish_reason
+            finish_reason_fallback_chunk = {
+                'id': 'test-id',
+                'object': 'chat.completion.chunk',
+                'created': 1234567890,
+                'model': 'test/model',
+                'choices': [
+                    {
+                        'index': 0,
+                        'delta': {},
+                        'finish_reason': 'stop',
+                        # No native_finish_reason - should be auto-populated
+                    }
+                ],
+                'provider': 'Test',
+            }
+            yield type('Chunk', (), {'model_dump': lambda *a, **kw: finish_reason_fallback_chunk})()
+
+            # Test 4: Chunk with non-dict choices (should be skipped)
+            invalid_choices_chunk = {
+                'id': 'test-id-2',
+                'object': 'chat.completion.chunk',
+                'created': 1234567890,
+                'model': 'test/model',
+                'choices': ['invalid', 123, None, {'index': 0, 'delta': {'content': 'valid'}}],
+                'provider': 'Test',
+            }
+            yield type('Chunk', (), {'model_dump': lambda *a, **kw: invalid_choices_chunk})()
+
+            # Test 5: Error chunk
             error_chunk = {'error': {'code': 418, 'message': "I'm a teapot"}, 'choices': []}
             yield type('Chunk', (), {'model_dump': lambda *a, **kw: error_chunk})()
 
@@ -738,10 +783,19 @@ async def test_openrouter_edge_cases_and_normalization() -> None:
         async for chunk in stream._validate_response():  # type: ignore
             chunks.append(chunk)
 
-    assert len(chunks) == 1
-    assert chunks[0].id == 'gen-123'  # Pulled from nested provider
-    assert chunks[0].provider == 'Google'  # Pulled from nested provider
+    assert len(chunks) == 4
+    assert chunks[0].id == 'gen-123'
+    assert chunks[0].provider == 'Google'
     assert chunks[0].choices[0].delta.content == 'Hello'
+
+    assert chunks[1].provider == 'unknown'
+    assert chunks[1].id == 'openrouter-fallback-id'
+    assert chunks[1].model == 'google/gemini-flash-1.5-8b'
+    assert chunks[1].object == 'chat.completion.chunk'
+
+    assert chunks[2].choices[0].finish_reason == 'stop'
+    assert len(chunks[3].choices) == 1
+    assert chunks[3].choices[0].delta.content == 'valid'
 
     assert exc_info.value.status_code == 418
     assert "I'm a teapot" in str(exc_info.value)
@@ -755,7 +809,13 @@ async def test_openrouter_edge_cases_and_normalization() -> None:
         'model': None,
         'object': None,
         'provider': {
-            'choices': [{'message': {'role': 'assistant', 'content': 'foo'}, 'finish_reason': 'stop'}],
+            'choices': [
+                {
+                    'message': {'role': 'assistant', 'content': 'foo'},
+                    'finish_reason': 'stop',
+                    'index': 0,
+                }
+            ],
             'provider': 'HiddenProvider',
         },
     }
@@ -764,5 +824,22 @@ async def test_openrouter_edge_cases_and_normalization() -> None:
 
     assert normalized['provider'] == 'HiddenProvider'
     assert normalized['choices'][0]['message']['content'] == 'foo'
-    assert normalized['id'] == 'openrouter-fallback-id'  # Default applied
-    assert normalized['object'] == 'chat.completion'  # Default applied
+
+    assert normalized['id'] == 'openrouter-fallback-id'
+    assert normalized['model'] == 'test/model'
+    assert normalized['object'] == 'chat.completion'
+
+    bad_response_invalid_provider = {
+        'id': 'test-id',
+        'choices': [{'message': {'role': 'assistant', 'content': 'test'}, 'finish_reason': 'stop', 'index': 0}],
+        'model': 'test/model',
+        'object': 'chat.completion',
+        'created': 1234567890,
+        'provider': {'nested': 'object'},  # Invalid - not a string
+    }
+
+    normalized_2 = model._normalize_openrouter_response(  # type: ignore
+        bad_response_invalid_provider, 'chat.completion'
+    )
+
+    assert normalized_2['provider'] == 'unknown'
