@@ -688,7 +688,7 @@ async def test_openrouter_document_url_no_force_download(
     )
 
 
-async def test_openrouter_supported_builtin_tools(openrouter_api_key: str) -> None:
+async def test_openrouter_supported_builtin_tools() -> None:
     """Test that OpenRouterModel declares support for WebSearchTool."""
     from pydantic_ai.builtin_tools import WebSearchTool
 
@@ -768,3 +768,50 @@ async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) ->
     extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
     assert 'plugins' not in extra_body
     assert 'web_search_options' not in extra_body
+
+
+async def test_openrouter_settings_to_openai_settings_no_web_search_options() -> None:
+    """Test _openrouter_settings_to_openai_settings when web_search_plugin is provided but web_search_options is None."""
+    from typing import Any
+
+    from pydantic_ai.models.openrouter import (
+        OpenRouterWebSearchPlugin,
+        _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    settings = OpenRouterModelSettings()
+    web_search_plugin: OpenRouterWebSearchPlugin = {'id': 'web'}
+
+    result = _openrouter_settings_to_openai_settings(
+        settings, web_search_plugin=web_search_plugin, web_search_options=None
+    )
+
+    extra_body = cast(dict[str, Any], result.get('extra_body', {}))
+    assert 'plugins' in extra_body
+    assert extra_body['plugins'] == [{'id': 'web'}]
+    assert 'web_search_options' not in extra_body
+
+
+async def test_openrouter_prepare_request_multiple_websearch_tools(openrouter_api_key: str) -> None:
+    """Test prepare_request with multiple WebSearchTool instances (covers loop continuation until finding first match)."""
+    from typing import Any
+
+    from pydantic_ai.builtin_tools import WebSearchTool
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+
+    tool1 = WebSearchTool(search_context_size='low')
+    tool2 = WebSearchTool(search_context_size='high', engine='exa')
+
+    model_request_parameters = ModelRequestParameters(
+        builtin_tools=[tool1, tool2],
+    )
+
+    new_settings, _ = model.prepare_request(None, model_request_parameters)
+
+    assert new_settings is not None
+    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
+    assert 'plugins' in extra_body
+    assert extra_body['plugins'] == [{'id': 'web'}]
+    assert extra_body['web_search_options'] == {'search_context_size': 'low'}
