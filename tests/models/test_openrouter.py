@@ -687,6 +687,7 @@ async def test_openrouter_document_url_no_force_download(
         }
     )
 
+
 async def test_openrouter_supported_builtin_tools(openrouter_api_key: str) -> None:
     """Test that OpenRouterModel declares support for WebSearchTool."""
     from pydantic_ai.builtin_tools import WebSearchTool
