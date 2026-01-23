@@ -82,7 +82,7 @@ OpenRouter supports web search via its [plugins](https://openrouter.ai/docs/guid
 
 You can customize the web search behavior using parameters on [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]:
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.models.openrouter import OpenRouterModel
