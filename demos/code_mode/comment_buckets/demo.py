@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import os
 
-from pydantic_ai import Agent
-from pydantic_ai.models import ModelSettings
+from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 

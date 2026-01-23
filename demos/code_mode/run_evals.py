@@ -21,7 +21,7 @@ from typing import TypedDict
 
 import logfire
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -59,6 +59,15 @@ class Discount(TypedDict):
     product_id: str
     discount_percent: float
     min_quantity: int
+
+
+class EvalRunResult(TypedDict):
+    mode: str
+    run: int
+    request_count: int
+    input_tokens: int
+    output_tokens: int
+    correct: bool
 
 
 _TEAM_MEMBERS: dict[str, list[TeamMember]] = {
@@ -221,7 +230,7 @@ def _create_toolset() -> FunctionToolset[None]:
     return toolset
 
 
-async def run_traditional(run_number: int) -> dict[str, int | str | bool]:
+async def run_traditional(run_number: int) -> EvalRunResult:
     """Run task in traditional mode."""
     toolset = _create_toolset()
     agent: Agent[None, str] = Agent('gateway/anthropic:claude-sonnet-4-5')
@@ -229,28 +238,10 @@ async def run_traditional(run_number: int) -> dict[str, int | str | bool]:
     with logfire.span('eval_run', mode='traditional', run_number=run_number):
         result = await agent.run(PROMPT, toolsets=[toolset])
 
-    request_count = 0
-    total_input = 0
-    total_output = 0
-    for msg in result.all_messages():
-        if isinstance(msg, ModelResponse):
-            request_count += 1
-            total_input += msg.usage.input_tokens
-            total_output += msg.usage.output_tokens
-
-    correct = 'bob' in result.output.lower() and '150' in result.output
-
-    return {
-        'mode': 'traditional',
-        'run': run_number,
-        'request_count': request_count,
-        'input_tokens': total_input,
-        'output_tokens': total_output,
-        'correct': correct,
-    }
+    return _extract_eval_metrics(result, 'traditional', run_number)
 
 
-async def run_code_mode(run_number: int) -> dict[str, int | str | bool]:
+async def run_code_mode(run_number: int) -> EvalRunResult:
     """Run task in code mode."""
     toolset = _create_toolset()
     code_toolset = CodeModeToolset(wrapped=toolset)
@@ -260,6 +251,11 @@ async def run_code_mode(run_number: int) -> dict[str, int | str | bool]:
         async with code_toolset:
             result = await agent.run(PROMPT, toolsets=[code_toolset])
 
+    return _extract_eval_metrics(result, 'code_mode', run_number)
+
+
+def _extract_eval_metrics(result: AgentRunResult[str], mode: str, run_number: int) -> EvalRunResult:
+    """Extract metrics from agent result."""
     request_count = 0
     total_input = 0
     total_output = 0
@@ -271,14 +267,14 @@ async def run_code_mode(run_number: int) -> dict[str, int | str | bool]:
 
     correct = 'bob' in result.output.lower() and '150' in result.output
 
-    return {
-        'mode': 'code_mode',
-        'run': run_number,
-        'request_count': request_count,
-        'input_tokens': total_input,
-        'output_tokens': total_output,
-        'correct': correct,
-    }
+    return EvalRunResult(
+        mode=mode,
+        run=run_number,
+        request_count=request_count,
+        input_tokens=total_input,
+        output_tokens=total_output,
+        correct=correct,
+    )
 
 
 async def main():
@@ -290,7 +286,7 @@ async def main():
     print('=' * 70)
     print()
 
-    all_results: list[dict[str, int | str | bool]] = []
+    all_results: list[EvalRunResult] = []
 
     # Run traditional mode
     print('TRADITIONAL MODE')
@@ -324,23 +320,23 @@ async def main():
     trad_results = [r for r in all_results if r['mode'] == 'traditional']
     code_results = [r for r in all_results if r['mode'] == 'code_mode']
 
-    def avg(results: list[dict[str, int | str | bool]], key: str) -> float:
-        vals = [r[key] for r in results if isinstance(r[key], int)]
-        return sum(vals) / len(vals) if vals else 0.0
-
     print('=' * 70)
     print('SUMMARY')
     print('=' * 70)
     print(f'{"Metric":<25} {"Traditional":>15} {"Code Mode":>15} {"Savings":>15}')
     print('-' * 70)
 
-    trad_req = avg(trad_results, 'request_count')
-    code_req = avg(code_results, 'request_count')
+    trad_req = sum(r['request_count'] for r in trad_results) / len(trad_results) if trad_results else 0.0
+    code_req = sum(r['request_count'] for r in code_results) / len(code_results) if code_results else 0.0
     req_savings = f'{((trad_req - code_req) / trad_req * 100):.1f}%' if trad_req > 0 else 'N/A'
     print(f'{"Avg Requests":<25} {trad_req:>15.1f} {code_req:>15.1f} {req_savings:>15}')
 
-    trad_tokens = avg(trad_results, 'input_tokens') + avg(trad_results, 'output_tokens')
-    code_tokens = avg(code_results, 'input_tokens') + avg(code_results, 'output_tokens')
+    trad_in = sum(r['input_tokens'] for r in trad_results) / len(trad_results) if trad_results else 0.0
+    trad_out = sum(r['output_tokens'] for r in trad_results) / len(trad_results) if trad_results else 0.0
+    code_in = sum(r['input_tokens'] for r in code_results) / len(code_results) if code_results else 0.0
+    code_out = sum(r['output_tokens'] for r in code_results) / len(code_results) if code_results else 0.0
+    trad_tokens = trad_in + trad_out
+    code_tokens = code_in + code_out
     tok_savings = f'{((trad_tokens - code_tokens) / trad_tokens * 100):.1f}%' if trad_tokens > 0 else 'N/A'
     print(f'{"Avg Total Tokens":<25} {trad_tokens:>15.1f} {code_tokens:>15.1f} {tok_savings:>15}')
 
