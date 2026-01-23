@@ -3775,6 +3775,7 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                             }
                         },
                         'preliminary': None,
+                        'approval': None,
                     }
                 ],
             },
@@ -3984,6 +3985,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                             }
                         },
                         'preliminary': None,
+                        'approval': None,
                     }
                 ],
             },
@@ -4058,6 +4060,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                                 },
                             }
                         },
+                        'approval': None,
                     }
                 ],
             },
@@ -4316,6 +4319,7 @@ Fix the errors and try again.\
                                 'provider_details': {'attempt': 1},
                             }
                         },
+                        'approval': None,
                     }
                 ],
             },
