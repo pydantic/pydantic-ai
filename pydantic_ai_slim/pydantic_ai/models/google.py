@@ -569,18 +569,17 @@ class GoogleModel(Model):
 
         raw_finish_reason = candidate.finish_reason
         if raw_finish_reason:  # pragma: no branch
-            vendor_details['finish_reason'] = raw_finish_reason.value
+            vendor_details = {'finish_reason': raw_finish_reason.value}
+            # Add safety ratings to provider details
+            if candidate.safety_ratings:
+                vendor_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
 
         if candidate.content is None or candidate.content.parts is None:
-            if finish_reason == 'content_filter' and raw_finish_reason:
-                raise UnexpectedModelBehavior(
-                    f'Content filter {raw_finish_reason.value!r} triggered', response.model_dump_json()
-                )
-            parts = []  # pragma: no cover
+            parts = []
         else:
             parts = candidate.content.parts or []
 
@@ -616,7 +615,7 @@ class GoogleModel(Model):
             _provider_timestamp=first_chunk.create_time,
         )
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
@@ -657,8 +656,28 @@ class GoogleModel(Model):
                     else:
                         assert_never(part)
 
+                # Work around a Gemini bug where content objects containing functionResponse parts are treated as
+                # role=model even when role=user is explicitly specified.
+                #
+                # We build `message_parts` first, then split into multiple content objects whenever we transition
+                # between function_response and non-function_response parts.
+                #
+                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
                 if message_parts:
-                    contents.append({'role': 'user', 'parts': message_parts})
+                    content_parts: list[PartDict] = []
+
+                    for part in message_parts:
+                        if (
+                            content_parts
+                            and 'function_response' in content_parts[-1]
+                            and 'function_response' not in part
+                        ):
+                            contents.append({'role': 'user', 'parts': content_parts})
+                            content_parts = []
+
+                        content_parts.append(part)
+
+                    contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(m, self.system)
                 if maybe_content:
@@ -729,7 +748,9 @@ class GoogleModel(Model):
                             part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                         content.append(part_dict)  # pragma: lax no cover
                 elif isinstance(item, CachePoint):
-                    # Google Gemini doesn't support prompt caching via CachePoint
+                    # Google doesn't support inline CachePoint markers. Google's caching requires
+                    # pre-creating cache objects via the API, then referencing them by name using
+                    # `GoogleModelSettings.google_cached_content`. See https://ai.google.dev/gemini-api/docs/caching
                     pass
                 else:
                     assert_never(item)
@@ -760,7 +781,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
-            self.provider_details = {'timestamp': self._provider_timestamp}  # pragma: no cover
+            self.provider_details = {'timestamp': self._provider_timestamp}
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
@@ -772,8 +793,15 @@ class GeminiStreamedResponse(StreamedResponse):
             if chunk.response_id:  # pragma: no branch
                 self.provider_response_id = chunk.response_id
 
-            if raw_finish_reason := candidate.finish_reason:
-                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
+            raw_finish_reason = candidate.finish_reason
+            if raw_finish_reason:
+                self.provider_details = {'finish_reason': raw_finish_reason.value}
+
+                if candidate.safety_ratings:
+                    self.provider_details['safety_ratings'] = [
+                        r.model_dump(by_alias=True) for r in candidate.safety_ratings
+                    ]
+
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Google streams the grounding metadata (including the web search queries and results)
@@ -799,12 +827,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
             if candidate.content is None or candidate.content.parts is None:
-                if self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
-                    raise UnexpectedModelBehavior(
-                        f'Content filter {raw_finish_reason.value!r} triggered', chunk.model_dump_json()
-                    )
-                else:  # pragma: no cover
-                    continue
+                continue
 
             parts = candidate.content.parts
             if not parts:

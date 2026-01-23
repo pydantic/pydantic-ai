@@ -284,6 +284,36 @@ agent = Agent(model)
 ...
 ```
 
+## Using AWS Application Inference Profiles
+
+AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. When using these profiles, you should specify a [model profile](https://ai.pydantic.dev/models/overview/#models-and-providers) to ensure Pydantic AI can correctly identify model capabilities (streaming, tool use, caching, etc.) while still using the custom inference profile for cost tracking.
+
+Without explicit configuration, an inference profile ARN like `arn:aws:bedrock:us-east-2:*****:application-inference-profile/****` doesn't contain enough information for Pydantic AI to determine the underlying model. You can work around this by:
+
+1. Passing the inference profile ARN as the model name to [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
+2. Using the `profile` parameter to specify the logical model name for feature detection
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockConverseModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+# Create provider with your AWS configuration
+provider = BedrockProvider(region_name='us-east-2')
+
+# Create a profile with the logical model name for feature detection
+profile = provider.model_profile('us.anthropic.claude-opus-4-5-20251101-v1:0')
+
+# Pass the inference profile ARN as the model name
+model = BedrockConverseModel(
+    'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
+    provider=provider,
+    profile=profile,  # Provides the logical model name for feature detection
+)
+
+agent = Agent(model)
+```
+
 ## Configuring Retries
 
 Bedrock uses boto3's built-in retry mechanisms. You can configure retry behavior by passing a custom boto3 client with retry settings:

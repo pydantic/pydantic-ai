@@ -43,9 +43,11 @@ with try_import() as imports_successful:
         CompletionChunk as MistralCompletionChunk,
         CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice,
         CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
+        ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
         Mistral,
+        ReferenceChunk as MistralReferenceChunk,
         TextChunk as MistralTextChunk,
         UsageInfo as MistralUsageInfo,
     )
@@ -57,7 +59,11 @@ with try_import() as imports_successful:
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
-    from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
+    from pydantic_ai.models.mistral import (
+        MistralModel,
+        MistralStreamedResponse,
+        _map_content,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -732,6 +738,15 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
                     'dict_value': {'A': 'A', 'B': 'B'},
                     'dict_int_value': {'A': 1, 'B': 2},
                 },
+                {
+                    'first': 'One',
+                    'second': 2,
+                    'bool_value': True,
+                    'nullable_value': None,
+                    'array_value': ['A', 'B', 'C'],
+                    'dict_value': {'A': 'A', 'B': 'B'},
+                    'dict_int_value': {'A': 1, 'B': 2},
+                },
             ]
         )
         assert result.is_complete
@@ -817,6 +832,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
             ]
         )
         assert result.is_complete
@@ -847,7 +863,7 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
         v = [c async for c in result.stream_output(debounce_by=None)]
-        assert v == snapshot([1, 1])
+        assert v == snapshot([1, 1, 1])
         assert result.is_complete
         assert result.usage().input_tokens == 6
         assert result.usage().output_tokens == 6
@@ -937,6 +953,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
                 ['first', 'One', 'second', 'Two'],
                 ['first', 'One', 'second', 'Two'],
                 ['first', 'One', 'second', 'Two'],
+                ['first', 'One', 'second', 'Two'],
             ]
         )
         assert result.is_complete
@@ -1020,6 +1037,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
                 MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
             ]
         )
         assert result.is_complete
@@ -1084,6 +1102,7 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
                 MyTypedBaseModel(first='One', second=''),
                 MyTypedBaseModel(first='One', second='T'),
                 MyTypedBaseModel(first='One', second='Tw'),
+                MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
                 MyTypedBaseModel(first='One', second='Two'),
@@ -1501,7 +1520,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
         v = [c async for c in result.stream_output(debounce_by=None)]
-        assert v == snapshot([{'won': True}])
+        assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.usage().input_tokens == 4
@@ -1627,7 +1646,7 @@ async def test_stream_tool_call(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
         v = [c async for c in result.stream_output(debounce_by=None)]
-        assert v == snapshot(['final ', 'final response'])
+        assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.usage().input_tokens == 6
@@ -2626,3 +2645,30 @@ async def test_document_url_no_force_download() -> None:
         await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
         mock_download.assert_not_called()
+
+
+def test_map_content_concatenates_text_chunks() -> None:
+    """Test that _map_content correctly concatenates multiple MistralTextChunks."""
+    content: list[MistralContentChunk] = [
+        MistralTextChunk(text='Hello'),
+        MistralTextChunk(text=' world'),
+    ]
+
+    text, thinking = _map_content(content)
+
+    assert text == 'Hello world'
+    assert thinking == []
+
+
+def test_map_content_handles_reference_chunk() -> None:
+    """Test that _map_content does not fail when encountering a MistralReferenceChunk."""
+    content: list[MistralContentChunk] = [
+        MistralTextChunk(text='Hello'),
+        MistralReferenceChunk(reference_ids=[1, 2, 3]),
+        MistralTextChunk(text=' world'),
+    ]
+
+    text, thinking = _map_content(content)
+
+    assert text == 'Hello world'
+    assert thinking == []
