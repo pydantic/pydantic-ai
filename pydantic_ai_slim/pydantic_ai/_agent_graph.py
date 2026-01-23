@@ -1057,7 +1057,7 @@ def _handle_tool_calls_parts(
     *,
     output_parts: list[_messages.ModelRequestPart],
     tool_manager: ToolManager[DepsT],
-    calls_to_run: list[_messages.ToolCallPart],
+    output_calls_to_run: list[_messages.ToolCallPart],
     projected_tool_uses: Counter[str],
 ) -> Iterator[_messages.HandleResponseEvent]:
     accepted_per_tool: Counter[str] = Counter()
@@ -1083,7 +1083,7 @@ def _handle_tool_calls_parts(
             accepted_per_tool[call.tool_name] += 1
             total_accepted += 1
             yield _messages.FunctionToolCallEvent(call)
-            calls_to_run.append(call)
+            output_calls_to_run.append(call)
 
 
 async def _call_tools(  # noqa: C901
@@ -1120,7 +1120,7 @@ async def _call_tools(  # noqa: C901
         tool_calls,
         output_parts=output_parts,
         tool_manager=tool_manager,
-        calls_to_run=calls_to_run,
+        output_calls_to_run=calls_to_run,
         projected_tool_uses=projected_tool_uses,
     ):
         yield event
