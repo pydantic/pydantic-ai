@@ -3146,8 +3146,9 @@ def test_binary_content_round_trip_direct():
     serialized = to_json(wrapped)
     deserialized = _tool_return_ta.validate_json(serialized)
 
-    assert isinstance(deserialized.result, BinaryContent)
-    assert deserialized.result.data == binary_data
+    assert deserialized == snapshot(
+        _ToolReturn(result=BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png', _identifier='test-file'))
+    )
 
 
 def test_binary_content_round_trip_nested_in_dict():
@@ -3159,10 +3160,14 @@ def test_binary_content_round_trip_nested_in_dict():
     serialized = to_json(wrapped)
     deserialized = _tool_return_ta.validate_json(serialized)
 
-    assert isinstance(deserialized.result, dict)
-    assert isinstance(deserialized.result['image'], BinaryContent)
-    assert deserialized.result['image'].data == binary_data
-    assert deserialized.result['label'] == 'test'
+    assert deserialized == snapshot(
+        _ToolReturn(
+            result={
+                'image': BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                'label': 'test',
+            }
+        )
+    )
 
 
 def test_binary_content_round_trip_in_list():
@@ -3174,7 +3179,6 @@ def test_binary_content_round_trip_in_list():
     serialized = to_json(wrapped)
     deserialized = _tool_return_ta.validate_json(serialized)
 
-    assert isinstance(deserialized.result, list)
-    assert isinstance(deserialized.result[0], BinaryContent)
-    assert deserialized.result[0].data == binary_data
-    assert deserialized.result[1] == 'other-item'
+    assert deserialized == snapshot(
+        _ToolReturn(result=[BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'), 'other-item'])
+    )
