@@ -1752,17 +1752,19 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                send_item_ids = send_item_ids and message.provider_name == self.system
-
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 for item in message.parts:
-                    item_provider_matches = item.provider_name == self.system
+                    should_send_item_id = send_item_ids and (
+                        item.provider_name == self.system
+                        or (item.provider_name is None and message.provider_name == self.system)
+                    )
+
                     if isinstance(item, TextPart):
-                        if item.id and (send_item_ids or item_provider_matches):
+                        if item.id and should_send_item_id:
                             if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
                                     role='assistant',
@@ -1796,11 +1798,11 @@ class OpenAIResponsesModel(Model):
                         )
                         if profile.openai_responses_requires_function_call_status_none:
                             param['status'] = None  # type: ignore[reportGeneralTypeIssues]
-                        if id and (send_item_ids or item_provider_matches):  # pragma: no branch
+                        if id and should_send_item_id:  # pragma: no branch
                             param['id'] = id
                         openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
-                        if item_provider_matches and send_item_ids:  # pragma: no branch
+                        if should_send_item_id:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and item.tool_call_id
@@ -1887,7 +1889,7 @@ class OpenAIResponsesModel(Model):
                                     openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, BuiltinToolReturnPart):
-                        if item_provider_matches and send_item_ids:  # pragma: no branch
+                        if should_send_item_id:  # pragma: no branch
                             content_is_dict = isinstance(item.content, dict)
                             status = item.content.get('status') if content_is_dict else None
                             kind_to_item = {
@@ -1911,14 +1913,14 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # Get raw CoT content from provider_details if present and from this provider
                         raw_content: list[str] | None = None
-                        if item_provider_matches:
+                        if item.provider_name == self.system:
                             raw_content = (item.provider_details or {}).get('raw_content')
 
-                        if item.id and (send_item_ids or raw_content):
+                        if item.id and (should_send_item_id or raw_content):
                             signature: str | None = None
                             if (
                                 item.signature
-                                and item_provider_matches
+                                and item.provider_name == self.system
                                 and profile.openai_supports_encrypted_reasoning_content
                             ):
                                 signature = item.signature

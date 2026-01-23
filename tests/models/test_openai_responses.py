@@ -4804,25 +4804,15 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                 'arguments': '{}',
                 'call_id': 'call_3WCunBU7lCG1HHaLmnnRJn8I',
                 'type': 'function_call',
-                'id': 'fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
             },
             {'type': 'function_call_output', 'call_id': 'call_3WCunBU7lCG1HHaLmnnRJn8I', 'output': '42'},
             {
                 'role': 'assistant',
-                'id': 'msg_68cc4fa7693081a184ff6f32e5209ab00307c6d4d2ee5985',
-                'content': [
-                    {
-                        'text': """\
+                'content': """\
 The meaning of life, according to popular culture and famously in Douglas Adams' "The Hitchhiker's Guide to the Galaxy," is 42!
 
 If you're looking for a deeper or philosophical answer, let me know your perspective or context, and I can elaborate further.\
 """,
-                        'type': 'output_text',
-                        'annotations': [],
-                    }
-                ],
-                'type': 'message',
-                'status': 'completed',
             },
         ]
     )
