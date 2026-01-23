@@ -792,26 +792,28 @@ async def test_openrouter_settings_to_openai_settings_no_web_search_options() ->
     assert 'web_search_options' not in extra_body
 
 
-async def test_openrouter_prepare_request_multiple_websearch_tools(openrouter_api_key: str) -> None:
-    """Test prepare_request with multiple WebSearchTool instances (covers loop continuation until finding first match)."""
+async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
+    """Test prepare_request loop continuation when first tool is not WebSearchTool."""
     from typing import Any
+    from unittest.mock import Mock, patch
 
     from pydantic_ai.builtin_tools import WebSearchTool
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
 
-    tool1 = WebSearchTool(search_context_size='low')
-    tool2 = WebSearchTool(search_context_size='high', engine='exa')
+    non_web_tool = Mock(spec=[])
+    web_tool = WebSearchTool(search_context_size='medium', engine='native')
 
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[tool1, tool2],
+        builtin_tools=[non_web_tool, web_tool],
     )
 
-    new_settings, _ = model.prepare_request(None, model_request_parameters)
+    with patch.object(model.__class__.__bases__[0], 'prepare_request', return_value=({}, model_request_parameters)):
+        new_settings, _ = model.prepare_request(None, model_request_parameters)
 
     assert new_settings is not None
     extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
     assert 'plugins' in extra_body
-    assert extra_body['plugins'] == [{'id': 'web'}]
-    assert extra_body['web_search_options'] == {'search_context_size': 'low'}
+    assert extra_body['plugins'] == [{'id': 'web', 'engine': 'native'}]
+    assert extra_body['web_search_options'] == {'search_context_size': 'medium'}
