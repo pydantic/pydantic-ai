@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from typing import TypeVar
 
     from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.xai import XaiProvider
 
     T = TypeVar('T')
 
@@ -115,6 +116,12 @@ else:
 
 
 SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
+
+
+def sanitize_filename(name: str, max_len: int) -> str:
+    """Sanitize a string for safe use as a filename across platforms."""
+    # Windows does not allow these characters in paths. Linux bans slashes only.
+    return re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', name)[:max_len]
 
 
 @customize_repr
@@ -215,8 +222,7 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
 
         # Max path length in Windows is 260. Leaving some buffer here
         max_name_len = 240 - len(str(tmp_path))
-        # Windows does not allow these characters in paths. Linux bans slashes only.
-        sanitized_name = re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', request.node.name)[:max_name_len]
+        sanitized_name = sanitize_filename(request.node.name, max_name_len)
         module_name = f'{sanitized_name}_{secrets.token_hex(5)}'
         path = tmp_path / f'{module_name}.py'
         path.write_text(source_code, encoding='utf-8')
@@ -296,6 +302,16 @@ def pytest_recording_configure(config: Any, vcr: VCR):
             raise AssertionError(f'{r1.method} != {r2.method}')
 
     vcr.register_matcher('method', method_matcher)
+
+
+def pytest_addoption(parser: Any) -> None:
+    parser.addoption(
+        '--xai-proto-include-json',
+        action='store_true',
+        default=True,
+        dest='xai_proto_include_json',
+        help='Include JSON representations in xAI proto cassette YAML files.',
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -448,6 +464,45 @@ def heroku_inference_key() -> str:
 @pytest.fixture(scope='session')
 def cerebras_api_key() -> str:
     return os.getenv('CEREBRAS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def xai_api_key() -> str:
+    return os.getenv('XAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
+def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
+    """xAI provider fixture backed by protobuf cassettes.
+
+    Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
+    """
+
+    try:
+        from pydantic_ai.providers.xai import XaiProvider
+        from tests.models.xai_proto_cassettes import xai_proto_cassette_session
+    except ImportError:  # pragma: no cover
+        pytest.skip('xai_sdk not installed')
+
+    cassette_name = sanitize_filename(request.node.name, 240)
+    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / 'test_xai' / f'{cassette_name}.xai.yaml'
+    record_mode: str | None
+    try:
+        # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
+        record_mode = cast(Any, request.config).getoption('record_mode')
+    except Exception:  # pragma: no cover
+        record_mode = None
+    include_debug_json = bool(cast(Any, request.config).getoption('xai_proto_include_json'))
+    session = xai_proto_cassette_session(
+        cassette_path,
+        record_mode=record_mode,
+        include_debug_json=include_debug_json,
+    )
+    provider = XaiProvider(xai_client=cast(Any, session.client))
+    try:
+        yield provider
+    finally:
+        session.dump_if_recording()
 
 
 @pytest.fixture(scope='session')

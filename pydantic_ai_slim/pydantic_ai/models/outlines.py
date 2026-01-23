@@ -134,7 +134,7 @@ class OutlinesModel(Model):
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
 
     @classmethod
-    def from_llamacpp(
+    def from_llamacpp(  # pragma: lax no cover
         cls,
         llama_model: llama_cpp.Llama,
         *,
@@ -282,7 +282,7 @@ class OutlinesModel(Model):
         if isinstance(self.model, OutlinesAsyncBaseModel):
             response = self.model.stream(prompt, output_type, None, **inference_kwargs)
             yield await self._process_streamed_response(response, model_request_parameters)
-        else:
+        else:  # pragma: lax no cover
             response = self.model.stream(prompt, output_type, None, **inference_kwargs)
 
             async def async_response():
@@ -318,7 +318,7 @@ class OutlinesModel(Model):
 
         if isinstance(self.model, Transformers):
             settings_dict = self._format_transformers_inference_kwargs(settings_dict)
-        elif isinstance(self.model, LlamaCpp):
+        elif isinstance(self.model, LlamaCpp):  # pragma: lax no cover
             settings_dict = self._format_llama_cpp_inference_kwargs(settings_dict)
         elif isinstance(self.model, MLXLM):  # pragma: no cover
             settings_dict = self._format_mlxlm_inference_kwargs(settings_dict)
@@ -345,7 +345,9 @@ class OutlinesModel(Model):
 
         return filtered_settings
 
-    def _format_llama_cpp_inference_kwargs(self, model_settings: dict[str, Any]) -> dict[str, Any]:
+    def _format_llama_cpp_inference_kwargs(  # pragma: lax no cover
+        self, model_settings: dict[str, Any]
+    ) -> dict[str, Any]:
         """Select the model settings supported by the LlamaCpp model."""
         supported_args = [
             'max_tokens',

@@ -1,0 +1,151 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is the largest city in the user country?
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      response_format:
+        format_type: FORMAT_TYPE_JSON_SCHEMA
+        schema: '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}},
+          "required": ["city", "country"], "title": "CityLocation", "type": "object"}'
+      tools:
+      - function:
+          name: get_user_country
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CjMKLwotV2hhdCBpcyB0aGUgbGFyZ2VzdCBjaXR5IGluIHRoZSB1c2VyIGNvdW50cnk/EAESGWdy
+      b2stNC1mYXN0LW5vbi1yZWFzb25pbmdSnAEIAxKXAXsicHJvcGVydGllcyI6IHsiY2l0eSI6IHsi
+      dHlwZSI6ICJzdHJpbmcifSwgImNvdW50cnkiOiB7InR5cGUiOiAic3RyaW5nIn19LCAicmVxdWly
+      ZWQiOiBbImNpdHkiLCAiY291bnRyeSJdLCAidGl0bGUiOiAiQ2l0eUxvY2F0aW9uIiwgInR5cGUi
+      OiAib2JqZWN0In2KAVkKVwoQZ2V0X3VzZXJfY291bnRyeSJDeyJhZGRpdGlvbmFsUHJvcGVydGll
+      cyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: 7bafc3d1-670b-99e7-b644-cc6a90dfe4d6
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_83554006
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_user_country
+              arguments: '{}'
+      created: '2026-01-16T17:04:33.976261275Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 16
+        prompt_tokens: 439
+        total_tokens: 455
+        prompt_text_tokens: 439
+        cached_prompt_text_tokens: 314
+      settings:
+        parallel_tool_calls: true
+        response_format:
+          format_type: FORMAT_TYPE_JSON_SCHEMA
+          schema: '{"properties": {"city": {"type": "string"}, "country": {"type":
+            "string"}}, "required": ["city", "country"], "title": "CityLocation",
+            "type": "object"}'
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_user_country
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+    raw: !!binary |
+      CiQ3YmFmYzNkMS02NzBiLTk5ZTctYjY0NC1jYzZhOTBkZmU0ZDYSMwgEGi8QAhorCg1jYWxsXzgz
+      NTU0MDA2EAEYAVIWChBnZXRfdXNlcl9jb3VudHJ5EgJ7fSoMCKHfqcsGEJuhwtEDMhlncm9rLTQt
+      ZmFzdC1ub24tcmVhc29uaW5nOg1mcF80NjE2ZTc2NDEzShIIEBC3AxjHAyC3Azi6AljY3B1agAIQ
+      ATKcAQgDEpcBeyJwcm9wZXJ0aWVzIjogeyJjaXR5IjogeyJ0eXBlIjogInN0cmluZyJ9LCAiY291
+      bnRyeSI6IHsidHlwZSI6ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSIsICJjb3VudHJ5
+      Il0sICJ0aXRsZSI6ICJDaXR5TG9jYXRpb24iLCAidHlwZSI6ICJvYmplY3QifToCCAFCWQpXChBn
+      ZXRfdXNlcl9jb3VudHJ5IkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0
+      aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is the largest city in the user country?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_83554006
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_user_country
+            arguments: '{}'
+      - content:
+        - text: Mexico
+        role: ROLE_TOOL
+      model: grok-4-fast-non-reasoning
+      response_format:
+        format_type: FORMAT_TYPE_JSON_SCHEMA
+        schema: '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}},
+          "required": ["city", "country"], "title": "CityLocation", "type": "object"}'
+      tools:
+      - function:
+          name: get_user_country
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CjMKLwotV2hhdCBpcyB0aGUgbGFyZ2VzdCBjaXR5IGluIHRoZSB1c2VyIGNvdW50cnk/EAEKMwoC
+      CgAQAiIrCg1jYWxsXzgzNTU0MDA2EAEYAVIWChBnZXRfdXNlcl9jb3VudHJ5EgJ7fQoMCggKBk1l
+      eGljbxAFEhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nUpwBCAMSlwF7InByb3BlcnRpZXMiOiB7
+      ImNpdHkiOiB7InR5cGUiOiAic3RyaW5nIn0sICJjb3VudHJ5IjogeyJ0eXBlIjogInN0cmluZyJ9
+      fSwgInJlcXVpcmVkIjogWyJjaXR5IiwgImNvdW50cnkiXSwgInRpdGxlIjogIkNpdHlMb2NhdGlv
+      biIsICJ0eXBlIjogIm9iamVjdCJ9igFZClcKEGdldF91c2VyX2NvdW50cnkiQ3siYWRkaXRpb25h
+      bFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In2S
+      AQIIAQ==
+  response_sample:
+    json:
+      id: 5935dfa5-e6e5-e63a-be81-0e09104308e7
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: '{"city": "Mexico City", "country": "Mexico"}'
+          role: ROLE_ASSISTANT
+      created: '2026-01-16T17:04:34.474238353Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 13
+        prompt_tokens: 467
+        total_tokens: 480
+        prompt_text_tokens: 467
+        cached_prompt_text_tokens: 455
+      settings:
+        parallel_tool_calls: true
+        response_format:
+          format_type: FORMAT_TYPE_JSON_SCHEMA
+          schema: '{"properties": {"city": {"type": "string"}, "country": {"type":
+            "string"}}, "required": ["city", "country"], "title": "CityLocation",
+            "type": "object"}'
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_user_country
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+    raw: !!binary |
+      CiQ1OTM1ZGZhNS1lNmU1LWU2M2EtYmU4MS0wZTA5MTA0MzA4ZTcSNAgDGjAKLHsiY2l0eSI6ICJN
+      ZXhpY28gQ2l0eSIsICJjb3VudHJ5IjogIk1leGljbyJ9EAIqDAii36nLBhCRm5HiATIZZ3Jvay00
+      LWZhc3Qtbm9uLXJlYXNvbmluZzoNZnBfNDYxNmU3NjQxM0oSCA0Q0wMY4AMg0wM4xwNY1KgTWoAC
+      EAEynAEIAxKXAXsicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlwZSI6ICJzdHJpbmcifSwgImNv
+      dW50cnkiOiB7InR5cGUiOiAic3RyaW5nIn19LCAicmVxdWlyZWQiOiBbImNpdHkiLCAiY291bnRy
+      eSJdLCAidGl0bGUiOiAiQ2l0eUxvY2F0aW9uIiwgInR5cGUiOiAib2JqZWN0In06AggBQlkKVwoQ
+      Z2V0X3VzZXJfY291bnRyeSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVy
+      dGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifQ==

@@ -67,3 +67,10 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: check-cassettes
+        name: Check cassettes
+        entry: uv
+        args: [run, python, scripts/check_cassettes.py]
+        language: system
+        files: ^tests/
+        pass_filenames: false

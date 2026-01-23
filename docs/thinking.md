@@ -71,6 +71,20 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+## xAI
+
+xAI reasoning models (Grok) support native thinking. To preserve the thinking content for multi-turn conversations, enable [`XaiModelSettings.xai_include_encrypted_content`][pydantic_ai.models.xai.XaiModelSettings.xai_include_encrypted_content].
+
+```python {title="xai_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+
+model = XaiModel('grok-4-fast-reasoning')
+settings = XaiModelSettings(xai_include_encrypted_content=True)
+agent = Agent(model, model_settings=settings)
+...
+```
+
 ## Bedrock
 
 Although Bedrock Converse doesn't provide a unified API to enable thinking, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](agents.md#model-run-settings) to pass provider-specific configuration:

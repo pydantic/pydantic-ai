@@ -1,0 +1,385 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use tools to get the users city and then use the web search tool to
+            find a famous landmark in that city.
+        role: ROLE_SYSTEM
+      - content:
+        - text: I am thinking of a city, can you tell me about a famours landmark
+            in this city?
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - web_search:
+          enable_image_understanding: false
+      - function:
+          name: guess_city
+          description: The city to guess
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      parallel_tool_calls: false
+      use_encrypted_content: true
+      include:
+      - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      Cm4KagpoVXNlIHRvb2xzIHRvIGdldCB0aGUgdXNlcnMgY2l0eSBhbmQgdGhlbiB1c2UgdGhlIHdl
+      YiBzZWFyY2ggdG9vbCB0byBmaW5kIGEgZmFtb3VzIGxhbmRtYXJrIGluIHRoYXQgY2l0eS4QAwpV
+      ClEKT0kgYW0gdGhpbmtpbmcgb2YgYSBjaXR5LCBjYW4geW91IHRlbGwgbWUgYWJvdXQgYSBmYW1v
+      dXJzIGxhbmRtYXJrIGluIHRoaXMgY2l0eT8QARIVZ3Jvay00LWZhc3QtcmVhc29uaW5nigEEGgIY
+      AIoBZgpkCgpndWVzc19jaXR5EhFUaGUgY2l0eSB0byBndWVzcyJDeyJhZGRpdGlvbmFsUHJvcGVy
+      dGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggBqAEA
+      wAEB0gEBAQ==
+  response_sample:
+    json:
+      id: 65b32f19-6615-5ed6-da35-baa8dcf04236
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_64728645
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: guess_city
+              arguments: '{}'
+          encrypted_content: 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
+      created: '2026-01-16T17:05:09.279624520Z'
+      model: grok-4-fast-reasoning
+      system_fingerprint: fp_cfcc85ff86
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 743
+        total_tokens: 1241
+        prompt_text_tokens: 743
+        reasoning_tokens: 483
+        cached_prompt_text_tokens: 170
+      settings:
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - web_search:
+            enable_image_understanding: false
+        - function:
+            name: guess_city
+            description: The city to guess
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        use_encrypted_content: true
+        include:
+        - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CiQ2NWIzMmYxOS02NjE1LTVlZDYtZGEzNS1iYWE4ZGNmMDQyMzYS8RYIBBrsFhACGiUKDWNhbGxf
+      NjQ3Mjg2NDUQARgBUhAKCmd1ZXNzX2NpdHkSAnt9KsAWTWJIclAyR3JMZHd5bWdmd1pzOVNpR2p6
+      L2RuaGZMRXlXNGJDUnhpTnIrWUxHNWl3OGsxemtqOGVXbEpYZ29GVkllOTc5NWswd2psOFVMVDlY
+      OER0M2lJK3QxSmw5WmdZdjFwRk5yWUFIMFNSZzZYanE4bHNsbXFsSUdGYUpYZGhoVTU2aGdRUU5G
+      eEdyVWE1N3lnSkdISnZiUEhGUzhwR1lzVVZtS2x2TUw3aFl0UXBFTUMrUTRlNzdqZnJzMGJFVnhP
+      a2ZwNEl4c2oycCtEMFF4UTc4NW45MTdTaFR3YVRUcitHWXlRdGc0S1l0eDN6cjhGS3c4Zm1kczlz
+      eEtKOWlCWFByQzdoRlpUUlFJbnZSUUxxTm9xWUVZdHpESFBRdDRBMktIT2dxb2pJUVpsRm1LRVRl
+      Y0V2QTNpTkpNZFIwTzBNcFlSbUdrQTZGWEZZMmdqYmFTNnkvUlNJZzZGZnYxMmhoeFNjZjNoRU5P
+      Z1gvZFgvbUtiTC9xd2plbjYxZEpGQ0xQeWNYckV5STNINkNEdUcwTE1yWmdON3hWc0IrUHJOQmxk
+      V1pONFl0SW5WT211eFQweTFHSHN2VXF5dTYxeUJnTWE4ZGpDSUwvOFhxV2VabkdwdFR4M214ODVB
+      VDFUeDZJMzhpWWJIOXdQTnJoVzYzbC90ajFRbUVaOVVBUjQrQVQ4WWhHNkxNQTVrRTh4MDVIMW84
+      M2FqNnUvNG5PVDB2dzNZUHJxVEkyTlI4eElsOHpENHVzTS82SnRBSk92ZkQ0akl6RnJHYnI5TEU2
+      VnBrcEQ3NzZaeGpaVjdYODhRbVJpbXFVTWc4dHBLK1plNGdWLzVUV3ZEZm9WTmxYT2RZOTdkSVJL
+      SHJUSTVMWE1HUWxWMzUvRTJKSW9yQTA0UEc2cjEzemlwU3RhdDhzRnlhNjN5T0JkcUFnZnJrem5o
+      cENPcUEzTGpITW5VSVgwdG5nejVMdHNaOVlmMTVVVEtKYXh2TGNZQjRUNDcxTUJ6OUVXS2tHYnc5
+      UTFNQXEvRUQ1UkVLeEF4Ry9IMW0rb2x0RzJzUWhPM1Q4b3NibCtvcUMzY1dZSTJYTG1UNEFHOXk3
+      V0lrbGgxblZTN3o3U2tsRVZkd0ZYOEZmNU83dzZDaTVUTnlIRlA1Z21OeDhPS2x4eXRZSktGZXlJ
+      WGMzcXRZMTcxbnRmVHlYTjlPNHlMZlNEZXo1STlySmRDK0FBUXJ1alAzeTRFd3ZuSTNYQko3VEVL
+      Tyt1aHo5MFRKQy9lY0lvNWd5Y3gwUENmTWVQOFFwdVFZNzZSNFoyOWloY0g5NnpuQXAwWE5jdTlQ
+      VlRaY3MxQndYajdObTdHOHFrQWVyeHVuNFdTekkyODkrYmVra3JUSURFY2R4Z2QvZTJMRmxKRlg5
+      ZjV3NG1sWWtPRnZHa0R3SGp3U1Naclg1bkdnN0lDVS9zUkVBNlBWU1c4UHU2YzI5bG1UcVZaaWly
+      UDNVeFBJYVJqOWlQeEJCc3huaThRSjE5cWExNk1nNEZ1Vmt4enN5MGx2YkZjNmVaTnNSTVpyTXl0
+      dzRheDd0V3RGM1cwcDRoZ0FWVVVIT1RUUnBqZmJmeW9KQStNSzltN3FsdUpLejg2eHptb2w3YjZ5
+      YVg0allkOHk2Um1RcERzVGMwSkJ1MmIwN0V3RTNZLzhhem8vYmlITUUvNURMYzBNNEdsbVlmN0Uv
+      aFRVS1lEWGNON2l4aVEvTzRHN3VjeTR6NklMalEvZnBmbXBqYXpCMlROMlNHQnV4VFBUNkVKbVdZ
+      SjZQRm44TnZyeVMvWEd3ajcvRjNSL0VpRlIxc0t1d004c1Z4RWh4eGsvL0M5Yko5c29zQmcwc29C
+      NVAxVkJzMnlad0xlYzM4YTFsYnFLZG1tcGtacG9RZnJPU05NOWFnNjVreU5PQm01QmNVN1Jac0k2
+      RzBEbHJjSUd3TjRENkowWVVoUUxpZ09RaVRhOWZIZ2RyWkhETFp2cHIzNTZnbXZZZU11dkFzcVJD
+      Z1Qydjl3Ym5OKzlNMVJSMFVGTDVFTmNveEU3OW1IWHIzNkE1NEYzc0RaRjJzcXdHVFZzemdxbmx0
+      SkhjcjFTQ3lSY1RNdTZHV3I1VTZVckJhNDdjY0pqV2doQ0o5NzVHaEpZOHhzY0hLaVkxdnprUkEx
+      Uk5JRDh5UHRDQnZkS2ZEV21VTHVzQ0lTUEVNbkltMGora1p4dmoyOHl1Y25ueWQ5QXpKZS9zaTNv
+      RWVweFRjYklxVXpOMU92cWo4dGZSL01uYXlOeFZMUEZsL211N3J4amtXVWxJUlVFTW1YVUxEL3B5
+      Q0pzWjNsQk9IS2tyS0RLdCtYK1FZWHVKQ3QxaElocTdQWG1qd3EwWVJQMDhhZHpwN3FldUNVcWZv
+      U1VxZUJ1aExxSUZNZzdrSmYvN2l3dUtEL3kvWHNyRitvMS9Lak94TDZwR3BQV1BVTUlrcnByV05Y
+      dFlMQUlnd1ZEQmMxQ3p0UDR3cDJsV2hDVjhQSEdDOFFvMklTVVk4OE5EOWNNWTc5MXc2MG1JMEpn
+      d3c5RE9VWS8yb3duYXFvenBuSmpJRktZc0RYOWQ2blhNaEFjZEV2aFVKL0NoVmRrSXRYY3lZcytp
+      YTRuNVJ6bjFiNDJRbG1tK2h0cnM5RWZ3RmEzVktKL0pwdHZJN3o1Y2xRMGhoeDBMcU1ucUJaUEF3
+      Q0hQQ2pxOEUvOG80ZWZZcTZ4STF3ekZiQ2l1S2NUT2JiRnIySnRYTXU4Y2x2MGdpL3pWOUxIMnJX
+      RFk4UkZZenQvVWR5UXRYNU5jMVRzZHNtanUrWmZQRkZ5dlhDdnVsQUROK3YveDI2SzdQdzVTYitw
+      R2diaEhqVGhJeHE5Unc4emVOdUpaMUdBQktBemZLVnU2OXdyMFNFVFZPS2M0VmluWUZuSEVPbFZv
+      Ti9wM05GRmZwdllXdnh1RnRJZGxuNXlhcldhckQ4YVdkOHFuRGluRnlFbW91ZWFXbmFzMXgyMmps
+      WHNDeUpmQXl2YW9ldXFiUFlGZCs2WkcyVkJJbk9qYTNlVzFiTDRUNTNlRGNaMjZNa1c3TUc3T3dP
+      OEZuR2kreXRlSDE5eWxWWkh2VG5XMmNwMzBrVWpUbUo3YmFZTHNVREoxaFJKUGpBMmV5ZjFUbjJT
+      aTF1T1k4dGQyUmx2TUZsTFhRZmJHWm00WDZOM0g5YXJ6NVRRb1NnVk10VFBJUTZHNkJwQXBoVGNZ
+      QkVyc05mY0I4dUdSRDhWMFVlZlp0WmtkdWNxMXp3cmF6T3hURDZGcUNDZVNmaUJWRUhXOUttU0Y3
+      SE1nN0VJQXBhS3NHS0tITW12NDVIRzhteHoxdGJmeHhXQm5VRk1KZGhkdUhHajBhQ2JWQzZncFEw
+      OWFrRmFGeUh5UGJUSGJhcUcwbGdFSU1uaERPWHBwNW91ZVJZMEZ5RFUwUzlETzhqK2pUVUJSeGsr
+      ZXlMVkNpVHdMNTlOT0hjcjdLYkcvQXpMNGo1RFNSUWFsSzlwU2I3dVcxTzdFOVBHa09BbUVzTE43
+      OTNMM3AycEdzVW83TVk1NXNvaHBxM2Z1M0JXTVhGMUpYSlF4ejdxWUE0bFdUSUREdThqTTRsazYx
+      a014eXFrc0RXbVY3UTlHSWZuUzQ4aEYyVHAwd1ZOdkp3eU9qYytKazVJenYxQkJNbkpHblpsbkRn
+      YVgwb2xCV2RsVVhLVERoRmcxdEVaWVBnMmlreVhtZldXMjkwSWVPUFFCNmlDazNJb3pHNUlzSXVH
+      WHM3Q0E1L0ZTYTQ3a1dmeFdEbDJheDJnaWhlblo5eVVESXNaaTRXMjZrd0ZhWjlTZExLdzBBL1Na
+      eFphaWlVKgwIxd+pywYQyPaqhQEyFWdyb2stNC1mYXN0LXJlYXNvbmluZzoNZnBfY2ZjYzg1ZmY4
+      NkoWCA8Q5wUY2Qkg5wUw4wM4qgFYqI7jAVp3OgIIAUIEGgIYAEJmCmQKCmd1ZXNzX2NpdHkSEVRo
+      ZSBjaXR5IHRvIGd1ZXNzIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0
+      aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9aAFyAQE=
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use tools to get the users city and then use the web search tool to
+            find a famous landmark in that city.
+        role: ROLE_SYSTEM
+      - content:
+        - text: I am thinking of a city, can you tell me about a famours landmark
+            in this city?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        encrypted_content: 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
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_64728645
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: guess_city
+            arguments: '{}'
+      - content:
+        - text: Chicago
+        role: ROLE_TOOL
+      model: grok-4-fast-reasoning
+      tools:
+      - web_search:
+          enable_image_understanding: false
+      - function:
+          name: guess_city
+          description: The city to guess
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      parallel_tool_calls: false
+      use_encrypted_content: true
+      include:
+      - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      Cm4KagpoVXNlIHRvb2xzIHRvIGdldCB0aGUgdXNlcnMgY2l0eSBhbmQgdGhlbiB1c2UgdGhlIHdl
+      YiBzZWFyY2ggdG9vbCB0byBmaW5kIGEgZmFtb3VzIGxhbmRtYXJrIGluIHRoYXQgY2l0eS4QAwpV
+      ClEKT0kgYW0gdGhpbmtpbmcgb2YgYSBjaXR5LCBjYW4geW91IHRlbGwgbWUgYWJvdXQgYSBmYW1v
+      dXJzIGxhbmRtYXJrIGluIHRoaXMgY2l0eT8QAQrJFgoCCgAQAjLAFk1iSHJQMkdyTGR3eW1nZnda
+      czlTaUdqei9kbmhmTEV5VzRiQ1J4aU5yK1lMRzVpdzhrMXprajhlV2xKWGdvRlZJZTk3OTVrMHdq
+      bDhVTFQ5WDhEdDNpSSt0MUpsOVpnWXYxcEZOcllBSDBTUmc2WGpxOGxzbG1xbElHRmFKWGRoaFU1
+      NmhnUVFORnhHclVhNTd5Z0pHSEp2YlBIRlM4cEdZc1VWbUtsdk1MN2hZdFFwRU1DK1E0ZTc3amZy
+      czBiRVZ4T2tmcDRJeHNqMnArRDBReFE3ODVuOTE3U2hUd2FUVHIrR1l5UXRnNEtZdHgzenI4Rkt3
+      OGZtZHM5c3hLSjlpQlhQckM3aEZaVFJRSW52UlFMcU5vcVlFWXR6REhQUXQ0QTJLSE9ncW9qSVFa
+      bEZtS0VUZWNFdkEzaU5KTWRSME8wTXBZUm1Ha0E2RlhGWTJnamJhUzZ5L1JTSWc2RmZ2MTJoaHhT
+      Y2YzaEVOT2dYL2RYL21LYkwvcXdqZW42MWRKRkNMUHljWHJFeUkzSDZDRHVHMExNclpnTjd4VnNC
+      K1ByTkJsZFdaTjRZdEluVk9tdXhUMHkxR0hzdlVxeXU2MXlCZ01hOGRqQ0lMLzhYcVdlWm5HcHRU
+      eDNteDg1QVQxVHg2STM4aVliSDl3UE5yaFc2M2wvdGoxUW1FWjlVQVI0K0FUOFloRzZMTUE1a0U4
+      eDA1SDFvODNhajZ1LzRuT1QwdnczWVBycVRJMk5SOHhJbDh6RDR1c00vNkp0QUpPdmZENGpJekZy
+      R2JyOUxFNlZwa3BENzc2WnhqWlY3WDg4UW1SaW1xVU1nOHRwSytaZTRnVi81VFd2RGZvVk5sWE9k
+      WTk3ZElSS0hyVEk1TFhNR1FsVjM1L0UySklvckEwNFBHNnIxM3ppcFN0YXQ4c0Z5YTYzeU9CZHFB
+      Z2Zya3puaHBDT3FBM0xqSE1uVUlYMHRuZ3o1THRzWjlZZjE1VVRLSmF4dkxjWUI0VDQ3MU1CejlF
+      V0trR2J3OVExTUFxL0VENVJFS3hBeEcvSDFtK29sdEcyc1FoTzNUOG9zYmwrb3FDM2NXWUkyWExt
+      VDRBRzl5N1dJa2xoMW5WUzd6N1NrbEVWZHdGWDhGZjVPN3c2Q2k1VE55SEZQNWdtTng4T0tseHl0
+      WUpLRmV5SVhjM3F0WTE3MW50ZlR5WE45TzR5TGZTRGV6NUk5ckpkQytBQVFydWpQM3k0RXd2bkkz
+      WEJKN1RFS08rdWh6OTBUSkMvZWNJbzVneWN4MFBDZk1lUDhRcHVRWTc2UjRaMjlpaGNIOTZ6bkFw
+      MFhOY3U5UFZUWmNzMUJ3WGo3Tm03Rzhxa0Flcnh1bjRXU3pJMjg5K2Jla2tyVElERWNkeGdkL2Uy
+      TEZsSkZYOWY1dzRtbFlrT0Z2R2tEd0hqd1NTWnJYNW5HZzdJQ1Uvc1JFQTZQVlNXOFB1NmMyOWxt
+      VHFWWmlpclAzVXhQSWFSajlpUHhCQnN4bmk4UUoxOXFhMTZNZzRGdVZreHpzeTBsdmJGYzZlWk5z
+      Uk1ack15dHc0YXg3dFd0RjNXMHA0aGdBVlVVSE9UVFJwamZiZnlvSkErTUs5bTdxbHVKS3o4Nnh6
+      bW9sN2I2eWFYNGpZZDh5NlJtUXBEc1RjMEpCdTJiMDdFd0UzWS84YXpvL2JpSE1FLzVETGMwTTRH
+      bG1ZZjdFL2hUVUtZRFhjTjdpeGlRL080Rzd1Y3k0ejZJTGpRL2ZwZm1wamF6QjJUTjJTR0J1eFRQ
+      VDZFSm1XWUo2UEZuOE52cnlTL1hHd2o3L0YzUi9FaUZSMXNLdXdNOHNWeEVoeHhrLy9DOWJKOXNv
+      c0JnMHNvQjVQMVZCczJ5WndMZWMzOGExbGJxS2RtbXBrWnBvUWZyT1NOTTlhZzY1a3lOT0JtNUJj
+      VTdSWnNJNkcwRGxyY0lHd040RDZKMFlVaFFMaWdPUWlUYTlmSGdkclpIRExadnByMzU2Z212WWVN
+      dXZBc3FSQ2dUMnY5d2JuTis5TTFSUjBVRkw1RU5jb3hFNzltSFhyMzZBNTRGM3NEWkYyc3F3R1RW
+      c3pncW5sdEpIY3IxU0N5UmNUTXU2R1dyNVU2VXJCYTQ3Y2NKaldnaENKOTc1R2hKWTh4c2NIS2lZ
+      MXZ6a1JBMVJOSUQ4eVB0Q0J2ZEtmRFdtVUx1c0NJU1BFTW5JbTBqK2taeHZqMjh5dWNubnlkOUF6
+      SmUvc2kzb0VlcHhUY2JJcVV6TjFPdnFqOHRmUi9NbmF5TnhWTFBGbC9tdTdyeGprV1VsSVJVRU1t
+      WFVMRC9weUNKc1ozbEJPSEtrcktES3QrWCtRWVh1SkN0MWhJaHE3UFhtandxMFlSUDA4YWR6cDdx
+      ZXVDVXFmb1NVcWVCdWhMcUlGTWc3a0pmLzdpd3VLRC95L1hzckYrbzEvS2pPeEw2cEdwUFdQVU1J
+      a3JwcldOWHRZTEFJZ3dWREJjMUN6dFA0d3AybFdoQ1Y4UEhHQzhRbzJJU1VZODhORDljTVk3OTF3
+      NjBtSTBKZ3d3OURPVVkvMm93bmFxb3pwbkpqSUZLWXNEWDlkNm5YTWhBY2RFdmhVSi9DaFZka0l0
+      WGN5WXMraWE0bjVSem4xYjQyUWxtbStodHJzOUVmd0ZhM1ZLSi9KcHR2STd6NWNsUTBoaHgwTHFN
+      bnFCWlBBd0NIUENqcThFLzhvNGVmWXE2eEkxd3pGYkNpdUtjVE9iYkZyMkp0WE11OGNsdjBnaS96
+      VjlMSDJyV0RZOFJGWXp0L1VkeVF0WDVOYzFUc2RzbWp1K1pmUEZGeXZYQ3Z1bEFETit2L3gyNks3
+      UHc1U2IrcEdnYmhIalRoSXhxOVJ3OHplTnVKWjFHQUJLQXpmS1Z1Njl3cjBTRVRWT0tjNFZpbllG
+      bkhFT2xWb04vcDNORkZmcHZZV3Z4dUZ0SWRsbjV5YXJXYXJEOGFXZDhxbkRpbkZ5RW1vdWVhV25h
+      czF4MjJqbFhzQ3lKZkF5dmFvZXVxYlBZRmQrNlpHMlZCSW5PamEzZVcxYkw0VDUzZURjWjI2TWtX
+      N01HN093TzhGbkdpK3l0ZUgxOXlsVlpIdlRuVzJjcDMwa1VqVG1KN2JhWUxzVURKMWhSSlBqQTJl
+      eWYxVG4yU2kxdU9ZOHRkMlJsdk1GbExYUWZiR1ptNFg2TjNIOWFyejVUUW9TZ1ZNdFRQSVE2RzZC
+      cEFwaFRjWUJFcnNOZmNCOHVHUkQ4VjBVZWZadFprZHVjcTF6d3Jhek94VEQ2RnFDQ2VTZmlCVkVI
+      VzlLbVNGN0hNZzdFSUFwYUtzR0tLSE1tdjQ1SEc4bXh6MXRiZnh4V0JuVUZNSmRoZHVIR2owYUNi
+      VkM2Z3BRMDlha0ZhRnlIeVBiVEhiYXFHMGxnRUlNbmhET1hwcDVvdWVSWTBGeURVMFM5RE84aitq
+      VFVCUnhrK2V5TFZDaVR3TDU5Tk9IY3I3S2JHL0F6TDRqNURTUlFhbEs5cFNiN3VXMU83RTlQR2tP
+      QW1Fc0xONzkzTDNwMnBHc1VvN01ZNTVzb2hwcTNmdTNCV01YRjFKWEpReHo3cVlBNGxXVElERHU4
+      ak00bGs2MWtNeHlxa3NEV21WN1E5R0lmblM0OGhGMlRwMHdWTnZKd3lPamMrSms1SXp2MUJCTW5K
+      R25abG5EZ2FYMG9sQldkbFVYS1REaEZnMXRFWllQZzJpa3lYbWZXVzI5MEllT1BRQjZpQ2szSW96
+      RzVJc0l1R1hzN0NBNS9GU2E0N2tXZnhXRGwyYXgyZ2loZW5aOXlVRElzWmk0VzI2a3dGYVo5U2RM
+      S3cwQS9TWnhaYWlpVQotCgIKABACIiUKDWNhbGxfNjQ3Mjg2NDUQARgBUhAKCmd1ZXNzX2NpdHkS
+      Ant9Cg0KCQoHQ2hpY2FnbxAFEhVncm9rLTQtZmFzdC1yZWFzb25pbmeKAQQaAhgAigFmCmQKCmd1
+      ZXNzX2NpdHkSEVRoZSBjaXR5IHRvIGd1ZXNzIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFs
+      c2UsICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9kgECCAGoAQDAAQHSAQEB
+  response_sample:
+    json:
+      id: 9b86d94d-f974-791e-6f54-88f50af40485
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_92171071
+            type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: web_search
+              arguments: '{"query":"famous landmarks in Chicago","num_results":5}'
+          encrypted_content: 86muH+AcyGfuuyl/ZFzAbUccSiQMhrn+eOlu3H0i78UCnspe+KtgdUF4i6J/6R9cmzZ4bDoHSdga0JqZCuvoOVngnIUH6zPfQtpicuFrw0gnmitot/dodzCn2pznUtun5rfd/uXqVXcVpR1hYdMgXKbdIFWsaShPyhnqgf245XPgj8zaxfD80H5rbtok/pXzkaDQ6Drkg6sy/mfQ4i9NijYzjyzsjPpFDGrNwwsHrFzCtZanLb9qNPS6c5RKJXiwlaqRN3c2WsBpOEMUEsZNMaQ9AiUmOg
+      - index: 1
+        message:
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call_92171071
+            type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: web_search
+              arguments: '{"query":"famous landmarks in Chicago","num_results":5}'
+          encrypted_content: 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
+      - finish_reason: REASON_STOP
+        index: 2
+        message:
+          content: One of the most famous landmarks in Chicago is **Cloud Gate**,
+            often nicknamed "The Bean." It's a massive, reflective stainless steel
+            sculpture in Millennium Park, designed by artist Anish Kapoor and unveiled
+            in 2006. The 110-ton, bean-shaped installation mirrors the city's skyline,
+            Lake Michigan, and visitors, creating surreal and interactive photo opportunities.
+            It's become an iconic symbol of Chicago, drawing millions of visitors
+            annually for its playful design and free public access. If that's not
+            the city you had in mind, feel free to give me a hint!
+          role: ROLE_ASSISTANT
+          encrypted_content: gbvyatpehkxcmD2ruOUS3y+1QPIu0DrXGoDAgBOnNC5Rb02CKnqFeVxuSr3rrpX5fugV+bjn2KsyixLmFwEO8RrR/kCqbfgwDOkHpmPOg8cYVRkzGMYMWiydesCNF94U3Ky2mVOm3r+6a+8p7ku+tvhNULdULaNtS/xYX4ww6swMTe19qk9U0h/m4Oh4/779zzRlwzfT7fNoIuQNCI8eCNvHDWm1NRYYiIoOEYKiSOSrfZKM5pCOomCjEuI2Mz04ROzRpj+N9+VzIXVZ6ktcG9QQ+wG1ZS/Qmz55js9byyGMru6PC8jLT/hu0S2+Z/nfE9rpfEFbgUPm91euu/lX2k/gCw2jMH5zkmn4LCpGwyLv6uowjsYQ4FEXN5+SSrlpmZ4h8YH3Nf/PzFow88g6YfAgC9zmRu3cx1quIQr8yEtjjklptUYZdou1yp8LGMuZkZR88FRAFvxgl/67D4XC47y+7WJI3b/X9sxPOEFNNYn1lEH9ctDOJd5OcAU3+HUPhQsrlRvI19LMDQXUgkddqh9/yisVm9JaT/bx1Ikli1FmgW5Mu3eeFgH9TYNjHgSiikCZ+9uFJJg9qCSAt4w2VFkV6iIYOTxCXhV5ferU6tgiy8uYfyUYrBA3iLZLtN4Db5R7We99h7nMJ2LugLvCwxL6UruTlbUj75aF98AiwPsh2SvJtEhHx9Y3wdC4ndPFdJCx/j6dt5DaGuzbV/G2EfoHc+SjlW6hOBa5fC3+g1dKeEw+dMLInxgZFll6WxG0K5awdnMnxm3p7d9ebb74/Wbz6ds
+      created: '2026-01-16T17:05:13.208633393Z'
+      model: grok-4-fast-reasoning
+      system_fingerprint: fp_cfcc85ff86
+      usage:
+        completion_tokens: 150
+        prompt_tokens: 2973
+        total_tokens: 3291
+        prompt_text_tokens: 2973
+        reasoning_tokens: 168
+        cached_prompt_text_tokens: 1506
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_WEB_SEARCH
+      citations:
+      - https://loopchicago.com/explore/things-to-do/landmarks
+      - https://en.wikipedia.org/wiki/List_of_Chicago_Landmarks
+      - https://webapps1.chicago.gov/landmarksweb/web/listings.htm
+      - https://www.tripadvisor.com/Attractions-g35805-Activities-c47-Chicago_Illinois.html
+      - https://www.reddit.com/r/AskChicago/comments/1kdrnlt/what_would_be_your_chicago_landmarks
+      settings:
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - web_search:
+            enable_image_understanding: false
+        - function:
+            name: guess_city
+            description: The city to guess
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        use_encrypted_content: true
+        include:
+        - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CiQ5Yjg2ZDk0ZC1mOTc0LTc5MWUtNmY1NC04OGY1MGFmNDA0ODUShAMIBBr/AhACGloKDWNhbGxf
+      OTIxNzEwNzEQAhgBUkUKCndlYl9zZWFyY2gSN3sicXVlcnkiOiJmYW1vdXMgbGFuZG1hcmtzIGlu
+      IENoaWNhZ28iLCJudW1fcmVzdWx0cyI6NX0qngI4Nm11SCtBY3lHZnV1eWwvWkZ6QWJVY2NTaVFN
+      aHJuK2VPbHUzSDBpNzhVQ25zcGUrS3RnZFVGNGk2Si82UjljbXpaNGJEb0hTZGdhMEpxWkN1dm9P
+      Vm5nbklVSDZ6UGZRdHBpY3VGcncwZ25taXRvdC9kb2R6Q24ycHpuVXR1bjVyZmQvdVhxVlhjVnBS
+      MWhZZE1nWEtiZElGV3NhU2hQeWhucWdmMjQ1WFBnajh6YXhmRDgwSDVyYnRvay9wWHprYURRNkRy
+      a2c2c3kvbWZRNGk5TmlqWXpqeXpzalBwRkRHck53d3NIckZ6Q3RaYW5MYjlxTlBTNmM1UktKWGl3
+      bGFxUk4zYzJXc0JwT0VNVUVzWk5NYVE5QWlVbU9nEqYREAEaoREQBRpaCg1jYWxsXzkyMTcxMDcx
+      EAIYAVJFCgp3ZWJfc2VhcmNoEjd7InF1ZXJ5IjoiZmFtb3VzIGxhbmRtYXJrcyBpbiBDaGljYWdv
+      IiwibnVtX3Jlc3VsdHMiOjV9KsAQZUtRL0gvRGxQME8veXV2N2tuQ00wTm9IaDRncFF6ZW50Vjk4
+      dFc2YWl1cDVPN0h0VjVQVVFOUEI1QmVLMURXbzZINi9OdGFZYk5FMU5ObHFFY2F2YVVvMnNpWkY4
+      SmEzVE5xZUp4MlA0ZkFMdDhyOUJ5d3pXcVVTTWEyNnRhSXVXVVFEQTBZMU4rUTF2d2dTS1BzblUz
+      NHJFOGtSdFIza2J3WDBERzRPYnplKzhHTzVSRXllaHc5ajhMcmlnd2tJcGxQZ2dmeWI4MnM2eXUz
+      Wm9SQWNWQjlxMnZid1gxUjhEdjhEUkxlRWxDVVdJbkVveWJpVnFpTjNMV1dvMHdCVGh3b1h2Y1kx
+      bzg3Nk1teHJ6YnQ3bVJUY2wvODN6ejZpaEgwOGJlWXlGdDFOa095bC8wTjZFQ1NISGFHanlsY2NT
+      VDF2U3hJZ0E0YzVEb2FEcHJiVlBDbFNpQlNLeEhneHB3L3dJc3hZT25xbjhnRWVvdlV6RHowR1F3
+      VklTZFcrVmowcGNNdEJOR0RXYlFjQjJhVzlPVGpEV2pueTRuQy8yNUhrdzlIeDdJVmJ5aHg1UUVh
+      SE5RbkhCMUl2ZzRvV25wL3FvY3hjaUJlRTMrbHdOTWhIdmtYTHptV0N6MXMyWUtOTUdtcUgvdnkw
+      WHNIWkdvckRHbjBIT3h0UjVNQS9Ybk5zOTg2ZzhvTUNoTGVJMVR3Ri9PU0tjY2c1OEVQNVU1dWsr
+      TjIvV28yRXZROTNtdWgrSmYvT0pQVCtKMlZGVGZBVHZBUXdrOVZTTVVkQTBsejllM3ZOaGFiT1hJ
+      UFlKVWhjY3YzUTMxUW9wLzBFbElMeHpBenh0OTFrcURtQ0M4azNLeVZ1YlBIVUc0MmpBakl2ME13
+      aEdjWTQxdVZrblpmeU9tY2ZCeDZVQ1RUbDkybC96UEQ5Y09ZYXNWcjBCdjJYMmhIbXRiaHA1ck5J
+      eWhlNE43MXVNcU9VL0NiSE9UYjlNdFcyMUNVeEFKVVV6bUcySHArTVZyd243eXd0SU9XVEdSZkdT
+      RlRWZWxtbm9LWGVXcTNsZi93ZjEwUFBxR0xtSmFNcHgxTy9wbEVSOE9YMld0MUJRZ3JCREc5MDVC
+      dlRubHRTVEtRM3Rrb3RIUUE2VUtGZDhDUlUvdmUxK1h3Wk1vTVlGTXBLdkhicTFYTU1QLytvS0x5
+      aURhaDZ3S1puaTVHS0VBQ20vMUxtZ0l4S0VqYUV5YVkrcHV5WFhmdDQ1L2dHVzBrTjRGbWtHTzk4
+      WTNvNVFQakhNMVU1UVdSM0l3dHNRU1hkM1preTEvN1k2SVd5NU5JbmorWVFhZHd6KzR3RFdVNk9I
+      R1BMYTQxbnhmQlYydlJSQVBQR3dHZm14dnNYNHhmSXdLLzhYVlhydjZDMXJjSEpFMk9tWEdpRnhY
+      bU9KNFVEbGppZTNDY01NM21TcW02bTZJd3RIRm1ha0drRU03cUVva2xBc2ZDYUp1U29TYWpMTVRR
+      M3c4Q0tNQmsyZTlsZzE1M1UzbjMrVmRhUE53UGt5ZlJkV2Z0UnUyblV6bVQ3b2Q2aFl0Nys0QUVU
+      emZmUmQwbmY5ZmpTUWNhaXlEM1puU1F4Qjk0a2M1U0J5cS9rZUlMcmhoU3JkeDR1SGd5NmJ2cE5Z
+      YTZ3Y2J5aGVJdHNDWFFNcTd4eUZsamlOczBxZ2FQMWRTMXM1c0ZpOXFuUm5ON3l1dUtmMDNUdUNP
+      Vmx0NUcrd0gvMnFJUnM5K2lWTE54REpab1loZWwvTWl0TlB0UXFPTEg0WlNkVDRpNndyZjRkaU12
+      azZENGZ6c09odFp1cG1MRlZDQkpaWkVDVTYzNU9HWHdPcEQzY1A2cnVkV3kyVHFBMHpGcStacFRC
+      NTZINHdaY1lQOWMrbm9xbkZMUnJCMGVUd0ZFV3FqSlJEU3ltdHhTVGtPK3BmSTlQd0diNTFJNkl6
+      YWV4em0yS0ovMmVZRkxjWTVPay9TK1c5ZzZ0UGgwZU05RkVLQmMrV3UzOVBMcmRvN2dUYzZ6VUpD
+      SGt1MlFMYmNCN2wvOUtEbHZCci9yV2ZHRTZ3RTRjeUZjV1VGc3JKclh4ZjFjTUYwd0twTkdTeU1Q
+      VUhmTTY2eTcvU3lWbTdGRGhFQlgvY0grTjVJc0lYMkVIMDNRL2U5UElsNGxUU3U2V0lma0cySnd1
+      TlEwRFNOKzAwaFFFUnVaMTJwSFZZRnlna3kzMlhsRzVoRXNCN2hmNlcya3YvWWUzSlJDMVZ3N2tm
+      T01OeFc0WVlyaS95Wm10ZEsxb25nbHJVM04weE1mb0pBczVEaHBOUVZXb0JxaTVXYzYyTFozUjRx
+      aHNLNW53WUJOKzhVM0w4SHhEaVIvc1IzWGduVnpNOWZheFZua3B2YWs3VHN3UVRUZ093L2xSbGd5
+      Y3lrWVkwSmNjYVc3L0RNTlcwQUFUWG5tTkk0SndsczVPME9nS0lXdkVSWnVWUnFFeWRYK09JajBI
+      eW1tVC9wUHZTZnJWQkhPelZnbkEyLzFHYWlmRU95M1o3Y1lEK0svZGxWM09Za1NoV1pmS2ZzNXlh
+      U2FIbkVUOG9pTnREQlFJMmcybmtsWHM5SnVjemFRQ0ozN255U1VtbUhaeDhLWk5oeGFSWi9vT1Fx
+      MEZhSXIyT2hNd25ONmhDWlZTZjU2bDdoK0pkVCtLNllrSjgxbklHaUgwSEZ2WE4wVGprVGZuSUxX
+      WWxRNFREZEo5R0x1TUorSnk3OVo5UUVLQlA3M0loNmFWY2dZeWpNb1BuVENoSWdhakVHdlFjeHF1
+      RUttUkRuUTFaOW9TOExmcmtydFhqTlBDEtsKCAMQAhrUCgqxBE9uZSBvZiB0aGUgbW9zdCBmYW1v
+      dXMgbGFuZG1hcmtzIGluIENoaWNhZ28gaXMgKipDbG91ZCBHYXRlKiosIG9mdGVuIG5pY2tuYW1l
+      ZCAiVGhlIEJlYW4uIiBJdCdzIGEgbWFzc2l2ZSwgcmVmbGVjdGl2ZSBzdGFpbmxlc3Mgc3RlZWwg
+      c2N1bHB0dXJlIGluIE1pbGxlbm5pdW0gUGFyaywgZGVzaWduZWQgYnkgYXJ0aXN0IEFuaXNoIEth
+      cG9vciBhbmQgdW52ZWlsZWQgaW4gMjAwNi4gVGhlIDExMC10b24sIGJlYW4tc2hhcGVkIGluc3Rh
+      bGxhdGlvbiBtaXJyb3JzIHRoZSBjaXR5J3Mgc2t5bGluZSwgTGFrZSBNaWNoaWdhbiwgYW5kIHZp
+      c2l0b3JzLCBjcmVhdGluZyBzdXJyZWFsIGFuZCBpbnRlcmFjdGl2ZSBwaG90byBvcHBvcnR1bml0
+      aWVzLiBJdCdzIGJlY29tZSBhbiBpY29uaWMgc3ltYm9sIG9mIENoaWNhZ28sIGRyYXdpbmcgbWls
+      bGlvbnMgb2YgdmlzaXRvcnMgYW5udWFsbHkgZm9yIGl0cyBwbGF5ZnVsIGRlc2lnbiBhbmQgZnJl
+      ZSBwdWJsaWMgYWNjZXNzLiBJZiB0aGF0J3Mgbm90IHRoZSBjaXR5IHlvdSBoYWQgaW4gbWluZCwg
+      ZmVlbCBmcmVlIHRvIGdpdmUgbWUgYSBoaW50IRACKpsGZ2J2eWF0cGVoa3hjbUQycnVPVVMzeSsx
+      UVBJdTBEclhHb0RBZ0JPbk5DNVJiMDJDS25xRmVWeHVTcjNycnBYNWZ1Z1YrYmpuMktzeWl4TG1G
+      d0VPOFJyUi9rQ3FiZmd3RE9rSHBtUE9nOGNZVlJrekdNWU1XaXlkZXNDTkY5NFUzS3kybVZPbTNy
+      KzZhKzhwN2t1K3R2aE5VTGRVTGFOdFMveFlYNHd3NnN3TVRlMTlxazlVMGgvbTRPaDQvNzc5enpS
+      bHd6ZlQ3Zk5vSXVRTkNJOGVDTnZIRFdtMU5SWVlpSW9PRVlLaVNPU3JmWktNNXBDT29tQ2pFdUky
+      TXowNFJPelJwaitOOStWeklYVlo2a3RjRzlRUSt3RzFaUy9RbXo1NWpzOWJ5eUdNcnU2UEM4akxU
+      L2h1MFMyK1ovbmZFOXJwZkVGYmdVUG05MWV1dS9sWDJrL2dDdzJqTUg1emttbjRMQ3BHd3lMdjZ1
+      b3dqc1lRNEZFWE41K1NTcmxwbVo0aDhZSDNOZi9QekZvdzg4ZzZZZkFnQzl6bVJ1M2N4MXF1SVFy
+      OHlFdGpqa2xwdFVZWmRvdTF5cDhMR011WmtaUjg4RlJBRnZ4Z2wvNjdENFhDNDd5KzdXSkkzYi9Y
+      OXN4UE9FRk5OWW4xbEVIOWN0RE9KZDVPY0FVMytIVVBoUXNybFJ2STE5TE1EUVhVZ2tkZHFoOS95
+      aXNWbTlKYVQvYngxSWtsaTFGbWdXNU11M2VlRmdIOVRZTmpIZ1NpaWtDWis5dUZKSmc5cUNTQXQ0
+      dzJWRmtWNmlJWU9UeENYaFY1ZmVyVTZ0Z2l5OHVZZnlVWXJCQTNpTFpMdE40RGI1UjdXZTk5aDdu
+      TUoyTHVnTHZDd3hMNlVydVRsYlVqNzVhRjk4QWl3UHNoMlN2SnRFaEh4OVkzd2RDNG5kUEZkSkN4
+      L2o2ZHQ1RGFHdXpiVi9HMkVmb0hjK1NqbFc2aE9CYTVmQzMrZzFkS2VFdytkTUxJbnhnWkZsbDZX
+      eEcwSzVhd2RuTW54bTNwN2Q5ZWJiNzQvV2J6NmRzKgsIyd+pywYQsfy9YzIVZ3Jvay00LWZhc3Qt
+      cmVhc29uaW5nOg1mcF9jZmNjODVmZjg2ShoIlgEQnRcY2xkgnRcwqAE44gtKAQFYyOutGlI2aHR0
+      cHM6Ly9sb29wY2hpY2Fnby5jb20vZXhwbG9yZS90aGluZ3MtdG8tZG8vbGFuZG1hcmtzUjdodHRw
+      czovL2VuLndpa2lwZWRpYS5vcmcvd2lraS9MaXN0X29mX0NoaWNhZ29fTGFuZG1hcmtzUjpodHRw
+      czovL3dlYmFwcHMxLmNoaWNhZ28uZ292L2xhbmRtYXJrc3dlYi93ZWIvbGlzdGluZ3MuaHRtUlNo
+      dHRwczovL3d3dy50cmlwYWR2aXNvci5jb20vQXR0cmFjdGlvbnMtZzM1ODA1LUFjdGl2aXRpZXMt
+      YzQ3LUNoaWNhZ29fSWxsaW5vaXMuaHRtbFJZaHR0cHM6Ly93d3cucmVkZGl0LmNvbS9yL0Fza0No
+      aWNhZ28vY29tbWVudHMvMWtkcm5sdC93aGF0X3dvdWxkX2JlX3lvdXJfY2hpY2Fnb19sYW5kbWFy
+      a3NadzoCCAFCBBoCGABCZgpkCgpndWVzc19jaXR5EhFUaGUgY2l0eSB0byBndWVzcyJDeyJhZGRp
+      dGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmpl
+      Y3QifWgBcgEB
