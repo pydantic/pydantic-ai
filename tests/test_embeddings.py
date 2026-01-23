@@ -56,8 +56,6 @@ with try_import() as bedrock_imports_successful:
     from pydantic_ai.embeddings.bedrock import (
         BedrockEmbeddingModel,
         BedrockEmbeddingSettings,
-        CohereEmbeddingHandler,
-        TitanEmbeddingHandler,
     )
     from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -536,24 +534,6 @@ class TestBedrock:
             )
         )
 
-    def test_titan_v1_dimensions_warning(self):
-        """Test that Titan V1 warns when dimensions setting is provided (unsupported)."""
-
-        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
-        settings = BedrockEmbeddingSettings(dimensions=256)
-
-        with pytest.warns(UserWarning, match='The `dimensions` setting is not supported by'):
-            handler.prepare_request(['test'], 'query', settings)
-
-    def test_titan_v1_normalize_warning(self):
-        """Test that Titan V1 warns when normalize setting is provided (unsupported)."""
-
-        handler = TitanEmbeddingHandler('amazon.titan-embed-text-v1')
-        settings = BedrockEmbeddingSettings(bedrock_titan_normalize=True)
-
-        with pytest.warns(UserWarning, match='The `bedrock_titan_normalize` setting is not supported by'):
-            handler.prepare_request(['test'], 'query', settings)
-
     # ==================== Titan V2 Tests ====================
     # Titan V2 supports: dimensions (default: 1024), normalize (default: True)
 
@@ -724,24 +704,6 @@ class TestBedrock:
                 provider_response_id=IsStr(),
             )
         )
-
-    def test_cohere_v3_max_tokens_warning(self):
-        """Test that Cohere V3 warns when max_tokens setting is provided (unsupported)."""
-
-        handler = CohereEmbeddingHandler('cohere.embed-english-v3')
-        settings = BedrockEmbeddingSettings(bedrock_cohere_max_tokens=1000)
-
-        with pytest.warns(UserWarning, match='The `bedrock_cohere_max_tokens` setting is not supported by'):
-            handler.prepare_request(['test'], 'query', settings)
-
-    def test_cohere_v3_dimensions_warning(self):
-        """Test that Cohere V3 warns when dimensions setting is provided (unsupported)."""
-
-        handler = CohereEmbeddingHandler('cohere.embed-multilingual-v3')
-        settings = BedrockEmbeddingSettings(dimensions=512)
-
-        with pytest.warns(UserWarning, match='The `dimensions` setting is not supported by'):
-            handler.prepare_request(['test'], 'query', settings)
 
     # ==================== Cohere V4 Tests ====================
     # Cohere V4 supports: dimensions (default: 1536), max_tokens, input_type, truncate (default: NONE)
