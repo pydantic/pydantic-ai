@@ -89,7 +89,7 @@ class OpenAIModelProfile(ModelProfile):
     """Whether the model supports including encrypted reasoning content in the response."""
 
     openai_supports_reasoning: bool = False
-    """Whether the model supports reasoning (o-series, GPT-5, GPT-5.1+).
+    """Whether the model supports reasoning (o-series, GPT-5+).
 
     When True, sampling parameters may need to be dropped depending on reasoning_effort setting."""
 
