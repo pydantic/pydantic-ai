@@ -19,9 +19,11 @@ from pydantic import BaseModel
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FilePart,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
@@ -1273,6 +1275,186 @@ def test_activity_message_other_types_ignored() -> None:
     )
 
     assert messages == snapshot([ModelResponse(parts=[TextPart(content='Response')], timestamp=IsDatetime())])
+
+
+def _sync_part_timestamps(original_part: Any, new_part: Any) -> None:
+    """Sync timestamp attribute if both parts have it."""
+    if hasattr(new_part, 'timestamp') and hasattr(original_part, 'timestamp'):
+        object.__setattr__(new_part, 'timestamp', original_part.timestamp)
+
+
+def _sync_timestamps(original: list[ModelMessage], reloaded: list[ModelMessage]) -> None:
+    """Sync timestamps between original and reloaded messages for comparison."""
+    for o, n in zip(original, reloaded):
+        if isinstance(n, ModelResponse) and isinstance(o, ModelResponse):
+            n.timestamp = o.timestamp
+            for op, np in zip(o.parts, n.parts):
+                _sync_part_timestamps(op, np)
+        elif isinstance(n, ModelRequest) and isinstance(o, ModelRequest):
+            for op, np in zip(o.parts, n.parts):
+                _sync_part_timestamps(op, np)
+
+
+def test_dump_load_roundtrip_basic() -> None:
+    """Test that load_messages(dump_messages(msgs)) preserves basic messages."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful'), UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_thinking() -> None:
+    """Test full round-trip for thinking parts with all metadata."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='Deep thoughts...',
+                    id='think-001',
+                    signature='sig_xyz',
+                    provider_name='anthropic',
+                    provider_details={'model': 'claude-sonnet-4-5'},
+                ),
+                TextPart(content='Conclusion'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_tools() -> None:
+    """Test full round-trip for tool calls and returns."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', tool_call_id='call_abc', content='result')]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
+    """Test round-trip preserves multiple ThinkingParts with their metadata."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think hard')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='First thought', id='think-1', signature='sig_1'),
+                ThinkingPart(content='Second thought', id='think-2', signature='sig_2'),
+                TextPart(content='Final answer'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_binary_content() -> None:
+    """Test round-trip for binary content in user prompts (images, documents, etc.)."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Describe this image',
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                        BinaryContent(data=b'raw image data', media_type='image/jpeg'),
+                    ]
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='I see an image.')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_file_part() -> None:
+    """Test round-trip for FilePart in model responses.
+
+    Note: BinaryImage is used because from_data_uri() returns BinaryImage for image/* media types.
+    """
+    file_data = b'generated file content'
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate an image')]),
+        ModelResponse(
+            parts=[
+                FilePart(
+                    content=BinaryImage(data=file_data, media_type='image/png'),
+                    id='file-001',
+                    provider_name='openai',
+                    provider_details={'model': 'gpt-image'},
+                ),
+                TextPart(content='Here is your generated image.'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_builtin_tool_return() -> None:
+    """Test round-trip for builtin tool calls with their return values.
+
+    Note: The round-trip reorders parts within ModelResponse because AG-UI's AssistantMessage
+    has separate content and tool_calls fields. TextPart comes first (from content), then
+    BuiltinToolCallPart (from tool_calls), then BuiltinToolReturnPart (from subsequent ToolMessage).
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search for info')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Based on the search...'),
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_123',
+                    args='{"query": "test"}',
+                    provider_name='anthropic',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_123',
+                    content='Search results here',
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
 
 
 async def test_tool_local_then_ag_ui() -> None:
