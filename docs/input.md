@@ -118,29 +118,8 @@ Support for file URLs varies depending on type and provider:
 | [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | — | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 
-??? warning "`DocumentUrl` and `BinaryContent` documents are not supported when using `AzureProvider` with `OpenAIChatModel`."
-    Use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] instead:
-
-    ```python
-    from pydantic_ai import Agent, BinaryContent
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.azure import AzureProvider
-
-    pdf_bytes = b'%PDF-1.4 ...'  # Your PDF content
-
-    model = OpenAIResponsesModel(
-        'gpt-5',
-        provider=AzureProvider(
-            azure_endpoint='your-azure-endpoint',
-            api_version='your-api-version',
-        ),
-    )
-    agent = Agent(model)
-    result = agent.run_sync([
-        'Summarize this document',
-        BinaryContent(data=pdf_bytes, media_type='application/pdf'),
-    ])
-    ```
+!!! warning
+    `DocumentUrl` and `BinaryContent` documents are not supported when using `AzureProvider` with `OpenAIChatModel`. Azure's Chat Completions API does not support document input. Use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] instead. See the [Azure AI Foundry documentation](openai.md#azure-ai-foundry) for more details.
 
 A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request.
 

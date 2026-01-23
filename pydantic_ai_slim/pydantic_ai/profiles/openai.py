@@ -84,7 +84,6 @@ class OpenAIModelProfile(ModelProfile):
     """Whether the Chat Completions API supports file content parts (type='file').
 
     Some OpenAI-compatible providers (e.g. Azure) do not support file input via the Chat Completions API.
-    For Azure, use `OpenAIResponsesModel` with `AzureProvider` instead.
     """
 
     def __post_init__(self):  # pragma: no cover
