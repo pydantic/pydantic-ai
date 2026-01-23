@@ -1065,13 +1065,11 @@ def _handle_tool_calls_parts(
     total_accepted = 0
 
     for call in tool_calls:
+        # TODO: I have no idea how this logic went through but damn it is ugly need to read through and fix this
         rejection_reason = tool_manager.check_tool_call_allowed(
             call.tool_name,
-            current_tool_calls,
-            total_accepted,
-            accepted_per_tool[call.tool_name],
-            projected_tool_uses[call.tool_name],
-            projected_usage,
+            tool_accepted_in_step=accepted_per_tool[call.tool_name],
+            projected_tool_uses=projected_tool_uses[call.tool_name],
         )
         if rejection_reason is not None:
             return_part = _messages.ToolReturnPart(

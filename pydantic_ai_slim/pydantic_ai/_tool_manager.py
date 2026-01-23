@@ -327,11 +327,9 @@ class ToolManager(Generic[AgentDepsT]):
     def check_tool_call_allowed(
         self,
         tool_name: str,
-        current_tool_calls: int,
-        total_accepted_in_step: int,
+        *,
         tool_accepted_in_step: int,
         projected_tool_uses: int,
-        projected_usage: RunUsage,
     ) -> str | None:
         """Check if a tool call is allowed based on per-tool limits.
 
