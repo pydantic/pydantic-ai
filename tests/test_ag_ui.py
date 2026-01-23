@@ -22,6 +22,7 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -33,6 +34,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -1448,6 +1450,115 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
                 ),
             ]
         ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_cache_point() -> None:
+    """Test that CachePoint is filtered out during round-trip (it's metadata only)."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Hello', CachePoint(), 'world']),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+    expected: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(expected, reloaded)
+
+    assert reloaded == expected
+
+
+def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
+    """Test round-trip for RetryPromptPart with tool_name (converted to ToolMessage with error)."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args='{}')]),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_1',
+                    content='Invalid args',
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='OK')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    # RetryPromptPart becomes ToolReturnPart on reload (same tool_call_id mapping)
+    assert len(reloaded) == 4
+    assert isinstance(reloaded[2], ModelRequest)
+    retry_part = reloaded[2].parts[0]
+    assert isinstance(retry_part, ToolReturnPart)
+    assert retry_part.tool_name == 'my_tool'
+    assert retry_part.tool_call_id == 'call_1'
+
+
+def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
+    """Test round-trip for RetryPromptPart without tool_name (converted to UserMessage)."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+        ModelRequest(parts=[RetryPromptPart(content='Please try again')]),
+        ModelResponse(parts=[TextPart(content='OK')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    # RetryPromptPart without tool becomes UserPromptPart on reload
+    # Content is formatted by RetryPromptPart.model_response()
+    assert len(reloaded) == 4
+    assert isinstance(reloaded[2], ModelRequest)
+    retry_part = reloaded[2].parts[0]
+    assert isinstance(retry_part, UserPromptPart)
+    assert 'Please try again' in str(retry_part.content)
+
+
+def test_dump_load_roundtrip_file_part_minimal() -> None:
+    """Test round-trip for FilePart without optional attributes (id, provider_name, provider_details)."""
+    file_data = b'minimal file'
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate')]),
+        ModelResponse(
+            parts=[
+                FilePart(content=BinaryImage(data=file_data, media_type='image/png')),
+                TextPart(content='Done'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_file_part_only() -> None:
+    """Test round-trip for response with only FilePart (no text, no tool calls)."""
+    file_data = b'only file'
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate image only')]),
+        ModelResponse(parts=[FilePart(content=BinaryImage(data=file_data, media_type='image/png'))]),
     ]
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
