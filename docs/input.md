@@ -156,8 +156,11 @@ When using [`UploadedFile`][pydantic_ai.UploadedFile] you must set the provider 
 
 If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends you can use a [history processor][pydantic_ai.agent.Agent.history_processors] to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
 
+!!! note "Beta Feature"
+    The Anthropic Files API is currently in beta. You need to include the beta header `anthropic-beta: files-api-2025-04-14` when making requests.
+
 ```py {title="uploaded_file_anthropic.py" test="skip"}
-from pydantic_ai import Agent, UploadedFile
+from pydantic_ai import Agent, ModelSettings, UploadedFile
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -168,13 +171,14 @@ model = AnthropicModel('claude-sonnet-4-5', provider=provider)
 with open('document.pdf', 'rb') as f:
     uploaded_file = provider.client.beta.files.upload(file=f.read())
 
-# Reference the uploaded file
+# Reference the uploaded file, including the required beta header
 agent = Agent(model)
 result = agent.run_sync(
     [
         'Summarize this document',
         UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
-    ]
+    ],
+    model_settings=ModelSettings(extra_headers={'anthropic-beta': 'files-api-2025-04-14'}),
 )
 print(result.output)
 ```

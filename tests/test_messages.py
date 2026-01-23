@@ -821,6 +821,24 @@ def test_uploaded_file_in_otel_message_parts():
         [{'type': 'file', 'modality': 'image', 'file_id': 'img-123', 'mime_type': 'image/png'}]
     )
 
+    # Test with audio media_type - should have audio modality
+    part_audio = UserPromptPart(
+        content=[UploadedFile(file_id='audio-123', provider_name='openai', media_type='audio/mp3')]
+    )
+    otel_parts_audio = part_audio.otel_message_parts(settings)
+    assert otel_parts_audio == snapshot(
+        [{'type': 'file', 'modality': 'audio', 'file_id': 'audio-123', 'mime_type': 'audio/mp3'}]
+    )
+
+    # Test with video media_type - should have video modality
+    part_video = UserPromptPart(
+        content=[UploadedFile(file_id='video-123', provider_name='openai', media_type='video/mp4')]
+    )
+    otel_parts_video = part_video.otel_message_parts(settings)
+    assert otel_parts_video == snapshot(
+        [{'type': 'file', 'modality': 'video', 'file_id': 'video-123', 'mime_type': 'video/mp4'}]
+    )
+
     # Test without include_content (should only have type and modality)
     settings_no_content = InstrumentationSettings(include_content=False)
     otel_parts_no_content = part.otel_message_parts(settings_no_content)
