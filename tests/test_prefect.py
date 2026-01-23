@@ -1176,7 +1176,7 @@ async def test_repeated_run_hits_cache():
     its own cache namespace. To enable cross-flow caching, we use CROSS_FLOW_CACHE_POLICY
     which excludes RUN_ID.
 
-    We use tmp_path for result_storage to isolate this test from other runs.
+    We use a unique prompt (via UUID) per test run to avoid cross-run cache hits.
 
     If caching is broken, the model will be called twice instead of once.
     """
