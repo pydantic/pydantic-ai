@@ -1,0 +1,46 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "97"
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: Hello
+            role: user
+        model: databricks-gpt-oss-120b
+        stream: false
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "144"
+        content-type:
+          - application/json; charset=utf-8
+        server-timing:
+          - request_id;dur=0;desc="92c42002-57e9-4662-8718-e19f6c82ceee", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        vary:
+          - Accept-Encoding
+        www-authenticate:
+          - Bearer realm="DatabricksRealm"
+      parsed_body:
+        error_code: 401
+        message: "Credential was not sent or was of an unsupported type for this API. [ReqId: 92c42002-57e9-4662-8718-e19f6c82ceee]"
+      status:
+        code: 401
+        message: Unauthorized
+version: 1

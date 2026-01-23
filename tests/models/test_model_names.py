@@ -21,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import OpenAIModelName
+    from pydantic_ai.providers.databricks import DatabricksModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
     from pydantic_ai.providers.grok import GrokModelName
@@ -63,6 +64,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'bedrock': BedrockModelName,
     'cohere': CohereModelName,
     'deepseek': DeepSeekModelName,
+    'databricks': DatabricksModelName,
     'google-gla': GoogleModelName,
     'google-vertex': GoogleModelName,
     'grok': GrokModelName,

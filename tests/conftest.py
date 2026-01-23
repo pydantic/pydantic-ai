@@ -338,6 +338,9 @@ def vcr_config():
         # Note: additional header filtering is done inside the serializer
         'filter_headers': ['authorization', 'x-api-key'],
         'decode_compressed_response': True,
+        'filter_sensitive_data': [
+            (os.environ.get('DATABRICKS_BASE_URL'), 'https://mock.databricks.com'),
+        ],
     }
 
 
@@ -437,6 +440,13 @@ def co_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def databricks_api_key() -> str:
+    return os.getenv('DATABRICKS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def databricks_base_url():
+    return os.getenv('DATABRICKS_BASE_URL', 'https://mock.databricks.com')
 def voyage_api_key() -> str:
     return os.getenv('VOYAGE_API_KEY', 'mock-api-key')
 

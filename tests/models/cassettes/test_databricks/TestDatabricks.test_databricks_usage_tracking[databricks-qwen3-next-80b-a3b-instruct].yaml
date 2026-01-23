@@ -1,0 +1,59 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "112"
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: Hello
+            role: user
+        model: databricks-qwen3-next-80b-a3b-instruct
+        stream: false
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "352"
+        content-type:
+          - application/json; charset=utf-8
+        server-timing:
+          - request_id;dur=0;desc="358833ec-aa2f-42c7-9466-125afcbd5f6a", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            logprobs: null
+            message:
+              content: "Hello! How can I help you today? \U0001F60A"
+              role: assistant
+        created: 1768819965
+        id: chatcmpl_178295ac-1daf-4c41-8e66-e8452f329787
+        model: qwen3-next-instruct-091725
+        object: chat.completion
+        usage:
+          completion_tokens: 12
+          prompt_tokens: 9
+          total_tokens: 21
+      status:
+        code: 200
+        message: OK
+version: 1
