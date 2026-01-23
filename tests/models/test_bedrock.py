@@ -590,7 +590,7 @@ async def test_bedrock_model_guardrail_config(allow_model_requests: None):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
     model_settings = BedrockModelSettings(
         bedrock_guardrail_config={
-            'guardrailIdentifier': 'z1uci6pmvugd',
+            'guardrailIdentifier': 'xbgw7g293v7o',
             'guardrailVersion': 'DRAFT',
             'trace': 'enabled',
         }
@@ -598,7 +598,7 @@ async def test_bedrock_model_guardrail_config(allow_model_requests: None):
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        "The capital of France is Paris. Known for its rich history, iconic landmarks such as the Eiffel Tower, Louvre Museum, and charming architecture, Paris is a global center for art, culture, fashion, and gastronomy. It's also a major player in politics, being the heart of the French government."
+        "The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, serving as the center of French government, culture, and commerce. It's known for its historical and cultural landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and many charming neighborhoods like Montmartre."
     )
 
 
@@ -611,7 +611,7 @@ async def test_bedrock_model_other_parameters(allow_model_requests: None):
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        'The capital of France is Paris. Paris is not only the political, cultural, and economic center of France but also one of the most iconic cities in the world, known for its historical landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions.'
+        "The capital of France is Paris. Paris is not only the political center of the country but also one of the world's most influential cities in culture, fashion, gastronomy, and the arts. It's known for its iconic landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other historical and architectural treasures."
     )
 
 

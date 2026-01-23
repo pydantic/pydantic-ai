@@ -1,12 +1,12 @@
 interactions:
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
-      are a helpful chatbot."}], "inferenceConfig": {}, "guardrailConfig": {"guardrailIdentifier": "z1uci6pmvugd", "guardrailVersion":
+      are a helpful chatbot."}], "inferenceConfig": {}, "guardrailConfig": {"guardrailIdentifier": "xbgw7g293v7o", "guardrailVersion":
       "DRAFT", "trace": "enabled"}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YWFiMDkzNDItOWJlYS00M2FiLWE0ZTMtZTQxNmZkOTU3OTkx
+        Nzk4MjcwYmEtZWU5MS00ZGRmLWI4YmEtODM0ZjBkNDE4Y2Mw
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -22,28 +22,29 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1826'
+      - '1935'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1117
+        latencyMs: 1257
       output:
         message:
           content:
-          - text: The capital of France is Paris. Known for its rich history, iconic landmarks such as the Eiffel Tower, Louvre
-              Museum, and charming architecture, Paris is a global center for art, culture, fashion, and gastronomy. It's
-              also a major player in politics, being the heart of the French government.
+          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France,
+              serving as the center of French government, culture, and commerce. It's known for its historical and cultural
+              landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and many charming neighborhoods
+              like Montmartre.
           role: assistant
       stopReason: end_turn
       trace:
         guardrail:
           actionReason: No action.
           inputAssessment:
-            z1uci6pmvugd:
+            xbgw7g293v7o:
               appliedGuardrailDetails:
-                guardrailArn: arn:aws:bedrock:us-east-2:353014496775:guardrail/z1uci6pmvugd
-                guardrailId: z1uci6pmvugd
+                guardrailArn: arn:aws:bedrock:us-east-1:353014496775:guardrail/xbgw7g293v7o
+                guardrailId: xbgw7g293v7o
                 guardrailOrigin:
                 - REQUEST
                 guardrailOwnership: SELF
@@ -53,22 +54,23 @@ interactions:
                   textCharacters:
                     guarded: 30
                     total: 30
-                guardrailProcessingLatency: 350
+                guardrailProcessingLatency: 397
                 usage:
                   automatedReasoningPolicies: 0
                   automatedReasoningPolicyUnits: 0
-                  contentPolicyUnits: 1
+                  contentPolicyImageUnits: 0
+                  contentPolicyUnits: 0
                   contextualGroundingPolicyUnits: 0
                   sensitiveInformationPolicyFreeUnits: 0
                   sensitiveInformationPolicyUnits: 0
-                  topicPolicyUnits: 0
+                  topicPolicyUnits: 1
                   wordPolicyUnits: 0
           modelOutput: []
           outputAssessments:
-            z1uci6pmvugd:
+            xbgw7g293v7o:
             - appliedGuardrailDetails:
-                guardrailArn: arn:aws:bedrock:us-east-2:353014496775:guardrail/z1uci6pmvugd
-                guardrailId: z1uci6pmvugd
+                guardrailArn: arn:aws:bedrock:us-east-1:353014496775:guardrail/xbgw7g293v7o
+                guardrailId: xbgw7g293v7o
                 guardrailOrigin:
                 - REQUEST
                 guardrailOwnership: SELF
@@ -76,23 +78,24 @@ interactions:
               invocationMetrics:
                 guardrailCoverage:
                   textCharacters:
-                    guarded: 292
-                    total: 292
-                guardrailProcessingLatency: 273
+                    guarded: 345
+                    total: 345
+                guardrailProcessingLatency: 370
                 usage:
                   automatedReasoningPolicies: 0
                   automatedReasoningPolicyUnits: 0
-                  contentPolicyUnits: 1
+                  contentPolicyImageUnits: 0
+                  contentPolicyUnits: 0
                   contextualGroundingPolicyUnits: 0
                   sensitiveInformationPolicyFreeUnits: 0
                   sensitiveInformationPolicyUnits: 0
-                  topicPolicyUnits: 0
+                  topicPolicyUnits: 1
                   wordPolicyUnits: 0
       usage:
         inputTokens: 13
-        outputTokens: 62
+        outputTokens: 69
         serverToolUsage: {}
-        totalTokens: 75
+        totalTokens: 82
     status:
       code: 200
       message: OK

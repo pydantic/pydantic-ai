@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZDk5Njc5YTEtZDFjNi00OWJkLThhODItNDBjZWJmMTEyNzNj
+        MDJmOTU0MzItNzZlNS00MDI3LTk4MzUtM2E3OWJjYTRiZjUw
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -21,25 +21,26 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '495'
+      - '550'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 436
+        latencyMs: 519
       output:
         message:
           content:
-          - text: The capital of France is Paris. Paris is not only the political, cultural, and economic center of France
-              but also one of the most iconic cities in the world, known for its historical landmarks such as the Eiffel Tower,
-              the Louvre Museum, and Notre-Dame Cathedral, among many other attractions.
+          - text: The capital of France is Paris. Paris is not only the political center of the country but also one of the
+              world's most influential cities in culture, fashion, gastronomy, and the arts. It's known for its iconic landmarks
+              such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other historical and architectural
+              treasures.
           role: assistant
       stopReason: end_turn
       usage:
         inputTokens: 13
-        outputTokens: 60
+        outputTokens: 72
         serverToolUsage: {}
-        totalTokens: 73
+        totalTokens: 85
     status:
       code: 200
       message: OK
