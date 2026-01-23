@@ -225,7 +225,7 @@ def function_schema(  # noqa: C901
         type_args = get_args(return_annotation)
         inner_type = type_args[0] if type_args else Any
         try:
-            return_schema = TypeAdapter(inner_type).json_schema(schema_generator=schema_generator)
+            return_schema = TypeAdapter(inner_type).json_schema(schema_generator=schema_generator, mode='serialization')
             if return_description and 'description' not in return_schema:
                 return_schema['description'] = return_description
         except (PydanticSchemaGenerationError, PydanticUserError):

@@ -36,6 +36,9 @@ class ReturnSchemaToolset(WrapperToolset[AgentDepsT]):
         def _build_description(tool: ToolsetTool[AgentDepsT]) -> str | None:
             if (self.include_return_schema or tool.include_return_schema) and tool.tool_def.return_schema is not None:
                 # TODO: This should be overridable by PromptConfig when that lands
+                # TODO: When multiple tools share common Pydantic models, `$defs` are repeated in each
+                # tool's schema. An optimization could deduplicate these shared definitions to
+                # reduce token usage when injecting schemas into descriptions.
                 base_desc = tool.tool_def.description or ''
                 return '\n\n'.join([base_desc, 'Return schema:', json.dumps(tool.tool_def.return_schema, indent=2)])
             # Preserve the original description (including None)

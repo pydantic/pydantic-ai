@@ -37,7 +37,14 @@ from pydantic_ai.messages import AudioUrl, BinaryContent, BinaryImage, DocumentU
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResult,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
@@ -2848,6 +2855,12 @@ def test_tool_return_schema():
     def tool_with_return_tool_return() -> ToolReturn:  # pragma: no cover
         return ToolReturn(return_value='hello', content=[ImageUrl(url='https://example.com/image.jpg')])
 
+    @agent.tool_plain
+    def tool_with_deferred_return() -> DeferredToolResult:
+        return ToolApproved()
+
+    # DeferredToolResult has an insane token footprint, unsure if it is wise to do this but I will read more.
+
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
@@ -3134,6 +3147,275 @@ def test_tool_return_schema():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': {},
+            },
+            {
+                'name': 'tool_with_deferred_return',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    '$defs': {
+                        'AudioUrl': {
+                            'description': 'A URL to an audio file.',
+                            'properties': {
+                                'url': {'type': 'string'},
+                                'force_download': {'default': False, 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'kind': {'const': 'audio-url', 'default': 'audio-url', 'type': 'string'},
+                            },
+                            'required': ['url'],
+                            'title': 'AudioUrl',
+                            'type': 'object',
+                        },
+                        'BinaryContent': {
+                            'description': 'Binary content, e.g. an audio or image file.',
+                            'properties': {
+                                'data': {'format': 'binary', 'type': 'string'},
+                                'media_type': {
+                                    'anyOf': [
+                                        {
+                                            'enum': [
+                                                'audio/wav',
+                                                'audio/mpeg',
+                                                'audio/ogg',
+                                                'audio/flac',
+                                                'audio/aiff',
+                                                'audio/aac',
+                                            ],
+                                            'type': 'string',
+                                        },
+                                        {
+                                            'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+                                            'type': 'string',
+                                        },
+                                        {
+                                            'enum': [
+                                                'application/pdf',
+                                                'text/plain',
+                                                'text/csv',
+                                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                                'text/html',
+                                                'text/markdown',
+                                                'application/msword',
+                                                'application/vnd.ms-excel',
+                                            ],
+                                            'type': 'string',
+                                        },
+                                        {'type': 'string'},
+                                    ]
+                                },
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
+                            },
+                            'required': ['data', 'media_type'],
+                            'title': 'BinaryContent',
+                            'type': 'object',
+                        },
+                        'CachePoint': {
+                            'properties': {
+                                'kind': {'const': 'cache-point', 'default': 'cache-point', 'type': 'string'},
+                                'ttl': {'default': '5m', 'enum': ['5m', '1h'], 'type': 'string'},
+                            },
+                            'title': 'CachePoint',
+                            'type': 'object',
+                        },
+                        'DocumentUrl': {
+                            'description': 'The URL of the document.',
+                            'properties': {
+                                'url': {'type': 'string'},
+                                'force_download': {'default': False, 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'kind': {'const': 'document-url', 'default': 'document-url', 'type': 'string'},
+                            },
+                            'required': ['url'],
+                            'title': 'DocumentUrl',
+                            'type': 'object',
+                        },
+                        'ErrorDetails': {
+                            'properties': {
+                                'type': {'type': 'string'},
+                                'loc': {'items': {'anyOf': [{'type': 'integer'}, {'type': 'string'}]}, 'type': 'array'},
+                                'msg': {'type': 'string'},
+                                'input': {},
+                                'ctx': {'additionalProperties': True, 'type': 'object'},
+                                'url': {'type': 'string'},
+                            },
+                            'required': ['type', 'loc', 'msg', 'input'],
+                            'title': 'ErrorDetails',
+                            'type': 'object',
+                        },
+                        'ImageUrl': {
+                            'description': 'A URL to an image.',
+                            'properties': {
+                                'url': {'type': 'string'},
+                                'force_download': {'default': False, 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'kind': {'const': 'image-url', 'default': 'image-url', 'type': 'string'},
+                            },
+                            'required': ['url'],
+                            'title': 'ImageUrl',
+                            'type': 'object',
+                        },
+                        'RetryPromptPart': {
+                            'description': """\
+A message back to a model asking it to try again.
+
+This can be sent for a number of reasons:
+
+* Pydantic validation of tool arguments failed, here content is derived from a Pydantic
+  [`ValidationError`][pydantic_core.ValidationError]
+* a tool raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+* no tool was found for the tool name
+* the model returned plain text when a structured response was expected
+* Pydantic validation of a structured response failed, here content is derived from a Pydantic
+  [`ValidationError`][pydantic_core.ValidationError]
+* an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception\
+""",
+                            'properties': {
+                                'content': {
+                                    'anyOf': [
+                                        {'items': {'$ref': '#/$defs/ErrorDetails'}, 'type': 'array'},
+                                        {'type': 'string'},
+                                    ]
+                                },
+                                'tool_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'tool_call_id': {'type': 'string'},
+                                'timestamp': {'format': 'date-time', 'type': 'string'},
+                                'part_kind': {'const': 'retry-prompt', 'default': 'retry-prompt', 'type': 'string'},
+                            },
+                            'required': ['content'],
+                            'title': 'RetryPromptPart',
+                            'type': 'object',
+                        },
+                        'ToolApproved': {
+                            'properties': {
+                                'override_args': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'kind': {'const': 'tool-approved', 'default': 'tool-approved', 'type': 'string'},
+                            },
+                            'title': 'ToolApproved',
+                            'type': 'object',
+                        },
+                        'ToolDenied': {
+                            'description': 'Indicates that a tool call has been denied and that a denial message should be returned to the model.',
+                            'properties': {
+                                'message': {'default': 'The tool call was denied.', 'type': 'string'},
+                                'kind': {'const': 'tool-denied', 'default': 'tool-denied', 'type': 'string'},
+                            },
+                            'title': 'ToolDenied',
+                            'type': 'object',
+                        },
+                        'ToolReturn': {
+                            'description': """\
+A structured return value for tools that need to provide both a return value and custom content to the model.
+
+This class allows tools to return complex responses that include:
+- A return value for actual tool return
+- Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
+- Optional metadata for application use\
+""",
+                            'properties': {
+                                'return_value': {},
+                                'content': {
+                                    'anyOf': [
+                                        {'type': 'string'},
+                                        {
+                                            'items': {
+                                                'anyOf': [
+                                                    {'type': 'string'},
+                                                    {'$ref': '#/$defs/ImageUrl'},
+                                                    {'$ref': '#/$defs/AudioUrl'},
+                                                    {'$ref': '#/$defs/DocumentUrl'},
+                                                    {'$ref': '#/$defs/VideoUrl'},
+                                                    {'$ref': '#/$defs/BinaryContent'},
+                                                    {'$ref': '#/$defs/CachePoint'},
+                                                ]
+                                            },
+                                            'type': 'array',
+                                        },
+                                        {'type': 'null'},
+                                    ],
+                                    'default': None,
+                                },
+                                'metadata': {'default': None},
+                                'kind': {'const': 'tool-return', 'default': 'tool-return', 'type': 'string'},
+                            },
+                            'required': ['return_value'],
+                            'title': 'ToolReturn',
+                            'type': 'object',
+                        },
+                        'VideoUrl': {
+                            'description': 'A URL to a video.',
+                            'properties': {
+                                'url': {'type': 'string'},
+                                'force_download': {'default': False, 'type': 'boolean'},
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'media_type': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'kind': {'const': 'video-url', 'default': 'video-url', 'type': 'string'},
+                            },
+                            'required': ['url'],
+                            'title': 'VideoUrl',
+                            'type': 'object',
+                        },
+                    },
+                    'anyOf': [
+                        {
+                            'discriminator': {
+                                'mapping': {
+                                    'tool-approved': '#/$defs/ToolApproved',
+                                    'tool-denied': '#/$defs/ToolDenied',
+                                },
+                                'propertyName': 'kind',
+                            },
+                            'oneOf': [{'$ref': '#/$defs/ToolApproved'}, {'$ref': '#/$defs/ToolDenied'}],
+                        },
+                        {
+                            'oneOf': [
+                                {'$ref': '#/$defs/ToolReturn'},
+                                {
+                                    'properties': {
+                                        'message': {'type': 'string'},
+                                        'kind': {'const': 'model-retry', 'type': 'string'},
+                                    },
+                                    'required': ['message', 'kind'],
+                                    'type': 'object',
+                                },
+                                {'$ref': '#/$defs/RetryPromptPart'},
+                            ]
+                        },
+                    ],
+                },
             },
         ]
     )
