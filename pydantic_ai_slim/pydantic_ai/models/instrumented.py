@@ -330,7 +330,7 @@ class InstrumentationSettings:
         attributes: dict[str, AttributeValue],
     ):
         for typ in ['input', 'output', 'cache_read']:
-            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
+            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
