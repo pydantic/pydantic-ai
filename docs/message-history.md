@@ -47,8 +47,8 @@ print(result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
-        instructions='Be a helpful assistant.',
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -89,8 +89,8 @@ async def main():
                         timestamp=datetime.datetime(...),
                     )
                 ],
-                instructions='Be a helpful assistant.',
                 timestamp=datetime.datetime(...),
+                instructions='Be a helpful assistant.',
                 run_id='...',
             )
         ]
@@ -114,8 +114,8 @@ async def main():
                         timestamp=datetime.datetime(...),
                     )
                 ],
-                instructions='Be a helpful assistant.',
                 timestamp=datetime.datetime(...),
+                instructions='Be a helpful assistant.',
                 run_id='...',
             ),
             ModelResponse(
@@ -168,8 +168,8 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
-        instructions='Be a helpful assistant.',
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -190,8 +190,8 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
-        instructions='Be a helpful assistant.',
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -293,8 +293,8 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
-        instructions='Be a helpful assistant.',
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -315,8 +315,8 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
-        instructions='Be a helpful assistant.',
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(

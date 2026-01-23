@@ -309,7 +309,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=1198, output_tokens=74, tool_calls=1))
+    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -335,7 +335,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-2.amazonaws.com',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -355,24 +355,60 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='final_result',
-                        args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
-                        tool_call_id=IsStr(),
-                    ),
                     TextPart(
                         content="""\
 
-
+<thinking> The tool has provided the temperature for London on 1st January 2022, which was 30°C. I will now provide this information to the user.</thinking>
 The temperature in London on 1st January 2022 was 30°C.\
 """
-                    ),
+                    )
                 ],
-                usage=RequestUsage(input_tokens=627, output_tokens=52),
+                usage=RequestUsage(input_tokens=627, output_tokens=67),
                 model_name='us.amazon.nova-micro-v1:0',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
                 provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-2.amazonaws.com',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'json_invalid',
+                                'loc': (),
+                                'msg': 'Invalid JSON: expected value at line 2 column 1',
+                                'input': """\
+
+<thinking> The tool has provided the temperature for London on 1st January 2022, which was 30°C. I will now provide this information to the user.</thinking>
+The temperature in London on 1st January 2022 was 30°C.\
+""",
+                                'ctx': {'error': 'expected value at line 2 column 1'},
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
+                        tool_call_id='tooluse_qVHAm8Q9QMGoJRkk06_TVA',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=821, output_tokens=31),
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -469,7 +505,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> I can directly use the get_capital tool to retrieve the capital of France by providing the country name as an argument.</thinking>\n'
+                        content='<thinking> To determine the capital of France, I can use the provided tool that returns the capital of a given country. Since the country in question is France, I will use the tool with the country parameter set to "France". </thinking>\n'
                     ),
                     ToolCallPart(
                         tool_name='get_capital',
@@ -477,11 +513,11 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=426, output_tokens=45),
+                usage=RequestUsage(input_tokens=426, output_tokens=66),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-2.amazonaws.com',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -503,17 +539,17 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 parts=[
                     TextPart(
                         content="""\
-<thinking> It seems like there's an error with the tool. Since the tool is not working correctly, I will inform the User and suggest an alternative if available.</thinking> <thinking> Unfortunately, I cannot directly fetch this information without the correct functioning of the tool. If another method or resource is available to answer this question, I will use that.</thinking>
+<thinking> It appears that there was an error in retrieving the capital of France as the tool indicated that the country is not supported. Since the tool is not able to provide the requested information, I will respond to the User with the information I have access to. </thinking> \n\
 
-I'm sorry, but I currently cannot retrieve the capital of France using the provided tool. However, I can inform you that the capital of France is Paris. If you need information from a different country or any other assistance, feel free to ask!\
+The capital of France is Paris. If you need any further information, feel free to ask!\
 """
                     )
                 ],
-                usage=RequestUsage(input_tokens=510, output_tokens=126),
+                usage=RequestUsage(input_tokens=531, output_tokens=76),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-2.amazonaws.com',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -534,7 +570,7 @@ async def test_bedrock_model_top_p(allow_model_requests: None, bedrock_provider:
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        "The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. It's well-known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions."
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, fashion, gastronomy, and international diplomacy.'
     )
 
 

@@ -84,8 +84,8 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
-        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         timestamp=datetime.datetime(...),
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
     ),
     ModelResponse(
@@ -108,8 +108,8 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
-        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         timestamp=datetime.datetime(...),
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
     ),
     ModelResponse(
@@ -132,8 +132,8 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
-        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         timestamp=datetime.datetime(...),
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
     ),
     ModelResponse(

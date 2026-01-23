@@ -1238,6 +1238,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
@@ -1502,7 +1503,9 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         return 20.0
 
     result = await agent.run('What is the temperature in Tokyo?')
-    assert result.output == snapshot('I need the latitude and longitude for Tokyo. Can you please provide them?')
+    assert result.output == snapshot(
+        "I'm sorry, I'm having trouble getting the temperature for Tokyo. Can you please try again?"
+    )
 
 
 @pytest.mark.vcr()
