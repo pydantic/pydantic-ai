@@ -1118,6 +1118,20 @@ async def test_cache_policy_custom():
     assert hash3 != hash1
 
 
+async def test_cache_policy_excludes_run_id():
+    """Test that run_id is excluded from cache key computation."""
+    cache_policy = PrefectAgentInputs()
+
+    messages1 = [ModelRequest(parts=[UserPromptPart(content='test')], run_id='run-1')]
+    messages2 = [ModelRequest(parts=[UserPromptPart(content='test')], run_id='run-2')]
+
+    mock_task_ctx = MagicMock()
+    hash1 = cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': messages1}, flow_parameters={})
+    hash2 = cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': messages2}, flow_parameters={})
+
+    assert hash1 == hash2
+
+
 async def test_cache_policy_with_tuples():
     """Test that cache policy handles tuples with timestamps correctly."""
     cache_policy = PrefectAgentInputs()
