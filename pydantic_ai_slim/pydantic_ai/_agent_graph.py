@@ -833,7 +833,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
-        if tool_responses:
+        if tool_responses or resume_tool_group is not None:
             messages.append(
                 _messages.ModelRequest(
                     parts=tool_responses,
