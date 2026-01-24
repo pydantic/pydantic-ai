@@ -1865,6 +1865,46 @@ def test_mixed_deferred_and_output_exhaustive_output_first():
     )
 
 
+def test_error_on_missing_deferred_tool_results():
+    tool_calls: list[int] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('external_tool', {'x': 1}, tool_call_id='external_tool'),
+                ToolCallPart('function_tool', {'x': 2}, tool_call_id='function_tool'),
+            ]
+        )
+
+    external_toolset = ExternalToolset(
+        [
+            ToolDefinition(
+                name='external_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests], toolsets=[external_toolset])
+
+    @agent.tool_plain
+    def function_tool(x: int) -> int:
+        tool_calls.append(x)
+        return x + 1
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert tool_calls == [2]
+
+    msg = "Tool call results need to be provided for all deferred tool calls. Expected: {'function_tool', 'external_tool'}, got: {'function_tool'}"
+    with pytest.raises(UserError, match=msg):
+        # Calling `run_sync` without providing `deferred_tool_results` should raise an error
+        agent.run_sync(message_history=result.all_messages())
+
+    # Check that the non-deferred tool did not executed again
+    assert tool_calls == [2]
+
+
 def test_deferred_tool_with_output_type():
     class MyModel(BaseModel):
         foo: str
