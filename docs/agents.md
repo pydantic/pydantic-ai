@@ -1011,7 +1011,7 @@ Validation errors from both function tool parameter validation and [structured o
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
 - The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__].
-- You can access the current retry count from within a tool or output function via [`ctx.retry`][pydantic_ai.tools.RunContext].
+- You can access the current retry count from within a tool via [`ctx.retry`][pydantic_ai.tools.RunContext.retry], and from within an output validator or output function via [`ctx.output_retries`][pydantic_ai.tools.RunContext.output_retries].
 
 Here's an example:
 
