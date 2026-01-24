@@ -221,7 +221,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         instructions: str | None = None
 
         if messages and (last_message := messages[-1]):
-            if isinstance(last_message, _messages.ModelRequest) and last_message.resume_tool_group is not None:
+            if isinstance(last_message, _messages.ModelRequest):
                 last_model_request = last_message
                 last_model_response: _messages.ModelResponse | None = next(
                     (message for message in reversed(messages) if isinstance(message, _messages.ModelResponse)), None
@@ -232,9 +232,17 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         'Last model request indicates tool calls were made, but there is no corresponding model response.'
                     )
 
-                return await self._handle_deferred_tool_results(
-                    last_model_request, last_model_response, self.deferred_tool_results, ctx
+                tool_calls_in_response = set(tool_call.tool_call_id for tool_call in last_model_response.tool_calls)
+                tool_calls_in_request = set(
+                    part.tool_call_id
+                    for part in last_model_request.parts
+                    if part.part_kind == 'tool-return' or part.part_kind == 'retry-prompt'
                 )
+
+                if tool_calls_in_request < tool_calls_in_response:
+                    return await self._handle_deferred_tool_results(
+                        last_model_request, last_model_response, self.deferred_tool_results, ctx
+                    )
 
             if self.deferred_tool_results is not None:
                 raise exceptions.UserError('Deferred tool results can only be provided when resuming from a tool call.')
@@ -342,9 +350,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 final_result = result.FinalResult(part.content, part.tool_name, part.tool_call_id)
 
         # Skip ModelRequestNode and go directly to CallToolsNode
+        resume_tool_group = _calculate_tool_group_resume_index(
+            ctx.deps.tool_manager, last_model_response, last_model_request, ctx.deps.end_strategy
+        )
         return CallToolsNode[DepsT, NodeRunEndT](
             last_model_response,
-            resume_tool_group=last_model_request.resume_tool_group,
+            resume_tool_group=resume_tool_group,
             final_result=final_result,
             tool_call_results=tool_call_results,
             tool_call_metadata=deferred_tool_results.metadata or None,
@@ -768,8 +779,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
-        output_resume_tool_group: deque[int | None] = deque(maxlen=1)
-        output_resume_tool_group.append(None)
 
         tool_call_groups = model_response_to_tool_call_groups(
             ctx.deps.tool_manager, self.model_response, ctx.deps.end_strategy
@@ -784,14 +793,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             ctx=ctx,
             output_parts=output_parts,
             output_final_result=output_final_result,
-            output_resume_tool_group=output_resume_tool_group,
         ):
             yield event
 
         if output_final_result:
             final_result = output_final_result[0]
-            resume_tool_group = output_resume_tool_group[0]
-            self._next_node = self._handle_final_result(ctx, final_result, output_parts, resume_tool_group)
+            self._next_node = self._handle_final_result(ctx, final_result, output_parts)
         else:
             # Add user prompt if provided, after all tool return parts
             if self.user_prompt is not None:
@@ -829,19 +836,17 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         final_result: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
-        resume_tool_group: int | None = None,
     ) -> End[result.FinalResult[NodeRunEndT]]:
         messages = ctx.state.message_history
 
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
-        if tool_responses or resume_tool_group is not None:
+        if tool_responses or isinstance(final_result.output, DeferredToolRequests):
             messages.append(
                 _messages.ModelRequest(
                     parts=tool_responses,
                     run_id=ctx.state.run_id,
                     timestamp=now_utc(),
-                    resume_tool_group=resume_tool_group,
                 )
             )
 
@@ -988,6 +993,25 @@ def model_response_to_tool_call_groups(
     return groups
 
 
+def _calculate_tool_group_resume_index(
+    tool_manager: ToolManager[DepsT],
+    response: _messages.ModelResponse,
+    request: _messages.ModelRequest,
+    end_strategy: EndStrategy,
+) -> int | None:
+    tool_groups = model_response_to_tool_call_groups(tool_manager, response, end_strategy)
+    tool_call_ids_in_request = {
+        part.tool_call_id
+        for part in request.parts
+        if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+    }
+    for group_index, group in enumerate(tool_groups):
+        group_tool_call_ids = {tool_call.tool_call_id for tool_call in group.tool_calls}
+        if not group_tool_call_ids.issubset(tool_call_ids_in_request):
+            return group_index
+    return None
+
+
 async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_call_groups: list[ToolCallGroup],
@@ -998,14 +1022,13 @@ async def process_tool_calls(  # noqa: C901
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
     output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1),
-    output_resume_tool_group: deque[int | None] = deque(maxlen=1),
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     """Process function (i.e., non-result) tool calls in parallel.
 
     Also add stub return parts for any other tools that need it.
 
     Because async iterators can't have return values,
-    we use `output_parts`, `output_final_result`, and `output_resume_tool_group` as output arguments.
+    we use `output_parts` and `output_final_result` as output arguments.
     """
     if tool_call_results is None:
         tool_call_results = dict()
@@ -1051,7 +1074,6 @@ async def process_tool_calls(  # noqa: C901
             yield event
 
         if deferred_calls:
-            output_resume_tool_group.append(resume_tool_group)
             deferred_tool_requests = DeferredToolRequests(
                 calls=deferred_calls['external'],
                 approvals=deferred_calls['unapproved'],
@@ -1184,7 +1206,6 @@ async def process_tool_calls(  # noqa: C901
                     raise exceptions.UserError(
                         'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
                     )
-                output_resume_tool_group.append(tool_group_idx)
                 deferred_tool_requests = DeferredToolRequests(
                     calls=deferred_calls['external'],
                     approvals=deferred_calls['unapproved'],
@@ -1559,7 +1580,6 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
                     timestamp=message.timestamp or last_message.timestamp,
-                    resume_tool_group=message.resume_tool_group,
                 )
                 clean_messages[-1] = merged_message
             else:
