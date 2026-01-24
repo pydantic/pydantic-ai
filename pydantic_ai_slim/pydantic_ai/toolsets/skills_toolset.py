@@ -23,7 +23,7 @@ from .._griffe import doc_descriptions
 from .._run_context import RunContext
 from ..skills import Skill, SkillResource, SkillScript, SkillsDirectory, SkillWrapper, normalize_skill_name
 from ..skills._exceptions import SkillNotFoundError, SkillResourceNotFoundError, SkillValidationError
-from ..skills._types import _SKILL_NAME_PATTERN
+from ..skills._types import SKILL_NAME_PATTERN
 from .function import FunctionToolset
 
 # Default instruction template for skills system prompt
@@ -583,7 +583,7 @@ class SkillsToolset(FunctionToolset):
                 # Explicit name provided - validate it directly without normalization
                 skill_name = name
                 # Validate the explicit name
-                if not _SKILL_NAME_PATTERN.match(skill_name):
+                if not SKILL_NAME_PATTERN.match(skill_name):
                     raise SkillValidationError(
                         f"Skill name '{skill_name}' is invalid. "
                         'Skill names must contain only lowercase letters, numbers, and hyphens '

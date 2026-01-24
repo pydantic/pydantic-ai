@@ -24,7 +24,7 @@ from ..tools import GenerateToolJsonSchema
 from ._exceptions import SkillValidationError
 
 # Skill name pattern: lowercase letters, numbers, and hyphens (no consecutive hyphens)
-_SKILL_NAME_PATTERN = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
+SKILL_NAME_PATTERN = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
 
 # Generic type variable for dependencies
 DepsT = TypeVar('DepsT')
@@ -55,7 +55,7 @@ def normalize_skill_name(func_name: str) -> str:
     normalized = func_name.replace('_', '-').lower()
 
     # Validate against pattern
-    if not _SKILL_NAME_PATTERN.match(normalized):
+    if not SKILL_NAME_PATTERN.match(normalized):
         raise SkillValidationError(
             f"Skill name '{normalized}' (derived from function '{func_name}') is invalid. "
             'Skill names must contain only lowercase letters, numbers, and hyphens '
