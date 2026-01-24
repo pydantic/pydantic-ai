@@ -22,6 +22,6 @@ class ToolPolicy:
     """If `False`, reject ALL calls when batch exceeds limits. Default (`None`) allows partial acceptance."""
 
     # If we add a mode sort of thing here then we can either raise hard errors or we can raise ModelRetries based on this setting which would be great?
-    mode: Literal['error', 'retry'] = (
-        'retry'  # We can toggle behaviour from here instead of thinking about soft vs hard limits, now everything can be soft or hard LMAO
+    mode: Literal['error', 'model_retry'] = (
+        'model_retry'  # We can toggle behaviour from here instead of thinking about soft vs hard limits, now everything can be soft or hard LMAO
     )
