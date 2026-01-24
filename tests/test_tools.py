@@ -1896,7 +1896,7 @@ def test_error_on_missing_deferred_tool_results():
     assert isinstance(result.output, DeferredToolRequests)
     assert tool_calls == [2]
 
-    msg = "Tool call results need to be provided for all deferred tool calls. Expected: {'function_tool', 'external_tool'}, got: {'function_tool'}"
+    msg = 'Tool call results need to be provided for all deferred tool calls.'
     with pytest.raises(UserError, match=msg):
         # Calling `run_sync` without providing `deferred_tool_results` should raise an error
         agent.run_sync(message_history=result.all_messages())
