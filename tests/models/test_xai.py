@@ -1915,8 +1915,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc',
-                    provider_name='xai',
+                    signature_delta='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc'
                 ),
             ),
             PartStartEvent(
@@ -1953,8 +1952,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
-                    provider_name='xai',
+                    signature_delta='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo'
                 ),
             ),
             PartStartEvent(index=5, part=TextPart(content='Today'), previous_part_kind='builtin-tool-return'),
@@ -2804,10 +2802,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta=IsStr(),
-                    provider_name='xai',
-                ),
+                delta=ThinkingPartDelta(signature_delta=IsStr()),
             ),
             PartStartEvent(index=3, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
