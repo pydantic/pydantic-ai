@@ -57,6 +57,7 @@ with try_import() as imports_successful:
         ImageContent,
         Implementation,
         TextContent,
+        ToolUseContent,
     )
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
@@ -930,6 +931,7 @@ async def test_tool_returning_audio_resource_link(
                             tool_name='get_audio_resource_link',
                             args={},
                             tool_call_id=IsStr(),
+                            provider_name='google-gla',
                             provider_details={'thought_signature': IsStr()},
                         )
                     ],
@@ -1659,6 +1661,20 @@ def test_map_from_mcp_params_model_response():
     )
 
 
+def test_map_from_mcp_params_unsupported_user_content():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(
+                role='user',
+                content=ToolUseContent(type='tool_use', id='123', name='tool', input={}),
+            ),
+        ],
+        maxTokens=8,
+    )
+    with pytest.raises(NotImplementedError, match='ToolUseContent cannot be used as user content'):
+        map_from_mcp_params(params)
+
+
 def test_map_from_pai_messages_with_binary_content():
     """Test that map_from_pai_messages correctly converts image and audio content to MCP format.
 
@@ -1678,7 +1694,11 @@ def test_map_from_pai_messages_with_binary_content():
     assert system_prompt == ''
     assert [m.model_dump(by_alias=True) for m in sampling_msgs] == snapshot(
         [
-            {'role': 'user', 'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None}},
+            {
+                'role': 'user',
+                'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None},
+                '_meta': None,
+            },
             {
                 'role': 'user',
                 'content': {
@@ -1688,6 +1708,7 @@ def test_map_from_pai_messages_with_binary_content():
                     'annotations': None,
                     '_meta': None,
                 },
+                '_meta': None,
             },
         ]
     )
@@ -2232,6 +2253,17 @@ async def test_custom_http_client_not_closed():
     assert len(tools) > 0
 
     assert not custom_http_client.is_closed
+
+
+async def test_http_client_mutually_exclusive_with_headers():
+    server = MCPServerStreamableHTTP(
+        url='https://example.com/mcp',
+        http_client=cached_async_http_client(),
+        headers={'Authorization': 'Bearer token'},
+    )
+    with pytest.raises(ValueError, match='`http_client` is mutually exclusive with `headers`'):
+        async with server:
+            pass
 
 
 # ============================================================================
