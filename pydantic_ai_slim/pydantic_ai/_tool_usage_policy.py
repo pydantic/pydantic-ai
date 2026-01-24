@@ -19,7 +19,7 @@ class ToolPolicy:
     """Maximum successful uses allowed within a single step. `None` for unlimited."""
 
     partial_execution: bool | None = None
-    """If `False`, reject ALL calls when batch exceeds limits. Default (`None`) allows partial acceptance."""
+    """If `False`, reject ALL calls when batch exceeds limits. Default (`None`) allows partial execution."""
 
     # If we add a mode sort of thing here then we can either raise hard errors or we can raise ModelRetries based on this setting which would be great?
     mode: Literal['error', 'model_retry'] = (

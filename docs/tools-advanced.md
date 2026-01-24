@@ -449,9 +449,9 @@ result = agent.run_sync('Fetch records 1, 2, 3, and 4')
 
 This is useful when you want to limit specific expensive or rate-limited tools while leaving others unrestricted.
 
-#### Partial Acceptance vs All-or-Nothing
+#### Partial Execution vs All-or-Nothing
 
-By default, when a model requests more tool calls than allowed, Pydantic AI uses **partial acceptance**: it accepts as many calls as the limits allow and rejects the rest individually. This lets the model make progress with the calls that succeeded.
+By default, when a model requests more tool calls than allowed, Pydantic AI uses **partial execution**: it accepts as many calls as the limits allow and rejects the rest individually. This lets the model make progress with the calls that succeeded.
 
 You can switch to **all-or-nothing** behavior by setting `partial_execution=False` on the tool's `ToolPolicy`. This is useful for tools that have transactional semantics or require all their calls to succeed together:
 

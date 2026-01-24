@@ -1328,15 +1328,15 @@ def test_tool_retries():
 
 
 def test_tool_max_uses():
-    """Test ToolPolicy.max_uses_per_step with partial acceptance on an individual tool.
+    """Test ToolPolicy.max_uses_per_step with partial execution on an individual tool.
 
     ToolPolicy is set on individual tools via @agent.tool(usage_policy=...).
     It limits how many times that specific tool can be called during an agent run.
 
     Here we set max_uses=2 and max_uses_per_step=1. When the model tries to call
-    the tool twice in the same step (exceeding max_uses_per_step), partial acceptance
+    the tool twice in the same step (exceeding max_uses_per_step), partial execution
     kicks in: the first call is accepted and executed, the second call is rejected
-    with a message. ToolPolicy.partial_execution defaults to True, so partial acceptance
+    with a message. ToolPolicy.partial_execution defaults to True, so partial execution
     works by default.
     """
     call_count = 0

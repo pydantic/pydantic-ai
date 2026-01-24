@@ -333,7 +333,7 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> str | None:
         """Check if a tool call is allowed based on per-tool limits.
 
-        This is the check for partial acceptance. It checks per-tool limits (max_uses for this specific tool).
+        This is the check for partial execution. It checks per-tool limits (max_uses for this specific tool).
 
         Args:
             tool_name: The name of the tool to check.
@@ -365,7 +365,7 @@ class ToolManager(Generic[AgentDepsT]):
         if (max_uses_per_step is not None and projected_tool_uses > max_uses_per_step) or (
             max_uses is not None and projected_tool_uses + current_tool_uses > max_uses
         ):
-            # If limits would be exceeded and partial acceptance is not allowed, reject all calls.
+            # If limits would be exceeded and partial execution is not allowed, reject all calls.
             # The tool's ToolPolicy must have partial_execution != False (None means inherit default True)
             tool = self.tools.get(tool_name)
             # Tool allows partial if: no tool, no usage_policy (inherits default True),
