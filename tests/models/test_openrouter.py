@@ -6,7 +6,11 @@ from typing import Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
+
+from unittest.mock import Mock
+from pydantic import ValidationError
 from openai.types.chat import ChatCompletion
+
 from pydantic import BaseModel
 from vcr.cassette import Cassette
 
@@ -855,9 +859,6 @@ async def test_openrouter_edge_cases_and_normalization() -> None:
     assert normalized_2['provider'] == 'unknown'
 
     # ===== PART 3: NON-STREAMING COMPLETION PATHS =====
-    from unittest.mock import Mock
-
-    from openai.types.chat import ChatCompletion
 
     # Test 8a: SUCCESSFUL completion (no error) - covers 555->563 (skip error block)
     success_response = Mock(spec=ChatCompletion)
@@ -941,7 +942,7 @@ async def test_openrouter_coverage_edge_cases() -> None:
 
     # Coverage for error that's NOT a dict
     class MockResponseNotDictError:
-        def model_dump(self) -> dict[str, Any]:  # ✅ Add return type
+        def model_dump(self) -> dict[str, Any]:
             return {
                 'id': 'test-id',
                 'created': 1234567890,
@@ -958,8 +959,6 @@ async def test_openrouter_coverage_edge_cases() -> None:
                 'object': 'chat.completion',
             }
 
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError) as excinfo:
         model._validate_completion(MockResponseNotDictError())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
 
@@ -974,25 +973,27 @@ async def test_openrouter_coverage_edge_cases() -> None:
                 (),
                 {
                     'model_dump': lambda *a, **kw: {  # pyright: ignore[reportUnknownLambdaType]
-                        'error': 'string error',
-                        'choices': [],
+                        'id': 'valid-chunk',
+                        'object': 'chat.completion.chunk',
+                        'created': 1234567890,
                         'model': 'test',
+                        'choices': [{'index': 0, 'delta': {'content': 'valid'}}],
+                        'provider': 'Test',
                     }
                 },
             )()
-
             yield type(
                 'Chunk',
                 (),
                 {
                     'model_dump': lambda *a, **kw: {  # pyright: ignore[reportUnknownLambdaType]
-                        'choices': None,
-                        'provider': {'some_other_key': 'value'},
+                        'error': 'string error',
+                        'choices': [],
                         'model': 'test',
+                        'created': 1234567890,
                     }
                 },
             )()
-
             yield type(
                 'Chunk',
                 (),
@@ -1000,6 +1001,7 @@ async def test_openrouter_coverage_edge_cases() -> None:
                     'model_dump': lambda *a, **kw: {  # pyright: ignore[reportUnknownLambdaType]
                         'choices': 123,
                         'model': 'test',
+                        'created': 1234567890,
                     }
                 },
             )()
@@ -1025,18 +1027,22 @@ async def test_openrouter_coverage_edge_cases() -> None:
             continue
 
     # Direct normalization calls
-    model._normalize_openrouter_response(  # pyright: ignore[reportPrivateUsage]
+    step1 = model._normalize_openrouter_response(  # pyright: ignore[reportPrivateUsage]
         {'choices': None, 'provider': {'some_other_key': 'value'}, 'model': 'test'}, 'chat.completion'
     )
+    assert step1.get('provider') == 'unknown'
 
-    model._normalize_openrouter_response(  # pyright: ignore[reportPrivateUsage]
+    step2 = model._normalize_openrouter_response(  # pyright: ignore[reportPrivateUsage]
         {'choices': 123, 'model': 'test'}, 'chat.completion'
     )
+    assert step2.get('choices') == 123
 
-    stream._normalize_openrouter_response(  # pyright: ignore[reportPrivateUsage]
+    step3 = stream._normalize_openrouter_response(  # pyright: ignore[reportPrivateUsage]
         {'choices': None, 'provider': {'some_other_key': 'value'}, 'model': 'test'}, 'chat.completion.chunk'
     )
+    assert step3.get('provider') == 'unknown'
 
-    stream._normalize_openrouter_response(  # pyright: ignore[reportPrivateUsage]
+    step4 = stream._normalize_openrouter_response(  # pyright: ignore[reportPrivateUsage]
         {'choices': 123, 'model': 'test'}, 'chat.completion.chunk'
     )
+    assert step4.get('choices') == 123
