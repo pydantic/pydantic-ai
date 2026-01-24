@@ -927,6 +927,9 @@ class OutputToolCall:
 class NonOutputToolCalls:
     tool_calls: list[_messages.ToolCallPart] = field(default_factory=list[_messages.ToolCallPart])
 
+    def __bool__(self) -> bool:
+        return bool(self.tool_calls)
+
 
 ToolCallGroup = OutputToolCall | NonOutputToolCalls
 
@@ -1011,7 +1014,9 @@ async def process_tool_calls(  # noqa: C901
     if resume_tool_group is not None:
         result_tool_call_ids = set(tool_call_results.keys())
         all_expected_tool_call_ids = set(
-            tool_call.tool_call_id for group in tool_call_groups[:resume_tool_group + 1] for tool_call in group.tool_calls
+            tool_call.tool_call_id
+            for group in tool_call_groups[: resume_tool_group + 1]
+            for tool_call in group.tool_calls
         )
         if result_tool_call_ids != all_expected_tool_call_ids:
             raise exceptions.UserError(
