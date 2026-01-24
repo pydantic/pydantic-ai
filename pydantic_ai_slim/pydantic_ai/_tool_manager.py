@@ -366,14 +366,14 @@ class ToolManager(Generic[AgentDepsT]):
             max_uses is not None and projected_tool_uses + current_tool_uses > max_uses
         ):
             # If limits would be exceeded and partial acceptance is not allowed, reject all calls.
-            # The tool's ToolPolicy must have partial_acceptance != False (None means inherit default True)
+            # The tool's ToolPolicy must have partial_execution != False (None means inherit default True)
             tool = self.tools.get(tool_name)
             # Tool allows partial if: no tool, no usage_policy (inherits default True),
-            # or usage_policy.partial_acceptance is not explicitly False
+            # or usage_policy.partial_execution is not explicitly False
             tool_allows_partial = (
                 tool is None  # Unknown tool - allow through, will fail later with proper error
                 or tool.usage_policy is None  # No policy on tool - inherits default True behavior
-                or tool.usage_policy.partial_acceptance is not False  # None means inherit default True
+                or tool.usage_policy.partial_execution is not False  # None means inherit default True
             )
             if not tool_allows_partial:
                 # TODO: Should be configurable via PromptConfig #3656

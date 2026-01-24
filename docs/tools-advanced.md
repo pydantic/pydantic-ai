@@ -445,7 +445,7 @@ result = agent.run_sync('Fetch records 1, 2, 3, and 4')
 | ------ | ----------- |
 | `max_uses` | Maximum successful uses allowed across the entire run. Once reached, the tool is removed from available tools in subsequent steps. In the current step, further calls are rejected with a message. |
 | `max_uses_per_step` | Maximum successful uses allowed within a single step (model request → tool calls → response). Resets each step. |
-| `partial_acceptance` | When `False`, reject all calls to this tool if the batch would exceed limits (default: `None`, inherits `True` behavior). |
+| `partial_execution` | When `False`, reject all calls to this tool if the batch would exceed limits (default: `None`, inherits `True` behavior). |
 
 This is useful when you want to limit specific expensive or rate-limited tools while leaving others unrestricted.
 
@@ -453,7 +453,7 @@ This is useful when you want to limit specific expensive or rate-limited tools w
 
 By default, when a model requests more tool calls than allowed, Pydantic AI uses **partial acceptance**: it accepts as many calls as the limits allow and rejects the rest individually. This lets the model make progress with the calls that succeeded.
 
-You can switch to **all-or-nothing** behavior by setting `partial_acceptance=False` on the tool's `ToolPolicy`. This is useful for tools that have transactional semantics or require all their calls to succeed together:
+You can switch to **all-or-nothing** behavior by setting `partial_execution=False` on the tool's `ToolPolicy`. This is useful for tools that have transactional semantics or require all their calls to succeed together:
 
 ```python
 from pydantic_ai import Agent, ToolPolicy
@@ -461,7 +461,7 @@ from pydantic_ai import Agent, ToolPolicy
 agent = Agent('openai:gpt-5')
 
 
-@agent.tool_plain(usage_policy=ToolPolicy(max_uses=3, partial_acceptance=False))
+@agent.tool_plain(usage_policy=ToolPolicy(max_uses=3, partial_execution=False))
 def batch_operation(item: str) -> str:
     """Process items in a batch. All calls must succeed together."""
     return f'Processed {item}'

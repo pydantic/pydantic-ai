@@ -1336,7 +1336,7 @@ def test_tool_max_uses():
     Here we set max_uses=2 and max_uses_per_step=1. When the model tries to call
     the tool twice in the same step (exceeding max_uses_per_step), partial acceptance
     kicks in: the first call is accepted and executed, the second call is rejected
-    with a message. ToolPolicy.partial_acceptance defaults to True, so partial acceptance
+    with a message. ToolPolicy.partial_execution defaults to True, so partial acceptance
     works by default.
     """
     call_count = 0
@@ -1348,7 +1348,7 @@ def test_tool_max_uses():
 
         if call_count == 1:
             # First round: call the tool twice.
-            # With max_uses_per_step=1 and partial_acceptance=True (default):
+            # With max_uses_per_step=1 and partial_execution=True (default):
             # - First call is accepted and executed
             # - Second call is rejected with a limit message
             return ModelResponse(
@@ -1422,8 +1422,8 @@ def test_tool_max_uses():
     )
 
 
-def test_tool_policy_partial_acceptance_false_per_tool_rejection():
-    """Test per-tool limit with partial_acceptance=False on the tool rejects batch."""
+def test_tool_policy_partial_execution_false_per_tool_rejection():
+    """Test per-tool limit with partial_execution=False on the tool rejects batch."""
     call_count = 0
 
     def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1431,7 +1431,7 @@ def test_tool_policy_partial_acceptance_false_per_tool_rejection():
         call_count += 1
 
         if call_count == 1:
-            # Try to call tool 3 times, but max_uses is 2 with partial_acceptance=False
+            # Try to call tool 3 times, but max_uses is 2 with partial_execution=False
             return ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='limited_tool', args={}, tool_call_id='call_1'),
@@ -1443,7 +1443,7 @@ def test_tool_policy_partial_acceptance_false_per_tool_rejection():
 
     agent = Agent(FunctionModel(my_model), output_type=str)
 
-    @agent.tool(usage_policy=ToolPolicy(max_uses=2, partial_acceptance=False))
+    @agent.tool(usage_policy=ToolPolicy(max_uses=2, partial_execution=False))
     def limited_tool(ctx: RunContext[None]) -> str:  # pragma: no cover
         return 'used'
 
