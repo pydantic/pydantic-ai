@@ -161,23 +161,45 @@ def _discover_resources(skill_folder: Path) -> list[SkillResource]:
 
     Returns:
         List of discovered SkillResource objects.
+
+    Security:
+        Validates that resolved resource paths remain within skill_folder
+        after symlink resolution to prevent traversal attacks.
     """
     resources: list[SkillResource] = []
 
     # Supported textual file extensions
     supported_extensions = ['.md', '.json', '.yaml', '.yml', '.csv', '.xml', '.txt']
 
+    # Resolve skill_folder once for comparison
+    skill_folder_resolved = skill_folder.resolve()
+
     # Find all supported files recursively, excluding SKILL.md
     for extension in supported_extensions:
         for resource_file in skill_folder.rglob(f'*{extension}'):
             if resource_file.name.upper() != 'SKILL.MD':
+                # Resolve symlinks to detect escape attempts
+                resolved_path = resource_file.resolve()
+
+                # Verify resolved path stays within skill_folder (symlink containment check)
+                try:
+                    resolved_path.relative_to(skill_folder_resolved)
+                except ValueError:
+                    # Path is outside skill_folder (symlink escape detected)
+                    warnings.warn(
+                        f"Resource '{resource_file}' resolves outside skill directory (symlink escape detected). Skipping.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    continue
+
                 rel_path = resource_file.relative_to(skill_folder)
                 # Always use relative path for consistency and better context
                 name = str(rel_path)
                 resources.append(
                     create_file_based_resource(
                         name=name,
-                        uri=str(resource_file.resolve()),
+                        uri=str(resolved_path),
                     )
                 )
 
@@ -231,36 +253,54 @@ def _discover_scripts(
 
     Returns:
         List of discovered SkillScript objects.
+
+    Security:
+        Validates that resolved script paths remain within skill_folder
+        after symlink resolution to prevent execution of scripts outside the skill directory.
     """
     scripts: list[SkillScript] = []
+
+    # Resolve skill_folder once for comparison
+    skill_folder_resolved = skill_folder.resolve()
+
+    def _add_script_if_safe(py_file: Path) -> None:
+        """Add script if its resolved path stays within skill_folder."""
+        # Resolve symlinks to detect escape attempts
+        resolved_path = py_file.resolve()
+
+        # Verify resolved path stays within skill_folder (symlink containment check)
+        try:
+            resolved_path.relative_to(skill_folder_resolved)
+        except ValueError:
+            # Path is outside skill_folder (symlink escape detected)
+            warnings.warn(
+                f"Script '{py_file}' resolves outside skill directory (symlink escape detected). Skipping.",
+                UserWarning,
+                stacklevel=3,
+            )
+            return
+
+        rel_path = py_file.relative_to(skill_folder)
+        scripts.append(
+            create_file_based_script(
+                name=str(rel_path),  # relative path with .py extension
+                uri=str(resolved_path),
+                skill_name=skill_name,
+                executor=executor,
+            )
+        )
 
     # Find .py files in skill folder root (excluding __init__.py)
     for py_file in skill_folder.glob('*.py'):
         if py_file.name != '__init__.py':
-            rel_path = py_file.relative_to(skill_folder)
-            scripts.append(
-                create_file_based_script(
-                    name=str(rel_path),  # relative path with .py extension
-                    uri=str(py_file.resolve()),
-                    skill_name=skill_name,
-                    executor=executor,
-                )
-            )
+            _add_script_if_safe(py_file)
 
     # Find .py files in scripts/ subdirectory
     scripts_dir = skill_folder / 'scripts'
     if scripts_dir.exists() and scripts_dir.is_dir():
         for py_file in scripts_dir.glob('*.py'):
             if py_file.name != '__init__.py':
-                rel_path = py_file.relative_to(skill_folder)
-                scripts.append(
-                    create_file_based_script(
-                        name=str(rel_path),  # relative path with .py extension
-                        uri=str(py_file.resolve()),
-                        skill_name=skill_name,
-                        executor=executor,
-                    )
-                )
+                _add_script_if_safe(py_file)
 
     return scripts
 

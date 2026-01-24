@@ -605,7 +605,7 @@ class SkillsToolset(FunctionToolset):
                 skill_description = desc
 
             # Create the skill wrapper
-            wrapper = SkillWrapper(
+            wrapper: SkillWrapper[Any] = SkillWrapper(
                 function=f,
                 name=skill_name,
                 description=skill_description,

@@ -128,6 +128,11 @@ class LocalSkillScriptExecutor:
         Args:
             script: The script to run.
             args: Named arguments as a dictionary (converted to command-line arguments).
+                Argument conversion rules:
+                - Boolean True: emits flag only (e.g., --verbose without a value)
+                - Boolean False or None: omits the flag entirely
+                - List: repeats the flag for each item (e.g., --item a --item b)
+                - Other types: converts to string (e.g., --query test)
 
         Returns:
             Combined stdout and stderr output.
@@ -145,11 +150,22 @@ class LocalSkillScriptExecutor:
         cmd = [self._python_executable, str(script_path)]
 
         # Convert dict args to command-line named arguments
-        # Example: {"query": "test", "max-papers": 5} -> ["--query", "test", "--max-papers", "5"]
         if args:
             for key, value in args.items():
-                cmd.append(f'--{key}')
-                cmd.append(str(value))
+                if isinstance(value, bool):
+                    # Boolean True: emit flag only; False: omit entirely
+                    if value:
+                        cmd.append(f'--{key}')
+                elif isinstance(value, list):
+                    # List values: repeat flag for each item
+                    for item in cast(list[Any], value):
+                        cmd.append(f'--{key}')
+                        cmd.append(str(item))
+                elif value is not None:
+                    # Regular values: flag + value
+                    cmd.append(f'--{key}')
+                    cmd.append(str(value))
+                # else: None values are omitted
 
         # No stdin data needed for command-line arguments
         stdin_data: bytes | None = None
@@ -279,7 +295,12 @@ class FileBasedSkillScript(SkillScript):
 
         Args:
             ctx: RunContext for accessing dependencies (unused for file-based scripts).
-            args: Named arguments passed as command-line arguments (e.g., {"query": "test"} becomes --query test).
+            args: Named arguments passed as command-line arguments.
+                Argument conversion rules:
+                - Boolean True: emits flag only (e.g., --verbose)
+                - Boolean False or None: omits the flag
+                - List: repeats flag for each item (e.g., --item a --item b)
+                - Other: converts to string (e.g., --query test)
 
         Returns:
             Script output (stdout + stderr).

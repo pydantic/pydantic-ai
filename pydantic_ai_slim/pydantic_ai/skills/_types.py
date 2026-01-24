@@ -452,7 +452,7 @@ class SkillWrapper(Generic[DepsT]):
 
     def __init__(
         self,
-        function: Callable[[Any], str],
+        function: Callable[[], str],
         name: str,
         description: str | None,
         license: str | None,
