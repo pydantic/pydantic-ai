@@ -324,8 +324,9 @@ def vcr_config():
 Use the `@pytest.mark.vcr` decorator to record and replay HTTP interactions:
 
 ```py {title="test_integration.py"}
-from pydantic_ai import Agent
 import pytest
+
+from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o-mini')
 
