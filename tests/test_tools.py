@@ -1391,6 +1391,7 @@ def test_tool_raises_approval_required():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr(), resume_tool_group=0),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
@@ -1831,6 +1832,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                resume_tool_group=0,
             ),
         ]
     )
@@ -1926,6 +1928,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                resume_tool_group=0,
             ),
             ModelRequest(
                 parts=[
@@ -2200,6 +2203,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                resume_tool_group=0,
             ),
         ]
     )
@@ -2255,6 +2259,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                resume_tool_group=0,
             ),
             ModelRequest(
                 parts=[
