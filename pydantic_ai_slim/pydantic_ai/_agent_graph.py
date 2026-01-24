@@ -321,7 +321,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     call_result = _messages.ToolReturn(call_result)
                 tool_call_results[tool_call_id] = call_result
 
-        tool_manager = ctx.deps.tool_manager
+        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(build_run_context(ctx))
+
         final_result: result.FinalResult[NodeRunEndT] | None = None
         for part in last_model_request.parts:
             if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
@@ -335,7 +336,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if (
                 final_result is None
                 and isinstance(part, _messages.ToolReturnPart)
-                and (tool_def := tool_manager.get_tool_def(part.tool_name))
+                and (tool_def := ctx.deps.tool_manager.get_tool_def(part.tool_name))
                 and tool_def.kind == 'output'
             ):
                 final_result = result.FinalResult(part.content, part.tool_name, part.tool_call_id)
