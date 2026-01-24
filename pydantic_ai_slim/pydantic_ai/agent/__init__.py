@@ -633,7 +633,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries,tool_use_policy=tool_use_policy)
+        tool_manager = ToolManager[AgentDepsT](
+            toolset, default_max_retries=self._max_tool_retries, tool_use_policy=tool_use_policy
+        )
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)

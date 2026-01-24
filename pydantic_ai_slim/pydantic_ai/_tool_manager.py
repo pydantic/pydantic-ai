@@ -351,6 +351,8 @@ class ToolManager(Generic[AgentDepsT]):
             None if the call is allowed.
             A string error message if the call should be rejected.
         """
+        # TODO: I have no idea how this logic went through but damn it is ugly need to read through and fix this signature to be more understanable
+
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 

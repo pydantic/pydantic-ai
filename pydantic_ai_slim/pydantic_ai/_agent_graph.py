@@ -1064,7 +1064,7 @@ def _handle_tool_calls_parts(
     total_accepted = 0
 
     for call in tool_calls:
-        # TODO: I have no idea how this logic went through but damn it is ugly need to read through and fix this
+
         rejection_reason = tool_manager.check_tool_call_allowed(
             call.tool_name,
             tool_accepted_in_step=accepted_per_tool[call.tool_name],
@@ -1109,9 +1109,7 @@ async def _call_tools(  # noqa: C901
     if usage_limits.tool_calls_limit is not None:
         usage_limits.check_before_tool_call(projected_usage)
 
-    projected_tool_uses = Counter[str]()
-    for call in tool_calls:
-        projected_tool_uses[call.tool_name] += 1
+    projected_tool_uses = Counter[str](call.tool_name for call in tool_calls)
 
     calls_to_run: list[_messages.ToolCallPart] = []
 

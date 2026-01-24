@@ -52,6 +52,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Number of retries for each tool so far."""
     tools_use_counts: dict[str, int] = field(default_factory=dict)
     """Successful use counts per tool. Only tools that have been used appear here."""
+    #TODO: Consider having an aggregate of total counts as well here?
+    # How does usage limit track this? -> RunUsage is incremented in place where it tracks total tool_calls
+    # I am tracking it here, is that really fine? Is RunUsage a better place to put it?
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
