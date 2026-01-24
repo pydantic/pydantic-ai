@@ -767,6 +767,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
         output_resume_tool_group: deque[int | None] = deque(maxlen=1)
+        output_resume_tool_group.append(None)
 
         tool_call_groups = model_response_to_tool_call_groups(
             ctx.deps.tool_manager, self.model_response, ctx.deps.end_strategy
