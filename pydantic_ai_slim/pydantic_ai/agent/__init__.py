@@ -452,6 +452,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self._output_type
 
     @property
+    def tool_use_policy(self) -> ToolPolicy | None:
+        """Agent tool policy"""
+        return self._tool_use_policy
+
+    @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         return self._event_stream_handler
@@ -593,13 +598,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
-            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
 
         Returns:
             The result of the run.
@@ -614,6 +619,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_schema = self._prepare_output_schema(output_type)
 
         output_type_ = output_type or self.output_type
+        tool_use_policy = tool_use_policy or self.tool_use_policy
 
         # We consider it a user error if a user tries to restrict the result type while having an output validator that
         # may change the result type from the restricted type to something else. Therefore, we consider the following
@@ -627,7 +633,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
+        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries,tool_use_policy=tool_use_policy)
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)

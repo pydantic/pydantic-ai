@@ -11,6 +11,8 @@ from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
+from pydantic_ai._tool_usage_policy import ToolPolicy
+
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
@@ -37,6 +39,8 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
+    tool_use_policy: ToolPolicy | None = None
+    """Tool use policy configured on the Agent or the run methods"""
 
     @classmethod
     @contextmanager
