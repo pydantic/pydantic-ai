@@ -593,9 +593,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                tool_call_groups = _agent_graph.model_response_to_tool_call_groups(
+                                    graph_ctx.deps.tool_manager, stream.response, graph_ctx.deps.end_strategy
+                                )
+                                # `process_tool_calls` may return deferred tool requests.
+                                # If this happens,
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
-                                    tool_calls=stream.response.tool_calls,
+                                    tool_call_groups=tool_call_groups,
+                                    resume_tool_group=None,
                                     tool_call_results=None,
                                     tool_call_metadata=None,
                                     final_result=final_result,
