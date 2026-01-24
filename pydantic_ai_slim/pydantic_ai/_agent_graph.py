@@ -345,6 +345,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         return CallToolsNode[DepsT, NodeRunEndT](
             last_model_response,
             resume_tool_group=last_model_request.resume_tool_group,
+            final_result=final_result,
             tool_call_results=tool_call_results,
             tool_call_metadata=deferred_tool_results.metadata or None,
             user_prompt=self.user_prompt,
