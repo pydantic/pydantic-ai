@@ -65,7 +65,7 @@ Example - File-based skills:
     # Create agent with skills as a toolset
     # Skills instructions are automatically injected via get_instructions()
     agent = Agent(
-        model='openai:gpt-4o',
+        model='openai:gpt-5.2',
         instructions="You are a helpful research assistant.",
         toolsets=[skills_toolset]
     )

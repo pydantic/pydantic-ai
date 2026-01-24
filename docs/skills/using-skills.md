@@ -13,7 +13,7 @@ toolset = SkillsToolset()
 
 # Create agent with skills
 agent = Agent(
-    model='openai:gpt-4o',
+    model='openai:gpt-5.2',
     toolsets=[toolset]
 )
 
@@ -97,8 +97,42 @@ toolset = SkillsToolset(
     max_depth=3,                  # Max directory depth for discovery (default: 3)
     id=None,                      # Unique identifier (default: None)
     instruction_template=None,    # Custom instruction template (default: None)
+    exclude_tools=None,           # Tools to exclude (default: None)
 )
 ```
+
+### Excluding Tools
+
+For security or capability restrictions, you can exclude specific skill tools from being available to agents:
+
+```python
+# Disable script execution only
+toolset = SkillsToolset(
+    directories=["./skills"],
+    exclude_tools={'run_skill_script'}
+)
+
+# Disable multiple tools
+toolset = SkillsToolset(
+    directories=["./skills"],
+    exclude_tools={'run_skill_script', 'read_skill_resource'}
+)
+```
+
+Valid tool names are:
+
+- `list_skills`: List available skills
+- `load_skill`: Load skill instructions
+- `read_skill_resource`: Access skill resources (files or callables)
+- `run_skill_script`: Execute skill scripts
+
+!!! warning "Excluding load_skill"
+    Excluding `load_skill` severely limits skill functionality and will emit a warning. Agents need this tool to work effectively with skills.
+
+**Best Practice:** Only exclude tools you intentionally want to restrict. For example:
+
+- Exclude `run_skill_script` if you want to prevent arbitrary code execution
+- Exclude `read_skill_resource` if you want to limit resource access
 
 ### Default Directory Behavior
 
@@ -409,7 +443,7 @@ async def analyze(ctx: RunContext[MyDeps], metric: str) -> str:
 
 # Use with agent
 agent = Agent(
-    model='openai:gpt-4o',
+    model='openai:gpt-5.2',
     deps_type=MyDeps,
     toolsets=[SkillsToolset(skills=[data_skill])]
 )

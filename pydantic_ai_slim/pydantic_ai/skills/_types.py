@@ -71,20 +71,16 @@ def normalize_skill_name(func_name: str) -> str:
 
 @dataclass
 class SkillResource:
-    """A skill resource within a skill (e.g., FORMS.md, REFERENCE.md, or callable function).
-
-    Resources can be either:
-    - Static content: Loaded from files or provided directly as strings
-    - Dynamic callables: Functions that generate content on-demand, optionally taking RunContext
+    """A skill resource: static content or callable that generates content.
 
     Attributes:
         name: Resource name (e.g., "FORMS.md" or "get_samples").
         description: Description of what the resource provides.
-        content: Static content string (for file-based or direct content resources).
-        function: Callable that generates content dynamically (for programmatic resources).
-        takes_ctx: Whether the function takes a RunContext first argument (auto-detected if None).
+        content: Static content string.
+        function: Callable that generates content dynamically.
+        takes_ctx: Whether the function takes RunContext as first argument.
         function_schema: Function schema for callable resources (auto-generated).
-        uri: Optional URI string for file-based resources (internal use only).
+        uri: Optional URI string for file-based resources (internal use).
     """
 
     name: str
@@ -107,29 +103,24 @@ class SkillResource:
             raise ValueError(f"Resource '{self.name}' with function must have function_schema")
 
     async def load(self, ctx: Any, args: dict[str, Any] | None = None) -> Any:
-        """Load the resource content.
+        """Load resource content.
 
-        Default implementation for programmatic resources with function or static content.
-        File-based resource subclasses override this method to load from disk.
+        File-based subclasses override to load from disk.
 
         Args:
             ctx: RunContext for accessing dependencies.
             args: Named arguments for callable resources.
 
         Returns:
-            The resource content (can be any type like str, dict, etc.).
+            Resource content (any type).
 
         Raises:
             ValueError: If resource has no content or function.
         """
-        # Handle callable resource (programmatic)
         if self.function and self.function_schema:
             return await self.function_schema.call(args or {}, ctx)
-
-        # Handle static content
         elif self.content:
             return self.content
-
         else:
             raise ValueError(f"Resource '{self.name}' has no content or function")
 
@@ -138,18 +129,16 @@ class SkillResource:
 class SkillScript:
     """An executable script within a skill.
 
-    Scripts can be either:
-    - Programmatic functions: Python functions with RunContext support
-    - File-based scripts: Python scripts executed via subprocess
+    Can be programmatic (function) or file-based (executed via subprocess).
 
     Attributes:
-        name: Script name (includes .py extension for file-based scripts).
+        name: Script name (includes .py extension for file-based).
         description: Description of what the script does.
-        function: Callable that implements the script logic (for programmatic scripts).
-        takes_ctx: Whether the function takes a RunContext first argument (auto-detected).
+        function: Callable that implements the script (programmatic).
+        takes_ctx: Whether the function takes RunContext as first argument.
         function_schema: Function schema for callable scripts (auto-generated).
-        uri: Optional URI string for file-based scripts (internal use only).
-        skill_name: Optional parent skill name (internal use only).
+        uri: Optional URI for file-based scripts (internal use).
+        skill_name: Optional parent skill name (internal use).
     """
 
     name: str
@@ -174,23 +163,20 @@ class SkillScript:
     async def run(self, ctx: Any, args: dict[str, Any] | None = None) -> Any:
         """Execute the script.
 
-        Default implementation for programmatic scripts with function.
-        File-based script subclasses override this method to execute via subprocess.
+        File-based subclasses override to execute via subprocess.
 
         Args:
             ctx: RunContext for accessing dependencies.
             args: Named arguments for the script.
 
         Returns:
-            Script output (can be any type like str, dict, etc.).
+            Script output (any type).
 
         Raises:
             ValueError: If script has no function.
         """
-        # Handle callable script (programmatic)
         if self.function and self.function_schema:
             return await self.function_schema.call(args or {}, ctx)
-
         else:
             raise ValueError(f"Script '{self.name}' has no function")
 
@@ -199,7 +185,7 @@ class SkillScript:
 class Skill:
     """A skill instance with metadata, content, resources, and scripts.
 
-    Skills can be created programmatically or loaded from filesystem directories.
+    Can be created programmatically or loaded from filesystem directories.
 
     Example - Programmatic skill with decorators:
         ```python
@@ -240,12 +226,12 @@ class Skill:
     Attributes:
         name: Skill name.
         description: Brief description of what the skill does.
-        content: Main instructional content for the skill.
-        license: Optional license information (e.g., "Apache-2.0" or reference to LICENSE.txt).
-        compatibility: Optional environment requirements (e.g., "Requires git, docker, and internet access"). Max 500 chars.
-        resources: List of resources (files or callables). Defaults to empty list.
-        scripts: List of scripts (functions or file-based). Defaults to empty list.
-        uri: Optional URI string for skill's base location (internal use only, for file-based skills).
+        content: Main instructional content.
+        license: Optional license information.
+        compatibility: Optional environment requirements (max 500 chars).
+        resources: List of resources (files or callables).
+        scripts: List of scripts (functions or file-based).
+        uri: Optional URI for skill's base location (internal use).
         metadata: Additional metadata fields.
     """
 
@@ -300,8 +286,6 @@ class Skill:
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
             resource_name = name or f.__name__
             gen = schema_generator or GenerateToolJsonSchema
-
-            # Generate function schema
             func_schema = _function_schema.function_schema(
                 f,
                 schema_generator=gen,
@@ -309,8 +293,6 @@ class Skill:
                 docstring_format=docstring_format,
                 require_parameter_descriptions=False,
             )
-
-            # Create resource and add to skill
             resource = SkillResource(
                 name=resource_name,
                 description=description or func_schema.description,
@@ -373,8 +355,6 @@ class Skill:
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
             script_name = name or f.__name__
             gen = schema_generator or GenerateToolJsonSchema
-
-            # Generate function schema
             func_schema = _function_schema.function_schema(
                 f,
                 schema_generator=gen,
@@ -382,8 +362,6 @@ class Skill:
                 docstring_format=docstring_format,
                 require_parameter_descriptions=False,
             )
-
-            # Create script and add to skill
             script = SkillScript(
                 name=script_name,
                 description=description or func_schema.description,
@@ -406,11 +384,7 @@ class Skill:
 class SkillWrapper(Generic[DepsT]):
     """Generic wrapper for decorator-based skill creation with type-safe dependencies.
 
-    This class wraps a function that returns skill content and provides decorators
-    for attaching resources and scripts. The wrapper is generic over the dependency
-    type, enabling type-safe RunContext usage in attached resources and scripts.
-
-    This is typically created via the `@skills.skill` decorator on a SkillsToolset instance.
+    Typically created via `@skills.skill` decorator on a SkillsToolset instance.
 
     Example:
         ```python
@@ -440,14 +414,14 @@ class SkillWrapper(Generic[DepsT]):
         ```
 
     Attributes:
-        function: The function that returns skill content.
-        name: Skill name (normalized from function name if not provided).
+        function: Function that returns skill content.
+        name: Skill name (normalized from function name).
         description: Brief description (from docstring if not provided).
         license: Optional license information.
         compatibility: Optional environment requirements.
         metadata: Additional metadata fields.
-        resources: List of resources to attach to the skill.
-        scripts: List of scripts to attach to the skill.
+        resources: List of resources attached to the skill.
+        scripts: List of scripts attached to the skill.
     """
 
     def __init__(
@@ -464,7 +438,7 @@ class SkillWrapper(Generic[DepsT]):
         """Initialize the skill wrapper.
 
         Args:
-            function: The function that returns skill content.
+            function: Function that returns skill content.
             name: Skill name (already normalized).
             description: Skill description.
             license: Optional license information.
@@ -479,8 +453,8 @@ class SkillWrapper(Generic[DepsT]):
         self.license = license
         self.compatibility = compatibility
         self.metadata = metadata
-        self.resources = list(resources)  # Make a copy to avoid mutations
-        self.scripts = list(scripts)  # Make a copy to avoid mutations
+        self.resources = list(resources)
+        self.scripts = list(scripts)
 
     def resource(
         self,
@@ -527,8 +501,6 @@ class SkillWrapper(Generic[DepsT]):
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
             resource_name = name or f.__name__
             gen = schema_generator or GenerateToolJsonSchema
-
-            # Generate function schema
             func_schema = _function_schema.function_schema(
                 f,
                 schema_generator=gen,
@@ -536,8 +508,6 @@ class SkillWrapper(Generic[DepsT]):
                 docstring_format=docstring_format,
                 require_parameter_descriptions=False,
             )
-
-            # Create resource and add to skill wrapper
             resource = SkillResource(
                 name=resource_name,
                 description=description or func_schema.description,
@@ -600,8 +570,6 @@ class SkillWrapper(Generic[DepsT]):
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
             script_name = name or f.__name__
             gen = schema_generator or GenerateToolJsonSchema
-
-            # Generate function schema
             func_schema = _function_schema.function_schema(
                 f,
                 schema_generator=gen,
@@ -609,8 +577,6 @@ class SkillWrapper(Generic[DepsT]):
                 docstring_format=docstring_format,
                 require_parameter_descriptions=False,
             )
-
-            # Create script and add to skill wrapper
             script = SkillScript(
                 name=script_name,
                 description=description or func_schema.description,
@@ -632,16 +598,10 @@ class SkillWrapper(Generic[DepsT]):
     def to_skill(self) -> Skill:
         """Convert the wrapper to a Skill dataclass.
 
-        Calls the wrapped function to generate the skill content and constructs
-        a Skill instance with all attached resources and scripts.
-
         Returns:
-            A Skill dataclass instance with all metadata and attached resources/scripts.
+            Skill instance with all metadata and attached resources/scripts.
         """
-        # Call the function to get content (must return str)
         content = self.function()
-
-        # Create and return the Skill instance
         return Skill(
             name=self.name,
             description=self.description or '',

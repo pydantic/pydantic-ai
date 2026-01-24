@@ -28,7 +28,7 @@ skills_toolset = SkillsToolset(directories=["./skills"])
 
 # Create agent with skills
 agent = Agent(
-    model='openai:gpt-4o',
+    model='openai:gpt-5.2',
     instructions="You are a helpful research assistant.",
     toolsets=[skills_toolset]
 )

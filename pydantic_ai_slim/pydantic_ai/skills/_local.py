@@ -42,17 +42,15 @@ class FileBasedSkillResource(SkillResource):
     async def load(self, ctx: Any, args: dict[str, Any] | None = None) -> Any:
         """Load resource content from file.
 
-        JSON and YAML files are automatically parsed into Python dicts.
-        If parsing fails, the raw text content is returned instead.
-        All other file types are returned as UTF-8 text strings.
+        JSON and YAML files are parsed; falls back to text if parsing fails.
+        Other file types are returned as UTF-8 text.
 
         Args:
             ctx: RunContext for accessing dependencies (unused for file-based resources).
             args: Named arguments (unused for file-based resources).
 
         Returns:
-            - For JSON/YAML: Parsed dict or fallback to text
-            - For other files: UTF-8 text string
+            Parsed dict (JSON/YAML) or UTF-8 text string.
 
         Raises:
             SkillResourceLoadError: If file cannot be read or path is invalid.
@@ -67,26 +65,20 @@ class FileBasedSkillResource(SkillResource):
         except OSError as e:
             raise SkillResourceLoadError(f"Failed to read resource '{self.name}': {e}") from e
 
-        # Extract file extension from the resource name
         file_extension = Path(self.name).suffix.lower()
 
-        # Attempt to parse JSON files
         if file_extension == '.json':
             try:
                 return json.loads(content)
             except json.JSONDecodeError:
-                # Fall back to returning raw text if parsing fails
                 return content
 
-        # Attempt to parse YAML files
         elif file_extension in ('.yaml', '.yml'):
             try:
                 return yaml.safe_load(content)
             except yaml.YAMLError:
-                # Fall back to returning raw text if parsing fails
                 return content
 
-        # All other file types return as text
         return content
 
 
@@ -127,12 +119,9 @@ class LocalSkillScriptExecutor:
 
         Args:
             script: The script to run.
-            args: Named arguments as a dictionary (converted to command-line arguments).
-                Argument conversion rules:
-                - Boolean True: emits flag only (e.g., --verbose without a value)
-                - Boolean False or None: omits the flag entirely
-                - List: repeats the flag for each item (e.g., --item a --item b)
-                - Other types: converts to string (e.g., --query test)
+            args: Named arguments as a dictionary.
+                Boolean True emits flag only, False/None omits it,
+                lists repeat the flag for each item, other types convert to string.
 
         Returns:
             Combined stdout and stderr output.
@@ -143,52 +132,38 @@ class LocalSkillScriptExecutor:
         if script.uri is None:
             raise SkillScriptExecutionError(f"Script '{script.name}' has no URI for subprocess execution")
 
-        # Convert URI to path for filesystem execution
         script_path = Path(script.uri)
-
-        # Build command with named arguments
         cmd = [self._python_executable, str(script_path)]
 
-        # Convert dict args to command-line named arguments
         if args:
             for key, value in args.items():
                 if isinstance(value, bool):
-                    # Boolean True: emit flag only; False: omit entirely
                     if value:
                         cmd.append(f'--{key}')
                 elif isinstance(value, list):
-                    # List values: repeat flag for each item
                     for item in cast(list[Any], value):
                         cmd.append(f'--{key}')
                         cmd.append(str(item))
                 elif value is not None:
-                    # Regular values: flag + value
                     cmd.append(f'--{key}')
                     cmd.append(str(value))
-                # else: None values are omitted
 
-        # No stdin data needed for command-line arguments
         stdin_data: bytes | None = None
+        cwd = str(script_path.parent)
 
         try:
-            # Use anyio.run_process for async-compatible execution
-            # cwd is the script's directory
-            cwd = str(script_path.parent)
-
             result = None
             with anyio.move_on_after(self.timeout) as scope:
                 result = await anyio.run_process(
                     cmd,
-                    check=False,  # We handle return codes manually
+                    check=False,
                     cwd=cwd,
                     input=stdin_data,
                 )
 
-            # Check if timeout was reached (result would be None if cancelled)
             if scope.cancelled_caught or result is None:
                 raise SkillScriptExecutionError(f"Script '{script.name}' timed out after {self.timeout} seconds")
 
-            # Decode output from bytes to string
             output = result.stdout.decode('utf-8', errors='replace')
             if result.stderr:
                 stderr = result.stderr.decode('utf-8', errors='replace')

@@ -27,20 +27,20 @@ from ..skills._types import SKILL_NAME_PATTERN
 from .function import FunctionToolset
 
 # Default instruction template for skills system prompt
-DEFAULT_INSTRUCTION_TEMPLATE = """\
-Here is a list of skills that contain domain specific knowledge on a variety of topics.
-Each skill comes with a description of the topic and instructions on how to use it.
-When a user asks you to perform a task that falls within the domain of a skill, use the `load_skill` tool to acquire the full instructions.
+_INSTRUCTION_SKILLS_HEADER = """\
+You have access to a collection of skills containing domain-specific knowledge and capabilities.
+Each skill provides specialized instructions, resources, and scripts for specific tasks.
 
 <available_skills>
 {skills_list}
 </available_skills>
 
-Use progressive disclosure: load only what you need, when you need it:
+When a task falls within a skill's domain:
+1. Use `load_skill` to read the complete skill instructions
+2. Follow the skill's guidance to complete the task
+3. Use skill resources and scripts as needed
 
-- First, use `load_skill` tool to read the full skill instructions
-- To read additional resources within a skill, use `read_skill_resource` tool
-- To execute skill scripts, use `run_skill_script` tool"""
+Use progressive disclosure: load only what you need, when you need it."""
 
 # Template used by load_skill
 LOAD_SKILL_TEMPLATE = """<skill>
@@ -66,7 +66,7 @@ LOAD_SKILL_TEMPLATE = """<skill>
 class SkillsToolset(FunctionToolset):
     """Pydantic AI toolset for automatic skill discovery and integration.
 
-    See [skills docs](../skills.md) for more information.
+    See [skills docs](../skills/overview.md) for more information.
 
     This is the primary interface for integrating skills with Pydantic AI agents.
     It manages skills directly and provides tools for skill interaction.
@@ -83,14 +83,14 @@ class SkillsToolset(FunctionToolset):
 
         # Default: uses ./skills directory
         agent = Agent(
-            model='openai:gpt-4o',
+            model='openai:gpt-5.2',
             instructions="You are a helpful assistant.",
             toolsets=[SkillsToolset()]
         )
 
         # Multiple directories
         agent = Agent(
-            model='openai:gpt-4o',
+            model='openai:gpt-5.2',
             toolsets=[SkillsToolset(directories=["./skills", "./more-skills"])]
         )
 
@@ -104,13 +104,13 @@ class SkillsToolset(FunctionToolset):
             content="Instructions here",
         )
         agent = Agent(
-            model='openai:gpt-4o',
+            model='openai:gpt-5.2',
             toolsets=[SkillsToolset(skills=[custom_skill])]
         )
 
         # Combined mode: both programmatic skills and directories
         agent = Agent(
-            model='openai:gpt-4o',
+            model='openai:gpt-5.2',
             toolsets=[SkillsToolset(
                 skills=[custom_skill],
                 directories=["./skills"]
@@ -122,7 +122,7 @@ class SkillsToolset(FunctionToolset):
 
         dir1 = SkillsDirectory(path="./skills")
         agent = Agent(
-            model='openai:gpt-4o',
+            model='openai:gpt-5.2',
             toolsets=[SkillsToolset(directories=[dir1, "./more-skills"])]
         )
         # Skills instructions are automatically injected via get_instructions()
@@ -138,6 +138,7 @@ class SkillsToolset(FunctionToolset):
         max_depth: int | None = 3,
         id: str | None = None,
         instruction_template: str | None = None,
+        exclude_tools: set[str] | None = None,
     ) -> None:
         """Initialize the skills toolset.
 
@@ -151,6 +152,10 @@ class SkillsToolset(FunctionToolset):
             id: Unique identifier for this toolset.
             instruction_template: Custom instruction template for skills system prompt.
                 Must include `{skills_list}` placeholder. If None, uses default template.
+                Tool usage guidance is provided in the tool docstrings themselves.
+            exclude_tools: Set of tool names to exclude from registration (e.g., {'run_skill_script'}).
+                Useful for security or capability restrictions such as disabling script execution.
+                Valid tool names: 'list_skills', 'load_skill', 'read_skill_resource', 'run_skill_script'.
 
         Example:
             ```python
@@ -177,6 +182,21 @@ class SkillsToolset(FunctionToolset):
         super().__init__(id=id)
 
         self._instruction_template = instruction_template
+
+        # Validate and initialize exclude_tools
+        valid_tools = {'list_skills', 'load_skill', 'read_skill_resource', 'run_skill_script'}
+        self._exclude_tools: set[str] = set(exclude_tools or set())
+        invalid = self._exclude_tools - valid_tools
+        if invalid:
+            raise ValueError(f'Unknown tools: {invalid}. Valid: {valid_tools}')
+
+        if 'load_skill' in self._exclude_tools:
+            warnings.warn(
+                "'load_skill' is a critical tool for skills usage and has been excluded. "
+                'Agents will not be able to load skill instructions, which severely limits skill functionality.',
+                UserWarning,
+                stacklevel=2,
+            )
 
         # Initialize the skills dict and directories list (for refresh)
         self._skills: dict[str, Skill] = {}
@@ -340,41 +360,62 @@ class SkillsToolset(FunctionToolset):
     def _register_tools(self) -> None:
         """Register skill management tools with the toolset.
 
-        This method registers all four skill management tools:
-        - list_skills: List available skills
-        - load_skill: Load skill instructions
-        - read_skill_resource: Read skill resources
-        - run_skill_script: Execute skill scripts
+        This method registers skill management tools, excluding any specified in exclude_tools.
+        Available tools: list_skills, load_skill, read_skill_resource, run_skill_script.
         """
+        if 'list_skills' not in self._exclude_tools:
+            self._register_list_skills()
+        if 'load_skill' not in self._exclude_tools:
+            self._register_load_skill()
+        if 'read_skill_resource' not in self._exclude_tools:
+            self._register_read_skill_resource()
+        if 'run_skill_script' not in self._exclude_tools:
+            self._register_run_skill_script()
+
+    def _register_list_skills(self) -> None:
+        """Register the list_skills tool."""
 
         @self.tool
         async def list_skills(_ctx: RunContext[Any]) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
-            """List all available skills with their descriptions.
+            """Get an overview of all available skills and what they do.
 
-            Only use this tool if the available skills are not in your system prompt.
+            Use this when you need to discover what skills exist or refresh your knowledge
+            of available capabilities. Skills provide domain-specific knowledge and instructions
+            for specialized tasks.
 
             Returns:
-                Dictionary mapping skill names to brief descriptions.
+                Dictionary mapping skill names to their descriptions.
                 Empty dictionary if no skills are available.
             """
             return {name: skill.description for name, skill in self._skills.items()}
 
+    def _register_load_skill(self) -> None:
+        """Register the load_skill tool."""
+
         @self.tool
         async def load_skill(ctx: RunContext[Any], skill_name: str) -> str:  # pyright: ignore[reportUnusedFunction]  # noqa: D417
-            """Load complete instructions and metadata for a specific skill.
+            """Load complete instructions and capabilities for a specific skill.
 
-            Do NOT infer or guess resource names or script names - they must come from
-            the output of this tool.
+            A skill contains detailed instructions, supplementary resources (like templates or
+            reference docs), and executable scripts. Load a skill when you need to perform a
+            task within its domain.
 
             Args:
-                skill_name: Exact name of the skill.
+                skill_name: Exact name from your available skills list.
+                    Must match exactly (e.g., "data-analysis" not "data analysis").
 
             Returns:
-                Complete skill documentation including:
-                - Skill description and purpose
-                - List of available resource files (e.g., FORMS.md, REFERENCE.md)
-                - List of available scripts with their names
-                - Detailed usage instructions and examples
+                Structured documentation containing:
+                - Skill name, description, and source location
+                - Available resources: supplementary files with their parameters
+                - Available scripts: executable programs with their parameters
+                - Detailed instructions: step-by-step guidance for using the skill
+
+            Important:
+            - Read the entire instructions section before taking action
+            - Resource and script names are authoritative - use exact names from the output
+            - Do NOT infer or guess resource/script names
+            - Check parameter schemas if resources or scripts require arguments
             """
             _ = ctx  # Required by Pydantic AI toolset protocol
             if skill_name not in self._skills:
@@ -407,30 +448,43 @@ class SkillsToolset(FunctionToolset):
                 content=skill.content,
             )
 
+    def _register_read_skill_resource(self) -> None:
+        """Register the read_skill_resource tool."""
+
         @self.tool
-        async def read_skill_resource(  # pyright: ignore[reportUnusedFunction]
+        async def read_skill_resource(  # pyright: ignore[reportUnusedFunction]  #noqa: D417
             ctx: RunContext[Any],
             skill_name: str,
             resource_name: str,
             args: dict[str, Any] | None = None,
         ) -> str:
-            """Read a resource file from a skill or invoke a callable resource.
+            """Access supplementary documentation, templates, or data from a skill.
 
-            Do NOT guess or infer resource names, use load_skill first to get the resource names.
+            Resources are additional files that support skill execution. They can be static
+            content (markdown docs, templates, schemas) or dynamic callables (functions that
+            generate content based on parameters).
 
-            Resources contain supplementary documentation like form templates,
-            reference guides, or data schemas. They can be static content or dynamic callables.
+            When to use this:
+            - When a skill's instructions reference a specific resource
+            - To access form templates, reference documentation, or data schemas
+            - When you need supplementary information beyond the skill instructions
 
             Args:
-                ctx: Run context (required by toolset protocol).
-                skill_name: Exact name of the skill (from list_skills or load_skill).
-                resource_name: Exact resource filename as listed in load_skill output
-                    (e.g., "FORMS.md", "REFERENCE.md").
-                args: Named arguments as a dictionary matching the resource's parameter schema.
-                    Keys should match parameter names from the resource's schema.
+                skill_name: Name of the skill containing the resource.
+                resource_name: Exact name of the resource as listed in the skill.
+                    Examples: "FORMS.md", "REFERENCE.md", "get_schema"
+                    Must match exactly - do not infer or guess.
+                args: Arguments for callable resources (optional for static files).
+                    Keys must match the parameter names in the resource's schema.
 
             Returns:
-                Complete content of the requested resource.
+                The resource content as a string.
+
+            Important:
+            - Get resource names from the skill's documentation first
+            - Use exact resource names - do not modify or guess
+            - Check if the resource requires arguments (check its schema)
+            - Static files don't need args; callables may require them
             """
             if skill_name not in self._skills:
                 raise SkillNotFoundError(f"Skill '{skill_name}' not found.")
@@ -449,27 +503,45 @@ class SkillsToolset(FunctionToolset):
             # Use resource.load() interface - implementation handles the details
             return await resource.load(ctx=ctx, args=args)
 
+    def _register_run_skill_script(self) -> None:
+        """Register the run_skill_script tool."""
+
         @self.tool
-        async def run_skill_script(  # pyright: ignore[reportUnusedFunction]
+        async def run_skill_script(  # pyright: ignore[reportUnusedFunction]  # noqa: D417
             ctx: RunContext[Any],
             skill_name: str,
             script_name: str,
             args: dict[str, Any] | None = None,
         ) -> str:
-            """Execute a script provided by a skill.
+            """Execute a skill script that performs actions or computations.
 
-            Do NOT guess or infer script names or arguments.
-            Use load_skill first to get the script names and usage instructions.
+            Scripts are executable programs provided by skills that can perform actions
+            (API calls, file operations), process data (transformations, analysis), or
+            generate outputs (reports, visualizations).
+
+            When to use this:
+            - When a skill's instructions tell you to run a specific script
+            - To perform automated tasks that the skill provides
+            - For data processing, API interactions, or file operations
 
             Args:
-                ctx: Run context (required by toolset protocol).
-                skill_name: Exact name of the skill (from list_skills or load_skill).
-                script_name: Exact script name as listed in load_skill output (includes .py extension).
-                args: Named arguments as a dictionary matching the script's parameter schema.
-                    Keys should match parameter names from the script's schema.
+                skill_name: Name of the skill containing the script.
+                script_name: Exact name of the script as listed in the skill.
+                    Usually includes .py extension: "analyze.py", "process.py"
+                    Must match exactly - do not infer or guess.
+                args: Arguments required by the script.
+                    Keys must match the parameter names in the script's schema.
 
             Returns:
-                Script output including both stdout and stderr.
+                Script execution output including stdout and stderr.
+
+            Important:
+            - Get script names from the skill's documentation first
+            - Use exact script names - do not modify or guess
+            - Check the script's parameter schema for required arguments
+            - Review skill instructions before running scripts
+            - Scripts may modify external state (files, databases, APIs)
+            - Execution errors are included in the output
             """
             if skill_name not in self._skills:
                 raise SkillNotFoundError(f"Skill '{skill_name}' not found.")
@@ -491,8 +563,7 @@ class SkillsToolset(FunctionToolset):
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         """Return instructions to inject into the agent's system prompt.
 
-        Returns the skills system prompt containing all skill metadata
-        and usage guidance for the agent.
+        Returns the skills system prompt containing usage guidance and all skill metadata.
 
         Args:
             ctx: The run context for this agent run.
@@ -503,7 +574,7 @@ class SkillsToolset(FunctionToolset):
         if not self._skills:
             return None
 
-        # Build skills list
+        # Build skills list in XML format
         skills_list_lines: list[str] = []
         for skill in sorted(self._skills.values(), key=lambda s: s.name):
             skills_list_lines.append('<skill>')
@@ -514,11 +585,11 @@ class SkillsToolset(FunctionToolset):
             skills_list_lines.append('</skill>')
         skills_list = '\n'.join(skills_list_lines)
 
-        # Use custom template or default
-        template = self._instruction_template if self._instruction_template else DEFAULT_INSTRUCTION_TEMPLATE
+        # Use custom template if provided, otherwise use default
+        if self._instruction_template:
+            return self._instruction_template.format(skills_list=skills_list)
 
-        # Format template with skills list
-        return template.format(skills_list=skills_list)
+        return _INSTRUCTION_SKILLS_HEADER.format(skills_list=skills_list)
 
     def skill(
         self,

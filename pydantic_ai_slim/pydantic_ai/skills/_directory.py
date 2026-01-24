@@ -56,7 +56,6 @@ def _validate_skill_metadata(
 
     # Validate name format
     if name:
-        # Check length first to avoid processing excessively long names (good practice)
         if len(name) > 64:
             warnings.warn(
                 f"Skill name '{name}' exceeds 64 characters ({len(name)} chars) recommendation. Consider shortening it.",
@@ -109,8 +108,6 @@ def _validate_skill_metadata(
 def _parse_skill_md(content: str) -> tuple[dict[str, Any], str]:
     """Parse a SKILL.md file into frontmatter and instructions.
 
-    Uses PyYAML for robust YAML parsing.
-
     Args:
         content: Full content of the SKILL.md file.
 
@@ -120,18 +117,15 @@ def _parse_skill_md(content: str) -> tuple[dict[str, Any], str]:
     Raises:
         SkillValidationError: If YAML parsing fails.
     """
-    # Match YAML frontmatter between --- delimiters
     frontmatter_pattern = r'^---\s*\n(.*?)^---\s*\n'
     match = re.search(frontmatter_pattern, content, re.DOTALL | re.MULTILINE)
 
     if not match:
-        # No frontmatter, treat entire content as instructions
         return {}, content.strip()
 
     frontmatter_yaml = match.group(1).strip()
     instructions = content[match.end() :].strip()
 
-    # Handle empty frontmatter
     if not frontmatter_yaml:
         return {}, instructions
 
@@ -145,47 +139,29 @@ def _parse_skill_md(content: str) -> tuple[dict[str, Any], str]:
 def _discover_resources(skill_folder: Path) -> list[SkillResource]:
     """Discover resource files in a skill folder.
 
-    Resources are text files other than SKILL.md in the root directory
-    or in any subdirectory (e.g., references/, assets/).
+    Resources are text files other than SKILL.md in any subdirectory.
+    Supported: .md, .json, .yaml, .yml, .csv, .xml, .txt
 
-    Supported file types:
-    - Markdown: .md
-    - JSON: .json
-    - YAML: .yaml, .yml
-    - CSV: .csv
-    - XML: .xml
-    - Text: .txt
+    Security validates that resolved paths remain within skill_folder
+    after symlink resolution to prevent traversal attacks.
 
     Args:
         skill_folder: Path to the skill directory.
 
     Returns:
         List of discovered SkillResource objects.
-
-    Security:
-        Validates that resolved resource paths remain within skill_folder
-        after symlink resolution to prevent traversal attacks.
     """
     resources: list[SkillResource] = []
-
-    # Supported textual file extensions
     supported_extensions = ['.md', '.json', '.yaml', '.yml', '.csv', '.xml', '.txt']
-
-    # Resolve skill_folder once for comparison
     skill_folder_resolved = skill_folder.resolve()
 
-    # Find all supported files recursively, excluding SKILL.md
     for extension in supported_extensions:
         for resource_file in skill_folder.rglob(f'*{extension}'):
             if resource_file.name.upper() != 'SKILL.MD':
-                # Resolve symlinks to detect escape attempts
                 resolved_path = resource_file.resolve()
-
-                # Verify resolved path stays within skill_folder (symlink containment check)
                 try:
                     resolved_path.relative_to(skill_folder_resolved)
                 except ValueError:
-                    # Path is outside skill_folder (symlink escape detected)
                     warnings.warn(
                         f"Resource '{resource_file}' resolves outside skill directory (symlink escape detected). Skipping.",
                         UserWarning,
@@ -194,7 +170,6 @@ def _discover_resources(skill_folder: Path) -> list[SkillResource]:
                     continue
 
                 rel_path = resource_file.relative_to(skill_folder)
-                # Always use relative path for consistency and better context
                 name = str(rel_path)
                 resources.append(
                     create_file_based_resource(
@@ -207,7 +182,7 @@ def _discover_resources(skill_folder: Path) -> list[SkillResource]:
 
 
 def _find_skill_files(root_dir: Path, max_depth: int | None) -> list[Path]:
-    """Find SKILL.md files with depth-limited search using optimized glob patterns.
+    """Find SKILL.md files with depth-limited search using glob patterns.
 
     Args:
         root_dir: Root directory to search from.
@@ -217,11 +192,8 @@ def _find_skill_files(root_dir: Path, max_depth: int | None) -> list[Path]:
         List of paths to SKILL.md files.
     """
     if max_depth is None:
-        # Unlimited recursive search
         return list(root_dir.glob('**/SKILL.md'))
 
-    # Build explicit glob patterns for each depth level
-    # This is much faster than iterdir() while still limiting depth
     skill_files: list[Path] = []
 
     for depth in range(max_depth + 1):
@@ -242,9 +214,9 @@ def _discover_scripts(
 ) -> list[SkillScript]:
     """Discover executable scripts in a skill folder.
 
-    Looks for Python scripts in:
-    - Directly in the skill folder (*.py)
-    - In a scripts/ subdirectory
+    Looks for Python scripts in the root and scripts/ subdirectory.
+    Security validates that resolved paths remain within skill_folder
+    after symlink resolution to prevent traversal attacks.
 
     Args:
         skill_folder: Path to the skill directory.
@@ -253,26 +225,16 @@ def _discover_scripts(
 
     Returns:
         List of discovered SkillScript objects.
-
-    Security:
-        Validates that resolved script paths remain within skill_folder
-        after symlink resolution to prevent execution of scripts outside the skill directory.
     """
     scripts: list[SkillScript] = []
-
-    # Resolve skill_folder once for comparison
     skill_folder_resolved = skill_folder.resolve()
 
     def _add_script_if_safe(py_file: Path) -> None:
         """Add script if its resolved path stays within skill_folder."""
-        # Resolve symlinks to detect escape attempts
         resolved_path = py_file.resolve()
-
-        # Verify resolved path stays within skill_folder (symlink containment check)
         try:
             resolved_path.relative_to(skill_folder_resolved)
         except ValueError:
-            # Path is outside skill_folder (symlink escape detected)
             warnings.warn(
                 f"Script '{py_file}' resolves outside skill directory (symlink escape detected). Skipping.",
                 UserWarning,
@@ -283,19 +245,17 @@ def _discover_scripts(
         rel_path = py_file.relative_to(skill_folder)
         scripts.append(
             create_file_based_script(
-                name=str(rel_path),  # relative path with .py extension
+                name=str(rel_path),
                 uri=str(resolved_path),
                 skill_name=skill_name,
                 executor=executor,
             )
         )
 
-    # Find .py files in skill folder root (excluding __init__.py)
     for py_file in skill_folder.glob('*.py'):
         if py_file.name != '__init__.py':
             _add_script_if_safe(py_file)
 
-    # Find .py files in scripts/ subdirectory
     scripts_dir = skill_folder / 'scripts'
     if scripts_dir.exists() and scripts_dir.is_dir():
         for py_file in scripts_dir.glob('*.py'):
@@ -338,7 +298,6 @@ def _discover_skills(
     if not dir_path.is_dir():
         return skills
 
-    # Find all SKILL.md files (depth-limited search for performance)
     skill_files = _find_skill_files(dir_path, max_depth)
     for skill_file in skill_files:
         try:
@@ -346,38 +305,30 @@ def _discover_skills(
             content = skill_file.read_text(encoding='utf-8')
             frontmatter, instructions = _parse_skill_md(content)
 
-            # Get required fields
             name = frontmatter.get('name')
             description = frontmatter.get('description', '')
 
-            # Validation - if name is missing, handle based on validate flag
             if not name:
                 if validate:
-                    # Skip skill and log warning when validation is enabled
                     warnings.warn(
                         f'Skipping skill at {skill_file}: missing required "name" field.', UserWarning, stacklevel=2
                     )
                     continue
                 else:
-                    # Use folder name as fallback when validation is disabled
                     name = skill_folder.name
 
-            # Extract standard fields and remaining metadata
             license_field = frontmatter.get('license')
             compatibility_field = frontmatter.get('compatibility')
             metadata = {
                 k: v for k, v in frontmatter.items() if k not in ('name', 'description', 'license', 'compatibility')
             }
 
-            # Validate metadata
             if validate:
                 _validate_skill_metadata(frontmatter, instructions)
 
-            # Discover resources and scripts
             resources = _discover_resources(skill_folder)
             scripts = _discover_scripts(skill_folder, name, script_executor or LocalSkillScriptExecutor())
 
-            # Create skill instance
             skill = Skill(
                 name=name,
                 description=description,
@@ -389,16 +340,13 @@ def _discover_skills(
                 scripts=scripts,
                 metadata=metadata if metadata else None,
             )
-
             skills.append(skill)
-
         except SkillValidationError as sve:
             if validate:
                 raise
             else:
                 warnings.warn(f'Skipping invalid skill at {skill_file}: {sve}', UserWarning, stacklevel=2)
         except (OSError, ValueError, KeyError) as e:
-            # Catch specific exceptions that can occur during skill loading
             raise SkillValidationError(f'Failed to load skill from {skill_file}: {e}') from e
 
     return skills
