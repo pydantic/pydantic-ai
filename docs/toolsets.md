@@ -656,14 +656,12 @@ _(This example is complete, it can be run "as is")_
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.
 
-If you want to reuse a network connection or session across tool listings and calls during an agent run, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__].
-
 You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method to provide instructions that will be injected into the agent's system prompt. This is useful for helping the model understand how to effectively use your toolset's tools.
 
-!!! warning "Custom Methods and Wrapper Toolsets"
-    If your custom toolset implements additional methods beyond the standard `AbstractToolset` interface, be aware that these custom methods will **not be preserved** when the toolset is wrapped using composition methods like [`filtered()`][pydantic_ai.toolsets.AbstractToolset.filtered], [`prefixed()`][pydantic_ai.toolsets.AbstractToolset.prefixed], [`prepared()`][pydantic_ai.toolsets.AbstractToolset.prepared], [`renamed()`][pydantic_ai.toolsets.AbstractToolset.renamed], or [`approval_required()`][pydantic_ai.toolsets.AbstractToolset.approval_required].
-    
-    To ensure your custom methods remain accessible, make sure to delegate them in your wrapper implementation, or avoid wrapping toolsets that have custom methods you need to use directly.
+If you want to reuse a network connection or session across tool listings and calls during an agent run, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__].
+
+!!! info "Custom Toolsets and Composition"
+    Custom instructions from [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] are automatically preserved when using composition methods like [`filtered()`][pydantic_ai.toolsets.AbstractToolset.filtered], [`prefixed()`][pydantic_ai.toolsets.AbstractToolset.prefixed], [`prepared()`][pydantic_ai.toolsets.AbstractToolset.prepared], [`renamed()`][pydantic_ai.toolsets.AbstractToolset.renamed], or [`approval_required()`][pydantic_ai.toolsets.AbstractToolset.approval_required]. Other custom methods will work at runtime but may not be recognized by static type checkers.
 
 ## Third-Party Toolsets
 

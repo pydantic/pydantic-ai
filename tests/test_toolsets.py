@@ -879,3 +879,111 @@ def test_agent_toolset_decorator_id():
     # Third toolset should have explicit id
     assert isinstance(toolsets[2], DynamicToolset)
     assert toolsets[2].id == 'custom_id'
+
+async def test_wrapper_toolset_get_instructions_delegation():
+    """Test that WrapperToolset explicitly delegates get_instructions()."""
+
+    class CustomToolsetWithInstructions(FunctionToolset):
+        """A custom toolset that provides instructions."""
+
+        @staticmethod
+        def custom_method() -> str:
+            """A custom method not in AbstractToolset."""
+            return 'custom'
+
+        async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
+            return 'Custom toolset instructions'
+
+    custom_toolset = CustomToolsetWithInstructions()
+    ctx = build_run_context(None)
+
+    # Test direct toolset instructions
+    instructions = await custom_toolset.get_instructions(ctx)
+    assert instructions == 'Custom toolset instructions'
+
+    # Test FilteredToolset preserves instructions via delegation
+    filtered = FilteredToolset(custom_toolset, lambda ctx, tool_def: True)
+    instructions = await filtered.get_instructions(ctx)
+    assert instructions == 'Custom toolset instructions'
+
+    # Test PrefixedToolset preserves instructions via delegation
+    prefixed = PrefixedToolset(custom_toolset, 'prefix_')
+    instructions = await prefixed.get_instructions(ctx)
+    assert instructions == 'Custom toolset instructions'
+
+    # Test PreparedToolset preserves instructions via delegation
+    prepared = PreparedToolset(custom_toolset, lambda ctx, tools: tools)
+    instructions = await prepared.get_instructions(ctx)
+    assert instructions == 'Custom toolset instructions'
+
+
+async def test_wrapper_toolset_custom_method_delegation():
+    """Test that WrapperToolset uses __getattr__() for custom methods."""
+
+    class CustomToolsetWithMethod(FunctionToolset):
+        """A custom toolset with a non-standard method."""
+
+        def custom_method(self) -> str:
+            """A custom method not in AbstractToolset."""
+            return 'custom_result'
+
+        async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
+            return 'Instructions'
+
+    custom_toolset = CustomToolsetWithMethod()
+
+    # Test that custom method is accessible via __getattr__()
+    filtered = FilteredToolset(custom_toolset, lambda ctx, tool_def: True)
+    assert filtered.custom_method() == 'custom_result'
+
+    # Test chained composition preserves custom method access
+    prefixed = PrefixedToolset(filtered, 'prefix_')
+    assert prefixed.custom_method() == 'custom_result'
+
+
+async def test_wrapper_toolset_chained_composition():
+    """Test that chained wrapper composition preserves get_instructions()."""
+
+    class InstructedToolset(FunctionToolset):
+        async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
+            return 'Base instructions'
+
+    base = InstructedToolset()
+
+    # Build a chain: filtered -> prefixed -> prepared
+    ctx = build_run_context(None)
+
+    filtered = FilteredToolset(base, lambda ctx, tool_def: True)
+    instructions = await filtered.get_instructions(ctx)
+    assert instructions == 'Base instructions'
+
+    prefixed = PrefixedToolset(filtered, 'test_')
+    instructions = await prefixed.get_instructions(ctx)
+    assert instructions == 'Base instructions'
+
+    prepared = PreparedToolset(prefixed, lambda ctx, tools: tools)
+    instructions = await prepared.get_instructions(ctx)
+    assert instructions == 'Base instructions'
+
+
+async def test_wrapper_toolset_get_instructions_with_none():
+    """Test that WrapperToolset correctly delegates None returns from get_instructions()."""
+
+    # FunctionToolset without overriding get_instructions should return None
+    toolset = FunctionToolset()
+
+    @toolset.tool
+    def sample_tool():
+        """A sample tool."""
+        pass
+
+    ctx = build_run_context(None)
+
+    # Direct call returns None
+    instructions = await toolset.get_instructions(ctx)
+    assert instructions is None
+
+    # Wrapped in FilteredToolset should also return None
+    filtered = FilteredToolset(toolset, lambda ctx, tool_def: True)
+    instructions = await filtered.get_instructions(ctx)
+    assert instructions is None

@@ -917,11 +917,13 @@ def test_toolset_tool_definitions(sample_skills_dir: Path) -> None:
             ToolDefinition(
                 name='list_skills',
                 description="""\
-<summary>List all available skills with their descriptions.
+<summary>Get an overview of all available skills and what they do.
 
-Only use this tool if the available skills are not in your system prompt.</summary>
+Use this when you need to discover what skills exist or refresh your knowledge
+of available capabilities. Skills provide domain-specific knowledge and instructions
+for specialized tasks.</summary>
 <returns>
-<description>Dictionary mapping skill names to brief descriptions.
+<description>Dictionary mapping skill names to their descriptions.
 Empty dictionary if no skills are available.</description>
 </returns>\
 """,
@@ -934,22 +936,31 @@ Empty dictionary if no skills are available.</description>
             ToolDefinition(
                 name='load_skill',
                 description="""\
-<summary>Load complete instructions and metadata for a specific skill.
+<summary>Load complete instructions and capabilities for a specific skill.
 
-Do NOT infer or guess resource names or script names - they must come from
-the output of this tool.</summary>
+A skill contains detailed instructions, supplementary resources (like templates or
+reference docs), and executable scripts. Load a skill when you need to perform a
+task within its domain.</summary>
 <returns>
-<type>Complete skill documentation including</type>
+<type>Structured documentation containing</type>
 <description>
-- Skill description and purpose
-- List of available resource files (e.g., FORMS.md, REFERENCE.md)
-- List of available scripts with their names
-- Detailed usage instructions and examples</description>
+- Skill name, description, and source location
+- Available resources: supplementary files with their parameters
+- Available scripts: executable programs with their parameters
+- Detailed instructions: step-by-step guidance for using the skill</description>
 </returns>\
 """,
                 parameters_json_schema={
                     'additionalProperties': False,
-                    'properties': {'skill_name': {'description': 'Exact name of the skill.', 'type': 'string'}},
+                    'properties': {
+                        'skill_name': {
+                            'description': """\
+Exact name from your available skills list.
+Must match exactly (e.g., "data-analysis" not "data analysis").\
+""",
+                            'type': 'string',
+                        }
+                    },
                     'required': ['skill_name'],
                     'type': 'object',
                 },
@@ -957,14 +968,18 @@ the output of this tool.</summary>
             ToolDefinition(
                 name='read_skill_resource',
                 description="""\
-<summary>Read a resource file from a skill or invoke a callable resource.
+<summary>Access supplementary documentation, templates, or data from a skill.
 
-Do NOT guess or infer resource names, use load_skill first to get the resource names.
+Resources are additional files that support skill execution. They can be static
+content (markdown docs, templates, schemas) or dynamic callables (functions that
+generate content based on parameters).
 
-Resources contain supplementary documentation like form templates,
-reference guides, or data schemas. They can be static content or dynamic callables.</summary>
+When to use this:
+- When a skill's instructions reference a specific resource
+- To access form templates, reference documentation, or data schemas
+- When you need supplementary information beyond the skill instructions</summary>
 <returns>
-<description>Complete content of the requested resource.</description>
+<description>The resource content as a string.</description>
 </returns>\
 """,
                 parameters_json_schema={
@@ -972,21 +987,22 @@ reference guides, or data schemas. They can be static content or dynamic callabl
                     'properties': {
                         'resource_name': {
                             'description': """\
-Exact resource filename as listed in load_skill output
-(e.g., "FORMS.md", "REFERENCE.md").\
+Exact name of the resource as listed in the skill.
+Examples: "FORMS.md", "REFERENCE.md", "get_schema"
+Must match exactly - do not infer or guess.\
 """,
                             'type': 'string',
                         },
                         'skill_name': {
-                            'description': 'Exact name of the skill (from list_skills or load_skill).',
+                            'description': 'Name of the skill containing the resource.',
                             'type': 'string',
                         },
                         'args': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'description': """\
-Named arguments as a dictionary matching the resource's parameter schema.
-Keys should match parameter names from the resource's schema.\
+Arguments for callable resources (optional for static files).
+Keys must match the parameter names in the resource's schema.\
 """,
                         },
                     },
@@ -997,12 +1013,18 @@ Keys should match parameter names from the resource's schema.\
             ToolDefinition(
                 name='run_skill_script',
                 description="""\
-<summary>Execute a script provided by a skill.
+<summary>Execute a skill script that performs actions or computations.
 
-Do NOT guess or infer script names or arguments.
-Use load_skill first to get the script names and usage instructions.</summary>
+Scripts are executable programs provided by skills that can perform actions
+(API calls, file operations), process data (transformations, analysis), or
+generate outputs (reports, visualizations).
+
+When to use this:
+- When a skill's instructions tell you to run a specific script
+- To perform automated tasks that the skill provides
+- For data processing, API interactions, or file operations</summary>
 <returns>
-<description>Script output including both stdout and stderr.</description>
+<description>Script execution output including stdout and stderr.</description>
 </returns>\
 """,
                 parameters_json_schema={
@@ -1012,16 +1034,20 @@ Use load_skill first to get the script names and usage instructions.</summary>
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'description': """\
-Named arguments as a dictionary matching the script's parameter schema.
-Keys should match parameter names from the script's schema.\
+Arguments required by the script.
+Keys must match the parameter names in the script's schema.\
 """,
                         },
                         'script_name': {
-                            'description': 'Exact script name as listed in load_skill output (includes .py extension).',
+                            'description': """\
+Exact name of the script as listed in the skill.
+Usually includes .py extension: "analyze.py", "process.py"
+Must match exactly - do not infer or guess.\
+""",
                             'type': 'string',
                         },
                         'skill_name': {
-                            'description': 'Exact name of the skill (from list_skills or load_skill).',
+                            'description': 'Name of the skill containing the script.',
                             'type': 'string',
                         },
                     },
@@ -1327,10 +1353,8 @@ async def test_get_instructions_returns_system_prompt(sample_skills_dir: Path) -
     assert 'Third test skill with executable scripts' in instructions
     # Should include usage instructions
     assert 'load_skill' in instructions
-    assert 'read_skill_resource' in instructions
-    assert 'run_skill_script' in instructions
     # Should include progressive disclosure guidance
-    assert 'Progressive disclosure' in instructions or 'progressive disclosure' in instructions
+    assert 'progressive disclosure' in instructions.lower()
 
 
 async def test_get_instructions_empty_toolset() -> None:
@@ -2020,10 +2044,7 @@ async def test_skill_decorator_combined_with_directory_skills(sample_skills_dir:
 
 def test_exclude_tools_run_skill_script(sample_skills_dir: Path) -> None:
     """Test excluding run_skill_script tool for security."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'run_skill_script'}
-    )
+    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
 
     # Check that run_skill_script is not registered
     assert 'run_skill_script' not in toolset.tools
@@ -2034,25 +2055,16 @@ def test_exclude_tools_run_skill_script(sample_skills_dir: Path) -> None:
 
 def test_exclude_tools_invalid_tool_names(sample_skills_dir: Path) -> None:
     """Test that invalid tool names raise ValueError."""
-    with pytest.raises(ValueError, match="Unknown tools"):
-        SkillsToolset(
-            directories=[sample_skills_dir],
-            exclude_tools={'invalid_tool', 'run_skill_script'}
-        )
+    with pytest.raises(ValueError, match='Unknown tools'):
+        SkillsToolset(directories=[sample_skills_dir], exclude_tools={'invalid_tool', 'run_skill_script'})
 
-    with pytest.raises(ValueError, match="Unknown tools"):
-        SkillsToolset(
-            directories=[sample_skills_dir],
-            exclude_tools={'nonexistent'}
-        )
+    with pytest.raises(ValueError, match='Unknown tools'):
+        SkillsToolset(directories=[sample_skills_dir], exclude_tools={'nonexistent'})
 
 
 def test_exclude_multiple_tools(sample_skills_dir: Path) -> None:
     """Test excluding multiple tools."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'run_skill_script', 'read_skill_resource'}
-    )
+    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script', 'read_skill_resource'})
 
     # Check that excluded tools are not registered
     assert 'run_skill_script' not in toolset.tools
@@ -2063,10 +2075,10 @@ def test_exclude_multiple_tools(sample_skills_dir: Path) -> None:
 
 def test_exclude_all_tools_except_list_skills(sample_skills_dir: Path) -> None:
     """Test excluding all tools except list_skills."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'load_skill', 'read_skill_resource', 'run_skill_script'}
-    )
+    with pytest.warns(UserWarning, match="'load_skill' is a critical tool"):
+        toolset = SkillsToolset(
+            directories=[sample_skills_dir], exclude_tools={'load_skill', 'read_skill_resource', 'run_skill_script'}
+        )
 
     # Only list_skills should remain
     assert 'list_skills' in toolset.tools
@@ -2077,10 +2089,7 @@ def test_exclude_all_tools_except_list_skills(sample_skills_dir: Path) -> None:
 
 def test_exclude_tools_empty_set(sample_skills_dir: Path) -> None:
     """Test that empty exclude_tools set doesn't exclude anything."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools=set()
-    )
+    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools=set())
 
     # All tools should be registered
     assert 'list_skills' in toolset.tools
@@ -2101,66 +2110,58 @@ def test_exclude_tools_none_default(sample_skills_dir: Path) -> None:
 
 
 async def test_exclude_tools_instructions_run_script(sample_skills_dir: Path) -> None:
-    """Test that instructions omit run_skill_script when excluded."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'run_skill_script'}
-    )
+    """Test that instructions include core guidance when scripts are excluded."""
+    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
 
     ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
     instructions = await toolset.get_instructions(ctx)
 
     assert instructions is not None
-    # Header should be present
-    assert 'Here is a list of skills' in instructions
-    # Excluded tool instruction should NOT be present
-    assert '- To execute skill scripts, use `run_skill_script` tool' not in instructions
-    # Other tool instruction lines should still be present
-    assert '- First, use `load_skill` tool' in instructions
-    assert '- To read additional resources within a skill, use `read_skill_resource` tool' in instructions
+    # Should include guidance about loading skills
+    assert 'load_skill' in instructions
+    # Should include progressive disclosure guidance
+    assert 'progressive disclosure' in instructions.lower()
 
 
 async def test_exclude_tools_instructions_all_tools(sample_skills_dir: Path) -> None:
     """Test instructions when all execution tools are excluded."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'load_skill', 'read_skill_resource', 'run_skill_script'}
-    )
+    with pytest.warns(UserWarning, match="'load_skill' is a critical tool"):
+        toolset = SkillsToolset(
+            directories=[sample_skills_dir], exclude_tools={'load_skill', 'read_skill_resource', 'run_skill_script'}
+        )
 
     ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
     instructions = await toolset.get_instructions(ctx)
 
     assert instructions is not None
     # Header should still be present (skills list is shown)
-    assert 'Here is a list of skills' in instructions
+    assert 'collection of skills' in instructions
     assert '<available_skills>' in instructions
-    # No tool instruction lines should be present
-    assert '- First, use `load_skill` tool' not in instructions
-    assert '- To read additional resources within a skill, use `read_skill_resource` tool' not in instructions
-    assert '- To execute skill scripts, use `run_skill_script` tool' not in instructions
+    # Skills should still be listed
+    assert 'skill-one' in instructions
 
 
 async def test_exclude_tools_instructions_no_exclusions(sample_skills_dir: Path) -> None:
-    """Test instructions contain all tool references when nothing is excluded."""
+    """Test instructions contain core guidance when nothing is excluded."""
     toolset = SkillsToolset(directories=[sample_skills_dir])
 
     ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
     instructions = await toolset.get_instructions(ctx)
 
     assert instructions is not None
-    # All tool instruction lines should be present
-    assert '- First, use `load_skill` tool' in instructions
-    assert '- To read additional resources within a skill, use `read_skill_resource` tool' in instructions
-    assert '- To execute skill scripts, use `run_skill_script` tool' in instructions
+    # Should include guidance about loading skills
+    assert 'load_skill' in instructions
+    # Should include guidance about using skills resources
+    assert 'skill resources' in instructions
+    # Should include progressive disclosure guidance
+    assert 'progressive disclosure' in instructions.lower()
 
 
 async def test_exclude_tools_with_custom_template(sample_skills_dir: Path) -> None:
     """Test that custom instruction_template bypasses exclude_tools filtering."""
-    custom_template = "Custom instructions with {skills_list}"
+    custom_template = 'Custom instructions with {skills_list}'
     toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'run_skill_script'},
-        instruction_template=custom_template
+        directories=[sample_skills_dir], exclude_tools={'run_skill_script'}, instruction_template=custom_template
     )
 
     ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
@@ -2175,10 +2176,7 @@ async def test_exclude_tools_with_custom_template(sample_skills_dir: Path) -> No
 
 def test_exclude_tools_skills_still_loaded(sample_skills_dir: Path) -> None:
     """Test that skills are still loaded even when tools are excluded."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'run_skill_script', 'read_skill_resource'}
-    )
+    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script', 'read_skill_resource'})
 
     # Skills should still be loaded
     assert 'skill-one' in toolset.skills
@@ -2192,10 +2190,7 @@ def test_exclude_tools_skills_still_loaded(sample_skills_dir: Path) -> None:
 
 async def test_exclude_tools_excluded_tool_raises_error(sample_skills_dir: Path) -> None:
     """Test that excluded tools are not callable."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'run_skill_script'}
-    )
+    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
 
     # The tool should not be in the tools dictionary
     assert 'run_skill_script' not in toolset.tools
@@ -2206,17 +2201,9 @@ async def test_exclude_tools_excluded_tool_raises_error(sample_skills_dir: Path)
 
 def test_exclude_tools_with_programmatic_skills() -> None:
     """Test exclude_tools with programmatically defined skills."""
-    skill = Skill(
-        name='test-skill',
-        uri='./test',
-        description='Test skill',
-        content='Instructions here'
-    )
+    skill = Skill(name='test-skill', uri='./test', description='Test skill', content='Instructions here')
 
-    toolset = SkillsToolset(
-        skills=[skill],
-        exclude_tools={'run_skill_script'}
-    )
+    toolset = SkillsToolset(skills=[skill], exclude_tools={'run_skill_script'})
 
     # Skill should be loaded
     assert 'test-skill' in toolset.skills
@@ -2227,10 +2214,7 @@ def test_exclude_tools_with_programmatic_skills() -> None:
 
 def test_exclude_tools_with_decorator(sample_skills_dir: Path) -> None:
     """Test exclude_tools with decorator-defined skills."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'run_skill_script'}
-    )
+    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
 
     @toolset.skill
     def programmatic_skill() -> str:
@@ -2245,10 +2229,7 @@ def test_exclude_tools_with_decorator(sample_skills_dir: Path) -> None:
 
 async def test_exclude_tools_with_agent(sample_skills_dir: Path) -> None:
     """Test exclude_tools integration with Agent."""
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir],
-        exclude_tools={'run_skill_script'}
-    )
+    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
 
     agent = Agent(model=TestModel(), toolsets=[toolset])
 

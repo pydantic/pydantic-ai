@@ -42,6 +42,14 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        """Delegate instructions to the wrapped toolset.
+
+        This explicit delegation ensures type safety and proper propagation of custom
+        instructions from wrapped toolsets to the agent's system prompt.
+        """
+        return await self.wrapped.get_instructions(ctx)
+
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         self.wrapped.apply(visitor)
 
@@ -49,3 +57,12 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, wrapped=self.wrapped.visit_and_replace(visitor))
+
+    def __getattr__(self, name: str) -> Any:
+        """Fallback delegation for custom attributes and methods from the wrapped toolset.
+
+        This enables runtime access to custom methods and attributes that may be defined
+        on the wrapped toolset but not on this wrapper. Note that static type checkers
+        may not recognize these delegated attributes.
+        """
+        return getattr(self.wrapped, name)
