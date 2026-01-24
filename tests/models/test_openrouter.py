@@ -3,15 +3,12 @@ import json
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
+from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
-
-from unittest.mock import Mock
-from pydantic import ValidationError
 from openai.types.chat import ChatCompletion
-
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
