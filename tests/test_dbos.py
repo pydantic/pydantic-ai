@@ -116,7 +116,6 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
         'name': 'pydantic_dbos_tests',
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
         'run_admin_server': False,
-        # enable_otlp requires dbos>1.14
         'enable_otlp': True,
     }
     dbos = DBOS(config=dbos_config)
