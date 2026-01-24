@@ -60,6 +60,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The maximum number of retries of this tool."""
     run_step: int = 0
     """The current step in the run."""
+    output_retries: int = 0
+    """Number of retries for output validation so far."""
+    max_output_retries: int = 0
+    """The maximum number of retries for output validation."""
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
     tool_call_metadata: Any = None
