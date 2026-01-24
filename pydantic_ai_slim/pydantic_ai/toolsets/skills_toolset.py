@@ -38,7 +38,7 @@ Each skill provides specialized instructions, resources, and scripts for specifi
 When a task falls within a skill's domain:
 1. Use `load_skill` to read the complete skill instructions
 2. Follow the skill's guidance to complete the task
-3. Use skill resources and scripts as needed
+3. Use any additional skill resources and scripts as needed
 
 Use progressive disclosure: load only what you need, when you need it."""
 
@@ -138,7 +138,7 @@ class SkillsToolset(FunctionToolset):
         max_depth: int | None = 3,
         id: str | None = None,
         instruction_template: str | None = None,
-        exclude_tools: set[str] | None = None,
+        exclude_tools: set[str] | list[str] | None = None,
     ) -> None:
         """Initialize the skills toolset.
 
@@ -153,7 +153,7 @@ class SkillsToolset(FunctionToolset):
             instruction_template: Custom instruction template for skills system prompt.
                 Must include `{skills_list}` placeholder. If None, uses default template.
                 Tool usage guidance is provided in the tool docstrings themselves.
-            exclude_tools: Set of tool names to exclude from registration (e.g., {'run_skill_script'}).
+            exclude_tools: Set or list of tool names to exclude from registration (e.g., ['run_skill_script']).
                 Useful for security or capability restrictions such as disabling script execution.
                 Valid tool names: 'list_skills', 'load_skill', 'read_skill_resource', 'run_skill_script'.
 
@@ -177,6 +177,9 @@ class SkillsToolset(FunctionToolset):
             # Using SkillsDirectory instances directly
             dir1 = SkillsDirectory(path="./skills")
             toolset = SkillsToolset(directories=[dir1])
+
+            # Excluding specific tools (disable script execution with a set)
+            toolset = SkillsToolset(exclude_tools=['run_skill_script'])
             ```
         """
         super().__init__(id=id)
@@ -185,7 +188,7 @@ class SkillsToolset(FunctionToolset):
 
         # Validate and initialize exclude_tools
         valid_tools = {'list_skills', 'load_skill', 'read_skill_resource', 'run_skill_script'}
-        self._exclude_tools: set[str] = set(exclude_tools or set())
+        self._exclude_tools: set[str] = set(exclude_tools or [])
         invalid = self._exclude_tools - valid_tools
         if invalid:
             raise ValueError(f'Unknown tools: {invalid}. Valid: {valid_tools}')
@@ -452,7 +455,7 @@ class SkillsToolset(FunctionToolset):
         """Register the read_skill_resource tool."""
 
         @self.tool
-        async def read_skill_resource(  # pyright: ignore[reportUnusedFunction]  #noqa: D417
+        async def read_skill_resource(  # pyright: ignore[reportUnusedFunction]  # noqa: D417
             ctx: RunContext[Any],
             skill_name: str,
             resource_name: str,
