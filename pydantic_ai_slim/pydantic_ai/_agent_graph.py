@@ -842,6 +842,22 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
             )
 
+        if final_result and final_result.tool_call_id is not None:
+            # Replace the final tool result with the placeholder message
+            # before returning the final result to the user.
+            #
+            # TODO: support a flag to disable this behavior (#3632)
+            for message in reversed(messages):
+                if isinstance(message, _messages.ModelResponse):
+                    break
+                elif isinstance(message, _messages.ModelRequest):
+                    for part in message.parts:
+                        if (
+                            isinstance(part, _messages.ToolReturnPart)
+                            and part.tool_call_id == final_result.tool_call_id
+                        ):
+                            part.content = 'Final result processed.'
+
         return End(final_result)
 
     __repr__ = dataclasses_no_defaults_repr
