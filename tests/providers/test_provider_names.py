@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers import Provider, infer_provider, infer_provider_class
+from pydantic_ai.providers import Provider, infer_profile_func, infer_provider, infer_provider_class
 
 from ..conftest import try_import
 
@@ -98,3 +98,32 @@ def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], 
         pytest.skip('Gateway providers are not supported for this test')
 
     assert infer_provider_class(provider) == provider_cls
+
+
+# Providers with dedicated profile functions (for Temporal workflow support)
+PROVIDERS_WITH_PROFILE_FUNCS = [
+    'openai',
+    'openai-chat',
+    'openai-responses',
+    'anthropic',
+    'google',
+    'google-gla',
+    'google-vertex',
+    'vertexai',
+    'groq',
+    'mistral',
+    'cohere',
+    'xai',
+    'grok',
+    'deepseek',
+    'moonshotai',
+    'alibaba',
+    'bedrock',
+]
+
+
+@pytest.mark.parametrize('provider', PROVIDERS_WITH_PROFILE_FUNCS)
+def test_infer_profile_func(provider: str):
+    """Test that infer_profile_func returns a valid function for known providers."""
+    profile_func = infer_profile_func(provider)
+    assert profile_func is not None, f"Missing profile func for '{provider}' in providers/__init__.py"

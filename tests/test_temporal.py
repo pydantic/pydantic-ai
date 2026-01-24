@@ -17,6 +17,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     AgentStreamEvent,
     BinaryImage,
+    CodeExecutionTool,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -41,6 +42,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
@@ -2713,6 +2715,77 @@ class MultiModelWorkflow:
         return result.output
 
 
+class _BuiltinToolModel(Model):
+    SUPPORTED_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset()
+
+    def __init__(self, *, response_text: str, model_name: str) -> None:
+        self._response_text = response_text
+        self._model_name = model_name
+        self.last_model_request_parameters: ModelRequestParameters | None = None
+        super().__init__()
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        return cls.SUPPORTED_TOOLS
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        return 'test'
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
+        self.last_model_request_parameters = model_request_parameters
+        return ModelResponse(parts=[TextPart(self._response_text)], model_name=self._model_name)
+
+
+class _WebSearchOnlyModel(_BuiltinToolModel):
+    SUPPORTED_TOOLS = frozenset({WebSearchTool})
+
+
+class _CodeExecutionOnlyModel(_BuiltinToolModel):
+    SUPPORTED_TOOLS = frozenset({CodeExecutionTool})
+
+
+def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractBuiltinTool:
+    if WebSearchTool in ctx.model.profile.supported_builtin_tools:
+        return WebSearchTool()
+    return CodeExecutionTool()
+
+
+web_search_builtin_model = _WebSearchOnlyModel(response_text='search model', model_name='web-search')
+code_execution_builtin_model = _CodeExecutionOnlyModel(response_text='code model', model_name='code-exec')
+
+builtin_tool_agent = Agent(
+    web_search_builtin_model,
+    name='builtin_tool_dynamic_agent',
+    builtin_tools=[_select_builtin_tool],
+)
+
+builtin_tool_temporal_agent = TemporalAgent(
+    builtin_tool_agent,
+    name='builtin_tool_dynamic_agent',
+    models={'code': code_execution_builtin_model},
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class BuiltinToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, model_id: str | None = None) -> str:
+        result = await builtin_tool_temporal_agent.run(prompt, model=model_id)
+        return result.output
+
+
 @workflow.defn
 class MultiModelWorkflowUnregistered:
     @workflow.run
@@ -2770,6 +2843,39 @@ async def test_temporal_agent_multi_model_selection_in_workflow(allow_model_requ
             task_queue=TASK_QUEUE,
         )
         assert output == 'Response from model 3'
+
+
+async def test_temporal_dynamic_builtin_tools_select_by_model(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BuiltinToolWorkflow],
+        plugins=[AgentPlugin(builtin_tool_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            BuiltinToolWorkflow.run,
+            args=['Hello', None],
+            id='BuiltinToolWorkflow_default',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'search model'
+        assert isinstance(web_search_builtin_model.last_model_request_parameters, ModelRequestParameters)
+        assert web_search_builtin_model.last_model_request_parameters.builtin_tools
+        assert isinstance(web_search_builtin_model.last_model_request_parameters.builtin_tools[0], WebSearchTool)
+
+        output = await client.execute_workflow(
+            BuiltinToolWorkflow.run,
+            args=['Hello', 'code'],
+            id='BuiltinToolWorkflow_code',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'code model'
+        assert isinstance(code_execution_builtin_model.last_model_request_parameters, ModelRequestParameters)
+        assert code_execution_builtin_model.last_model_request_parameters.builtin_tools
+        assert isinstance(
+            code_execution_builtin_model.last_model_request_parameters.builtin_tools[0],
+            CodeExecutionTool,
+        )
 
 
 async def test_temporal_agent_multi_model_unregistered_error(allow_model_requests: None, client: Client):
@@ -2922,6 +3028,48 @@ async def test_temporal_agent_model_selection_by_instance(
             task_queue=TASK_QUEUE,
         )
         assert output == expected_output
+
+
+def test_temporal_model_profile_for_raw_strings():
+    """Test TemporalModel infers model_name, system, and profile from raw strings without constructing providers."""
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__profile_inference',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # Without using_model, properties come from default
+    assert temporal_model.profile == default_model.profile
+    assert temporal_model.model_name == default_model.model_name
+    assert temporal_model.system == default_model.system
+
+    # With raw string, all properties are inferred correctly
+    with temporal_model.using_model('openai:gpt-5'):
+        assert temporal_model.model_name == 'gpt-5'
+        assert temporal_model.system == 'openai'
+        expected_profile = openai_model_profile('gpt-5')
+        assert temporal_model.profile.supports_json_schema_output == expected_profile.supports_json_schema_output
+
+    # Anthropic profile inference includes WebSearchTool support
+    with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
+        assert temporal_model.model_name == 'claude-sonnet-4-5'
+        assert temporal_model.system == 'anthropic'
+        assert WebSearchTool in temporal_model.profile.supported_builtin_tools
+
+    # Registered models work correctly for all properties
+    temporal_model_with_registry = TemporalModel(
+        default_model,
+        activity_name_prefix='test__profile_registry',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': TestModel(custom_output_text='alt', model_name='alt-model')},
+    )
+    with temporal_model_with_registry.using_model('alt'):
+        assert temporal_model_with_registry.model_name == 'alt-model'
 
 
 async def test_temporal_model_request_outside_workflow():
