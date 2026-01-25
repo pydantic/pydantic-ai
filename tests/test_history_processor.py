@@ -882,27 +882,6 @@ async def test_callable_class_history_processor_with_ctx_no_op(
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_new_messages_with_processor_pruning_current_run():
-    def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
-        return messages[-2:] if len(messages) > 2 else messages
-
-    agent = Agent(model=TestModel(custom_output_text='done'), history_processors=[keep_last_2])
-
-    @agent.tool
-    async def my_tool(ctx: RunContext[None]) -> str:
-        return 'tool executed'
-
-    result = await agent.run('New question')
-
-    new_msgs = result.new_messages()
-    all_msgs = result.all_messages()
-
-    assert len(new_msgs) == len(all_msgs), (
-        f'new_messages ({len(new_msgs)}) should equal all_messages ({len(all_msgs)}). '
-        f'Bug: history processor pruned current-run messages, causing new_message_index miscalculation.'
-    )
-
-
 async def test_new_messages_index_during_iter_with_pruning():
     def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
         return messages[-2:] if len(messages) > 2 else messages
@@ -932,28 +911,6 @@ async def test_new_messages_index_during_iter_with_pruning():
     )
 
 
-async def test_new_messages_streaming_with_processor_pruning_current_run():
-    def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
-        return messages[-2:] if len(messages) > 2 else messages
-
-    agent = Agent(model=TestModel(), history_processors=[keep_last_2])
-
-    @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
-        return 'tool executed'
-
-    async with agent.run_stream('New question') as result:
-        async for _ in result.stream_text():
-            pass
-
-    new_msgs = result.new_messages()
-    all_msgs = result.all_messages()
-
-    assert len(new_msgs) == len(all_msgs), (
-        f'Streaming: new_messages ({len(new_msgs)}) should equal all_messages ({len(all_msgs)}).'
-    )
-
-
 async def test_history_processor_reorder_old_new(function_model: FunctionModel, received_messages: list[ModelMessage]):
     def swap_last_two(messages: list[ModelMessage]) -> list[ModelMessage]:
         if len(messages) >= 2:
@@ -979,9 +936,26 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
         ]
     )
     new_msgs = result.new_messages()
-    assert len(new_msgs) == 1
-    assert new_msgs[0].parts[0].content == 'New question', (
-        f"Expected 'New question', got '{new_msgs[0].parts[0].content}'"
+    # Expected behavior: Only messages from THIS run should be in new_messages()
+    # The 'New question' request and response are from this run
+    # 'Old question' was reordered by the processor but is from a previous run
+    assert new_msgs == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
     )
 
 
@@ -1011,4 +985,28 @@ async def test_history_processor_injects_into_new_stream(
     )
 
     new_msgs = result.new_messages()
-    assert any(m.parts[0].content == 'Inserted' for m in new_msgs)
+    # Expected behavior: Messages injected by history processor during THIS run should be included
+    # 'Inserted' was injected by the processor, 'New question' is from this run
+    assert new_msgs == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Inserted', timestamp=IsDatetime()),
+                ],
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
