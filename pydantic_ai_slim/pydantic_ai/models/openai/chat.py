@@ -60,6 +60,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
+from ._azure import check_azure_content_filter
 from ._shared import (
     OpenAIChatModelSettings,
     OpenAIModelName,
@@ -265,6 +266,11 @@ class OpenAIChatModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
+
+        # Handle ModelResponse returned directly (for content filters)
+        if isinstance(response, ModelResponse):
+            return response
+
         model_response = self._process_response(response)
         return model_response
 
@@ -303,7 +309,7 @@ class OpenAIChatModel(Model):
         stream: Literal[False],
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion: ...
+    ) -> chat.ChatCompletion | ModelResponse: ...
 
     async def _completions_create(
         self,
@@ -311,7 +317,7 @@ class OpenAIChatModel(Model):
         stream: bool,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
@@ -375,6 +381,8 @@ class OpenAIChatModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if model_response := check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -806,7 +814,20 @@ class OpenAIChatModel(Model):
                     audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
-                    if self._is_text_like_media_type(item.media_type):
+                    # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
+                    # Some providers (e.g., OpenRouter) support URLs via the profile flag.
+                    profile = OpenAIModelProfile.from_profile(self.profile)
+                    if not item.force_download and profile.openai_chat_supports_file_urls:
+                        content.append(
+                            File(
+                                file=FileFile(
+                                    file_data=item.url,
+                                    filename=f'filename.{item.format}',
+                                ),
+                                type='file',
+                            )
+                        )
+                    elif self._is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
                         content.append(
                             self._inline_text_file_part(
