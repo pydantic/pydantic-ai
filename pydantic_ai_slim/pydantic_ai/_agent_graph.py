@@ -1182,19 +1182,21 @@ async def process_tool_calls(  # noqa: C901
                             ctx.state.increment_retries(
                                 ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings
                             )
+                            yield _messages.FunctionToolCallEvent(call)
                             await tool_manager.handle_call(call)
                         except ToolRetryError as e:
-                            output_parts.append(e.tool_retry)
+                            part = e.tool_retry
+                            output_parts.append(part)
+                            yield _messages.FunctionToolResultEvent(part)
                         else:
                             raise RuntimeError('Calling unknown tool should trigger ToolRetryError')
                     else:
-                        output_parts.append(
-                            _messages.ToolReturnPart(
-                                tool_name=call.tool_name,
-                                content='Tool not executed - a final result was already processed.',
-                                tool_call_id=call.tool_call_id,
-                            )
+                        part = _messages.ToolReturnPart(
+                            tool_name=call.tool_name,
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=call.tool_call_id,
                         )
+                        output_parts.append(part)
 
                 tool_group_idx += 1
                 continue
@@ -1207,8 +1209,10 @@ async def process_tool_calls(  # noqa: C901
                 tool_def = tool_manager.get_tool_def(call.tool_name)
                 kind = tool_def.kind if tool_def else 'unknown'
                 if kind == 'external':
+                    yield _messages.FunctionToolCallEvent(call)
                     deferred_calls['external'].append(call)
                 elif kind == 'unapproved':
+                    yield _messages.FunctionToolCallEvent(call)
                     deferred_calls['unapproved'].append(call)
                 else:
                     assert kind != 'output'
