@@ -156,6 +156,27 @@ class TestOpenAI:
         with pytest.raises(ModelHTTPError, match='model_not_found'):
             await embedder.embed_query('Hello, world!')
 
+    async def test_response_with_no_usage(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_client = AsyncMock()
+        mock_embedding_item = MagicMock()
+        mock_embedding_item.embedding = [0.1, 0.2, 0.3]
+
+        mock_response = MagicMock()
+        mock_response.data = [mock_embedding_item]
+        mock_response.usage = None
+        mock_response.model = 'test-model'
+
+        mock_client.embeddings.create.return_value = mock_response
+
+        provider = OpenAIProvider(api_key='test')
+        provider._client = mock_client  # pyright: ignore[reportPrivateUsage]
+        model = OpenAIEmbeddingModel('test-model', provider=provider)
+
+        result = await model.embed('test', input_type='query')
+        assert result.usage.input_tokens == 0
+
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
