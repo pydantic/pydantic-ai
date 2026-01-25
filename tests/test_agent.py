@@ -6763,7 +6763,10 @@ async def test_run_with_deferred_tool_results_errors():
     ):
         await agent.run('Hello', message_history=message_history)
 
-    with pytest.raises(UserError, match='Tool call results were provided, but the message history does not contain any unprocessed tool calls.'):
+    with pytest.raises(
+        UserError,
+        match='Tool call results were provided, but the message history does not contain any unprocessed tool calls.',
+    ):
         await agent.run(
             message_history=message_history,
             deferred_tool_results=DeferredToolResults(),
