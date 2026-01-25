@@ -3660,13 +3660,13 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='regular_tool',
+                            tool_name='external_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='external_tool',
+                            tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
@@ -3855,7 +3855,9 @@ class TestMultipleToolCalls:
                 ],
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='exhaustive')
+        agent = Agent(
+            FunctionModel(return_model), output_type=[OutputType, DeferredToolRequests], end_strategy='exhaustive'
+        )
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -3878,7 +3880,15 @@ class TestMultipleToolCalls:
 
         result = agent.run_sync('test exhaustive strategy')
 
+        # Deferred tools are requested first before returning
+        assert isinstance(result.output, DeferredToolRequests)
+        result = agent.run_sync(
+            message_history=result.all_messages(),
+            deferred_tool_results=DeferredToolResults(calls={result.output.calls[0].tool_call_id: 5}),
+        )
+
         # Verify the result came from the first final tool
+        assert isinstance(result.output, OutputType)
         assert result.output.value == 'first'
 
         # Verify all regular tools were called
@@ -3913,25 +3923,28 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
-                        ),
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
-                        ),
-                        ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content=2,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
@@ -3939,12 +3952,18 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
                         ToolReturnPart(
                             tool_name='deferred_tool',
-                            content='Tool not executed - a final result was already processed.',
+                            content=5,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
-                        ),
+                        )
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
@@ -6744,7 +6763,7 @@ async def test_run_with_deferred_tool_results_errors():
     ):
         await agent.run('Hello', message_history=message_history)
 
-    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
+    with pytest.raises(UserError, match='Tool call results were provided, but the message history does not contain any unprocessed tool calls.'):
         await agent.run(
             message_history=message_history,
             deferred_tool_results=DeferredToolResults(),
@@ -6853,6 +6872,7 @@ async def test_user_prompt_with_deferred_tool_results():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
         ]
     )
 
@@ -7445,7 +7465,16 @@ async def test_run_with_unapproved_tool_call_in_history():
 
     result = await agent.run(message_history=messages)
 
-    assert result.all_messages() == messages
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+        ]
+    )
     assert result.output == snapshot(
         DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
     )
