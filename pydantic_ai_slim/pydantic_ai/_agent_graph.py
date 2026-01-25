@@ -221,11 +221,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         instructions: str | None = None
 
         if messages and (last_message := messages[-1]):
+            last_model_response: _messages.ModelResponse | None = next(
+                (message for message in reversed(messages) if isinstance(message, _messages.ModelResponse)), None
+            )
             if isinstance(last_message, _messages.ModelRequest):
                 last_model_request = last_message
-                last_model_response: _messages.ModelResponse | None = next(
-                    (message for message in reversed(messages) if isinstance(message, _messages.ModelResponse)), None
-                )
 
                 tool_calls_in_request = set(
                     part.tool_call_id
@@ -236,7 +236,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 if last_model_response is not None:
                     tool_calls_in_response = set(tool_call.tool_call_id for tool_call in last_model_response.tool_calls)
 
-                    if tool_calls_in_response and tool_calls_in_request < tool_calls_in_response:
+                    if tool_calls_in_request < tool_calls_in_response:
                         return await self._handle_deferred_tool_results(
                             last_model_request, last_model_response, self.deferred_tool_results, ctx
                         )
@@ -246,7 +246,13 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     )
 
             if self.deferred_tool_results is not None:
-                raise exceptions.UserError('Deferred tool results can only be provided when resuming from a tool call.')
+                if not last_model_response:
+                    raise exceptions.UserError(
+                        'Tool call results were provided, but the message history does not contain a `ModelResponse`.'
+                    )
+                raise exceptions.UserError(
+                    'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
+                )
 
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
@@ -277,6 +283,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     raise exceptions.UserError(
                         'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
                     )
+
+        elif self.deferred_tool_results is not None:
+            raise exceptions.UserError('Tool call results were provided, but the message history is empty.')
 
         if not run_context:
             run_context = build_run_context(ctx)
@@ -1153,7 +1162,9 @@ async def process_tool_calls(  # noqa: C901
                 else:
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
-                        content=result_data,
+                        # The first final tool call's result is preserved in model request,
+                        # then later switched back to the placeholder message in `handle_final_result_after_tool_call`
+                        content=result_data if final_result is None else 'Final result processed.',
                         tool_call_id=call.tool_call_id,
                     )
                     output_parts.append(part)
@@ -1168,7 +1179,9 @@ async def process_tool_calls(  # noqa: C901
                 for call in current_tool_group.tool_calls:
                     if tool_manager.get_tool_def(call.tool_name) is None:
                         try:
-                            ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                            ctx.state.increment_retries(
+                                ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings
+                            )
                             await tool_manager.handle_call(call)
                         except ToolRetryError as e:
                             output_parts.append(e.tool_retry)
