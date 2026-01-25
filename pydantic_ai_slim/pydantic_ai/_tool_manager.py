@@ -328,12 +328,15 @@ class ToolManager(Generic[AgentDepsT]):
             return max_uses_per_step
         return None
 
+
     def check_tool_call_allowed(
         self,
         tool_name: str,
         *,
         tool_accepted_in_step: int,
         projected_tool_uses: int,
+        tool_calls_in_step: int,
+        projected_total_tools_uses: int
     ) -> str | None:
         """Check if a tool call is allowed based on per-tool limits.
 
@@ -341,11 +344,11 @@ class ToolManager(Generic[AgentDepsT]):
 
         Args:
             tool_name: The name of the tool to check.
-            current_tool_calls: Number of tool calls already made in this run (from usage).
-            total_accepted_in_step: Number of tool calls already accepted in the current batch.
             tool_accepted_in_step: Number of times this specific tool was accepted in the batch.
             projected_tool_uses: The projected number of uses of the tool in this step.
-            projected_usage: The projected usage of the tool calls.
+            tool_calls_in_step:
+            projected_total_tools_uses:
+
 
         Returns:
             None if the call is allowed.
@@ -361,6 +364,16 @@ class ToolManager(Generic[AgentDepsT]):
         if tool_name not in self.tools:
             return None
 
+        # Per-run limits
+        agent_tool_use_policy = self.tool_use_policy
+        will_batch_exceed = False
+
+        if agent_tool_use_policy:
+            if agent_tool_use_policy.max_uses_per_step:
+                will_batch_exceed = will_batch_exceed or tool_calls_in_step > agent_tool_use_policy.max_uses_per_step
+            if agent_tool_use_policy.max_uses:
+                will_batch_exceed = will_batch_exceed or projected_total_tools_uses > agent_tool_use_policy.max_uses
+
         # Per-tool limits
         current_tool_uses = self._get_current_uses_of_tool(tool_name)
         max_uses = self._get_max_uses_of_tool(tool_name)
@@ -370,13 +383,13 @@ class ToolManager(Generic[AgentDepsT]):
 
         if (max_uses_per_step is not None and projected_tool_uses > max_uses_per_step) or (
             max_uses is not None and projected_tool_uses + current_tool_uses > max_uses
-        ):
+        ) or (will_batch_exceed):
             # If limits would be exceeded and partial execution is not allowed, reject all calls.
             # The tool's ToolPolicy must have partial_execution != False (None means inherit default True)
             tool = self.tools.get(tool_name)
             # Tool allows partial if: no tool, no usage_policy (inherits default True),
             # or usage_policy.partial_execution is not explicitly False
-            tool_allows_partial = (
+            tool_allows_partial = (agent_tool_use_policy is None or agent_tool_use_policy.partial_execution) and (
                 tool is None  # Unknown tool - allow through, will fail later with proper error
                 or tool.usage_policy is None  # No policy on tool - inherits default True behavior
                 or tool.usage_policy.partial_execution is not False  # None means inherit default True

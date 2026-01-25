@@ -1058,17 +1058,23 @@ def _handle_tool_calls_parts(
     output_parts: list[_messages.ModelRequestPart],
     tool_manager: ToolManager[DepsT],
     output_calls_to_run: list[_messages.ToolCallPart],
-    projected_tool_uses: Counter[str],
+    projected_tools_uses: Counter[str],
+    projected_usage: _usage.RunUsage,
 ) -> Iterator[_messages.HandleResponseEvent]:
     accepted_per_tool: Counter[str] = Counter()
     total_accepted = 0
 
     for call in tool_calls:
-
+        # Before I check if this specific tool_call is allowed I need to check if any tool calls are allowed?
+        # That depends on if max_uses_per_step is exceeding for all tools or total_uses are exceeding
+        # I still need to respect partial_execution or not which should be checked upfront
+        # Need to do this while keeping maximum logic in tool manager and not pollute agent graph
         rejection_reason = tool_manager.check_tool_call_allowed(
             call.tool_name,
             tool_accepted_in_step=accepted_per_tool[call.tool_name],
-            projected_tool_uses=projected_tool_uses[call.tool_name],
+            projected_tool_uses=projected_tools_uses[call.tool_name],
+            tool_calls_in_step = len(tool_calls),
+            projected_total_tools_uses=projected_usage.tool_calls
         )
         if rejection_reason is not None:
             return_part = _messages.ToolReturnPart(
@@ -1111,6 +1117,10 @@ async def _call_tools(  # noqa: C901
 
     projected_tool_uses = Counter[str](call.tool_name for call in tool_calls)
 
+    # SOOOOO, should we check the Agent limits now itself instead of checking it later inside _handle_tool_calls_parts
+    # Ideally we should why wait I have the tool manager anyway?
+
+
     calls_to_run: list[_messages.ToolCallPart] = []
 
     # Process tool calls with partial execution - accept as many as allowed by limits
@@ -1120,6 +1130,7 @@ async def _call_tools(  # noqa: C901
         tool_manager=tool_manager,
         output_calls_to_run=calls_to_run,
         projected_tool_uses=projected_tool_uses,
+        projected_usage=projected_usage
     ):
         yield event
 
