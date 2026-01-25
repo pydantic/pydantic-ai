@@ -41,6 +41,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.messages import VideoUrl
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -1481,6 +1482,27 @@ The provided YAML snippet is a basic descriptor for something labeled with the n
 Each of these interpretations would depend on the broader context in which this YAML file is used. Further fields in the YAML file would provide more specificity about its purpose and functionality.\
 """
     )
+
+
+async def test_yaml_document_url_input(allow_model_requests: None, openai_api_key: str):
+    """Test that YAML files are treated as text-like and get inlined (not sent as file attachments)."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+    document_url = DocumentUrl(url='https://raw.githubusercontent.com/pydantic/pydantic-ai/main/mkdocs.yml')
+
+    result = await agent.run(['What is the site_name in this YAML configuration?', document_url])
+    assert result.output == snapshot('The `site_name` in this YAML configuration is "Pydantic AI".')
+
+
+async def test_video_url_not_supported(allow_model_requests: None, openai_api_key: str):
+    """Test that VideoUrl raises NotImplementedError for OpenAI."""
+
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+    video_url = VideoUrl(url='https://example.com/video.mp4')
+
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported for OpenAI'):
+        await agent.run(['What is the site_name in this YAML configuration?', video_url])
 
 
 async def test_document_as_binary_content_input_with_tool(
