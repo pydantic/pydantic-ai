@@ -32,7 +32,13 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -1397,7 +1403,7 @@ def test_tool_max_uses():
                 parts=[
                     ToolReturnPart(
                         tool_name='tool_with_max_use',
-                        content='Tool use limit reached for tool "tool_with_max_use".',
+                        content='Tool "tool_with_max_use" has reached its usage limit.',
                         tool_call_id='call_2',
                         timestamp=IsDatetime(),
                     ),
@@ -1470,19 +1476,19 @@ def test_tool_policy_partial_execution_false_per_tool_rejection():
                 parts=[
                     ToolReturnPart(
                         tool_name='limited_tool',
-                        content='Tool use limit reached for tool "limited_tool".',
+                        content='Tool "limited_tool" has reached its usage limit.',
                         tool_call_id='call_1',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
                         tool_name='limited_tool',
-                        content='Tool use limit reached for tool "limited_tool".',
+                        content='Tool "limited_tool" has reached its usage limit.',
                         tool_call_id='call_2',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
                         tool_name='limited_tool',
-                        content='Tool use limit reached for tool "limited_tool".',
+                        content='Tool "limited_tool" has reached its usage limit.',
                         tool_call_id='call_3',
                         timestamp=IsDatetime(),
                     ),
@@ -1550,7 +1556,7 @@ def test_tool_policy_max_uses_incremental_limit():
                 parts=[
                     ToolReturnPart(
                         tool_name='once_tool',
-                        content='Tool use limit reached for tool "once_tool".',
+                        content='Tool "once_tool" has reached its usage limit.',
                         tool_call_id='call_2',
                         timestamp=IsDatetime(),
                     )
@@ -3226,3 +3232,26 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     # For regular tool calls (not via ToolApproved), metadata should be None
     assert len(received_metadata) == 1
     assert received_metadata[0] is None
+
+
+def test_tool_policy_per_tool_mode_error():
+    """Test that per-tool mode='error' raises UsageLimitExceeded instead of returning retry message."""
+
+    def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='limited_tool', args={}, tool_call_id='call_1')])
+        elif len(messages) == 3:
+            # Try to call the tool again after the limit is reached
+            return ModelResponse(parts=[ToolCallPart(tool_name='limited_tool', args={}, tool_call_id='call_2')])
+        return ModelResponse(parts=[TextPart(content='Done')])
+
+    agent = Agent(FunctionModel(my_model), output_type=str)
+
+    @agent.tool(usage_policy=ToolPolicy(max_uses=1, mode='error'))
+    def limited_tool(ctx: RunContext[None]) -> str:
+        return 'used'
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        agent.run_sync('Hello')
+
+    assert 'Tool "limited_tool" has reached its usage limit.' in str(exc_info.value)
