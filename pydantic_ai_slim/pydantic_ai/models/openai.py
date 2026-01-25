@@ -273,8 +273,9 @@ def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_setti
     if not profile.openai_supports_reasoning:
         return
 
-    reasoning_effort = model_settings.get('openai_reasoning_effort', 'none')
-    if profile.openai_supports_reasoning_effort_none and reasoning_effort == 'none':
+    reasoning_effort = model_settings.get('openai_reasoning_effort')
+    # On GPT-5.1+ models, 'none' is the default
+    if profile.openai_supports_reasoning_effort_none and reasoning_effort in (None, 'none'):
         return
 
     if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
