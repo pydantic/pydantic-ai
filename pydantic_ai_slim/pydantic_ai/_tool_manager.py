@@ -16,7 +16,7 @@ from pydantic_ai._tool_usage_policy import ToolPolicy
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UsageLimitExceeded
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -355,7 +355,11 @@ class ToolManager(Generic[AgentDepsT]):
             A string error message if the call should be rejected.
         """
         # TODO: I have no idea how this logic went through but damn it is ugly need to read through and fix this signature to be more understanable
-
+        # I have completely ignored the mode as of now, need to integrate that logic here to allow for flexibility
+        # Also need to consider other Douwe suggestions on retries deprecating into tool and model retries I think? I'll need to read those parts as well
+        #
+        # Will think about it after I am done with mode part
+        # Refactor and clean this mess up lol?
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
@@ -395,17 +399,23 @@ class ToolManager(Generic[AgentDepsT]):
                 or tool.usage_policy.partial_execution is not False  # None means inherit default True
             )
             if not tool_allows_partial:
+                if agent_tool_use_policy and agent_tool_use_policy.mode == 'error':
+                    raise UsageLimitExceeded(message=f'Tool use limit reached for tool "{tool_name}".')
                 # TODO: Should be configurable via PromptConfig #3656
                 return f'Tool use limit reached for tool "{tool_name}".'
 
         # Check incremental call for tool
 
         if (max_uses_per_step is not None) and (tool_accepted_in_step == max_uses_per_step):
+            if agent_tool_use_policy and agent_tool_use_policy.mode == 'error':
+                raise UsageLimitExceeded(message=f'Tool use limit reached for tool "{tool_name}".')
             # If already equal, going through with this call will put us over the limit
             # TODO: Should be configurable via PromptConfig #3656
             return f'Tool use limit reached for tool "{tool_name}".'
 
         if (max_uses is not None) and (current_tool_uses + tool_accepted_in_step == max_uses):
+            if agent_tool_use_policy and agent_tool_use_policy.mode == 'error':
+                raise UsageLimitExceeded(message=f'Tool use limit reached for tool "{tool_name}".')
             # If already equal, going through with this call will put us over the limit
             # TODO: Should be configurable via PromptConfig #3656
             return f'Tool use limit reached for tool "{tool_name}".'

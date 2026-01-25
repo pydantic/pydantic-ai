@@ -1115,21 +1115,17 @@ async def _call_tools(  # noqa: C901
     if usage_limits.tool_calls_limit is not None:
         usage_limits.check_before_tool_call(projected_usage)
 
-    projected_tool_uses = Counter[str](call.tool_name for call in tool_calls)
-
-    # SOOOOO, should we check the Agent limits now itself instead of checking it later inside _handle_tool_calls_parts
-    # Ideally we should why wait I have the tool manager anyway?
-
+    projected_tools_uses = Counter[str](call.tool_name for call in tool_calls)
 
     calls_to_run: list[_messages.ToolCallPart] = []
 
-    # Process tool calls with partial execution - accept as many as allowed by limits
+    # Process tool calls, keeping the logic entailed within the tool manager as much as possible
     for event in _handle_tool_calls_parts(
         tool_calls,
         output_parts=output_parts,
         tool_manager=tool_manager,
         output_calls_to_run=calls_to_run,
-        projected_tool_uses=projected_tool_uses,
+        projected_tools_uses=projected_tools_uses,
         projected_usage=projected_usage
     ):
         yield event
