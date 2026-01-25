@@ -327,12 +327,12 @@ class ToolManager(Generic[AgentDepsT]):
             raise UsageLimitExceeded(message=message)
         return message
 
-    def check_batch_allowed(
+    def get_batch_rejection_reason(
         self,
         tool_calls_in_batch: int,
         current_total_tool_uses: int,
     ) -> str | None:
-        """Check tools_use_policy batch limits upfront when partial_execution=False.
+        """Get rejection reason for a batch of tool calls, or None if allowed.
 
         This method should be called once before processing a batch of tool calls.
         It rejects the entire batch early if tools_use_policy limits would be exceeded
@@ -343,7 +343,7 @@ class ToolManager(Generic[AgentDepsT]):
             current_total_tool_uses: Total tool calls executed in the run before this batch.
 
         Returns:
-            Rejection message if check fails, None if allowed.
+            Rejection message if batch should be rejected, None if allowed.
         """
         if not self.tools_use_policy or self.tools_use_policy.partial_execution is not False:
             return None  # No tools_use_policy or partial execution allowed
@@ -360,7 +360,7 @@ class ToolManager(Generic[AgentDepsT]):
             return self._reject_call('Tool usage limit reached for this run.', tools_policy=self.tools_use_policy)
         return None
 
-    def check_tool_call_allowed(
+    def get_tool_call_rejection_reason(
         self,
         tool_name: str,
         *,
@@ -369,16 +369,16 @@ class ToolManager(Generic[AgentDepsT]):
         current_total_tool_uses: int,
         tool_calls_executed_in_step: int,
     ) -> str | None:
-        """Check if a tool call is allowed based on tool use policy limits.
+        """Get rejection reason for a tool call, or None if allowed.
 
         This method enforces both agent-level and per-tool limits, supporting partial execution
         where some calls in a batch may be accepted while others are rejected.
 
         Note: Agent-level batch checks with partial_execution=False should be handled by
-        check_agent_batch_allowed() before calling this method.
+        get_batch_rejection_reason() before calling this method.
 
         Agent-level and per-tool partial_execution settings are independent:
-        - Agent partial_execution only affects agent-level limits (via check_agent_batch_allowed)
+        - Agent partial_execution only affects agent-level limits (via get_batch_rejection_reason)
         - Tool partial_execution only affects that tool's limits
 
         Args:
@@ -390,7 +390,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         Returns:
             None if the call is allowed.
-            A string error message if the call should be rejected.
+            A string rejection reason if the call should be rejected.
         """
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
