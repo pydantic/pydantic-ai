@@ -1165,13 +1165,22 @@ async def process_tool_calls(  # noqa: C901
         else:
             if final_result and ctx.deps.end_strategy == 'early':
                 for call in current_tool_group.tool_calls:
-                    output_parts.append(
-                        _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content='Tool not executed - a final result was already processed.',
-                            tool_call_id=call.tool_call_id,
+                    if tool_manager.get_tool_def(call.tool_name) is None:
+                        try:
+                            ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                            await tool_manager.handle_call(call)
+                        except ToolRetryError as e:
+                            output_parts.append(e.tool_retry)
+                        else:
+                            raise RuntimeError('Calling unknown tool should trigger ToolRetryError')
+                    else:
+                        output_parts.append(
+                            _messages.ToolReturnPart(
+                                tool_name=call.tool_name,
+                                content='Tool not executed - a final result was already processed.',
+                                tool_call_id=call.tool_call_id,
+                            )
                         )
-                    )
 
                 tool_group_idx += 1
                 continue
