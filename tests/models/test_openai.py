@@ -41,8 +41,8 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import VideoUrl
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
@@ -1494,15 +1494,26 @@ async def test_yaml_document_url_input(allow_model_requests: None, openai_api_ke
     assert result.output == snapshot('The `site_name` in this YAML configuration is "Pydantic AI".')
 
 
-async def test_video_url_not_supported(allow_model_requests: None, openai_api_key: str):
-    """Test that VideoUrl raises NotImplementedError for OpenAI."""
+def test_is_text_like_media_type():
+    """Test _is_text_like_media_type method for branch coverage."""
+    _is_text_like_media_type = OpenAIChatModel._is_text_like_media_type  # pyright: ignore[reportPrivateUsage]
 
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m)
-    video_url = VideoUrl(url='https://example.com/video.mp4')
+    # Test various media types
+    assert _is_text_like_media_type('text/plain') is True
+    assert _is_text_like_media_type('text/html') is True
+    assert _is_text_like_media_type('application/json') is True
+    assert _is_text_like_media_type('application/xml') is True
+    assert _is_text_like_media_type('application/yaml') is True
+    assert _is_text_like_media_type('application/x-yaml') is True
+    assert _is_text_like_media_type('application/ld+json') is True
+    assert _is_text_like_media_type('application/soap+xml') is True
 
-    with pytest.raises(NotImplementedError, match='VideoUrl is not supported for OpenAI'):
-        await agent.run(['What is the site_name in this YAML configuration?', video_url])
+    # Test non-text-like media types (these should return False)
+    assert _is_text_like_media_type('application/pdf') is False
+    assert _is_text_like_media_type('image/png') is False
+    assert _is_text_like_media_type('audio/mp3') is False
+    assert _is_text_like_media_type('video/mp4') is False
+    assert _is_text_like_media_type('application/octet-stream') is False
 
 
 async def test_document_as_binary_content_input_with_tool(
