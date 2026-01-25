@@ -604,12 +604,15 @@ async def test_bedrock_model_guardrail_config(allow_model_requests: None, bedroc
 async def test_bedrock_model_other_parameters(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(
+        bedrock_prompt_variables={'leo': {'text': 'aaaa'}},
+        bedrock_additional_model_requests_fields={'test': 'test'},
         bedrock_request_metadata={'test': 'test'},
+        bedrock_additional_model_response_fields_paths=['test'],
     )
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        "The capital of France is Paris. Paris is not only the political center of the country but also one of the world's most influential cities in culture, fashion, gastronomy, and the arts. It's known for its iconic landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other historical and architectural treasures."
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
     )
 
 

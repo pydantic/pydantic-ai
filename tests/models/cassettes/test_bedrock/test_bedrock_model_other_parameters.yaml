@@ -1,16 +1,16 @@
 interactions:
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
-      are a helpful chatbot."}], "inferenceConfig": {}, "requestMetadata": {"test": "test"}}'
+      are a helpful chatbot."}], "requestMetadata": {"test": "test"}, "additionalModelResponseFieldPaths": ["test"], "additionalModelRequestFields": {"test": "test"}, "promptVariables": {"leo": {"text": "aaaa"}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MDJmOTU0MzItNzZlNS00MDI3LTk4MzUtM2E3OWJjYTRiZjUw
+        ZmZhYjMyZmItODRjOS00YWZjLWE4NTAtNTQ4OTUxMjI5NmU4
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '201'
+      - '178'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -21,26 +21,26 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '550'
+      - '206'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 519
+        latencyMs: 159
       output:
         message:
           content:
-          - text: The capital of France is Paris. Paris is not only the political center of the country but also one of the
-              world's most influential cities in culture, fashion, gastronomy, and the arts. It's known for its iconic landmarks
-              such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other historical and architectural
-              treasures.
+          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural,
+              political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum,
+              and the Notre-Dame Cathedral, among many other historical and architectural treasures.
+
           role: assistant
-      stopReason: end_turn
+      stopReason: max_tokens
       usage:
         inputTokens: 13
-        outputTokens: 72
-        serverToolUsage: {}
-        totalTokens: 85
+        outputTokens: 5
+        totalTokens: 18
+      additionalModelResponseFields: "test"
     status:
       code: 200
       message: OK
