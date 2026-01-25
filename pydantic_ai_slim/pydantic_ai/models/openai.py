@@ -1178,6 +1178,9 @@ class OpenAIModel(OpenAIChatModel):
     """Deprecated alias for `OpenAIChatModel`."""
 
 
+responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
+
+
 @dataclass(init=False)
 class OpenAIResponsesModel(Model):
     """A model that uses the OpenAI Responses API.
@@ -1318,7 +1321,7 @@ class OpenAIResponsesModel(Model):
                         )
                         # We only need to store the signature and raw_content once.
                         signature = None
-                        provider_details = None
+                        provider_details = {}
                 elif signature or provider_details:
                     items.append(
                         ThinkingPart(
@@ -1337,9 +1340,9 @@ class OpenAIResponsesModel(Model):
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
                         if model_settings.get('openai_include_raw_annotations') and content.annotations:
                             part_provider_details = part_provider_details or {}
-                            part_provider_details['annotations'] = TypeAdapter(
-                                list[responses.response_output_text.Annotation]
-                            ).dump_python(list(content.annotations), warnings=False)
+                            part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
+                                list(content.annotations), warnings=False
+                            )
                         items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
@@ -2240,7 +2243,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         # Track annotations by item_id and content_index
-        _annotations_by_item: dict[str, list[responses.response_output_text.Annotation]] = {}
+        _annotations_by_item: dict[str, list[Any]] = {}
 
         if self._provider_timestamp is not None:  # pragma: no branch
             self.provider_details = {'timestamp': self._provider_timestamp}
@@ -2453,9 +2456,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                 # Collect annotations if the setting is enabled
                 if self._model_settings.get('openai_include_raw_annotations'):
-                    _annotations_by_item.setdefault(chunk.item_id, []).append(
-                        cast(responses.response_output_text.Annotation, chunk.annotation)
-                    )
+                    _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(
@@ -2465,23 +2466,23 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
                 # When text is done, add logprobs and annotations to provider_details if available
-                part = self._parts_manager.get_part_by_vendor_id(chunk.item_id)
-                if part is not None and isinstance(part, TextPart):
-                    # Add logprobs if available
-                    if chunk.logprobs:
-                        part.provider_details = part.provider_details or {}
-                        part.provider_details['logprobs'] = _map_logprobs(
-                            cast(Sequence[responses.response_output_text.Logprob], chunk.logprobs)
-                        )
+                provider_details: dict[str, Any] = {}
+                if chunk.logprobs:
+                    provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
 
-                    # Add annotations if the setting is enabled
-                    if self._model_settings.get('openai_include_raw_annotations'):
-                        annotations = _annotations_by_item.get(chunk.item_id)
-                        if annotations:
-                            part.provider_details = part.provider_details or {}
-                            part.provider_details['annotations'] = TypeAdapter(
-                                list[responses.response_output_text.Annotation]
-                            ).dump_python(list(annotations), warnings=False)
+                annotations = _annotations_by_item.get(chunk.item_id)
+                if annotations:
+                    provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
+                        list(annotations), warnings=False
+                    )
+
+                if provider_details:
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id=chunk.item_id,
+                        content='',
+                        provider_details=provider_details,
+                    ):
+                        yield event
 
             elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
                 pass  # there's nothing we need to do here
@@ -2638,19 +2639,28 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
 # Convert logprobs to a serializable format
 def _map_logprobs(
     logprobs: Sequence[chat_completion_token_logprob.ChatCompletionTokenLogprob]
-    | Sequence[responses.response_output_text.Logprob],
+    | Sequence[responses.response_output_text.Logprob]
+    | Sequence[responses.response_text_done_event.Logprob],
 ) -> list[dict[str, Any]]:
-    return [
-        {
-            'token': lp.token,
-            'bytes': lp.bytes,
-            'logprob': lp.logprob,
-            'top_logprobs': [
-                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-            ],
-        }
-        for lp in logprobs
-    ]
+    mapped: list[dict[str, Any]] = []
+    for lp in logprobs:
+        top_logprobs = lp.top_logprobs or []
+        mapped.append(
+            {
+                'token': lp.token,
+                'bytes': getattr(lp, 'bytes', None),
+                'logprob': lp.logprob,
+                'top_logprobs': [
+                    {
+                        'token': tlp.token,
+                        'bytes': getattr(tlp, 'bytes', None),
+                        'logprob': tlp.logprob,
+                    }
+                    for tlp in top_logprobs
+                ],
+            }
+        )
+    return mapped
 
 
 def _map_usage(

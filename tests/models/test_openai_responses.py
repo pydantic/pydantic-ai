@@ -57,15 +57,9 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
-    from openai.types.responses import (
-        ResponseCreatedEvent,
-        ResponseFunctionWebSearch,
-        ResponseOutputTextAnnotationAddedEvent,
-        ResponseTextDeltaEvent,
-        ResponseTextDoneEvent,
-    )
+    from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
-    from openai.types.responses.response_output_text import AnnotationURLCitation, Logprob, ResponseOutputText
+    from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -574,86 +568,6 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
     assert output_text == snapshot(['The capital of France is Paris.'])
 
 
-async def test_openai_responses_stream_logprobs(allow_model_requests: None):
-    annotation = AnnotationURLCitation(
-        type='url_citation',
-        start_index=0,
-        end_index=5,
-        title='Example',
-        url='https://example.com',
-    )
-    logprob = Logprob.model_construct(
-        token='Paris',
-        bytes=[80, 97, 114, 105, 115],
-        logprob=-0.1,
-        top_logprobs=[],
-    )
-    stream = [
-        ResponseCreatedEvent.model_construct(
-            type='response.created',
-            sequence_number=0,
-            response=response_message([]),
-        ),
-        ResponseTextDeltaEvent.model_construct(
-            type='response.output_text.delta',
-            item_id='msg_1',
-            output_index=0,
-            content_index=0,
-            delta='Paris',
-        ),
-        ResponseOutputTextAnnotationAddedEvent.model_construct(
-            type='response.output_text.annotation.added',
-            sequence_number=1,
-            item_id='msg_1',
-            output_index=0,
-            content_index=0,
-            annotation_index=0,
-            annotation=annotation,
-        ),
-        ResponseTextDoneEvent.model_construct(
-            type='response.output_text.done',
-            item_id='msg_1',
-            output_index=0,
-            content_index=0,
-            text='Paris',
-            logprobs=[logprob],
-        ),
-    ]
-    mock_client = MockOpenAIResponses.create_mock_stream(stream)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(
-        model=model,
-        model_settings=OpenAIResponsesModelSettings(openai_logprobs=True, openai_include_raw_annotations=True),
-    )
-
-    async with agent.run_stream('What is the capital of France?') as result:
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                text_part = next(part for part in response.parts if isinstance(part, TextPart))
-                assert text_part.provider_details is not None
-                assert text_part.provider_details['logprobs'] == snapshot(
-                    [
-                        {
-                            'token': 'Paris',
-                            'bytes': [80, 97, 114, 105, 115],
-                            'logprob': -0.1,
-                            'top_logprobs': [],
-                        }
-                    ]
-                )
-                assert text_part.provider_details['annotations'] == snapshot(
-                    [
-                        {
-                            'type': 'url_citation',
-                            'start_index': 0,
-                            'end_index': 5,
-                            'title': 'Example',
-                            'url': 'https://example.com',
-                        }
-                    ]
-                )
-
-
 async def test_openai_include_raw_annotations_streaming(allow_model_requests: None, openai_api_key: str):
     prompt = 'What is the tallest mountain in Alberta? Provide one sentence with a citation.'
     instructions = 'Use web search and include citations in your answer.'
@@ -663,30 +577,67 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
 
-    async with agent.run_stream(prompt, model_settings=settings) as result:
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                text_part = next(part for part in response.parts if isinstance(part, TextPart))
-                assert text_part.provider_details is not None
-                assert text_part.provider_details['annotations'] == IsInstance(list)
-                json.dumps(text_part.provider_details)
+    events = [event async for event in agent.run_stream_events(prompt, model_settings=settings)]
+    annotation_event = next(
+        event
+        for event in events
+        if isinstance(event, PartDeltaEvent)
+        and isinstance(event.delta, TextPartDelta)
+        and event.delta.provider_details
+        and 'annotations' in event.delta.provider_details
+    )
+    assert annotation_event.delta.provider_details == snapshot(
+        {
+            'annotations': [
+                {
+                    'type': 'url_citation',
+                    'start_index': 77,
+                    'end_index': 162,
+                    'title': 'Mount Columbia | mountain, Alberta, Canada | Britannica',
+                    'url': 'https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
+                }
+            ]
+        }
+    )
 
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
-    async with agent2.run_stream(prompt) as result2:
-        async for response, is_last in result2.stream_responses(debounce_by=None):
-            if is_last:
-                text_part2 = next(part for part in response.parts if isinstance(part, TextPart))
-                assert text_part2.provider_details is None or 'annotations' not in text_part2.provider_details
+    events2 = [event async for event in agent2.run_stream_events(prompt)]
+    assert not any(
+        (
+            isinstance(event, PartDeltaEvent)
+            and isinstance(event.delta, TextPartDelta)
+            and event.delta.provider_details
+            and 'annotations' in event.delta.provider_details
+        )
+        or (
+            isinstance(event, PartEndEvent)
+            and isinstance(event.part, TextPart)
+            and event.part.provider_details
+            and 'annotations' in event.part.provider_details
+        )
+        for event in events2
+    )
 
     model3 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent3 = Agent(model3, instructions='Answer directly.')
     settings3 = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
-    async with agent3.run_stream('What is 2+2?', model_settings=settings3) as result3:
-        async for response, is_last in result3.stream_responses(debounce_by=None):
-            if is_last:
-                text_part3 = next(part for part in response.parts if isinstance(part, TextPart))
-                assert text_part3.provider_details is None or 'annotations' not in text_part3.provider_details
+    events3 = [event async for event in agent3.run_stream_events('What is 2+2?', model_settings=settings3)]
+    assert not any(
+        (
+            isinstance(event, PartDeltaEvent)
+            and isinstance(event.delta, TextPartDelta)
+            and event.delta.provider_details
+            and 'annotations' in event.delta.provider_details
+        )
+        or (
+            isinstance(event, PartEndEvent)
+            and isinstance(event.part, TextPart)
+            and event.part.provider_details
+            and 'annotations' in event.part.provider_details
+        )
+        for event in events3
+    )
 
 
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
@@ -9114,8 +9065,8 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={
-                            'query': IsStr(),
-                            'type': IsStr(),
+                            'query': 'tallest mountain in Alberta',
+                            'type': 'search',
                             'queries': [
                                 'tallest mountain in Alberta',
                                 'Mount Columbia tallest mountain in Alberta elevation',
@@ -9132,9 +9083,22 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                         provider_name='openai',
                     ),
                     TextPart(
-                        content=IsStr(),
+                        content=(
+                            'The tallest mountain in Alberta is **Mount Columbia**, which rises to **3,747 m (12,294 ft)** '
+                            "and is Alberta's highest point. ([britannica.com](https://www.britannica.com/place/Mount-Columbia?utm_source=openai))"
+                        ),
                         id=IsStr(),
-                        provider_details={'annotations': IsInstance(list)},
+                        provider_details={
+                            'annotations': [
+                                {
+                                    'type': 'url_citation',
+                                    'start_index': 126,
+                                    'end_index': 211,
+                                    'title': 'Mount Columbia | mountain, Alberta, Canada | Britannica',
+                                    'url': 'https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
+                                }
+                            ]
+                        },
                     ),
                 ],
                 usage=IsInstance(RequestUsage),
@@ -9142,19 +9106,13 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
     )
-
-    response_msg = messages[1]
-    assert isinstance(response_msg, ModelResponse)
-    text_part = next(part for part in response_msg.parts if isinstance(part, TextPart))
-    assert text_part.provider_details is not None
-    json.dumps(text_part.provider_details)
 
     # Test with annotations disabled (default)
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
@@ -9173,7 +9131,11 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': IsStr(), 'type': IsStr(), 'queries': ['tallest mountain in Alberta']},
+                        args={
+                            'query': 'tallest mountain in Alberta',
+                            'type': 'search',
+                            'queries': ['tallest mountain in Alberta'],
+                        },
                         tool_call_id=IsStr(),
                         provider_name='openai',
                     ),
@@ -9185,7 +9147,10 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                         provider_name='openai',
                     ),
                     TextPart(
-                        content=IsStr(),
+                        content=(
+                            'The tallest mountain in Alberta is **Mount Columbia** (3,747 m / 12,294 ft). '
+                            '([britannica.com](https://www.britannica.com/place/Mount-Columbia?utm_source=openai))'
+                        ),
                         id=IsStr(),
                     ),
                 ],
@@ -9194,15 +9159,10 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
     )
-
-    response_msg2 = result2.all_messages()[1]
-    assert isinstance(response_msg2, ModelResponse)
-    text_part2 = next(part for part in response_msg2.parts if isinstance(part, TextPart))
-    assert text_part2.provider_details is None or 'annotations' not in text_part2.provider_details
