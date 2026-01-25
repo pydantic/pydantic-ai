@@ -3255,3 +3255,197 @@ def test_tool_policy_per_tool_mode_error():
         agent.run_sync('Hello')
 
     assert 'Tool "limited_tool" has reached its usage limit.' in str(exc_info.value)
+
+
+def test_tool_partial_execution_independent_of_agent():
+    """Test that tool partial_execution=True works even when agent partial_execution=False.
+
+    Per-tool and agent-level partial_execution settings are independent:
+    - Agent partial_execution=False only affects agent-level limits
+    - Tool partial_execution=True (default) still allows partial execution for tool-level limits
+    """
+    call_count = 0
+    tool_calls: list[str] = []
+
+    def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # Try to call the tool 3 times, exceeding the tool's max_uses=2
+            # Tool has partial_execution=True (default), so 2 calls should execute
+            # and 1 should be rejected
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='limited_tool', args={}, tool_call_id='call_1'),
+                    ToolCallPart(tool_name='limited_tool', args={}, tool_call_id='call_2'),
+                    ToolCallPart(tool_name='limited_tool', args={}, tool_call_id='call_3'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart(content='Done')])
+
+    # Agent has partial_execution=False, but tool uses default (True)
+    agent = Agent(
+        FunctionModel(my_model), output_type=str, tool_use_policy=ToolPolicy(max_uses=10, partial_execution=False)
+    )
+
+    @agent.tool(usage_policy=ToolPolicy(max_uses=2))  # partial_execution defaults to None (allows partial)
+    def limited_tool(ctx: RunContext[None]) -> str:
+        tool_calls.append('executed')
+        return 'used'
+
+    result = agent.run_sync('Hello')
+
+    # Tool should have been called twice (max_uses=2), third call rejected with partial execution
+    assert len(tool_calls) == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='limited_tool', args={}, tool_call_id='call_1'),
+                    ToolCallPart(tool_name='limited_tool', args={}, tool_call_id='call_2'),
+                    ToolCallPart(tool_name='limited_tool', args={}, tool_call_id='call_3'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
+                model_name='function:my_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='limited_tool',
+                        content='Tool "limited_tool" has reached its usage limit.',
+                        tool_call_id='call_3',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='limited_tool',
+                        content='used',
+                        tool_call_id='call_1',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='limited_tool',
+                        content='used',
+                        tool_call_id='call_2',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done')],
+                usage=RequestUsage(input_tokens=61, output_tokens=7),
+                model_name='function:my_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_agent_partial_execution_false_rejects_all_on_agent_limit():
+    """Test that agent partial_execution=False rejects all when agent-level limit exceeded.
+
+    When agent-level limits are exceeded and agent partial_execution=False,
+    all calls in the batch should be rejected even if tool allows partial execution.
+    """
+    call_count = 0
+    tool_calls: list[str] = []
+
+    def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # Try to call tools 3 times, exceeding agent's max_uses_per_step=2
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='tool_a', args={}, tool_call_id='call_1'),
+                    ToolCallPart(tool_name='tool_b', args={}, tool_call_id='call_2'),
+                    ToolCallPart(tool_name='tool_a', args={}, tool_call_id='call_3'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart(content='Done')])
+
+    # Agent has partial_execution=False with max_uses_per_step=2
+    # Batch has 3 calls, exceeding the limit
+    agent = Agent(
+        FunctionModel(my_model),
+        output_type=str,
+        tool_use_policy=ToolPolicy(max_uses_per_step=2, partial_execution=False),
+    )
+
+    @agent.tool  # Default tool policy (allows partial execution)
+    def tool_a(ctx: RunContext[None]) -> str:  # pragma: no cover
+        tool_calls.append('a')
+        return 'a'
+
+    @agent.tool  # Default tool policy (allows partial execution)
+    def tool_b(ctx: RunContext[None]) -> str:  # pragma: no cover
+        tool_calls.append('b')
+        return 'b'
+
+    result = agent.run_sync('Hello')
+
+    # No tools should have been called because agent partial_execution=False
+    # and agent-level limit was exceeded
+    assert len(tool_calls) == 0
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='tool_a', args={}, tool_call_id='call_1'),
+                    ToolCallPart(tool_name='tool_b', args={}, tool_call_id='call_2'),
+                    ToolCallPart(tool_name='tool_a', args={}, tool_call_id='call_3'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
+                model_name='function:my_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='tool_a',
+                        content='Tool usage limit reached for this run.',
+                        tool_call_id='call_1',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='tool_b',
+                        content='Tool usage limit reached for this run.',
+                        tool_call_id='call_2',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='tool_a',
+                        content='Tool usage limit reached for this run.',
+                        tool_call_id='call_3',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done')],
+                usage=RequestUsage(input_tokens=75, output_tokens=7),
+                model_name='function:my_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
