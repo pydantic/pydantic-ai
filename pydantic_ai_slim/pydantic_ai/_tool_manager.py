@@ -336,30 +336,26 @@ class ToolManager(Generic[AgentDepsT]):
         tool_accepted_in_step: int,
         projected_tool_uses: int,
         tool_calls_in_step: int,
-        projected_total_tools_uses: int
+        current_total_tool_uses: int,
+        tool_calls_executed_in_step: int,
     ) -> str | None:
-        """Check if a tool call is allowed based on per-tool limits.
+        """Check if a tool call is allowed based on tool use policy limits.
 
-        This is the check for partial execution. It checks per-tool limits (max_uses for this specific tool).
+        This method enforces both agent-level and per-tool limits, supporting partial execution
+        where some calls in a batch may be accepted while others are rejected.
 
         Args:
             tool_name: The name of the tool to check.
-            tool_accepted_in_step: Number of times this specific tool was accepted in the batch.
-            projected_tool_uses: The projected number of uses of the tool in this step.
-            tool_calls_in_step:
-            projected_total_tools_uses:
-
+            tool_accepted_in_step: Number of times this specific tool was already accepted in this batch.
+            projected_tool_uses: The projected number of uses of this tool if all calls in the batch succeed.
+            tool_calls_in_step: Total number of tool calls in the current batch (all tools).
+            current_total_tool_uses: Total tool calls executed in the run before this batch.
+            tool_calls_executed_in_step: Number of tool calls already accepted in this batch (all tools).
 
         Returns:
             None if the call is allowed.
             A string error message if the call should be rejected.
         """
-        # TODO: I have no idea how this logic went through but damn it is ugly need to read through and fix this signature to be more understanable
-        # I have completely ignored the mode as of now, need to integrate that logic here to allow for flexibility
-        # Also need to consider other Douwe suggestions on retries deprecating into tool and model retries I think? I'll need to read those parts as well
-        #
-        # Will think about it after I am done with mode part
-        # Refactor and clean this mess up lol?
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
@@ -368,7 +364,7 @@ class ToolManager(Generic[AgentDepsT]):
         if tool_name not in self.tools:
             return None
 
-        # Per-run limits
+        # Agent-level limits
         agent_tool_use_policy = self.tool_use_policy
         will_batch_exceed = False
 
@@ -376,7 +372,9 @@ class ToolManager(Generic[AgentDepsT]):
             if agent_tool_use_policy.max_uses_per_step:
                 will_batch_exceed = will_batch_exceed or tool_calls_in_step > agent_tool_use_policy.max_uses_per_step
             if agent_tool_use_policy.max_uses:
-                will_batch_exceed = will_batch_exceed or projected_total_tools_uses > agent_tool_use_policy.max_uses
+                will_batch_exceed = (
+                    will_batch_exceed or (current_total_tool_uses + tool_calls_in_step) > agent_tool_use_policy.max_uses
+                )
 
         # Per-tool limits
         current_tool_uses = self._get_current_uses_of_tool(tool_name)
@@ -419,6 +417,20 @@ class ToolManager(Generic[AgentDepsT]):
             # If already equal, going through with this call will put us over the limit
             # TODO: Should be configurable via PromptConfig #3656
             return f'Tool use limit reached for tool "{tool_name}".'
+
+        # Agent-level incremental checks
+        if agent_tool_use_policy:
+            if (agent_max_uses_per_step := agent_tool_use_policy.max_uses_per_step) is not None:
+                if tool_calls_executed_in_step >= agent_max_uses_per_step:
+                    if agent_tool_use_policy.mode == 'error':
+                        raise UsageLimitExceeded(message='Tool use limit reached for this step.')
+                    return 'Usage limit exceeded for tools in this step.'
+
+            if (agent_max_uses := agent_tool_use_policy.max_uses) is not None:
+                if (current_total_tool_uses + tool_calls_executed_in_step) >= agent_max_uses:
+                    if agent_tool_use_policy.mode == 'error':
+                        raise UsageLimitExceeded(message='Tool use limit reached for this run.')
+                    return 'Usage limit exceeded for tools in this run.'
 
         return None
 

@@ -1059,22 +1059,19 @@ def _handle_tool_calls_parts(
     tool_manager: ToolManager[DepsT],
     output_calls_to_run: list[_messages.ToolCallPart],
     projected_tools_uses: Counter[str],
-    projected_usage: _usage.RunUsage,
+    current_total_tool_uses: int,
 ) -> Iterator[_messages.HandleResponseEvent]:
     accepted_per_tool: Counter[str] = Counter()
     total_accepted = 0
 
     for call in tool_calls:
-        # Before I check if this specific tool_call is allowed I need to check if any tool calls are allowed?
-        # That depends on if max_uses_per_step is exceeding for all tools or total_uses are exceeding
-        # I still need to respect partial_execution or not which should be checked upfront
-        # Need to do this while keeping maximum logic in tool manager and not pollute agent graph
         rejection_reason = tool_manager.check_tool_call_allowed(
             call.tool_name,
             tool_accepted_in_step=accepted_per_tool[call.tool_name],
             projected_tool_uses=projected_tools_uses[call.tool_name],
-            tool_calls_in_step = len(tool_calls),
-            projected_total_tools_uses=projected_usage.tool_calls
+            tool_calls_in_step=len(tool_calls),
+            current_total_tool_uses=current_total_tool_uses,
+            tool_calls_executed_in_step=total_accepted,
         )
         if rejection_reason is not None:
             return_part = _messages.ToolReturnPart(
@@ -1126,7 +1123,7 @@ async def _call_tools(  # noqa: C901
         tool_manager=tool_manager,
         output_calls_to_run=calls_to_run,
         projected_tools_uses=projected_tools_uses,
-        projected_usage=projected_usage
+        current_total_tool_uses=usage.tool_calls,
     ):
         yield event
 
