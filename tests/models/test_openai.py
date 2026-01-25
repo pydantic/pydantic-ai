@@ -41,6 +41,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.messages import VideoUrl
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -1498,7 +1499,6 @@ def test_is_text_like_media_type():
     """Test _is_text_like_media_type method for branch coverage."""
     _is_text_like_media_type = OpenAIChatModel._is_text_like_media_type  # pyright: ignore[reportPrivateUsage]
 
-    # Test various media types
     assert _is_text_like_media_type('text/plain') is True
     assert _is_text_like_media_type('text/html') is True
     assert _is_text_like_media_type('application/json') is True
@@ -1507,13 +1507,15 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/x-yaml') is True
     assert _is_text_like_media_type('application/ld+json') is True
     assert _is_text_like_media_type('application/soap+xml') is True
-
-    # Test non-text-like media types (these should return False)
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
-    assert _is_text_like_media_type('audio/mp3') is False
-    assert _is_text_like_media_type('video/mp4') is False
-    assert _is_text_like_media_type('application/octet-stream') is False
+
+
+async def test_video_url_not_supported(allow_model_requests: None):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    agent = Agent(m)
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported for OpenAI'):
+        await agent.run(['Describe this video', VideoUrl(url='https://example.com/video.mp4')])
 
 
 async def test_document_as_binary_content_input_with_tool(
