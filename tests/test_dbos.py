@@ -353,6 +353,23 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             ],
                         ),
                         BasicSpan(
+                            content='running 1 tool',
+                            children=[
+                                BasicSpan(content='running tool: get_country'),
+                                BasicSpan(
+                                    content='event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content=IsStr(
+                                                regex='{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
                             content='event_stream_handler',
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
@@ -362,20 +379,8 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             ],
                         ),
                         BasicSpan(
-                            content='running 2 tools',
+                            content='running 1 tool',
                             children=[
-                                BasicSpan(content='running tool: get_country'),
-                                BasicSpan(
-                                    content='event_stream_handler',
-                                    children=[
-                                        BasicSpan(content='ctx.run_step=1'),
-                                        BasicSpan(
-                                            content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                            )
-                                        ),
-                                    ],
-                                ),
                                 BasicSpan(
                                     content='running tool: get_product_name',
                                     children=[BasicSpan(content='complex_agent__mcp_server__mcp.call_tool')],
@@ -1451,6 +1456,11 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
                     ToolReturnPart(
                         tool_name='create_file',
                         content='Success',
@@ -1592,6 +1602,11 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
                     ToolReturnPart(
                         tool_name='create_file',
                         content='Success',
