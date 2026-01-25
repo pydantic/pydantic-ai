@@ -610,14 +610,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 ):
                                     pass
 
-                                # To allow this message history to be used in a future run without dangling tool calls,
-                                # append a new ModelRequest using the tool returns and retries
-                                if parts:
-                                    messages.append(
-                                        _messages.ModelRequest(
-                                            parts, run_id=graph_ctx.state.run_id, timestamp=_utils.now_utc()
-                                        )
-                                    )
+                                _agent_graph.handle_final_result_after_tool_call(
+                                    graph_ctx, final_result, parts, messages=messages
+                                )
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 

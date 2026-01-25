@@ -798,7 +798,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         if output_final_result:
             final_result = output_final_result[0]
-            self._next_node = self._handle_final_result(ctx, final_result, output_parts)
+            self._next_node = handle_final_result_after_tool_call(ctx, final_result, output_parts)
         else:
             # Add user prompt if provided, after all tool return parts
             if self.user_prompt is not None:
@@ -821,7 +821,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         for validator in ctx.deps.output_validators:
             result_data = await validator.validate(result_data, run_context)
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+        return handle_final_result_after_tool_call(ctx, result.FinalResult(result_data), [])
 
     async def _handle_image_response(
         self,
@@ -829,46 +829,52 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         result_data = cast(NodeRunEndT, image)
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
-
-    def _handle_final_result(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        final_result: result.FinalResult[NodeRunEndT],
-        tool_responses: list[_messages.ModelRequestPart],
-    ) -> End[result.FinalResult[NodeRunEndT]]:
-        messages = ctx.state.message_history
-
-        # To allow this message history to be used in a future run without dangling tool calls,
-        # append a new ModelRequest using the tool returns and retries
-        if tool_responses or isinstance(final_result.output, DeferredToolRequests):
-            messages.append(
-                _messages.ModelRequest(
-                    parts=tool_responses,
-                    run_id=ctx.state.run_id,
-                    timestamp=now_utc(),
-                )
-            )
-
-        if final_result and final_result.tool_call_id is not None:
-            # Replace the final tool result with the placeholder message
-            # before returning the final result to the user.
-            #
-            # TODO: support a flag to disable this behavior (#3632)
-            for message in reversed(messages):
-                if isinstance(message, _messages.ModelResponse):
-                    break
-                elif isinstance(message, _messages.ModelRequest):
-                    for part in message.parts:
-                        if (
-                            isinstance(part, _messages.ToolReturnPart)
-                            and part.tool_call_id == final_result.tool_call_id
-                        ):
-                            part.content = 'Final result processed.'
-
-        return End(final_result)
+        return handle_final_result_after_tool_call(ctx, result.FinalResult(result_data), [])
 
     __repr__ = dataclasses_no_defaults_repr
+
+
+def handle_final_result_after_tool_call(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    final_result: result.FinalResult[NodeRunEndT],
+    parts: list[_messages.ModelRequestPart],
+    *,
+    messages: list[_messages.ModelMessage] | None = None,
+) -> End[result.FinalResult[NodeRunEndT]]:
+    """Updates the message history before finalizing the result.
+
+    When called, it stores the last tool call information to the message history
+    and finalizes the tool call result of output tools by replacing the tool call result
+    with the placeholder message.
+    """
+    if messages is None:
+        messages = ctx.state.message_history
+
+    # To allow this message history to be used in a future run without dangling tool calls,
+    # append a new ModelRequest using the tool returns and retries
+    if parts or isinstance(final_result.output, DeferredToolRequests):
+        messages.append(
+            _messages.ModelRequest(
+                parts,
+                run_id=ctx.state.run_id,
+                timestamp=now_utc(),
+            )
+        )
+
+    if final_result and final_result.tool_call_id is not None:
+        # Replace the final tool result with the placeholder message
+        # before returning the final result to the user.
+        #
+        # TODO: support a flag to disable this behavior (#3632)
+        for message in reversed(messages):
+            if isinstance(message, _messages.ModelResponse):
+                break
+            elif isinstance(message, _messages.ModelRequest):
+                for part in message.parts:
+                    if isinstance(part, _messages.ToolReturnPart) and part.tool_call_id == final_result.tool_call_id:
+                        part.content = 'Final result processed.'
+
+    return End(final_result)
 
 
 @dataclasses.dataclass
