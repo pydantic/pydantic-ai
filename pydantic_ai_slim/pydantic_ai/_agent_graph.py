@@ -958,6 +958,13 @@ ToolCallGroup = OutputToolCall | NonOutputToolCalls
 def model_response_to_tool_call_groups(
     tool_manager: ToolManager[DepsT], model_response: _messages.ModelResponse, end_strategy: EndStrategy
 ) -> list[ToolCallGroup]:
+    """Group tool calls by output/non-output order, end strategy, and sequential mode.
+
+    - end_strategy=early: output tools are pulled to the front, then remaining tools follow.
+    - end_strategy=exhaustive: tool order is preserved; output tools split non-output runs into separate groups.
+
+    When the current tool choices require sequential execution, each non-output tool goes into its own group one-by-one.
+    """
     groups: list[ToolCallGroup] = []
     tools = model_response.tool_calls
     sequential = tool_manager.should_call_sequentially(tools)

@@ -415,10 +415,12 @@ Async functions are run on the event loop, while sync functions are offloaded to
 
 #### Output Tool Calls
 
-When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
+When a model calls an [output tool](output.md#tool-output) with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
 The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
+With `'early'`, output tools are pulled to the front and run before any non-output tools. With `'exhaustive'`, tool calls are executed in model order, and output tools split non-output calls into batches.
+
+For more information on how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#output-tool-calls-and-end_strategy) docs.
 
 ## See Also
 

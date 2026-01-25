@@ -15,6 +15,27 @@ When the model calls a deferred tool, the agent run will end with a [`DeferredTo
 
 Note that handling deferred tool calls requires `DeferredToolRequests` to be in the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. If your agent can also be used in a context where no deferred tools are available and you don't want to deal with that type everywhere you use the agent, you can instead pass the `output_type` argument when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.agent.Agent.iter]. Note that the run-time `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output type explicitly.
 
+## Deferred Tools with Output Tools
+
+Deferred tools can appear alongside [output tools](output.md#tool-output), and their interaction depends on the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] and whether the run is streaming.
+
+In non-streaming runs:
+
+- With `'early'`, output tools are executed first (order preserved among output tools). If a valid output tool result is found, remaining tool calls, including deferred tools, are skipped.
+- With `'exhaustive'`, tool calls execute in model order. If a deferred tool appears after an output tool, the agent returns [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] first and only returns the final output after all the deferred tool results are provided, so it may look like the deferred request is "returned before" the output tool result.
+
+**Example:** Model returns `defer_A → output_B → defer_C`
+
+- With `'early'` (default): Only `output_B` executes.
+    - If `output_B` succeeds, it becomes the final result. The deferred tools are skipped entirely.
+    - If `output_B` fails validation, both `defer_A` and `defer_C` execute together and return as a single [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] (assuming neither has the `sequential=True` flag).
+- With `'exhaustive'`: Tool calls execute in order: `defer_A` → `output_B` → `defer_C`.
+    - First run returns [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] containing `defer_A`.
+    - After providing results for `defer_A`, the next run returns [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] containing `defer_C`.
+    - After providing results for `defer_C`, the final run returns the result from `output_B`.
+
+For streaming behavior, see the note in [Streaming Events and Final Output](agents.md#streaming-events-and-final-output).
+
 ## Human-in-the-Loop Tool Approval
 
 If a tool function always requires approval, you can pass the `requires_approval=True` argument to the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator, [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator, [`Tool`][pydantic_ai.tools.Tool] class, [`FunctionToolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator, or [`FunctionToolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] method. Inside the function, you can then assume that the tool call has been approved.

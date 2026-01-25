@@ -127,7 +127,23 @@ The example below shows how to stream events and text output. You can also [stre
 !!! note
     The `run_stream()` and `run_stream_sync()` methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
 
-	These "dangling" tool calls will not be executed unless the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] is set to `'exhaustive'`, and even then their results will not be sent back to the model as the agent run will already be considered completed. In short, if the model returns both tool calls and text, and the agent's output type is `str`, **the tool calls will not run** in streaming mode with the default setting.
+    These "dangling" tool calls will not be executed unless the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] is set to `'exhaustive'`, and even then their results will not be sent back to the model as the agent run is already considered completed. In short, if the model returns both tool calls and text, and the agent's output type is `str`, **the tool calls will not run** in streaming mode with the default setting.
+
+    **Example 1:** Model returns `text + tool_1` (output type is `str`)
+
+    - With `'early'` (default): The text is immediately captured as the final output. **No tools run.**
+    - With `'exhaustive'`: The text is returned as the final output. `tool_1` also runs.
+
+    **Example 2:** Model returns `tool_1 → tool_2 → output_A → tool_3 → deferred_B → tool_4` (output type is tool call)
+
+    - With `'early'` (default): Only `output_A` runs. All tools are skipped if `output_A` succeeds.
+    - With `'exhaustive'`: `tool_1`, `tool_2`, `output_A`, and `tool_3` run. Execution stops at the first deferred tool (`deferred_B`).
+    - In both cases, `output_A` is the final result.
+
+    **Example 3:** Model returns `tool_1 → tool_2 → deferred_A → tool_3 → output_B → tool_4` (output type is tool call)
+
+    - With both `'early'` and `'exhaustive'`: Execution stops at `deferred_A`.
+    - The final output is a [`DeferredToolCalls`][pydantic_ai.output.DeferredToolCalls] result, not `output_B`.
 
     If you want to always keep running the agent when it performs tool calls, and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
