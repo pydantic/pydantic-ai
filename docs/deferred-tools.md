@@ -67,14 +67,14 @@ DeferredToolRequests(
     calls=[],
     approvals=[
         ToolCallPart(
-            tool_name='update_file',
-            args={'path': '.env', 'content': ''},
-            tool_call_id='update_file_dotenv',
-        ),
-        ToolCallPart(
             tool_name='delete_file',
             args={'path': '__init__.py'},
             tool_call_id='delete_file',
+        ),
+        ToolCallPart(
+            tool_name='update_file',
+            args={'path': '.env', 'content': ''},
+            tool_call_id='update_file_dotenv',
         ),
     ],
     metadata={'update_file_dotenv': {'reason': 'protected'}},
@@ -159,15 +159,15 @@ print(result.all_messages())
     ModelRequest(
         parts=[
             ToolReturnPart(
-                tool_name='update_file',
-                content="File '.env' updated: ''",
-                tool_call_id='update_file_dotenv',
-                timestamp=datetime.datetime(...),
-            ),
-            ToolReturnPart(
                 tool_name='delete_file',
                 content='Deleting files is not allowed',
                 tool_call_id='delete_file',
+                timestamp=datetime.datetime(...),
+            ),
+            ToolReturnPart(
+                tool_name='update_file',
+                content="File '.env' updated: ''",
+                tool_call_id='update_file_dotenv',
                 timestamp=datetime.datetime(...),
             ),
             UserPromptPart(
@@ -343,6 +343,11 @@ async def main():
             ],
             usage=RequestUsage(input_tokens=63, output_tokens=13),
             model_name='gpt-5',
+            timestamp=datetime.datetime(...),
+            run_id='...',
+        ),
+        ModelRequest(
+            parts=[],
             timestamp=datetime.datetime(...),
             run_id='...',
         ),
