@@ -2506,6 +2506,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     for event in self._parts_manager.handle_text_delta(
                         vendor_part_id=chunk.item_id,
                         content='',
+                        provider_name=self.provider_name,
                         provider_details=provider_details,
                     ):
                         yield event
