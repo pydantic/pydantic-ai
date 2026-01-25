@@ -1063,7 +1063,7 @@ def _handle_tool_calls_parts(
 ) -> Iterator[_messages.HandleResponseEvent]:
     # Agent-level batch pre-check: reject all calls upfront if agent policy has
     # partial_execution=False and batch exceeds limits
-    batch_rejection = tool_manager.check_agent_batch_allowed(
+    batch_rejection = tool_manager.check_batch_allowed(
         tool_calls_in_batch=len(tool_calls),
         current_total_tool_uses=current_total_tool_uses,
     )

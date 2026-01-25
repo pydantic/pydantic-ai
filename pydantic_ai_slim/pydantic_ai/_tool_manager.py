@@ -307,21 +307,21 @@ class ToolManager(Generic[AgentDepsT]):
         return ctx.tools_use_counts.get(tool_name, 0)
 
     def _reject_call(
-        self, message: str, *, tool_policy: ToolPolicy | None = None, agent_policy: ToolPolicy | None = None
+        self, message: str, *, tool_policy: ToolPolicy | None = None, tools_policy: ToolPolicy | None = None
     ) -> str:
         """Reject a tool call. Raises UsageLimitExceeded if mode='error', otherwise returns message for model retry.
 
         Args:
             message: The rejection message.
             tool_policy: The per-tool policy (takes precedence for mode).
-            agent_policy: The agent-level policy (fallback for mode).
+            tools_policy: The agent-level policy (fallback for mode).
         """
         # Per-tool mode takes precedence over agent-level mode
         mode: ToolPolicyMode = 'model_retry'
         if tool_policy:
             mode = tool_policy.mode
-        elif agent_policy:
-            mode = agent_policy.mode
+        elif tools_policy:
+            mode = tools_policy.mode
 
         if mode == 'error':
             raise UsageLimitExceeded(message=message)
@@ -357,7 +357,7 @@ class ToolManager(Generic[AgentDepsT]):
         )
 
         if batch_exceeds:
-            return self._reject_call('Tool usage limit reached for this run.', agent_policy=self.tools_use_policy)
+            return self._reject_call('Tool usage limit reached for this run.', tools_policy=self.tools_use_policy)
         return None
 
     def check_tool_call_allowed(
@@ -402,7 +402,7 @@ class ToolManager(Generic[AgentDepsT]):
         # Phase 1: Gather policies and current usage state
         tool = self.tools.get(tool_name)
         tool_policy = tool.usage_policy if tool else None
-        agent_policy = self.tools_use_policy
+        tools_policy = self.tools_use_policy
 
         current_uses = self._get_current_uses_of_tool(tool_name)
         max_uses = tool_policy.max_uses if tool_policy else None
@@ -415,40 +415,40 @@ class ToolManager(Generic[AgentDepsT]):
         # If batch exceeds tool limits and no partial execution allowed, reject all calls for this tool upfront
         if tool_batch_exceeds and tool_policy and tool_policy.partial_execution is False:
             return self._reject_call(
-                f'Tool "{tool_name}" has reached its usage limit.', tool_policy=tool_policy, agent_policy=agent_policy
+                f'Tool "{tool_name}" has reached its usage limit.', tool_policy=tool_policy, tools_policy=tools_policy
             )
 
         # Phase 3: Incremental per-tool checks - enforce limits one call at a time (for partial execution)
         # Check if this tool has already been accepted max times in this step
         if max_uses_per_step is not None and tool_accepted_in_step >= max_uses_per_step:
             return self._reject_call(
-                f'Tool "{tool_name}" has reached its usage limit.', tool_policy=tool_policy, agent_policy=agent_policy
+                f'Tool "{tool_name}" has reached its usage limit.', tool_policy=tool_policy, tools_policy=tools_policy
             )
 
         # Check if this tool has already been used max times across the entire run
         if max_uses is not None and current_uses + tool_accepted_in_step >= max_uses:
             return self._reject_call(
-                f'Tool "{tool_name}" has reached its usage limit.', tool_policy=tool_policy, agent_policy=agent_policy
+                f'Tool "{tool_name}" has reached its usage limit.', tool_policy=tool_policy, tools_policy=tools_policy
             )
 
         # Phase 4: Incremental agent-level checks - enforce agent-wide limits one call at a time
-        if agent_policy:
+        if tools_policy:
             # Check if we've already accepted max tool calls in this step (across all tools)
             if (
-                agent_policy.max_uses_per_step is not None
-                and tool_calls_executed_in_step >= agent_policy.max_uses_per_step
+                tools_policy.max_uses_per_step is not None
+                and tool_calls_executed_in_step >= tools_policy.max_uses_per_step
             ):
                 return self._reject_call(
-                    'Tool usage limit reached for this step.', tool_policy=tool_policy, agent_policy=agent_policy
+                    'Tool usage limit reached for this step.', tool_policy=tool_policy, tools_policy=tools_policy
                 )
 
             # Check if we've already used max tool calls across the entire run (across all tools)
             if (
-                agent_policy.max_uses is not None
-                and current_total_tool_uses + tool_calls_executed_in_step >= agent_policy.max_uses
+                tools_policy.max_uses is not None
+                and current_total_tool_uses + tool_calls_executed_in_step >= tools_policy.max_uses
             ):
                 return self._reject_call(
-                    'Tool usage limit reached for this run.', tool_policy=tool_policy, agent_policy=agent_policy
+                    'Tool usage limit reached for this run.', tool_policy=tool_policy, tools_policy=tools_policy
                 )
 
         # All checks passed - this call is allowed
