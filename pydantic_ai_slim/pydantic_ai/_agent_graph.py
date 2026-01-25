@@ -227,21 +227,22 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     (message for message in reversed(messages) if isinstance(message, _messages.ModelResponse)), None
                 )
 
-                if last_model_response is None:
-                    raise exceptions.UserError(
-                        'Last model request indicates tool calls were made, but there is no corresponding model response.'
-                    )
-
-                tool_calls_in_response = set(tool_call.tool_call_id for tool_call in last_model_response.tool_calls)
                 tool_calls_in_request = set(
                     part.tool_call_id
                     for part in last_model_request.parts
                     if part.part_kind == 'tool-return' or part.part_kind == 'retry-prompt'
                 )
 
-                if tool_calls_in_request < tool_calls_in_response:
-                    return await self._handle_deferred_tool_results(
-                        last_model_request, last_model_response, self.deferred_tool_results, ctx
+                if last_model_response is not None:
+                    tool_calls_in_response = set(tool_call.tool_call_id for tool_call in last_model_response.tool_calls)
+
+                    if tool_calls_in_response and tool_calls_in_request < tool_calls_in_response:
+                        return await self._handle_deferred_tool_results(
+                            last_model_request, last_model_response, self.deferred_tool_results, ctx
+                        )
+                elif tool_calls_in_request:
+                    raise exceptions.UserError(
+                        'Last model request indicates tool calls were made, but there is no corresponding model response.'
                     )
 
             if self.deferred_tool_results is not None:
