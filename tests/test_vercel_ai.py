@@ -8,6 +8,8 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._agent_graph import capture_run_messages
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     AudioUrl,
@@ -4280,3 +4282,112 @@ class TestLoadProviderMetadata:
         provider_metadata = {'test': {'id': 'test_id'}}
         result = load_provider_metadata(provider_metadata)
         assert result == {}
+
+
+async def test_system_prompt_with_vercel_adapter():
+    """Test that system prompts are included when using VercelAIAdapter on first message."""
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        events: list[dict[str, Any]] = []
+        async for event in adapter.encode_stream(adapter.run_stream()):
+            if '[DONE]' not in event:
+                events.append(json.loads(event.removeprefix('data: ')))
+
+    assert len(messages) >= 1
+    first_request = messages[0]
+    assert any(isinstance(part, SystemPromptPart) and part.content == system_prompt for part in first_request.parts), (
+        'System prompt should be included in the first message when using UI adapter'
+    )
+
+
+async def test_dynamic_system_prompt_with_vercel_adapter():
+    """Test that dynamic system prompts work with VercelAIAdapter."""
+    agent = Agent(model=TestModel())
+
+    @agent.system_prompt
+    def dynamic_prompt(ctx: RunContext[None]) -> str:
+        return 'Dynamic system prompt from Vercel'
+
+    request = SubmitMessage(
+        id='test-request-2',
+        messages=[
+            UIMessage(
+                id='msg-2',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        events: list[dict[str, Any]] = []
+        async for event in adapter.encode_stream(adapter.run_stream()):
+            if '[DONE]' not in event:
+                events.append(json.loads(event.removeprefix('data: ')))
+
+    assert len(messages) >= 1
+    first_request = messages[0]
+    assert any(
+        isinstance(part, SystemPromptPart) and part.content == 'Dynamic system prompt from Vercel'
+        for part in first_request.parts
+    ), 'Dynamic system prompt should be evaluated and included in the first message'
+
+
+async def test_system_prompt_not_repeated_with_vercel_history():
+    """Test that system prompts are NOT repeated when history contains ModelResponse."""
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    request = SubmitMessage(
+        id='test-request-3',
+        messages=[
+            UIMessage(
+                id='msg-3',
+                role='user',
+                parts=[TextUIPart(text='First message')],
+            ),
+            UIMessage(
+                id='msg-4',
+                role='assistant',
+                parts=[TextUIPart(text='First response')],
+            ),
+            UIMessage(
+                id='msg-5',
+                role='user',
+                parts=[TextUIPart(text='Second message')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        events: list[dict[str, Any]] = []
+        async for event in adapter.encode_stream(adapter.run_stream()):
+            if '[DONE]' not in event:
+                events.append(json.loads(event.removeprefix('data: ')))
+
+    last_request = next((msg for msg in reversed(messages) if hasattr(msg, 'parts')), None)
+    assert last_request is not None
+
+    system_prompt_parts = [part for part in last_request.parts if isinstance(part, SystemPromptPart)]
+    assert len(system_prompt_parts) == 0, (
+        'System prompt should NOT be added again when conversation history already contains ModelResponse messages'
+    )

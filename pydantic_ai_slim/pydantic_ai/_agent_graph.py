@@ -263,6 +263,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if next_message:
             await self._reevaluate_dynamic_prompts([next_message], run_context)
+            # Check if we should add system prompts for the initial message
+            # This happens forn instance when a UI adapter passes a first user message but no prior model responses
+            if not messages or not any(isinstance(msg, _messages.ModelResponse) for msg in messages):
+                # No message history OR no model responses yet, so add system prompts to next_message
+                sys_parts = await self._sys_parts(run_context)
+                if sys_parts:
+                    # Insert system prompts at the beginning of the parts
+                    next_message.parts = [*sys_parts, *next_message.parts]
         else:
             parts: list[_messages.ModelRequestPart] = []
             if not messages:
@@ -307,8 +315,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
 
-        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
-        tool_call_results = {}
+        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
         for tool_call_id, approval in deferred_tool_results.approvals.items():
             if approval is True:
                 approval = ToolApproved()

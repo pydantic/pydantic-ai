@@ -41,6 +41,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._agent_graph import capture_run_messages
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.builtin_tools import WebSearchTool
@@ -2344,4 +2345,99 @@ async def test_handle_ag_ui_request():
             },
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
+    )
+
+
+async def test_system_prompt_with_ag_ui_adapter():
+    """Test that system prompts are included when using AGUIAdapter on first message."""
+
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    with capture_run_messages() as messages:
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+    assert len(messages) >= 1
+    first_request = messages[0]
+    assert any(isinstance(part, SystemPromptPart) and part.content == system_prompt for part in first_request.parts), (
+        'System prompt should be included in the first message when using UI adapter'
+    )
+
+
+async def test_dynamic_system_prompt_with_ag_ui_adapter():
+    """Test that dynamic system prompts are included when using AGUIAdapter on first message."""
+
+    agent = Agent(model=TestModel())
+
+    @agent.system_prompt
+    def dynamic_prompt(ctx: RunContext[None]) -> str:
+        return 'Dynamic system prompt'
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    with capture_run_messages() as messages:
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+    assert len(messages) >= 1
+    first_request = messages[0]
+    assert any(
+        isinstance(part, SystemPromptPart) and part.content == 'Dynamic system prompt' for part in first_request.parts
+    ), 'Dynamic system prompt should be evaluated and included in the first message'
+
+
+async def test_system_prompt_not_repeated_with_ag_ui_history():
+    """Test that system prompts are NOT repeated when there's already a ModelResponse in history."""
+
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        messages=[
+            UserMessage(
+                id='msg_1',
+                content='First message',
+            ),
+            AssistantMessage(
+                id='msg_2',
+                content='First response',
+            ),
+            UserMessage(
+                id='msg_3',
+                content='Second message',
+            ),
+        ],
+        state=None,
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+    with capture_run_messages() as messages:
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+    # Check the last ModelRequest (which should be for "Second message")
+    last_request = next((msg for msg in reversed(messages) if hasattr(msg, 'parts')), None)
+    assert last_request is not None
+
+    # system prompt should only be in the initial history, not repeated
+    system_prompt_parts = [part for part in last_request.parts if isinstance(part, SystemPromptPart)]
+    assert len(system_prompt_parts) == 0, (
+        'System prompt should not be added again when conversation history already contains ModelResponse messages'
     )
