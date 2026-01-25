@@ -1595,6 +1595,12 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         ),
                         ToolReturnPart(
+                            tool_name='external_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
@@ -1783,7 +1789,9 @@ class TestMultipleToolCalls:
             yield {5: DeltaToolCall('unknown_tool', '{"value": "???"}')}
             yield {6: DeltaToolCall('deferred_tool', '{"x": 4}')}
 
-        agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='exhaustive')
+        agent = Agent(
+            FunctionModel(stream_function=sf), output_type=[OutputType, DeferredToolRequests], end_strategy='exhaustive'
+        )
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -1806,6 +1814,7 @@ class TestMultipleToolCalls:
 
         async with agent.run_stream('test exhaustive strategy') as result:
             response = await result.get_output()
+            assert isinstance(response, OutputType)
             assert response.value == snapshot('first')
             messages = result.all_messages()
 
@@ -1840,25 +1849,25 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
-                        ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
                             tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
@@ -2568,18 +2577,12 @@ async def test_unknown_tool_call_events():
         [
             FunctionToolCallEvent(
                 part=ToolCallPart(
-                    tool_name='known_tool',
-                    args={'x': 5},
-                    tool_call_id=IsStr(),
-                )
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
                     tool_name='unknown_tool',
                     args={'arg': 'value'},
                     tool_call_id=IsStr(),
                 ),
             ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='known_tool', args={'x': 5}, tool_call_id=IsStr())),
             FunctionToolResultEvent(
                 result=RetryPromptPart(
                     content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
@@ -2837,6 +2840,7 @@ async def test_tool_raises_approval_required():
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
+                ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
