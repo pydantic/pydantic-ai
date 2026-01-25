@@ -39,6 +39,13 @@ repos:
           - tomli
   - repo: local
     hooks:
+      - id: check-lock
+        name: Check uv.lock is up-to-date
+        entry: uv
+        args: [lock, --check]
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
       - id: clai-help
         name: clai help output
         entry: uv
