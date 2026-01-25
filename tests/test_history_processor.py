@@ -17,6 +17,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
@@ -879,3 +880,135 @@ async def test_callable_class_history_processor_with_ctx_no_op(
         ]
     )
     assert result.new_messages() == result.all_messages()[-2:]
+
+
+async def test_new_messages_with_processor_pruning_current_run():
+    def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[-2:] if len(messages) > 2 else messages
+
+    agent = Agent(model=TestModel(custom_output_text='done'), history_processors=[keep_last_2])
+
+    @agent.tool
+    async def my_tool(ctx: RunContext[None]) -> str:
+        return 'tool executed'
+
+    result = await agent.run('New question')
+
+    new_msgs = result.new_messages()
+    all_msgs = result.all_messages()
+
+    assert len(new_msgs) == len(all_msgs), (
+        f'new_messages ({len(new_msgs)}) should equal all_messages ({len(all_msgs)}). '
+        f'Bug: history processor pruned current-run messages, causing new_message_index miscalculation.'
+    )
+
+
+async def test_new_messages_index_during_iter_with_pruning():
+    def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[-2:] if len(messages) > 2 else messages
+
+    agent = Agent(model=TestModel(custom_output_text='done'), history_processors=[keep_last_2])
+
+    @agent.tool
+    async def my_tool(ctx: RunContext[None]) -> str:
+        return 'tool executed'
+
+    async with agent.iter('start') as run:
+        async for node in run:
+            idx = run.ctx.deps.new_message_index
+            assert idx >= 0, (
+                f'BUG: new_message_index became negative: {idx}. all_messages count: {len(run.all_messages())}'
+            )
+
+    result = run.result
+    assert result is not None
+
+    new_msgs = result.new_messages()
+    all_msgs = result.all_messages()
+
+    assert len(new_msgs) == len(all_msgs), (
+        f'Fresh run: new_messages ({len(new_msgs)}) should equal all_messages ({len(all_msgs)}). '
+        f'This failure indicates the negative index bug is present.'
+    )
+
+
+async def test_new_messages_streaming_with_processor_pruning_current_run():
+    def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[-2:] if len(messages) > 2 else messages
+
+    agent = Agent(model=TestModel(), history_processors=[keep_last_2])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]) -> str:
+        return 'tool executed'
+
+    async with agent.run_stream('New question') as result:
+        async for _ in result.stream_text():
+            pass
+
+    new_msgs = result.new_messages()
+    all_msgs = result.all_messages()
+
+    assert len(new_msgs) == len(all_msgs), (
+        f'Streaming: new_messages ({len(new_msgs)}) should equal all_messages ({len(all_msgs)}).'
+    )
+
+
+async def test_history_processor_reorder_old_new(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    def swap_last_two(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if len(messages) >= 2:
+            return messages[:-2] + [messages[-1], messages[-2]]
+        return messages
+
+    agent = Agent(function_model, history_processors=[swap_last_two])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Old question')]),
+    ]
+
+    result = await agent.run('New question', message_history=message_history)
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                    UserPromptPart(content='Old question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    new_msgs = result.new_messages()
+    assert len(new_msgs) == 1
+    assert new_msgs[0].parts[0].content == 'New question', (
+        f"Expected 'New question', got '{new_msgs[0].parts[0].content}'"
+    )
+
+
+async def test_history_processor_injects_into_new_stream(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    def inject_middle(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[:-1] + [ModelRequest(parts=[UserPromptPart(content='Inserted')])] + messages[-1:]
+
+    agent = Agent(function_model, history_processors=[inject_middle])
+
+    message_history = [ModelRequest(parts=[UserPromptPart(content='Old')])]
+
+    result = await agent.run('New question', message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Old', timestamp=IsDatetime()),
+                    UserPromptPart(content='Inserted', timestamp=IsDatetime()),
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+    new_msgs = result.new_messages()
+    assert any(m.parts[0].content == 'Inserted' for m in new_msgs)
