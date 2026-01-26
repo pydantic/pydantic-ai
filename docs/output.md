@@ -860,6 +860,11 @@ async def main():
         #> True
 ```
 
+!!! info "Usage tracking for cancelled streams"
+    Usage information may be incomplete for cancelled streams. The [`usage()`][pydantic_ai.result.StreamedRunResult.usage] method returns whatever usage data arrived before the stream was cancelled.
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
 When a stream is cancelled:
 
 - Iteration stops immediately
@@ -870,11 +875,6 @@ When a stream is cancelled:
 
 !!! note
     Calling [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] multiple times is safe (idempotent). The cancellation is immediate — no further events will be yielded after calling `cancel()`.
-
-!!! info "Usage tracking for cancelled streams"
-    Usage information may be incomplete for cancelled streams. Most providers send final token counts at the end of the stream, which won't be received after cancellation. The [`usage()`][pydantic_ai.result.StreamedRunResult.usage] method returns whatever usage data arrived before the stream was cancelled.
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Examples
 
