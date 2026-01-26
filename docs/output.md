@@ -39,7 +39,7 @@ The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argume
 - Type unions and lists of multiple types
 - [Output functions](#output-functions)
 
-By default, Pydantic AI uses tool calling to get structured data from the model. When multiple output types are specified, each is registered as a separate output tool to simplify the schema. To customize this behavior (tool names, native structured output, or prompt-based output), use an [output mode](#output-modes) marker class.
+By default, Pydantic AI uses tool calling to get structured data from the model. When multiple output types are specified, each is registered as a separate output tool to simplify the schema and maximize the chances a model will respond correctly. To customize this behavior—such as changing tool names, using a model's native structured output feature, or passing the schema in the model's [instructions](agents.md#instructions)—use an [output mode](#output-modes) marker class.
 
 Plain text responses are accepted when no `output_type` is specified or when `str` is included. Otherwise, the model is forced to return structured data.
 
@@ -865,6 +865,7 @@ Example of what gets sent to the model:
 
 ```python
 from pydantic import BaseModel, Field
+
 
 class UserProfile(BaseModel):
     """A user profile with contact information."""
