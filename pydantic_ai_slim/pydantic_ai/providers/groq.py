@@ -32,7 +32,6 @@ def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     return ModelProfile(
         supports_json_object_output=True,
         supports_json_schema_output=True,
-        default_structured_output_mode='native',
         json_schema_transformer=OpenAIJsonSchemaTransformer,
     ).update(moonshotai_model_profile(model_name))
 
@@ -45,7 +44,6 @@ def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
             ModelProfile(
                 supports_json_object_output=True,
                 supports_json_schema_output=True,
-                default_structured_output_mode='native',
                 json_schema_transformer=OpenAIJsonSchemaTransformer,
             )
         )
