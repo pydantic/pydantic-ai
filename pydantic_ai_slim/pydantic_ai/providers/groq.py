@@ -27,26 +27,28 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+_GROQ_NATIVE_OUTPUT_PROFILE = ModelProfile(
+    supports_json_object_output=True,
+    supports_json_schema_output=True,
+    default_structured_output_mode='native',
+    json_schema_transformer=OpenAIJsonSchemaTransformer,
+)
+"""Profile for Groq models that support native structured output.
+
+Groq's API requires OpenAI-compatible JSON schema format with strict mode
+constraints (additionalProperties: false on all objects) for structured output."""
+
+
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an MoonshotAI model used with the Groq provider."""
-    return ModelProfile(
-        supports_json_object_output=True,
-        supports_json_schema_output=True,
-        json_schema_transformer=OpenAIJsonSchemaTransformer,
-    ).update(moonshotai_model_profile(model_name))
+    return _GROQ_NATIVE_OUTPUT_PROFILE.update(moonshotai_model_profile(model_name))
 
 
 def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Meta model used with the Groq provider."""
     if model_name in {'llama-4-maverick-17b-128e-instruct', 'llama-4-scout-17b-16e-instruct'}:
         base = meta_model_profile(model_name) or ModelProfile()
-        return base.update(
-            ModelProfile(
-                supports_json_object_output=True,
-                supports_json_schema_output=True,
-                json_schema_transformer=OpenAIJsonSchemaTransformer,
-            )
-        )
+        return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
     else:
         return meta_model_profile(model_name)
 
@@ -57,12 +59,7 @@ def groq_gpt_oss_model_profile(model_name: str) -> ModelProfile:
     GPT-OSS models (gpt-oss-20b, gpt-oss-120b) support strict native structured output
     with 100% schema adherence.
     """
-    return GroqModelProfile(
-        supports_json_schema_output=True,
-        supports_json_object_output=True,
-        default_structured_output_mode='native',
-        json_schema_transformer=OpenAIJsonSchemaTransformer,
-    )
+    return GroqModelProfile.from_profile(_GROQ_NATIVE_OUTPUT_PROFILE)
 
 
 class GroqProvider(Provider[AsyncGroq]):
