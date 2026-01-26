@@ -226,7 +226,7 @@ class OpenAIResponsesModel(Model):
                                 content=summary.text,
                                 id=item.id,
                                 signature=signature,
-                                provider_name=self.system if (signature or provider_details) else None,
+                                provider_name=self.system,
                                 provider_details=provider_details or None,
                             )
                         )
@@ -239,7 +239,7 @@ class OpenAIResponsesModel(Model):
                             content='',
                             id=item.id,
                             signature=signature,
-                            provider_name=self.system if (signature or provider_details) else None,
+                            provider_name=self.system,
                             provider_details=provider_details or None,
                         )
                     )
@@ -1024,6 +1024,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=chunk.item_id,
                     args=chunk.delta,
+                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1074,6 +1075,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=args_json_delta,
+                        provider_name=self.provider_name,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
@@ -1096,6 +1098,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=args_json_delta,
+                        provider_name=self.provider_name,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
@@ -1132,6 +1135,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=call_part.args,
+                        provider_name=self.provider_name,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
@@ -1143,6 +1147,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=call_part.args,
+                        provider_name=self.provider_name,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
@@ -1208,7 +1213,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(
-                    vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
+                    vendor_part_id=chunk.item_id,
+                    content=chunk.delta,
+                    id=chunk.item_id,
+                    provider_name=self.provider_name,
                 ):
                     yield event
 
@@ -1232,6 +1240,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args=json_args_delta,
+                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1240,6 +1249,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args='"}',
+                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1279,6 +1289,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args='}',
+                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1287,6 +1298,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args=chunk.delta,
+                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
