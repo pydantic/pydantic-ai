@@ -4207,7 +4207,18 @@ class TestRunStreamEventsCancellation:
         """Breaking during text streaming stops the stream properly."""
 
         async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            for word in ['Hello ', 'world, ', 'this ', 'is ', 'a ', 'very ', 'long ', 'response ', 'that ', 'continues']:
+            for word in [
+                'Hello ',
+                'world, ',
+                'this ',
+                'is ',
+                'a ',
+                'very ',
+                'long ',
+                'response ',
+                'that ',
+                'continues',
+            ]:
                 yield word
 
         agent = Agent(FunctionModel(stream_function=stream_function))
