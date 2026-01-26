@@ -615,8 +615,9 @@ class BedrockConverseModel(Model):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart) and part.content:
-                        system_prompt.append({'text': part.content})
+                    if isinstance(part, SystemPromptPart):
+                        if part.content:
+                            system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(
                             await self._map_user_prompt(part, document_count, profile.bedrock_supports_prompt_caching)
@@ -660,6 +661,8 @@ class BedrockConverseModel(Model):
                                     ],
                                 }
                             )
+                    else:
+                        assert_never(part)
             elif isinstance(message, ModelResponse):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
