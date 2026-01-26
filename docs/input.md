@@ -115,8 +115,10 @@ Support for file URLs varies depending on type and provider:
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | — | — |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA) | [YouTube](models/google.md#document-image-audio-and-video-input), [Files API](models/google.md#document-image-audio-and-video-input) | All other URLs | — |
+| [`XaiModel`][pydantic_ai.models.xai.XaiModel] | `ImageUrl` | `DocumentUrl` | `AudioUrl`, `VideoUrl` |
 | [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | — | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
+| [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl` | `AudioUrl` | `VideoUrl` |
 
 !!! warning
     `DocumentUrl` and `BinaryContent` documents are not supported when using `AzureProvider` with `OpenAIChatModel`. Azure's Chat Completions API does not support document input. Use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] instead. See the [Azure AI Foundry documentation](models/openai.md#azure-ai-foundry) for more details.
