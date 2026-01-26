@@ -14,7 +14,7 @@ from typing_extensions import assert_never, deprecated
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ModelRetry, ToolFailed, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -38,7 +38,9 @@ class ToolManager(Generic[AgentDepsT]):
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set[str])
-    """Names of tools that failed in this run step."""
+    """Names of tools that failed in this run step (for retry tracking)."""
+    disabled_tools: set[str] = field(default_factory=set[str])
+    """Names of tools that have been permanently disabled for this run."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
 
@@ -83,6 +85,8 @@ class ToolManager(Generic[AgentDepsT]):
             toolset=self.toolset,
             ctx=ctx,
             tools=await self.toolset.get_tools(ctx),
+            failed_tools=self.failed_tools if self.ctx is not None else set(),
+            disabled_tools=self.disabled_tools if self.ctx is not None else set(),
             default_max_retries=self.default_max_retries,
         )
 
@@ -92,7 +96,7 @@ class ToolManager(Generic[AgentDepsT]):
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        return [tool.tool_def for tool in self.tools.values()]
+        return [tool.tool_def for tool in self.tools.values() if tool.tool_def.name not in self.disabled_tools]
 
     def get_parallel_execution_mode(self, calls: list[ToolCallPart]) -> ParallelExecutionMode:
         """Get the effective parallel execution mode for a list of tool calls.
@@ -210,6 +214,19 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
             return await self.toolset.call_tool(name, args_dict, ctx, tool)
+        except ToolFailed as e:
+            # ToolFailed is traced as an error but allows agent to continue
+            if e.disable:
+                # Disable tool for remainder of run
+                self.disabled_tools.add(name)
+            if wrap_validation_errors:
+                m = _messages.RetryPromptPart(
+                    tool_name=name,
+                    content=e.message,
+                    tool_call_id=call.tool_call_id,
+                )
+                raise ToolRetryError(m) from e
+            raise
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             current_retry = self.ctx.retries.get(name, 0)

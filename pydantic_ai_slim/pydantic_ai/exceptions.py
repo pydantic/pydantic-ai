@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 __all__ = (
     'ModelRetry',
+    'ToolFailed',
     'CallDeferred',
     'ApprovalRequired',
     'UserError',
@@ -68,6 +69,34 @@ class ModelRetry(Exception):
                 return_schema=schema,
             ),
         )
+
+
+class ToolFailed(Exception):
+    """Exception to raise when a tool fails but the agent should continue.
+
+    Unlike `ModelRetry`, this exception is traced as an error in telemetry.
+    The tool can either remain available (for retry with different arguments) or be disabled for the remainder of the run.
+
+    Args:
+        message: The error message to return to the model.
+        disable: If True, the tool will be disabled for the remainder of the run. Defaults to False.
+    """
+
+    message: str
+    """The error message to return to the model."""
+    disable: bool
+    """Whether to disable the tool for the remainder of the run."""
+
+    def __init__(self, message: str, *, disable: bool = False):
+        self.message = message
+        self.disable = disable
+        super().__init__(message)
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, self.__class__) and other.message == self.message and other.disable == self.disable
+
+    def __hash__(self) -> int:
+        return hash((self.__class__, self.message, self.disable))
 
 
 class CallDeferred(Exception):
