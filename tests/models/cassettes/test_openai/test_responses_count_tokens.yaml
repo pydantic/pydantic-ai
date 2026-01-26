@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '93'
+      - '112'
       content-type:
       - application/json
       host:
@@ -34,9 +34,9 @@ interactions:
       openai-organization:
       - user-aqgbrbgshrc0qzcisc6v053e
       openai-processing-ms:
-      - '122'
+      - '39'
       openai-project:
-      - proj_kPjLCA6wSCpPE9oIqdgRJksg
+      - proj_sazfDS4z1dBLe741ZQt2ckC8
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -44,7 +44,7 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      input_tokens: 7
+      input_tokens: 16
       object: response.input_tokens
     status:
       code: 200

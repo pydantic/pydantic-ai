@@ -3574,7 +3574,7 @@ async def test_responses_count_tokens(allow_model_requests: None, openai_api_key
         ModelRequestParameters(),
     )
 
-    assert result.input_tokens == snapshot(7)
+    assert result.input_tokens == snapshot(16)
 
 
 async def test_responses_count_tokens_no_messages(allow_model_requests: None, openai_api_key: str) -> None:
