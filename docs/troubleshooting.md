@@ -12,13 +12,14 @@ Below are suggestions on how to fix some common errors you might encounter while
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
-result = await agent.run('Who let the dogs out?')
+result = await agent.run('Who let the dogs out?') # noqa: F704
 ```
 
 **Legacy environments or specific integrations**: If you encounter event loop conflicts, use [`nest-asyncio`](https://pypi.org/project/nest-asyncio/):
 
 ```python {test="skip"}
 import nest_asyncio
+
 from pydantic_ai import Agent
 
 nest_asyncio.apply()
