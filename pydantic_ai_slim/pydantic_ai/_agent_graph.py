@@ -1384,10 +1384,29 @@ async def _process_message_history(
     return messages
 
 
+def _filter_incomplete_tool_calls(response: _messages.ModelResponse) -> _messages.ModelResponse:
+    """Filter out tool call parts with args_incomplete=True from an incomplete response."""
+    if not response.incomplete:
+        return response
+
+    filtered_parts = [
+        part for part in response.parts if not (isinstance(part, _messages.BaseToolCallPart) and part.args_incomplete)
+    ]
+
+    if len(filtered_parts) == len(response.parts):
+        return response
+
+    return replace(response, parts=filtered_parts)
+
+
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
     """Clean the message history by merging consecutive messages of the same type."""
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
+        # Filter incomplete tool calls from incomplete responses before processing
+        if isinstance(message, _messages.ModelResponse):
+            message = _filter_incomplete_tool_calls(message)
+
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
 
         if isinstance(message, _messages.ModelRequest):

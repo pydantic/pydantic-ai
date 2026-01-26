@@ -62,13 +62,32 @@ class ModelResponsePartsManager:
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict, init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
 
-    def get_parts(self) -> list[ModelResponsePart]:
+    def get_parts(self, *, cancelled: bool = False) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
+
+        Args:
+            cancelled: If True, check tool call args and mark as args_incomplete=True
+                if they can't be parsed as valid JSON.
 
         Returns:
             A list of ModelResponsePart objects. ToolCallPartDelta objects are excluded.
         """
-        return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        parts: list[ModelResponsePart] = [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+
+        if cancelled:
+            marked_parts: list[ModelResponsePart] = []
+            for p in parts:
+                if isinstance(p, (ToolCallPart, BuiltinToolCallPart)):
+                    try:
+                        p.args_as_dict()
+                        marked_parts.append(p)  # Args are valid, keep as-is
+                    except Exception:
+                        marked_parts.append(replace(p, args_incomplete=True))
+                else:
+                    marked_parts.append(p)
+            parts = marked_parts
+
+        return parts
 
     def handle_text_delta(
         self,
