@@ -2,19 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(rg:*)",
-      "Bash(make format)",
-      "Bash(make lint)",
       "Bash(ls:*)",
       "Bash(tree:*)",
       "Bash(grep:*)",
-      "Bash(git checkout:*)",
       "Bash(git log:*)",
       "Bash(git diff:*)",
       "Bash(git grep:*)",
-      "Bash(git push:*)",
       "Bash(git show:*)",
       "Bash(git status:*)",
-      "Bash(gh pr create:*)",
       "Bash(gh pr view:*)",
       "Bash(gh pr checks:*)",
       "Bash(gh pr list:*)",
@@ -24,8 +19,14 @@
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
       "Bash(uv run:*)",
-      "Bash(uv run pytest:*)",
       "Bash(make:*)"
+    ],
+    "ask": [
+      "Bash(git add:*)",
+      "Bash(git checkout:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)"
     ]
   }
 }
