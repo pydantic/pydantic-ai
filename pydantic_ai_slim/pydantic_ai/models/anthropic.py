@@ -23,6 +23,7 @@ from ..builtin_tools import (
 )
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -43,6 +44,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -120,7 +122,6 @@ try:
         BetaThinkingDelta,
         BetaToolChoiceParam,
         BetaToolParam,
-        BetaToolResultBlockParam,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -132,6 +133,7 @@ try:
         BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
+        beta_tool_result_block_param,
     )
     from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
         Content as WebFetchToolResultBlockParamContent,
@@ -718,19 +720,55 @@ class AnthropicModel(Model):
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
-                        tool_result_block_param = BetaToolResultBlockParam(
+                        tool_result_content: list[beta_tool_result_block_param.Content] = []
+                        unsupported_files: list[BetaContentBlockParam] = []
+
+                        # Add data content (text/JSON) to tool result
+                        if data_str := request_part.model_response_str():
+                            tool_result_content.append(BetaTextBlockParam(text=data_str, type='text'))
+
+                        # Handle multimodal files - images go in tool_result, others go to separate user message
+                        for file in request_part.multimodal_content:
+                            if isinstance(file, BinaryContent):
+                                if file.media_type.startswith('image/'):
+                                    tool_result_content.append(self._map_binary_data(file.data, file.media_type))
+                                else:
+                                    unsupported_files.append(self._map_binary_data(file.data, file.media_type))
+                            elif isinstance(file, ImageUrl):
+                                if file.force_download:
+                                    downloaded = await download_item(file, data_format='bytes')
+                                    tool_result_content.append(
+                                        self._map_binary_data(downloaded['data'], file.media_type)
+                                    )
+                                else:
+                                    tool_result_content.append(
+                                        BetaImageBlockParam(source={'type': 'url', 'url': file.url}, type='image')
+                                    )
+                            elif isinstance(file, DocumentUrl | AudioUrl | VideoUrl):
+                                # Documents/audio/video not supported in tool_result, add to separate user message
+                                user_prompt = UserPromptPart(content=[file])
+                                async for block in self._map_user_prompt(user_prompt):
+                                    if not isinstance(block, CachePoint):  # pragma: no branch
+                                        unsupported_files.append(block)
+                            else:
+                                assert_never(file)
+
+                        tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
                             type='tool_result',
-                            content=request_part.model_response_str(),
+                            content=tool_result_content or request_part.model_response_str(),
                             is_error=False,
                         )
                         user_content_params.append(tool_result_block_param)
+
+                        # Add unsupported files as separate content after the tool result
+                        user_content_params.extend(unsupported_files)
                     elif isinstance(request_part, RetryPromptPart):  # pragma: no branch
                         if request_part.tool_name is None:
                             text = request_part.model_response()  # pragma: no cover
                             retry_param = BetaTextBlockParam(type='text', text=text)  # pragma: no cover
                         else:
-                            retry_param = BetaToolResultBlockParam(
+                            retry_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                                 tool_use_id=_guard_tool_call_id(t=request_part),
                                 type='tool_result',
                                 content=request_part.model_response(),
@@ -1047,7 +1085,7 @@ class AnthropicModel(Model):
         last_param['cache_control'] = self._build_cache_control(ttl)
 
     @staticmethod
-    def _map_binary_data(data: bytes, media_type: str) -> BetaContentBlockParam:
+    def _map_binary_data(data: bytes, media_type: str) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         # Anthropic SDK accepts file-like objects (IO[bytes]) and handles base64 encoding internally
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
