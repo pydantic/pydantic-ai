@@ -428,6 +428,7 @@ class OpenAIChatModel(Model):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
+
         items: list[ModelResponsePart] = []
 
         if thinking_parts := self._process_thinking(choice.message):
@@ -816,7 +817,6 @@ class OpenAIChatModel(Model):
                 elif isinstance(item, DocumentUrl):
                     # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
                     # Some providers (e.g., OpenRouter) support URLs via the profile flag.
-                    profile = OpenAIModelProfile.from_profile(self.profile)
                     if not item.force_download and profile.openai_chat_supports_file_urls:
                         content.append(
                             File(

@@ -64,6 +64,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
+from ._azure import check_azure_content_filter
 from ._shared import (
     MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME,
     OpenAIModelName,
@@ -183,6 +184,11 @@ class OpenAIResponsesModel(Model):
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
+
+        # Handle ModelResponse
+        if isinstance(response, ModelResponse):
+            return response
+
         return self._process_response(response, model_request_parameters)
 
     @asynccontextmanager
@@ -253,16 +259,14 @@ class OpenAIResponsesModel(Model):
                             TextPart(
                                 content.text,
                                 id=item.id,
+                                provider_name=self.system,
                                 provider_details=part_provider_details,
                             )
                         )
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(
-                        item.name,
-                        item.arguments,
-                        tool_call_id=item.call_id,
-                        id=item.id,
+                        item.name, item.arguments, tool_call_id=item.call_id, id=item.id, provider_name=self.system
                     )
                 )
             elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
@@ -374,7 +378,7 @@ class OpenAIResponsesModel(Model):
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         tools = (
             self._get_builtin_tools(model_request_parameters)
             + list(model_settings.get('openai_builtin_tools', []))
@@ -476,6 +480,9 @@ class OpenAIResponsesModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if model_response := check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
+
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -674,15 +681,10 @@ class OpenAIResponsesModel(Model):
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 for item in message.parts:
-                    # Check provider_name for parts that have it
-                    if isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart, ThinkingPart, FilePart)):
-                        should_send_item_id = send_item_ids and (
-                            item.provider_name == self.system
-                            or (item.provider_name is None and message.provider_name == self.system)
-                        )
-                    else:
-                        # For parts without provider_name (TextPart, ToolCallPart), check message provider
-                        should_send_item_id = send_item_ids and message.provider_name == self.system
+                    should_send_item_id = send_item_ids and (
+                        item.provider_name == self.system
+                        or (item.provider_name is None and message.provider_name == self.system)
+                    )
 
                     if isinstance(item, TextPart):
                         if item.id and should_send_item_id:
@@ -1003,6 +1005,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                 )
+
                 if raw_finish_reason:  # pragma: no branch
                     self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
@@ -1024,7 +1027,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=chunk.item_id,
                     args=chunk.delta,
-                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1046,6 +1048,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args=chunk.item.arguments,
                         tool_call_id=chunk.item.call_id,
                         id=chunk.item.id,
+                        provider_name=self.provider_name,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
                     pass
@@ -1075,7 +1078,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=args_json_delta,
-                        provider_name=self.provider_name,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
@@ -1098,7 +1100,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=args_json_delta,
-                        provider_name=self.provider_name,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
@@ -1135,7 +1136,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=call_part.args,
-                        provider_name=self.provider_name,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
@@ -1147,7 +1147,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=call_part.args,
-                        provider_name=self.provider_name,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
@@ -1208,7 +1207,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # content already accumulated via delta events
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                # TODO(Marcelo): We should support annotations in the future.
+                # TODO Citations being worked on in https://github.com/pydantic/pydantic-ai/pull/3729
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
@@ -1240,7 +1239,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args=json_args_delta,
-                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1249,7 +1247,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args='"}',
-                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1289,7 +1286,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args='}',
-                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1298,7 +1294,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args=chunk.delta,
-                    provider_name=self.provider_name,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
