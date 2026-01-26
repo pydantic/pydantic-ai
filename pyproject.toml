@@ -78,6 +78,7 @@ pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 pydantic-docs = { git = "https://github.com/pydantic/pydantic-docs" }
+inline-snapshot = { git = "https://github.com/15r10nk/inline-snapshot.git", rev = "customize" }
 
 [tool.uv.workspace]
 members = [
@@ -100,7 +101,7 @@ dev = [
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
     "exa-py>=2.0.0",
-    "inline-snapshot>=0.19.3",
+    "inline-snapshot>=0.25.3",
     "pytest>=9.0.0",
     "pytest-examples>=0.0.18",
     "pytest-mock>=3.14.0",
@@ -324,6 +325,7 @@ ignore_no_config = true
 
 [tool.inline-snapshot]
 format-command = "ruff format --stdin-filename {filename}"
+show-updates=true
 
 [tool.inline-snapshot.shortcuts]
 snap-fix = ["create", "fix"]
