@@ -1008,7 +1008,7 @@ def test_messages_to_otel_events_serialization_errors():
 
     messages = [
         ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')]),
-        ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')], timestamp=IsDatetime()),  # pyright: ignore[reportArgumentType]
+        ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')], timestamp=IsDatetime()),
     ]
 
     settings = InstrumentationSettings()

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
 import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
@@ -13,7 +11,7 @@ from typing import Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
@@ -58,7 +56,6 @@ from pydantic_graph.beta.join import reduce_list_append
 
 try:
     import temporalio.api.common.v1
-    from pydantic_core import to_json
     from temporalio import workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
@@ -82,7 +79,6 @@ try:
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
-    from pydantic_ai.durable_exec.temporal._toolset import _ToolReturn  # pyright: ignore[reportPrivateUsage]
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -3114,71 +3110,59 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
 # Tests for BinaryContent serialization in Temporal (#3702)
 
 
-def test_binary_content_serializes_to_base64():
-    """Test that BinaryContent serializes bytes as base64 via Pydantic."""
-    binary_data = b'\x89PNG\r\n\x1a\n'
-    bc = BinaryContent(data=binary_data, media_type='image/png')
-
-    serialized = to_json(bc)
-    deserialized = json.loads(serialized)
-
-    assert deserialized['data'] == base64.b64encode(binary_data).decode('ascii')
-    assert deserialized == snapshot(
-        {
-            'data': 'iVBORw0KGgo=',
-            'media_type': 'image/png',
-            'vendor_metadata': None,
-            'kind': 'binary',
-            'identifier': '4caece',
-        }
-    )
+binary_tool_agent = Agent(TestModel(), name='binary_tool_agent')
 
 
-_tool_return_ta: TypeAdapter[_ToolReturn] = TypeAdapter(_ToolReturn)
+@binary_tool_agent.tool
+def get_binary_direct(ctx: RunContext[None]) -> BinaryContent:
+    """Return BinaryContent directly."""
+    return BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png')
 
 
-def test_binary_content_round_trip_direct():
-    """Test round-trip when BinaryContent is the direct result."""
-    binary_data = b'\x89PNG\r\n\x1a\n'
-    bc = BinaryContent(data=binary_data, media_type='image/png', identifier='test-file')
-
-    wrapped = _ToolReturn(result=bc)
-    serialized = to_json(wrapped)
-    deserialized = _tool_return_ta.validate_json(serialized)
-
-    assert deserialized == snapshot(
-        _ToolReturn(result=BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png', _identifier='test-file'))
-    )
+@binary_tool_agent.tool
+def get_binary_in_list(ctx: RunContext[None]) -> list[Any]:
+    """Return BinaryContent inside a list."""
+    return [BinaryContent(data=b'\x89PNG', media_type='image/png'), 'other-item']
 
 
-def test_binary_content_round_trip_nested_in_dict():
-    """Test round-trip when BinaryContent is nested inside a dict."""
-    binary_data = b'\x89PNG'
-    bc = BinaryContent(data=binary_data, media_type='image/png')
+@binary_tool_agent.tool
+def get_binary_in_dict(ctx: RunContext[None]) -> dict[str, Any]:
+    """Return BinaryContent nested in a dict."""
+    return {'image': BinaryContent(data=b'\x89PNG', media_type='image/png'), 'label': 'test'}
 
-    wrapped = _ToolReturn(result={'image': bc, 'label': 'test'})
-    serialized = to_json(wrapped)
-    deserialized = _tool_return_ta.validate_json(serialized)
 
-    assert deserialized == snapshot(
-        _ToolReturn(
-            result={
-                'image': BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
-                'label': 'test',
-            }
+binary_tool_temporal_agent = TemporalAgent(binary_tool_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class BinaryToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await binary_tool_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_binary_content_serialization_in_workflow(client: Client):
+    """Test that BinaryContent survives Temporal activity→workflow serialization.
+
+    This is a regression test for #3702: MCP tools returning binary data failed
+    Temporal serialization with `PydanticSerializationError: invalid utf-8 sequence`.
+
+    To fix, BinaryContent is serialized with base64 encoding and
+    properly reconstructed after deserialization.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BinaryToolWorkflow],
+        plugins=[AgentPlugin(binary_tool_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            BinaryToolWorkflow.run,
+            args=['Call all binary tools'],
+            id='test_binary_content_serialization',
+            task_queue=TASK_QUEUE,
         )
-    )
-
-
-def test_binary_content_round_trip_in_list():
-    """Test round-trip when BinaryContent is inside a list."""
-    binary_data = b'\x89PNG'
-    bc = BinaryContent(data=binary_data, media_type='image/png')
-
-    wrapped = _ToolReturn(result=[bc, 'other-item'])
-    serialized = to_json(wrapped)
-    deserialized = _tool_return_ta.validate_json(serialized)
-
-    assert deserialized == snapshot(
-        _ToolReturn(result=[BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'), 'other-item'])
-    )
+        assert output == snapshot(
+            '{"get_binary_direct":"See file 4caece","get_binary_in_list":["See file 4effda","other-item"],"get_binary_in_dict":{"image":{"data":"iVBORw==","media_type":"image/png","vendor_metadata":null,"kind":"binary","identifier":"4effda"},"label":"test"}}'
+        )

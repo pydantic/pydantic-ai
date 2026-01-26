@@ -5,7 +5,7 @@ import hashlib
 import mimetypes
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
@@ -511,9 +511,10 @@ class BinaryContent:
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['binary'] = 'binary',
-        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
     ) -> None:  # pragma: no cover
+        # Pydantic dataclasses replace __init__ with a generated validator-wrapped version.
+        # This custom __init__ provides type hints for IDEs and accepts _identifier for inline-snapshot.
         self.data = data
         self.media_type = media_type
         self._identifier = identifier or _identifier
@@ -689,7 +690,7 @@ class ToolReturn:
     - Optional metadata for application use
     """
 
-    return_value: Any
+    return_value: ToolReturnContent
     """The return value to be used in the tool response."""
 
     _: KW_ONLY
@@ -808,38 +809,14 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
 )
 
 if TYPE_CHECKING:
-    # Simpler non-recursive type for static analysis (pyright doesn't fully support recursive TypeAliasType)
-    ToolReturnContent: TypeAlias = (
-        BinaryContent
-        | VideoUrl
-        | AudioUrl
-        | ImageUrl
-        | DocumentUrl
-        | list[Any]
-        | dict[str, Any]
-        | str
-        | int
-        | float
-        | bool
-        | None
-    )
+    # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
+    ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
 else:
     # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
     # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
     ToolReturnContent = TypeAliasType(
         'ToolReturnContent',
-        BinaryContent
-        | VideoUrl
-        | AudioUrl
-        | ImageUrl
-        | DocumentUrl
-        | list['ToolReturnContent']
-        | dict[str, 'ToolReturnContent']
-        | str
-        | int
-        | float
-        | bool
-        | None,
+        MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
     )
 
 
