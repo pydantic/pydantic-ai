@@ -12,6 +12,7 @@ from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -19,7 +20,7 @@ try:
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Cerebras provider, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+        'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"`'
     ) from _import_error
 
 
@@ -39,16 +40,23 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        prefix_to_profile = {'llama': meta_model_profile, 'qwen': qwen_model_profile, 'gpt-oss': harmony_model_profile}
+        prefix_to_profile = {
+            'llama': meta_model_profile,
+            'qwen': qwen_model_profile,
+            'gpt-oss': harmony_model_profile,
+            'zai': zai_model_profile,
+        }
 
         profile = None
+        model_name_lower = model_name.lower()
         for prefix, profile_func in prefix_to_profile.items():
-            model_name = model_name.lower()
-            if model_name.startswith(prefix):
-                profile = profile_func(model_name)
+            if model_name_lower.startswith(prefix):
+                profile = profile_func(model_name_lower)
+                break
 
         # According to https://inference-docs.cerebras.ai/resources/openai#currently-unsupported-openai-features,
         # Cerebras doesn't support some model settings.
+        # openai_chat_supports_web_search=False is default, so not required here
         unsupported_model_settings = (
             'frequency_penalty',
             'logit_bias',
@@ -71,6 +79,9 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
+    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
+
+    @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
 
     def __init__(
@@ -80,6 +91,14 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        """Create a new Cerebras provider.
+
+        Args:
+            api_key: The API key to use for authentication, if not provided, the `CEREBRAS_API_KEY` environment variable
+                will be used if available.
+            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+        """
         api_key = api_key or os.getenv('CEREBRAS_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
@@ -87,10 +106,16 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
                 'to use the Cerebras provider.'
             )
 
+        default_headers = {'X-Cerebras-3rd-Party-Integration': 'pydantic-ai'}
+
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
+            )
         else:
             http_client = cached_async_http_client(provider='cerebras')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
+            )

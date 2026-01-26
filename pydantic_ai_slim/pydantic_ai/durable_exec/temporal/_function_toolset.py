@@ -46,10 +46,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from e
 
-            # The tool args will already have been validated into their proper types in the `ToolManager`,
-            # but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
-            args_dict = tool.args_validator.validate_python(params.tool_args)
-            return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
+            return await self._call_tool_in_activity(name, params.tool_args, ctx, tool)
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type
@@ -65,7 +62,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.tool_activity_config.get(name, {})
@@ -78,7 +75,11 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                 )
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        tool_activity_config = self.activity_config | tool_activity_config
+        activity_config: ActivityConfig = {
+            'summary': f'call tool: {self.id}:{name}',
+            **self.activity_config,
+            **tool_activity_config,
+        }
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(
             await workflow.execute_activity(
@@ -92,6 +93,6 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     ),
                     ctx.deps,
                 ],
-                **tool_activity_config,
+                **activity_config,
             )
         )

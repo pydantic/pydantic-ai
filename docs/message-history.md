@@ -51,6 +51,7 @@ print(result.all_messages())
                 timestamp=datetime.datetime(...),
             ),
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -95,6 +96,7 @@ async def main():
                         timestamp=datetime.datetime(...),
                     ),
                 ],
+                timestamp=datetime.datetime(...),
                 run_id='...',
             )
         ]
@@ -122,6 +124,7 @@ async def main():
                         timestamp=datetime.datetime(...),
                     ),
                 ],
+                timestamp=datetime.datetime(...),
                 run_id='...',
             ),
             ModelResponse(
@@ -178,6 +181,7 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             ),
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -198,6 +202,7 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -303,6 +308,7 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             ),
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -323,6 +329,7 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(

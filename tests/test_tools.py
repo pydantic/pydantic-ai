@@ -6,11 +6,11 @@ from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
-from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
+from pytest import LogCaptureFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -150,6 +150,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -184,6 +185,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -226,6 +228,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -268,6 +271,7 @@ def test_google_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -308,6 +312,7 @@ def test_sphinx_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -354,6 +359,7 @@ def test_numpy_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -388,6 +394,7 @@ def test_only_returns_type():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -413,6 +420,7 @@ def test_docstring_unknown():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -456,6 +464,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -492,6 +501,7 @@ def test_takes_just_model():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -537,6 +547,7 @@ def test_takes_model_and_int():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -902,6 +913,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -974,6 +986,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
             {
                 'description': None,
@@ -989,6 +1002,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
         ]
     )
@@ -1077,6 +1091,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
             {
                 'description': None,
@@ -1090,6 +1105,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
         ]
     )
@@ -1127,6 +1143,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -1364,6 +1381,7 @@ def test_tool_raises_approval_required():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1382,6 +1400,7 @@ def test_tool_raises_approval_required():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1755,6 +1774,7 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1809,6 +1829,7 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -1848,6 +1869,7 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1902,6 +1924,7 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -1930,6 +1953,7 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1970,6 +1994,7 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1991,6 +2016,7 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2067,7 +2093,8 @@ def test_parallel_tool_return_with_deferred():
                         content='I bought a banana',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
         ]
     )
@@ -2148,6 +2175,7 @@ async def test_approval_required_toolset():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2170,6 +2198,7 @@ async def test_approval_required_toolset():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -2201,6 +2230,7 @@ async def test_approval_required_toolset():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2223,6 +2253,7 @@ async def test_approval_required_toolset():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -2240,6 +2271,7 @@ async def test_approval_required_toolset():
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2304,6 +2336,7 @@ def test_deferred_tool_results_serializable():
                 'tool-approved': {'override_args': {'foo': 'bar'}, 'kind': 'tool-approved'},
                 'tool-denied': {'message': 'The tool call was denied.', 'kind': 'tool-denied'},
             },
+            'metadata': {},
         }
     )
     deserialized = results_ta.validate_python(serialized)
@@ -2387,6 +2420,7 @@ def test_retry_tool_until_last_attempt():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2405,6 +2439,7 @@ def test_retry_tool_until_last_attempt():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2423,6 +2458,7 @@ def test_retry_tool_until_last_attempt():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2441,6 +2477,7 @@ def test_retry_tool_until_last_attempt():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2452,3 +2489,497 @@ def test_retry_tool_until_last_attempt():
             ),
         ]
     )
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_triggers_retry():
+    """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        # First call: try the slow tool
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
+        # After receiving retry, return text
+        return ModelResponse(parts=[TextPart(content='Tool timed out, giving up')])
+
+    agent = Agent(FunctionModel(model_logic))
+
+    @agent.tool_plain(timeout=0.1)
+    async def slow_tool() -> str:
+        await asyncio.sleep(1.0)  # 1 second, but timeout is 0.1s
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('call slow_tool')
+
+    # Check that retry prompt was sent to the model
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'slow_tool'
+
+
+@pytest.mark.anyio
+async def test_tool_with_timeout_completes_successfully():
+    """Test that a tool completes successfully when within its timeout."""
+    import asyncio
+
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: ask to run the slow tool
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='slow_but_allowed_tool', args={}, tool_call_id='call-1')]
+            )
+        # Second call: tool completed successfully, return final response
+        return ModelResponse(parts=[TextPart(content='Tool completed successfully')])
+
+    agent = Agent(FunctionModel(model_logic))
+
+    @agent.tool_plain(timeout=5.0)  # 5s per-tool timeout
+    async def slow_but_allowed_tool() -> str:
+        await asyncio.sleep(0.2)  # 200ms - within 5s timeout
+        return 'completed successfully'
+
+    result = await agent.run('call slow_but_allowed_tool')
+
+    # Should NOT have any retry prompts since tool completed within timeout
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 0
+    assert 'completed successfully' in result.output
+
+
+@pytest.mark.anyio
+async def test_no_timeout_by_default():
+    """Test that tools run without timeout by default (backward compatible)."""
+    import asyncio
+
+    agent = Agent(TestModel())  # No tool_timeout specified
+
+    @agent.tool_plain
+    async def normal_tool() -> str:
+        await asyncio.sleep(0.1)
+        return 'completed'
+
+    result = await agent.run('call normal_tool')
+
+    # Should complete normally without timeout
+    assert 'completed' in result.output
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_retry_counts_as_failed():
+    """Test that timeout counts toward tool retry limit."""
+    import asyncio
+
+    agent = Agent(TestModel(), retries=2)
+
+    call_count = 0
+
+    @agent.tool_plain(timeout=0.05)
+    async def flaky_tool() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            await asyncio.sleep(1.0)  # Will timeout
+        return 'finally done'
+
+    await agent.run('call flaky_tool')
+
+    # Tool should have been called 3 times (initial + 2 retries)
+    assert call_count == 3
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_message_format():
+    """Test the format of the retry prompt message on timeout."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_logic))
+
+    @agent.tool_plain(timeout=0.1)
+    async def my_slow_tool() -> str:
+        await asyncio.sleep(1.0)
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('call my_slow_tool')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    # Check message contains timeout value (tool_name is in the part, not in content)
+    assert '0.1' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'my_slow_tool'
+
+
+def test_tool_timeout_definition():
+    """Test that timeout is properly set on ToolDefinition."""
+    agent = Agent(TestModel())
+
+    @agent.tool_plain(timeout=30.0)
+    def tool_with_timeout() -> str:
+        return 'done'  # pragma: no cover
+
+    # Get tool definition through the toolset
+    tool = agent._function_toolset.tools['tool_with_timeout']
+    assert tool.timeout == 30.0
+    assert tool.tool_def.timeout == 30.0
+
+
+def test_tool_timeout_default_none():
+    """Test that timeout defaults to None when not specified."""
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def tool_without_timeout() -> str:
+        return 'done'  # pragma: no cover
+
+    tool = agent._function_toolset.tools['tool_without_timeout']
+    assert tool.timeout is None
+    assert tool.tool_def.timeout is None
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_exceeds_retry_limit():
+    """Test that UnexpectedModelBehavior is raised when timeout exceeds retry limit."""
+    import asyncio
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Always try to call the slow tool
+        return ModelResponse(parts=[ToolCallPart(tool_name='always_slow_tool', args={}, tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(model_logic), retries=1)  # Only 1 retry allowed
+
+    @agent.tool_plain(timeout=0.05)
+    async def always_slow_tool() -> str:
+        await asyncio.sleep(1.0)  # Always timeout
+        return 'done'  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
+        await agent.run('call always_slow_tool')
+
+
+@pytest.mark.anyio
+async def test_agent_level_tool_timeout():
+    """Test that agent-level tool_timeout applies to all tools."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    # Set global tool_timeout on Agent
+    agent = Agent(FunctionModel(model_logic), tool_timeout=0.1)
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        await asyncio.sleep(1.0)  # 1 second, but agent timeout is 0.1s
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('call slow_tool')
+
+    # Check that retry prompt was sent
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+
+
+@pytest.mark.anyio
+async def test_per_tool_timeout_overrides_agent_timeout():
+    """Test that per-tool timeout overrides agent-level timeout."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='fast_timeout_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    # Agent has generous 10s timeout, but per-tool timeout is only 0.1s
+    agent = Agent(FunctionModel(model_logic), tool_timeout=10.0)
+
+    @agent.tool_plain(timeout=0.1)  # Per-tool timeout overrides agent timeout
+    async def fast_timeout_tool() -> str:
+        await asyncio.sleep(1.0)  # 1 second, per-tool timeout is 0.1s
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('call fast_timeout_tool')
+
+    # Should timeout because per-tool timeout (0.1s) is applied, not agent timeout (10s)
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+
+
+def test_agent_tool_timeout_passed_to_toolset():
+    """Test that agent-level tool_timeout is passed to FunctionToolset as timeout."""
+    agent = Agent(TestModel(), tool_timeout=30.0)
+
+    # The agent's tool_timeout should be passed to the toolset as timeout
+    assert agent._function_toolset.timeout == 30.0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('is_stream', [True, False])
+async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
+    """Test that tools are cancelled when agent is cancelled."""
+    import asyncio
+
+    agent = Agent(TestModel())
+    is_called = asyncio.Event()
+    is_cancelled = asyncio.Event()
+
+    @agent.tool_plain
+    async def tool() -> None:
+        is_called.set()
+
+        try:
+            await asyncio.sleep(1.0)
+
+        except asyncio.CancelledError:
+            is_cancelled.set()
+            raise
+
+    async def run_agent() -> None:
+        if not is_stream:
+            await agent.run('call tool')
+
+        else:
+            async for _ in agent.run_stream_events('call tool'):
+                pass
+
+    task = asyncio.create_task(run_agent())
+    await asyncio.wait_for(is_called.wait(), timeout=1.0)
+    task.cancel()
+    await asyncio.wait_for(is_cancelled.wait(), timeout=1.0)
+
+
+def test_tool_approved_with_metadata():
+    """Test that DeferredToolResults.metadata is passed to RunContext.tool_call_metadata."""
+    received_metadata: list[Any] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(
+                metadata={
+                    'reason': 'High compute cost',
+                    'estimated_time': '5 minutes',
+                }
+            )
+        # Capture the tool_call_metadata from context
+        received_metadata.append(ctx.tool_call_metadata)
+        return x * 42
+
+    # First run: get approval request
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+    # Second run: provide approval with metadata
+    approval_metadata = {'user_id': 'user-123', 'approved_at': '2025-01-01T00:00:00Z'}
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={'my_tool': ToolApproved()},
+            metadata={'my_tool': approval_metadata},
+        ),
+    )
+
+    assert result.output == 'Done!'
+    # Verify the metadata was passed to the tool
+    assert len(received_metadata) == 1
+    assert received_metadata[0] == approval_metadata
+
+
+def test_tool_approved_with_metadata_and_override_args():
+    """Test that DeferredToolResults.metadata works together with ToolApproved.override_args."""
+    received_data: list[tuple[Any, int]] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        # Capture both the metadata and the argument
+        received_data.append((ctx.tool_call_metadata, x))
+        return x * 42
+
+    # First run: get approval request
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+    assert isinstance(result.output, DeferredToolRequests)
+
+    # Second run: provide approval with both metadata and override_args
+    approval_metadata = {'approver': 'admin', 'notes': 'LGTM'}
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={
+                'my_tool': ToolApproved(
+                    override_args={'x': 100},
+                )
+            },
+            metadata={'my_tool': approval_metadata},
+        ),
+    )
+
+    assert result.output == 'Done!'
+    # Verify both metadata and overridden args were received
+    assert len(received_data) == 1
+    assert received_data[0] == (approval_metadata, 100)
+
+
+def test_tool_approved_without_metadata():
+    """Test that tool_call_metadata is None when DeferredToolResults has no metadata for the tool."""
+    received_metadata: list[Any] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        # Capture the tool_call_metadata from context
+        received_metadata.append(ctx.tool_call_metadata)
+        return x * 42
+
+    # First run: get approval request
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+
+    # Second run: provide approval without metadata (using ToolApproved() or True)
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
+    )
+
+    assert result.output == 'Done!'
+    # Verify the metadata is None
+    assert len(received_metadata) == 1
+    assert received_metadata[0] is None
+
+
+def test_tool_call_metadata_not_available_for_unapproved_calls():
+    """Test that tool_call_metadata is None for non-approved tool calls."""
+    received_metadata: list[Any] = []
+
+    agent = Agent(TestModel())
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        # Capture the tool_call_metadata from context
+        received_metadata.append(ctx.tool_call_metadata)
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('{"my_tool":0}')
+    # For regular tool calls (not via ToolApproved), metadata should be None
+    assert len(received_metadata) == 1
+    assert received_metadata[0] is None

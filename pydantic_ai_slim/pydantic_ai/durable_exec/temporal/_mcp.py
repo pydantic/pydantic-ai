@@ -2,13 +2,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Self
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
@@ -19,14 +16,9 @@ from ._run_context import TemporalRunContext
 from ._toolset import (
     CallToolParams,
     CallToolResult,
+    GetToolsParams,
     TemporalWrapperToolset,
 )
-
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class _GetToolsParams:
-    serialized_run_context: Any
 
 
 class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
@@ -54,7 +46,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
 
         self.run_context_type = run_context_type
 
-        async def get_tools_activity(params: _GetToolsParams, deps: AgentDepsT) -> dict[str, ToolDefinition]:
+        async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, ToolDefinition]:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             tools = await self.wrapped.get_tools(run_context)
             # ToolsetTool is not serializable as it holds a SchemaValidator (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
@@ -95,26 +87,19 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.get_tools_activity, self.call_tool_activity]
 
-    async def __aenter__(self) -> Self:
-        # The wrapped MCPServer enters itself around listing and calling tools
-        # so we don't need to enter it here (nor could we because we're not inside a Temporal activity).
-        return self
-
-    async def __aexit__(self, *args: Any) -> bool | None:
-        return None
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().get_tools(ctx)
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        activity_config: ActivityConfig = {'summary': f'get tools: {self.id}', **self.activity_config}
         tool_defs = await workflow.execute_activity(
             activity=self.get_tools_activity,
             args=[
-                _GetToolsParams(serialized_run_context=serialized_run_context),
+                GetToolsParams(serialized_run_context=serialized_run_context),
                 ctx.deps,
             ],
-            **self.activity_config,
+            **activity_config,
         )
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
@@ -125,10 +110,14 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> CallToolResult:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
+        activity_config: ActivityConfig = {
+            'summary': f'call tool: {self.id}:{name}',
+            **self.activity_config,
+            **self.tool_activity_config.get(name, {}),
+        }
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(
             await workflow.execute_activity(
@@ -142,6 +131,6 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
                     ),
                     ctx.deps,
                 ],
-                **tool_activity_config,
+                **activity_config,
             )
         )

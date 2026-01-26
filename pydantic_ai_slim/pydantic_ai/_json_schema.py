@@ -45,7 +45,7 @@ class JsonSchemaTransformer(ABC):
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
-        self.defs: dict[str, JsonSchema] = self.schema.get('$defs', {})
+        self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
 

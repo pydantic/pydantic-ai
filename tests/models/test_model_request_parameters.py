@@ -68,6 +68,7 @@ def test_model_request_parameters_are_serializable():
                     'sequential': False,
                     'kind': 'function',
                     'metadata': None,
+                    'timeout': None,
                 }
             ],
             'builtin_tools': [
@@ -93,11 +94,12 @@ def test_model_request_parameters_are_serializable():
                     'background': 'auto',
                     'input_fidelity': None,
                     'moderation': 'auto',
-                    'output_compression': 100,
+                    'output_compression': None,
                     'output_format': None,
                     'partial_images': 0,
                     'quality': 'auto',
                     'size': '1024x1024',
+                    'aspect_ratio': None,
                 },
                 {'kind': 'memory'},
                 {
@@ -131,6 +133,7 @@ def test_model_request_parameters_are_serializable():
                     'sequential': False,
                     'kind': 'function',
                     'metadata': None,
+                    'timeout': None,
                 }
             ],
             'prompted_output_template': None,

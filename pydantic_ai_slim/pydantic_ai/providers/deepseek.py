@@ -58,16 +58,16 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         ).update(profile)
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
-
-    @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
-
-    @overload
-    def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        openai_client: None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None: ...
 
     def __init__(
         self,

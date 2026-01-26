@@ -113,6 +113,13 @@ This is a uv workspace with multiple packages:
 - **Docs source**: `docs/` directory (MkDocs with Material theme)
 - **API reference**: Auto-generated from docstrings using mkdocstrings
 
+**macOS Note**: The docs build uses `cairosvg` for social card generation, which requires the `cairo` C library. On macOS with Homebrew, Python may fail to locate the library. Fix by setting the library path:
+```bash
+export DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib"
+export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfig"
+uv run mkdocs build  # or mkdocs serve
+```
+
 ## Dependencies Management
 
 - **Package manager**: uv (fast Python package manager)

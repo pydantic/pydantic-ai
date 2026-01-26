@@ -134,28 +134,22 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
+            openai_chat_supports_file_urls=True,
         ).update(profile)
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
-
-    @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
-
-    @overload
-    def __init__(self, *, api_key: str, app_url: str, app_title: str) -> None: ...
-
-    @overload
-    def __init__(self, *, api_key: str, app_url: str, app_title: str, http_client: httpx.AsyncClient) -> None: ...
-
-    @overload
-    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
-
-    @overload
-    def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        app_url: str | None = None,
+        app_title: str | None = None,
+        openai_client: None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None: ...
 
     def __init__(
         self,

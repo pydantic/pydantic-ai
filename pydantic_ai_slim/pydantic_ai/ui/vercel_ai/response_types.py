@@ -9,12 +9,15 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-from ._utils import CamelBaseModel
+from ._models import CamelBaseModel
 
 # Technically this is recursive union of JSON types; for simplicity, we call it Any
 JSONValue = Any
 ProviderMetadata = dict[str, dict[str, JSONValue]]
 """Provider metadata."""
+
+FinishReason = Literal['stop', 'length', 'content-filter', 'tool-calls', 'error', 'other', 'unknown'] | None
+"""Reason why the model finished generating."""
 
 
 class BaseChunk(CamelBaseModel, ABC):
@@ -145,6 +148,21 @@ class ToolOutputErrorChunk(BaseChunk):
     dynamic: bool | None = None
 
 
+class ToolApprovalRequestChunk(BaseChunk):
+    """Tool approval request chunk for human-in-the-loop approval."""
+
+    type: Literal['tool-approval-request'] = 'tool-approval-request'
+    approval_id: str
+    tool_call_id: str
+
+
+class ToolOutputDeniedChunk(BaseChunk):
+    """Tool output denied chunk when user denies tool execution."""
+
+    type: Literal['tool-output-denied'] = 'tool-output-denied'
+    tool_call_id: str
+
+
 class SourceUrlChunk(BaseChunk):
     """Source URL chunk."""
 
@@ -178,7 +196,9 @@ class DataChunk(BaseChunk):
     """Data chunk with dynamic type."""
 
     type: Annotated[str, Field(pattern=r'^data-')]
+    id: str | None = None
     data: Any
+    transient: bool | None = None
 
 
 class StartStepChunk(BaseChunk):
@@ -205,6 +225,7 @@ class FinishChunk(BaseChunk):
     """Finish chunk."""
 
     type: Literal['finish'] = 'finish'
+    finish_reason: FinishReason = None
     message_metadata: Any | None = None
 
 

@@ -1,12 +1,17 @@
+import datetime
+import json
 from collections.abc import Sequence
 from typing import Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
+    BinaryContent,
+    DocumentUrl,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -95,7 +100,20 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
 
         _ = [chunk async for chunk in stream]
 
-        assert stream.provider_details == snapshot({'finish_reason': 'completed', 'downstream_provider': 'xAI'})
+        assert stream.provider_details is not None
+        assert stream.provider_details == snapshot(
+            {
+                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.timezone.utc),
+                'finish_reason': 'completed',
+                'cost': 0.00333825,
+                'upstream_inference_cost': None,
+                'is_byok': False,
+                'downstream_provider': 'xAI',
+            }
+        )
+        # Explicitly verify native_finish_reason is 'completed' and wasn't overwritten by the
+        # final usage chunk (which has native_finish_reason: null, see cassette for details)
+        assert stream.provider_details['finish_reason'] == 'completed'
         assert stream.finish_reason == snapshot('stop')
 
 
@@ -326,6 +344,40 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
     )
 
 
+async def test_openrouter_with_provider_details_but_no_parent_details(openrouter_api_key: str) -> None:
+    from typing import Any
+
+    class TestOpenRouterModel(OpenRouterModel):
+        def _process_provider_details(self, response: ChatCompletion) -> dict[str, Any] | None:
+            from pydantic_ai.models.openrouter import (
+                _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
+                _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+            )
+
+            assert isinstance(response, _OpenRouterChatCompletion)
+            openrouter_details = _map_openrouter_provider_details(response)
+            return openrouter_details or None
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = TestOpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+
+    choice = Choice.model_construct(
+        index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
+    )
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    assert result.provider_details == snapshot(
+        {
+            'downstream_provider': 'TestProvider',
+            'finish_reason': 'stop',
+            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
+        }
+    )
+
+
 async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('anthropic/claude-3.7-sonnet:thinking', provider=provider)
@@ -408,6 +460,53 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     )
 
 
+async def test_openrouter_streaming_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    agent = Agent(
+        model=model,
+        model_settings=OpenRouterModelSettings(openrouter_reasoning={'enabled': True}),
+    )
+
+    async with agent.run_stream('What is 2+2?') as stream:
+        _ = await stream.get_output()
+
+        assert stream.response.parts == snapshot(
+            [
+                ThinkingPart(
+                    content='This is a simple arithmetic question. 2+2 equals 4.',
+                    signature='Et0BCkgIChACGAIqQA2s7h7tA7IG35fbwVkou9PM2hANVJNUwcEM4q12fTRDK6y3v6YoEvJ+7bko8wnW/GLsQFXadaJPAEMCpLkhI9ISDLjFkeR1aVUIvdCtyBoMrUTovh0jwk+wpnZWIjANV3e6VVdgbGSsEyyTHO6KMmVtqqs79f9blnVdJmmMIwMyTi6bEtG59+jTU7v1zlsqQ2IKGZILOlr6adh0Aam7zYttvisys+wjyZZXU1y/Srz0nmp1cFgVOJe1BLKQI3SSRrjsqQC0uAEUZy0GX0Rq1AXjvIcYAQ==',
+                    provider_name='openrouter',
+                    provider_details={'format': 'anthropic-claude-v1', 'index': 0, 'type': 'reasoning.text'},
+                ),
+                TextPart(content='2 + 2 = 4'),
+            ]
+        )
+
+
+async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
+    """Test _process_provider_details when _map_openrouter_provider_details returns empty dict."""
+    from unittest.mock import patch
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+
+    choice = Choice.model_construct(
+        index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
+    )
+
+    with patch('pydantic_ai.models.openrouter._map_openrouter_provider_details', return_value={}):
+        result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    # With empty openrouter_details, we should still get the parent's provider_details (timestamp + finish_reason)
+    assert result.provider_details == snapshot(
+        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)}
+    )
+
+
 async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
     """Test that nested schemas with $defs/$ref work correctly with OpenRouter + Gemini.
 
@@ -470,3 +569,120 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     assert result.output.level_type == LevelType.ground
     assert result.output.space_count == 3
+
+
+async def test_openrouter_file_annotation(
+    allow_model_requests: None, openrouter_api_key: str, document_content: BinaryContent
+) -> None:
+    """Test that file annotations from OpenRouter are handled correctly.
+
+    When sending files (e.g., PDFs) to OpenRouter, the response can include
+    annotations with type="file". This test ensures those annotations are
+    parsed without validation errors.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-5.1-codex-mini', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run(
+        user_prompt=[
+            'What does this PDF contain? Answer in one short sentence.',
+            document_content,
+        ]
+    )
+
+    # The response should contain text (model may or may not include file annotations)
+    assert isinstance(result.output, str)
+    assert len(result.output) > 0
+
+
+async def test_openrouter_file_annotation_validation(openrouter_api_key: str) -> None:
+    """Test that file annotations from OpenRouter are correctly validated.
+
+    This unit test verifies that responses containing type="file" annotations
+    are parsed without validation errors, which was failing before the fix.
+    """
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    message = ChatCompletionMessage.model_construct(
+        role='assistant',
+        content='Here is the summary of your file.',
+        annotations=[
+            {'type': 'file', 'file': {'filename': 'test.pdf', 'file_id': 'file-123'}},
+        ],
+    )
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=0, object='chat.completion', model='test', provider='test'
+    )
+
+    # This should not raise a validation error
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+    text_part = cast(TextPart, result.parts[0])
+    assert text_part.content == 'Here is the summary of your file.'
+
+
+async def test_openrouter_url_citation_annotation_validation(openrouter_api_key: str) -> None:
+    """Test that url_citation annotations from OpenRouter are correctly validated."""
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    message = ChatCompletionMessage.model_construct(
+        role='assistant',
+        content='According to the source, this is the answer.',
+        annotations=[
+            {
+                'type': 'url_citation',
+                'url_citation': {'url': 'https://example.com', 'title': 'Example', 'start_index': 0, 'end_index': 10},
+            },
+        ],
+    )
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=0, object='chat.completion', model='test', provider='test'
+    )
+
+    # This should not raise a validation error
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+    text_part = cast(TextPart, result.parts[0])
+    assert text_part.content == 'According to the source, this is the answer.'
+
+
+async def test_openrouter_document_url_no_force_download(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """Test that OpenRouter passes DocumentUrl directly without downloading when force_download=False.
+
+    OpenRouter supports file URLs directly in the Chat API, unlike native OpenAI which only
+    supports base64-encoded data. This test verifies that when using OpenRouter, the URL
+    is passed directly without being downloaded first.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    agent = Agent(model)
+
+    pdf_url = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
+    document_url = DocumentUrl(url=pdf_url, force_download=False)
+
+    result = await agent.run(['What is the main content of this document?', document_url])
+    assert 'dummy' in result.output.lower() or 'pdf' in result.output.lower()
+
+    # Verify URL was passed directly (not downloaded and base64-encoded)
+    assert vcr is not None
+    assert len(vcr.requests) == 1, 'Should only have one request (to OpenRouter, not a download)'  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    file_content = request_body['messages'][0]['content'][1]
+    assert file_content == snapshot(
+        {
+            'file': {
+                'file_data': 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+                'filename': 'filename.pdf',
+            },
+            'type': 'file',
+        }
+    )

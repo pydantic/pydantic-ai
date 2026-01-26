@@ -372,7 +372,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
-        This is a synchronous wrapper around [`evaluate`][pydantic_evals.Dataset.evaluate] provided for convenience.
+        This is a synchronous wrapper around [`evaluate`][pydantic_evals.dataset.Dataset.evaluate] provided for convenience.
 
         Args:
             task: The task to evaluate. This should be a callable that takes the inputs of the case

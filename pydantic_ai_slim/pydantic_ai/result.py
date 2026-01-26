@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterat
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Generic, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated
@@ -52,15 +52,21 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
+    _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
+    _cached_output: OutputDataT | None = field(default=None, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
+        if self._cached_output is not None:
+            yield deepcopy(self._cached_output)
+            return
+
         last_response: _messages.ModelResponse | None = None
         async for response in self.stream_responses(debounce_by=debounce_by):
             if self._raw_stream_response.final_result_event is None or (
@@ -74,13 +80,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             except ValidationError:
                 pass
 
-        response = self.response
-        if self._raw_stream_response.final_result_event is None or (
-            last_response and response.parts == last_response.parts
-        ):
-            return
-
-        yield await self.validate_response_output(response)
+        if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
+            response = self.response
+            # Final validation with allow_partial=False (the default).
+            # We always yield the final result even if the content matches the last partial yield, because:
+            # 1. Output validators/functions receive partial_output=False only on this final call,
+            #    and may behave differently based on that flag
+            # 2. Users can rely on the last yielded item being the fully validated output
+            self._cached_output = await self.validate_response_output(response)
+            yield deepcopy(self._cached_output)
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Asynchronously stream the (unvalidated) model responses for the agent."""
@@ -111,6 +119,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         if not isinstance(self._output_schema, TextOutputSchema):
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
+        # Yield cached output for both delta and non-delta modes
+        # This is expected that the subsequent calls to `stream_text()`
+        # yield full not delta output even for `delta=True`
+        if isinstance(self._cached_output, str):
+            yield self._cached_output
+            return
+
         if delta:
             async for text in self._stream_response_text(delta=True, debounce_by=debounce_by):
                 yield text
@@ -125,6 +140,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """The unique identifier for the agent run."""
         assert self._run_ctx.run_id is not None
         return self._run_ctx.run_id
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        if self._metadata_getter is not None:
+            return self._metadata_getter()
+        return self._run_ctx.metadata
 
     # TODO (v2): Drop in favor of `response` property
     def get(self) -> _messages.ModelResponse:
@@ -152,10 +174,16 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
+        if self._cached_output is not None:
+            return deepcopy(self._cached_output)
+
+        # Iterate through any stream events
         async for _ in self:
             pass
 
-        return await self.validate_response_output(self.response)
+        # Final validation with `allow_partial=False` (default)
+        self._cached_output = await self.validate_response_output(self.response)
+        return deepcopy(self._cached_output)
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -199,7 +227,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
             result_data = await text_processor.process(
                 text,
-                run_context=self._run_ctx,
+                run_context=replace(self._run_ctx, partial_output=allow_partial),
                 allow_partial=allow_partial,
                 wrap_validation_errors=False,
             )
@@ -518,6 +546,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        if self._run_result is not None:
+            return self._run_result.metadata
+        elif self._stream_response is not None:
+            return self._stream_response.metadata
+        else:
+            return None
+
     # TODO (v2): Make this a property
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
@@ -570,6 +608,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
+        if self.is_complete:
+            return
         self.is_complete = True
         if message is not None:
             if self._stream_response:  # pragma: no branch
@@ -716,6 +756,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._streamed_run_result.run_id
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._streamed_run_result.metadata
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""

@@ -7,10 +7,10 @@ Toolsets are used (among many other things) to define [MCP servers](mcp/client.m
 
 The toolsets that will be available during an agent run can be specified in four different ways:
 
-* at agent construction time, via the [`toolsets`][pydantic_ai.Agent.__init__] keyword argument to `Agent`, which takes toolset instances as well as functions that generate toolsets [dynamically](#dynamically-building-a-toolset) based on the agent [run context][pydantic_ai.tools.RunContext]
-* at agent run time, via the `toolsets` keyword argument to [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. These toolsets will be additional to those registered on the `Agent`
-* [dynamically](#dynamically-building-a-toolset), via the [`@agent.toolset`][pydantic_ai.Agent.toolset] decorator which lets you build a toolset based on the agent [run context][pydantic_ai.tools.RunContext]
-* as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.Agent.iter] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
+* at agent construction time, via the [`toolsets`][pydantic_ai.agent.Agent.__init__] keyword argument to `Agent`, which takes toolset instances as well as functions that generate toolsets [dynamically](#dynamically-building-a-toolset) based on the agent [run context][pydantic_ai.tools.RunContext]
+* at agent run time, via the `toolsets` keyword argument to [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.agent.Agent.iter]. These toolsets will be additional to those registered on the `Agent`
+* [dynamically](#dynamically-building-a-toolset), via the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator which lets you build a toolset based on the agent [run context][pydantic_ai.tools.RunContext]
+* as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.agent.Agent.iter] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
 
 ```python {title="toolsets.py"}
 from pydantic_ai import Agent, FunctionToolset
@@ -594,7 +594,7 @@ _(This example is complete, it can be run "as is")_
 
 Toolsets can be built dynamically ahead of each agent run or run step using a function that takes the agent [run context][pydantic_ai.tools.RunContext] and returns a toolset or `None`. This is useful when a toolset (like an MCP server) depends on information specific to an agent run, like its [dependencies](./dependencies.md).
 
-To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.Agent.toolset] decorator.
+To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator.
 
 By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run.
 
@@ -666,6 +666,25 @@ Pydantic AI provides two toolsets that allow an agent to connect to and call too
 
 1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
 2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
+
+### Task Management
+
+Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
+
+- [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+
+### File Operations
+
+Toolsets for file operations help agents read, write, and edit files:
+
+- [`pydantic-ai-filesystem-sandbox`](https://github.com/zby/pydantic-ai-filesystem-sandbox) - `FileSystemToolset` with a sandbox and LLM-friendly errors
+- [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) — Deep agent framework that includes a `FilesystemToolset` with multiple backends (in-memory, real filesystem, Docker sandbox).
+
+### Code Execution
+
+Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
+
+- [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
 
 ### LangChain Tools {#langchain-tools}
 

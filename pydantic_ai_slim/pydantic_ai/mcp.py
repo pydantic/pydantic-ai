@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import base64
-import functools
 import os
 import re
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -32,7 +31,7 @@ try:
     from mcp.client.session import ClientSession, ElicitationFnT, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
     from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
     from mcp.shared.message import SessionMessage
@@ -371,6 +370,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
 
+    # TODO (v2): enforce the arguments to be passed as keyword arguments only
     def __init__(
         self,
         tool_prefix: str | None = None,
@@ -387,6 +387,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         cache_resources: bool = True,
         *,
         id: str | None = None,
+        client_info: mcp_types.Implementation | None = None,
     ):
         self.tool_prefix = tool_prefix
         self.log_level = log_level
@@ -400,6 +401,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.elicitation_callback = elicitation_callback
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
+        self.client_info = client_info
 
         self._id = id or tool_prefix
 
@@ -685,6 +687,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if self._running_count == 0:
                 async with AsyncExitStack() as exit_stack:
                     self._read_stream, self._write_stream = await exit_stack.enter_async_context(self.client_streams())
+
                     client = ClientSession(
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
@@ -693,6 +696,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
                         message_handler=self._handle_notification,
+                        client_info=self.client_info,
                     )
                     self._client = await exit_stack.enter_async_context(client)
 
@@ -774,7 +778,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     pass
             return text
         elif isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+            return messages.BinaryImage(data=base64.b64decode(part.data), media_type=part.mimeType)
         elif isinstance(part, mcp_types.AudioContent):
             # NOTE: The FastMCP server doesn't support audio content.
             # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
@@ -795,8 +799,10 @@ class MCPServer(AbstractToolset[Any], ABC):
         if isinstance(resource, mcp_types.TextResourceContents):
             return resource.text
         elif isinstance(resource, mcp_types.BlobResourceContents):
-            return messages.BinaryContent(
-                data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+            return messages.BinaryContent.narrow_type(
+                messages.BinaryContent(
+                    data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+                )
             )
         else:
             assert_never(resource)
@@ -879,6 +885,7 @@ class MCPServerStdio(MCPServer):
         cache_tools: bool = True,
         cache_resources: bool = True,
         id: str | None = None,
+        client_info: mcp_types.Implementation | None = None,
     ):
         """Build a new MCP server.
 
@@ -902,6 +909,7 @@ class MCPServerStdio(MCPServer):
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
+            client_info: Information describing the MCP client implementation.
         """
         self.command = command
         self.args = args
@@ -922,6 +930,7 @@ class MCPServerStdio(MCPServer):
             cache_tools,
             cache_resources,
             id=id,
+            client_info=client_info,
         )
 
     @classmethod
@@ -1042,6 +1051,7 @@ class _MCPServerHTTP(MCPServer):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
+        client_info: mcp_types.Implementation | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Build a new MCP server.
@@ -1065,6 +1075,7 @@ class _MCPServerHTTP(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
+            client_info: Information describing the MCP client implementation.
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
             if read_timeout is not None:
@@ -1085,81 +1096,21 @@ class _MCPServerHTTP(MCPServer):
         self.http_client = http_client
 
         super().__init__(
-            tool_prefix,
-            log_level,
-            log_handler,
-            timeout,
-            read_timeout,
-            process_tool_call,
-            allow_sampling,
-            sampling_model,
-            max_retries,
-            elicitation_callback,
-            cache_tools,
-            cache_resources,
+            tool_prefix=tool_prefix,
+            log_level=log_level,
+            log_handler=log_handler,
+            timeout=timeout,
+            read_timeout=read_timeout,
+            process_tool_call=process_tool_call,
+            allow_sampling=allow_sampling,
+            sampling_model=sampling_model,
+            max_retries=max_retries,
+            elicitation_callback=elicitation_callback,
+            cache_tools=cache_tools,
+            cache_resources=cache_resources,
             id=id,
+            client_info=client_info,
         )
-
-    @property
-    @abstractmethod
-    def _transport_client(
-        self,
-    ) -> Callable[
-        ...,
-        AbstractAsyncContextManager[
-            tuple[
-                MemoryObjectReceiveStream[SessionMessage | Exception],
-                MemoryObjectSendStream[SessionMessage],
-                GetSessionIdCallback,
-            ],
-        ]
-        | AbstractAsyncContextManager[
-            tuple[
-                MemoryObjectReceiveStream[SessionMessage | Exception],
-                MemoryObjectSendStream[SessionMessage],
-            ]
-        ],
-    ]: ...
-
-    @asynccontextmanager
-    async def client_streams(
-        self,
-    ) -> AsyncIterator[
-        tuple[
-            MemoryObjectReceiveStream[SessionMessage | Exception],
-            MemoryObjectSendStream[SessionMessage],
-        ]
-    ]:
-        if self.http_client and self.headers:
-            raise ValueError('`http_client` is mutually exclusive with `headers`.')  # pragma: no cover
-
-        transport_client_partial = functools.partial(
-            self._transport_client,
-            url=self.url,
-            timeout=self.timeout,
-            sse_read_timeout=self.read_timeout,
-        )
-
-        if self.http_client is not None:
-            # TODO: Clean up once https://github.com/modelcontextprotocol/python-sdk/pull/1177 lands.
-            @asynccontextmanager
-            async def httpx_client_factory(
-                headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> AsyncIterator[httpx.AsyncClient]:
-                assert self.http_client is not None
-                yield self.http_client
-
-            async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
-                read_stream,
-                write_stream,
-                *_,
-            ):
-                yield read_stream, write_stream
-        else:
-            async with transport_client_partial(headers=self.headers) as (read_stream, write_stream, *_):
-                yield read_stream, write_stream
 
     def __repr__(self) -> str:  # pragma: no cover
         repr_args = [
@@ -1204,9 +1155,47 @@ class MCPServerSSE(_MCPServerHTTP):
             ),
         )
 
-    @property
-    def _transport_client(self):
-        return sse_client  # pragma: no cover
+    # sse_client has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811)
+    # that prevents testing SSE transport in CI.
+    # TODO: Remove pragma and add a test
+    # once https://github.com/modelcontextprotocol/python-sdk/pull/1838 is released.
+    @asynccontextmanager
+    async def client_streams(  # pragma: no cover
+        self,
+    ) -> AsyncIterator[
+        tuple[
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
+        ]
+    ]:
+        if self.http_client and self.headers:
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+
+        if self.http_client is not None:
+
+            def httpx_client_factory(
+                headers: dict[str, str] | None = None,
+                timeout: httpx.Timeout | None = None,
+                auth: httpx.Auth | None = None,
+            ) -> httpx.AsyncClient:
+                assert self.http_client is not None
+                return self.http_client
+
+            async with sse_client(
+                url=self.url,
+                timeout=self.timeout,
+                sse_read_timeout=self.read_timeout,
+                httpx_client_factory=httpx_client_factory,
+            ) as (read_stream, write_stream, *_):
+                yield read_stream, write_stream
+        else:
+            async with sse_client(
+                url=self.url,
+                timeout=self.timeout,
+                sse_read_timeout=self.read_timeout,
+                headers=self.headers,
+            ) as (read_stream, write_stream, *_):
+                yield read_stream, write_stream
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerSSE) and self.url == value.url
@@ -1268,9 +1257,29 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
             ),
         )
 
-    @property
-    def _transport_client(self):
-        return streamablehttp_client
+    @asynccontextmanager
+    async def client_streams(
+        self,
+    ) -> AsyncIterator[
+        tuple[
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
+        ]
+    ]:
+        if self.http_client and self.headers:
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+
+        aexit_stack = AsyncExitStack()
+        http_client = self.http_client or await aexit_stack.enter_async_context(
+            httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, read=self.read_timeout), headers=self.headers)
+        )
+        read_stream, write_stream, *_ = await aexit_stack.enter_async_context(
+            streamable_http_client(self.url, http_client=http_client)
+        )
+        try:
+            yield read_stream, write_stream
+        finally:
+            await aexit_stack.aclose()
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url
