@@ -427,6 +427,7 @@ async def test_deferred_output_json_schema():
                             'default': None,
                             'title': 'Provider Details',
                         },
+                        'args_incomplete': {'default': False, 'title': 'Args Incomplete', 'type': 'boolean'},
                         'part_kind': {
                             'const': 'tool-call',
                             'default': 'tool-call',
@@ -551,6 +552,7 @@ distinguish multiple files.\
                             'default': None,
                             'title': 'Provider Details',
                         },
+                        'args_incomplete': {'default': False, 'title': 'Args Incomplete', 'type': 'boolean'},
                         'part_kind': {
                             'const': 'tool-call',
                             'default': 'tool-call',
