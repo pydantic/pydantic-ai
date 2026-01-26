@@ -59,6 +59,13 @@ _mime_types.add_type('audio/flac', '.flac')
 _mime_types.add_type('audio/ogg', '.oga')
 _mime_types.add_type('audio/wav', '.wav')
 
+# Text/data file types not recognized by default mimetypes
+# YAML: RFC 9512 (https://www.rfc-editor.org/rfc/rfc9512.html)
+_mime_types.add_type('application/yaml', '.yaml')
+_mime_types.add_type('application/yaml', '.yml')
+# TOML: RFC 9519 (https://www.rfc-editor.org/rfc/rfc9519.html)
+_mime_types.add_type('application/toml', '.toml')
+
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -155,7 +162,7 @@ class FileUrl(ABC):
     _: KW_ONLY
 
     force_download: bool = False
-    """For OpenAI and Google APIs it:
+    """For OpenAI, Google APIs and xAI it:
 
     * If True, the file is downloaded and the data is sent to the model as bytes.
     * If False, the URL is sent directly to the model and no download is performed.
@@ -167,6 +174,7 @@ class FileUrl(ABC):
     Supported by:
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
+    - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
@@ -476,6 +484,7 @@ class BinaryContent:
     Supported by:
     - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
@@ -934,12 +943,16 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     _: KW_ONLY
 
     provider_name: str | None = None
-    """The name of the provider that generated the response."""
+    """The name of the provider that generated the response.
+
+    Required to be set when `provider_details` is set.
+    """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data."""
 
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1088,12 +1101,23 @@ class TextPart:
     _: KW_ONLY
 
     id: str | None = None
-    """An optional identifier of the text part."""
+    """An optional identifier of the text part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Required to be set when `provider_details` or `id` is set.
+    """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1115,7 +1139,10 @@ class ThinkingPart:
     _: KW_ONLY
 
     id: str | None = None
-    """The identifier of the thinking part."""
+    """The identifier of the thinking part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     signature: str | None = None
     """The signature of the thinking.
@@ -1126,18 +1153,23 @@ class ThinkingPart:
     * Bedrock (corresponds to the `signature` field)
     * Google (corresponds to the `thought_signature` field)
     * OpenAI (corresponds to the `encrypted_content` field)
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
     provider_name: str | None = None
     """The name of the provider that generated the response.
 
     Signatures are only sent back to the same provider.
+    Required to be set when `provider_details`, `id` or `signature` is set.
     """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1159,16 +1191,23 @@ class FilePart:
     _: KW_ONLY
 
     id: str | None = None
-    """The identifier of the file part."""
+    """The identifier of the file part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     provider_name: str | None = None
     """The name of the provider that generated the response.
+
+    Required to be set when `provider_details` or `id` is set.
     """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1204,12 +1243,23 @@ class BaseToolCallPart:
     id: str | None = None
     """An optional identifier of the tool call part, separate from the tool call ID.
 
-    This is used by some APIs like OpenAI Responses."""
+    This is used by some APIs like OpenAI Responses.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Builtin tool calls are only sent back to the same provider.
+    Required to be set when `provider_details` or `id` is set.
+    """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -1262,12 +1312,6 @@ class BuiltinToolCallPart(BaseToolCallPart):
     """A tool call to a built-in tool."""
 
     _: KW_ONLY
-
-    provider_name: str | None = None
-    """The name of the provider that generated the response.
-
-    Built-in tool calls are only sent back to the same provider.
-    """
 
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1554,10 +1598,19 @@ class TextPartDelta:
 
     _: KW_ONLY
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    This is required to be set when `provider_details` is set and the initial TextPart does not have a `provider_name` or it has changed.
+    """
+
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
@@ -1579,6 +1632,7 @@ class TextPartDelta:
         return replace(
             part,
             content=part.content + self.content_delta,
+            provider_name=self.provider_name or part.provider_name,
             provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
         )
 
@@ -1602,6 +1656,7 @@ class ThinkingPartDelta:
     """Optional provider name for the thinking part.
 
     Signatures are only sent back to the same provider.
+    Required to be set when `provider_details` is set and the initial ThinkingPart does not have a `provider_name` or it has changed.
     """
 
     provider_details: ProviderDetailsDelta = None
@@ -1610,7 +1665,9 @@ class ThinkingPartDelta:
     Can be a dict to merge with existing details, or a callable that takes
     the existing details and returns updated details.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data."""
 
     part_delta_kind: Literal['thinking'] = 'thinking'
     """Part delta type identifier, used as a discriminator."""
@@ -1711,10 +1768,19 @@ class ToolCallPartDelta:
     Note this is never treated as a delta — it can replace None, but otherwise if a
     non-matching value is provided an error will be raised."""
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    This is required to be set when `provider_details` is set and the initial ToolCallPart does not have a `provider_name` or it has changed.
+    """
+
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_delta_kind: Literal['tool_call'] = 'tool_call'
     """Part delta type identifier, used as a discriminator."""
@@ -1732,6 +1798,7 @@ class ToolCallPartDelta:
             self.tool_name_delta,
             self.args_delta,
             self.tool_call_id or _generate_tool_call_id(),
+            provider_name=self.provider_name,
             provider_details=self.provider_details,
         )
 
@@ -1793,6 +1860,9 @@ class ToolCallPartDelta:
         if self.tool_call_id:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
+        if self.provider_name:
+            delta = replace(delta, provider_name=self.provider_name)
+
         if self.provider_details:
             merged_provider_details = {**(delta.provider_details or {}), **self.provider_details}
             delta = replace(delta, provider_details=merged_provider_details)
@@ -1803,6 +1873,7 @@ class ToolCallPartDelta:
                 delta.tool_name_delta,
                 delta.args_delta,
                 delta.tool_call_id or _generate_tool_call_id(),
+                provider_name=delta.provider_name,
                 provider_details=delta.provider_details,
             )
 
@@ -1828,6 +1899,9 @@ class ToolCallPartDelta:
 
         if self.tool_call_id:
             part = replace(part, tool_call_id=self.tool_call_id)
+
+        if self.provider_name:
+            part = replace(part, provider_name=self.provider_name)
 
         if self.provider_details:
             merged_provider_details = {**(part.provider_details or {}), **self.provider_details}

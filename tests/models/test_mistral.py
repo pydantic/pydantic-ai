@@ -44,9 +44,11 @@ with try_import() as imports_successful:
         CompletionChunk as MistralCompletionChunk,
         CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice,
         CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
+        ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
         Mistral,
+        ReferenceChunk as MistralReferenceChunk,
         TextChunk as MistralTextChunk,
         UsageInfo as MistralUsageInfo,
     )
@@ -58,7 +60,11 @@ with try_import() as imports_successful:
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
-    from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
+    from pydantic_ai.models.mistral import (
+        MistralModel,
+        MistralStreamedResponse,
+        _map_content,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -2376,9 +2382,21 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
-                    TextPart(content=IsStr(), id='msg_68bb64663d1c8196b9c7e78e7018cc4103498c8aa840cf12'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68bb64663d1c8196b9c7e78e7018cc4103498c8aa840cf12',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
                 model_name='o3-mini-2025-01-31',
@@ -2633,3 +2651,30 @@ async def test_document_url_no_force_download() -> None:
         await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
         mock_download.assert_not_called()
+
+
+def test_map_content_concatenates_text_chunks() -> None:
+    """Test that _map_content correctly concatenates multiple MistralTextChunks."""
+    content: list[MistralContentChunk] = [
+        MistralTextChunk(text='Hello'),
+        MistralTextChunk(text=' world'),
+    ]
+
+    text, thinking = _map_content(content)
+
+    assert text == 'Hello world'
+    assert thinking == []
+
+
+def test_map_content_handles_reference_chunk() -> None:
+    """Test that _map_content does not fail when encountering a MistralReferenceChunk."""
+    content: list[MistralContentChunk] = [
+        MistralTextChunk(text='Hello'),
+        MistralReferenceChunk(reference_ids=[1, 2, 3]),
+        MistralTextChunk(text=' world'),
+    ]
+
+    text, thinking = _map_content(content)
+
+    assert text == 'Hello world'
+    assert thinking == []
