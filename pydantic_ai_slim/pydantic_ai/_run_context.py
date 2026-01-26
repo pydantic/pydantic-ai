@@ -62,6 +62,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The current step in the run."""
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
+    tool_call_metadata: Any = None
+    """Metadata from `DeferredToolResults.metadata[tool_call_id]`, available when `tool_call_approved=True`."""
     partial_output: bool = False
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None

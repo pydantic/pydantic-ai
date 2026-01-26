@@ -29,6 +29,7 @@ nav:
           - models/openai.md
           - models/anthropic.md
           - models/google.md
+          - models/xai.md
           - models/bedrock.md
           - models/cerebras.md
           - models/cohere.md
@@ -150,6 +151,7 @@ nav:
           - api/models/fallback.md
           - api/models/function.md
           - api/models/google.md
+          - api/models/xai.md
           - api/models/groq.md
           - api/models/huggingface.md
           - api/models/instrumented.md

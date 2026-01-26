@@ -11,7 +11,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, cast, overload
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
@@ -173,6 +173,36 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
 
 
+class _AzureContentFilterResultDetail(BaseModel):
+    filtered: bool
+    severity: str | None = None
+    detected: bool | None = None
+
+
+class _AzureContentFilterResult(BaseModel):
+    hate: _AzureContentFilterResultDetail | None = None
+    self_harm: _AzureContentFilterResultDetail | None = None
+    sexual: _AzureContentFilterResultDetail | None = None
+    violence: _AzureContentFilterResultDetail | None = None
+    jailbreak: _AzureContentFilterResultDetail | None = None
+    profanity: _AzureContentFilterResultDetail | None = None
+
+
+class _AzureInnerError(BaseModel):
+    code: str
+    content_filter_result: _AzureContentFilterResult
+
+
+class _AzureError(BaseModel):
+    code: str
+    message: str
+    innererror: _AzureInnerError | None = None
+
+
+class _AzureErrorResponse(BaseModel):
+    error: _AzureError
+
+
 def _resolve_openai_image_generation_size(
     tool: ImageGenerationTool,
 ) -> _OPENAI_IMAGE_SIZE:
@@ -201,6 +231,36 @@ def _resolve_openai_image_generation_size(
         )
 
     return mapped_size
+
+
+def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str) -> ModelResponse | None:
+    """Check if the error is an Azure content filter error."""
+    # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
+    body_any: Any = e.body
+
+    if system == 'azure' and e.status_code == 400 and isinstance(body_any, dict):
+        try:
+            error_data = _AzureErrorResponse.model_validate(body_any)
+
+            if error_data.error.code == 'content_filter':
+                provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
+
+                if error_data.error.innererror:
+                    provider_details['content_filter_result'] = (
+                        error_data.error.innererror.content_filter_result.model_dump(exclude_none=True)
+                    )
+
+                return ModelResponse(
+                    parts=[],  # Empty parts to trigger content filter error in agent graph
+                    model_name=model_name,
+                    timestamp=_utils.now_utc(),
+                    provider_name=system,
+                    finish_reason='content_filter',
+                    provider_details=provider_details,
+                )
+        except ValidationError:
+            pass
+    return None
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -499,6 +559,11 @@ class OpenAIChatModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
+
+        # Handle ModelResponse returned directly (for content filters)
+        if isinstance(response, ModelResponse):
+            return response
+
         model_response = self._process_response(response)
         return model_response
 
@@ -537,7 +602,7 @@ class OpenAIChatModel(Model):
         stream: Literal[False],
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion: ...
+    ) -> chat.ChatCompletion | ModelResponse: ...
 
     async def _completions_create(
         self,
@@ -545,7 +610,7 @@ class OpenAIChatModel(Model):
         stream: bool,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
@@ -609,6 +674,8 @@ class OpenAIChatModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -654,6 +721,7 @@ class OpenAIChatModel(Model):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
+
         items: list[ModelResponsePart] = []
 
         if thinking_parts := self._process_thinking(choice.message):
@@ -1042,7 +1110,19 @@ class OpenAIChatModel(Model):
                     audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
-                    if self._is_text_like_media_type(item.media_type):
+                    # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
+                    # Some providers (e.g., OpenRouter) support URLs via the profile flag.
+                    if not item.force_download and profile.openai_chat_supports_file_urls:
+                        content.append(
+                            File(
+                                file=FileFile(
+                                    file_data=item.url,
+                                    filename=f'filename.{item.format}',
+                                ),
+                                type='file',
+                            )
+                        )
+                    elif self._is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
                         content.append(
                             self._inline_text_file_part(
@@ -1183,6 +1263,11 @@ class OpenAIResponsesModel(Model):
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
+
+        # Handle ModelResponse
+        if isinstance(response, ModelResponse):
+            return response
+
         return self._process_response(response, model_request_parameters)
 
     @asynccontextmanager
@@ -1226,7 +1311,7 @@ class OpenAIResponsesModel(Model):
                                 content=summary.text,
                                 id=item.id,
                                 signature=signature,
-                                provider_name=self.system if (signature or provider_details) else None,
+                                provider_name=self.system,
                                 provider_details=provider_details or None,
                             )
                         )
@@ -1239,7 +1324,7 @@ class OpenAIResponsesModel(Model):
                             content='',
                             id=item.id,
                             signature=signature,
-                            provider_name=self.system if (signature or provider_details) else None,
+                            provider_name=self.system,
                             provider_details=provider_details or None,
                         )
                     )
@@ -1249,14 +1334,18 @@ class OpenAIResponsesModel(Model):
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
-                        items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
+                        items.append(
+                            TextPart(
+                                content.text,
+                                id=item.id,
+                                provider_name=self.system,
+                                provider_details=part_provider_details,
+                            )
+                        )
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(
-                        item.name,
-                        item.arguments,
-                        tool_call_id=item.call_id,
-                        id=item.id,
+                        item.name, item.arguments, tool_call_id=item.call_id, id=item.id, provider_name=self.system
                     )
                 )
             elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
@@ -1368,7 +1457,7 @@ class OpenAIResponsesModel(Model):
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         tools = (
             self._get_builtin_tools(model_request_parameters)
             + list(model_settings.get('openai_builtin_tools', []))
@@ -1470,6 +1559,9 @@ class OpenAIResponsesModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
+
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -1662,16 +1754,19 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                send_item_ids = send_item_ids and message.provider_name == self.system
-
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 for item in message.parts:
+                    should_send_item_id = send_item_ids and (
+                        item.provider_name == self.system
+                        or (item.provider_name is None and message.provider_name == self.system)
+                    )
+
                     if isinstance(item, TextPart):
-                        if item.id and send_item_ids:
+                        if item.id and should_send_item_id:
                             if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
                                     role='assistant',
@@ -1705,11 +1800,11 @@ class OpenAIResponsesModel(Model):
                         )
                         if profile.openai_responses_requires_function_call_status_none:
                             param['status'] = None  # type: ignore[reportGeneralTypeIssues]
-                        if id and send_item_ids:  # pragma: no branch
+                        if id and should_send_item_id:  # pragma: no branch
                             param['id'] = id
                         openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
-                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
+                        if should_send_item_id:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and item.tool_call_id
@@ -1796,31 +1891,16 @@ class OpenAIResponsesModel(Model):
                                     openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, BuiltinToolReturnPart):
-                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
-                            if (
-                                item.tool_name == CodeExecutionTool.kind
-                                and code_interpreter_item is not None
-                                and isinstance(item.content, dict)
-                                and (content := cast(dict[str, Any], item.content))
-                                and (status := content.get('status'))
-                            ):
-                                code_interpreter_item['status'] = status
-                            elif (
-                                item.tool_name == WebSearchTool.kind
-                                and web_search_item is not None
-                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))
-                                and (status := content.get('status'))
-                            ):
-                                web_search_item['status'] = status
-                            elif (  # pragma: no cover
-                                item.tool_name == FileSearchTool.kind
-                                and file_search_item is not None
-                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))
-                                and (status := content.get('status'))
-                            ):
-                                file_search_item['status'] = status
+                        if should_send_item_id:  # pragma: no branch
+                            content_is_dict = isinstance(item.content, dict)
+                            status = item.content.get('status') if content_is_dict else None
+                            kind_to_item = {
+                                CodeExecutionTool.kind: code_interpreter_item,
+                                WebSearchTool.kind: web_search_item,
+                                FileSearchTool.kind: file_search_item,
+                            }
+                            if status and (builtin_item := kind_to_item.get(item.tool_name)) is not None:
+                                builtin_item['status'] = status
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
@@ -1838,7 +1918,7 @@ class OpenAIResponsesModel(Model):
                         if item.provider_name == self.system:
                             raw_content = (item.provider_details or {}).get('raw_content')
 
-                        if item.id and (send_item_ids or raw_content):
+                        if item.id and (should_send_item_id or raw_content):
                             signature: str | None = None
                             if (
                                 item.signature
@@ -2168,6 +2248,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                 )
+
                 if raw_finish_reason:  # pragma: no branch
                     self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
@@ -2210,6 +2291,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args=chunk.item.arguments,
                         tool_call_id=chunk.item.call_id,
                         id=chunk.item.id,
+                        provider_name=self.provider_name,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
                     pass
@@ -2333,6 +2415,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=vendor_id,
                     content=chunk.part.text,
                     id=chunk.item_id,
+                    provider_name=self.provider_name,
                 ):
                     yield event
 
@@ -2349,6 +2432,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=vendor_id,
                     content=chunk.delta,
                     id=chunk.item_id,
+                    provider_name=self.provider_name,
                 ):
                     yield event
 
@@ -2357,6 +2441,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 for event in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=chunk.item_id,
                     id=chunk.item_id,
+                    provider_name=self.provider_name,
                     provider_details=_make_raw_content_updater(chunk.delta, chunk.content_index),
                 ):
                     yield event
@@ -2370,7 +2455,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(
-                    vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
+                    vendor_part_id=chunk.item_id,
+                    content=chunk.delta,
+                    id=chunk.item_id,
+                    provider_name=self.provider_name,
                 ):
                     yield event
 

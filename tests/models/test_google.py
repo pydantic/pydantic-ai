@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import base64
 import datetime
+import json
 import os
 import re
 import tempfile
@@ -11,7 +11,7 @@ from datetime import timezone
 from typing import Any
 
 import pytest
-from httpx import Timeout
+from httpx import AsyncClient as HttpxAsyncClient, Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
@@ -59,12 +59,18 @@ from pydantic_ai.builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelRetry,
+    UserError,
+)
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -597,6 +603,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         tool_name='get_capital',
                         args={'country': 'France'},
                         tool_call_id=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -630,6 +637,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         tool_name='get_capital',
                         args={'country': 'La France'},
                         tool_call_id=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -661,6 +669,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 parts=[
                     TextPart(
                         content='Paris',
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -769,11 +778,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             ),
             PartEndEvent(
                 index=0,
-                part=ToolCallPart(
-                    tool_name='get_capital',
-                    args={'country': 'France'},
-                    tool_call_id=IsStr(),
-                ),
+                part=ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr()),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
@@ -787,11 +792,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             ),
             PartEndEvent(
                 index=0,
-                part=ToolCallPart(
-                    tool_name='get_temperature',
-                    args={'city': 'Paris'},
-                    tool_call_id=IsStr(),
-                ),
+                part=ToolCallPart(tool_name='get_temperature', args={'city': 'Paris'}, tool_call_id=IsStr()),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
@@ -1019,8 +1020,82 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     )
     agent = Agent(m, instructions='You hate the world!', model_settings=settings)
 
-    with pytest.raises(UnexpectedModelBehavior, match="Content filter 'SAFETY' triggered"):
+    with pytest.raises(
+        ContentFilterError,
+        match="Content filter triggered. Finish reason: 'SAFETY'",
+    ) as exc_info:
         await agent.run('Tell me a joke about a Brazilians.')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+
+    assert body_json == snapshot(
+        [
+            {
+                'parts': [],
+                'usage': {
+                    'input_tokens': 14,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {'text_prompt_tokens': 14},
+                },
+                'model_name': 'gemini-1.5-flash',
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'provider_name': 'google-gla',
+                'provider_url': 'https://generativelanguage.googleapis.com/',
+                'provider_details': {
+                    'finish_reason': 'SAFETY',
+                    'safety_ratings': [
+                        {
+                            'blocked': True,
+                            'category': 'HARM_CATEGORY_HATE_SPEECH',
+                            'overwrittenThreshold': None,
+                            'probability': 'LOW',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                        {
+                            'blocked': None,
+                            'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+                            'overwrittenThreshold': None,
+                            'probability': 'NEGLIGIBLE',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                        {
+                            'blocked': None,
+                            'category': 'HARM_CATEGORY_HARASSMENT',
+                            'overwrittenThreshold': None,
+                            'probability': 'NEGLIGIBLE',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                        {
+                            'blocked': None,
+                            'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            'overwrittenThreshold': None,
+                            'probability': 'NEGLIGIBLE',
+                            'probabilityScore': None,
+                            'severity': None,
+                            'severityScore': None,
+                        },
+                    ],
+                },
+                'provider_response_id': IsStr(),
+                'finish_reason': 'content_filter',
+                'run_id': IsStr(),
+                'metadata': None,
+            }
+        ]
+    )
 
 
 async def test_google_model_web_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
@@ -1638,7 +1713,11 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content=IsStr()), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(
+                index=2,
+                part=TextPart(content=IsStr()),
+                previous_part_kind='builtin-tool-return',
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(index=2, part=TextPart(content=IsStr())),
@@ -1988,6 +2067,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     ThinkingPart(content=IsStr()),
                     TextPart(
                         content=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -2027,6 +2107,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     ThinkingPart(content=IsStr()),
                     TextPart(
                         content=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -2083,11 +2164,31 @@ async def test_google_model_thinking_part_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
-                    TextPart(content=IsStr(), id='msg_68c1fb814fdc8196aec1a46164ddf7680c14a8a9087e8689'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c1fb814fdc8196aec1a46164ddf7680c14a8a9087e8689',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=45, output_tokens=1719, details={'reasoning_tokens': 1408}),
                 model_name='gpt-5-2025-08-07',
@@ -2131,6 +2232,7 @@ async def test_google_model_thinking_part_from_other_model(
                     ThinkingPart(content=IsStr()),
                     TextPart(
                         content=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -2189,6 +2291,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     ThinkingPart(content=IsStr()),
                     TextPart(
                         content=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -2245,6 +2348,7 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
                 index=1,
                 part=TextPart(
                     content='This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step',
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
                 previous_part_kind='thinking',
@@ -2305,6 +2409,7 @@ Once it's safe:
 
 The most important rule is to **stay alert and be predictable**. Always assume a driver might not see you.\
 """,
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
@@ -2508,13 +2613,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='final_result',
-                        args={'bar': 'hello'},
-                        tool_call_id=IsStr(),
-                    )
-                ],
+                parts=[ToolCallPart(tool_name='final_result', args={'bar': 'hello'}, tool_call_id=IsStr())],
                 usage=RequestUsage(
                     input_tokens=27, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27}
                 ),
@@ -3211,6 +3310,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                             media_type='image/jpeg',
                             _identifier='b6e95a',
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -3253,6 +3353,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                             media_type='image/jpeg',
                             _identifier='14bec0',
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -3403,6 +3504,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
 A little axolotl named Archie lived in a beautiful glass tank, but he always wondered what was beyond the clear walls. One day, he bravely peeked over the edge and discovered a whole new world of sunshine and potted plants.
 
 """,
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                     FilePart(
@@ -3412,6 +3514,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                             _identifier='00f2af',
                             identifier=IsStr(),
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -3522,6 +3625,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                             media_type='image/jpeg',
                             _identifier='4e5b3e',
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -3559,6 +3663,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
   "name": "Axolotl"
 } \
 """,
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -3663,6 +3768,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                             media_type='image/jpeg',
                             _identifier='787c28',
                         ),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -4346,8 +4452,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
             )
 
-        await asyncio.sleep(3)
-
         m = GoogleModel('gemini-2.5-pro', provider=google_provider)
         agent = Agent(
             m,
@@ -4510,8 +4614,6 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
             )
 
-        await asyncio.sleep(3)
-
         m = GoogleModel('gemini-2.5-pro', provider=google_provider)
         agent = Agent(
             m,
@@ -4612,12 +4714,18 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     next_part_kind='text',
                 ),
                 PartStartEvent(
-                    index=1, part=TextPart(content='The capital of France'), previous_part_kind='builtin-tool-call'
+                    index=1,
+                    part=TextPart(content='The capital of France'),
+                    previous_part_kind='builtin-tool-call',
                 ),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
-                PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is Paris. The city is well-known for its')),
                 PartDeltaEvent(
-                    index=1, delta=TextPartDelta(content_delta=' famous landmarks, including the Eiffel Tower.')
+                    index=1,
+                    delta=TextPartDelta(content_delta=' is Paris. The city is well-known for its'),
+                ),
+                PartDeltaEvent(
+                    index=1,
+                    delta=TextPartDelta(content_delta=' famous landmarks, including the Eiffel Tower.'),
                 ),
                 PartEndEvent(
                     index=1,
@@ -4819,10 +4927,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         provider_name='openai',
                     ),
                     ToolCallPart(
-                        tool_name='get_country',
-                        args='{}',
-                        tool_call_id=IsStr(),
-                        id=IsStr(),
+                        tool_name='get_country', args='{}', tool_call_id=IsStr(), id=IsStr(), provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(input_tokens=37, output_tokens=272, details={'reasoning_tokens': 256}),
@@ -4858,10 +4963,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='Mexico City (Ciudad de México).',
-                        id=IsStr(),
-                    ),
+                    TextPart(content='Mexico City (Ciudad de México).', id=IsStr(), provider_name='openai'),
                 ],
                 usage=RequestUsage(input_tokens=379, output_tokens=77, details={'reasoning_tokens': 64}),
                 model_name='gpt-5-2025-08-07',
@@ -4891,6 +4993,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
                         tool_call_id=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -5003,6 +5106,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                 parts=[
                     TextPart(
                         content='Hello! How can I help you today?',
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
@@ -5133,6 +5237,42 @@ def test_google_thought_signature_on_thinking_part():
     )
     assert old_google_response == new_google_response
 
+    # Test that thought_signature is used when item.provider_name matches even if ModelResponse.provider_name doesn't
+    response_with_item_provider_name = _content_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='text',
+                    provider_name='google-gla',
+                    provider_details={'thought_signature': signature},
+                ),
+            ],
+            provider_name=None,  # ModelResponse doesn't have provider_name set
+        ),
+        'google-gla',
+    )
+    assert response_with_item_provider_name == snapshot(
+        {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
+    )
+
+    # Also test when ModelResponse has a different provider_name (e.g., from another provider)
+    response_with_different_provider = _content_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='text',
+                    provider_name='google-gla',
+                    provider_details={'thought_signature': signature},
+                ),
+            ],
+            provider_name='openai',  # Different provider on ModelResponse
+        ),
+        'google-gla',
+    )
+    assert response_with_different_provider == snapshot(
+        {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
+    )
+
 
 def test_google_missing_tool_call_thought_signature():
     google_response = _content_model_response(
@@ -5151,7 +5291,7 @@ def test_google_missing_tool_call_thought_signature():
             'parts': [
                 {
                     'function_call': {'name': 'tool', 'args': {}, 'id': 'tool_call_id'},
-                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                    'thought_signature': b'skip_thought_signature_validator',
                 },
                 {'function_call': {'name': 'tool2', 'args': {}, 'id': 'tool_call_id2'}},
             ],
@@ -5196,11 +5336,12 @@ async def test_google_streaming_tool_call_thought_signature(
                         tool_name='get_country',
                         args={},
                         tool_call_id=IsStr(),
+                        provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=29, output_tokens=127, details={'thoughts_tokens': 117, 'text_prompt_tokens': 29}
+                    input_tokens=29, output_tokens=212, details={'thoughts_tokens': 202, 'text_prompt_tokens': 29}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5224,8 +5365,8 @@ async def test_google_streaming_tool_call_thought_signature(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The capital of Mexico is **Mexico City**.')],
-                usage=RequestUsage(input_tokens=170, output_tokens=9, details={'text_prompt_tokens': 170}),
+                parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                usage=RequestUsage(input_tokens=257, output_tokens=8, details={'text_prompt_tokens': 257}),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
@@ -5245,6 +5386,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     tool_name='get_country',
                     args={},
                     tool_call_id=IsStr(),
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
@@ -5254,6 +5396,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     tool_name='get_country',
                     args={},
                     tool_call_id=IsStr(),
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
@@ -5262,6 +5405,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     tool_name='get_country',
                     args={},
                     tool_call_id=IsStr(),
+                    provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 )
             ),
@@ -5273,15 +5417,15 @@ async def test_google_streaming_tool_call_thought_signature(
                     timestamp=IsDatetime(),
                 )
             ),
-            PartStartEvent(index=0, part=TextPart(content='The')),
+            PartStartEvent(index=0, part=TextPart(content='The capital of Mexico')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=0,
-                delta=TextPartDelta(content_delta=' capital of Mexico is **Mexico City**.'),
+                delta=TextPartDelta(content_delta=' is Mexico City.'),
             ),
             PartEndEvent(
                 index=0,
-                part=TextPart(content='The capital of Mexico is **Mexico City**.'),
+                part=TextPart(content='The capital of Mexico is Mexico City.'),
             ),
         ]
     )
@@ -5312,3 +5456,207 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
         }
     )
     assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
+
+
+async def test_google_stream_safety_filter(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that safety ratings are captured in the exception body when streaming."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    safety_rating = mocker.Mock(category='HARM_CATEGORY_HATE_SPEECH', probability='HIGH', blocked=True)
+
+    safety_rating.model_dump.return_value = {
+        'category': 'HARM_CATEGORY_HATE_SPEECH',
+        'probability': 'HIGH',
+        'blocked': True,
+    }
+
+    candidate = mocker.Mock(
+        finish_reason=GoogleFinishReason.SAFETY,
+        content=None,
+        safety_ratings=[safety_rating],
+        grounding_metadata=None,
+        url_context_metadata=None,
+    )
+
+    chunk = mocker.Mock(
+        candidates=[candidate],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_123',
+    )
+    chunk.model_dump_json.return_value = '{"mock": "json"}'
+
+    async def stream_iterator():
+        yield chunk
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        async with agent.run_stream('bad content'):
+            pass
+
+    # Verify exception message
+    assert 'Content filter triggered' in str(exc_info.value)
+
+    # Verify safety ratings are present in the body (serialized ModelResponse)
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+
+    # body_json is a list of messages, check the first one
+    response_msg = body_json[0]
+    assert response_msg['provider_details']['finish_reason'] == 'SAFETY'
+    assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'
+
+
+def test_google_provider_sets_http_options_timeout(google_provider: GoogleProvider):
+    """Test that GoogleProvider sets HttpOptions.timeout to prevent requests hanging indefinitely.
+
+    The google-genai SDK's HttpOptions.timeout defaults to None, which causes the SDK to
+    explicitly pass timeout=None to httpx, overriding any timeout configured on the httpx
+    client. This would cause requests to hang indefinitely.
+
+    See https://github.com/pydantic/pydantic-ai/issues/4031
+    """
+    http_options = google_provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    assert http_options.timeout == DEFAULT_HTTP_TIMEOUT * 1000
+
+
+def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str):
+    """Test that GoogleProvider respects a custom timeout from a user-provided http_client.
+
+    See https://github.com/pydantic/pydantic-ai/pull/4032#discussion_r2709797127
+    """
+    custom_timeout = 120
+    custom_http_client = HttpxAsyncClient(timeout=Timeout(custom_timeout))
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=custom_http_client)
+
+    http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    assert http_options.timeout == custom_timeout * 1000
+
+
+async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
+    """Test that ToolReturnPart and UserPromptPart are split into separate content objects.
+
+    TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    # ToolReturn + UserPrompt
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
+                UserPromptPart(content="What's 2 + 2?"),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': "What's 2 + 2?",
+                    }
+                ],
+            },
+        ]
+    )
+
+    # ToolReturn + Retry + UserPrompts
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id_1'),
+                RetryPromptPart(content='Tool error occurred', tool_name='another_tool', tool_call_id='test_id_2'),
+                UserPromptPart(content="What's 2 + 2?"),
+                UserPromptPart(content="What's 3 + 3?"),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id_1',
+                        }
+                    },
+                    {
+                        'function_response': {
+                            'name': 'another_tool',
+                            'response': {'error': 'Tool error occurred\n\nFix the errors and try again.'},
+                            'id': 'test_id_2',
+                        }
+                    },
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': "What's 2 + 2?",
+                    },
+                    {
+                        'text': "What's 3 + 3?",
+                    },
+                ],
+            },
+        ]
+    )
+
+    # ToolReturn only
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id'),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'return_value': 'Final result processed.'},
+                            'id': 'test_id',
+                        }
+                    },
+                ],
+            }
+        ]
+    )
