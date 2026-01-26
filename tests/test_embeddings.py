@@ -4,7 +4,7 @@ import os
 from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any, get_args
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -157,8 +157,6 @@ class TestOpenAI:
             await embedder.embed_query('Hello, world!')
 
     async def test_response_with_no_usage(self):
-        from unittest.mock import AsyncMock, MagicMock
-
         mock_client = AsyncMock()
         mock_embedding_item = MagicMock()
         mock_embedding_item.embedding = [0.1, 0.2, 0.3]
@@ -175,7 +173,7 @@ class TestOpenAI:
         model = OpenAIEmbeddingModel('test-model', provider=provider)
 
         result = await model.embed('test', input_type='query')
-        assert result.usage.input_tokens == 0
+        assert result.usage == RequestUsage()
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
